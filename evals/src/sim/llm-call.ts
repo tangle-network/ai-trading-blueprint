@@ -199,3 +199,47 @@ export async function llmCallJson<T>(opts: LlmCallOptions): Promise<{ result: T 
   if (!raw.ok) return { result: null, raw }
   return { result: extractJson<T>(raw.output), raw }
 }
+
+// ─── Profile-based invocation ─────────────────────────────────────────
+//
+// The profile-driven entry point. Callers import a profile object from
+// evals/src/profiles/ and pass it to `runProfile(profile, {message})`.
+// No inline prompts, no model-name hardcodes at call sites.
+
+import type { EvalProfile, EvalModelProvider } from '../profiles/types.js'
+
+/** Map an EvalModelProvider to the concrete LlmModel routing in
+ *  MODEL_CONFIG above. Centralized so both `llmCall(model=...)` and
+ *  `runProfile(profile)` resolve to the same backend. */
+const PROVIDER_TO_LLM_MODEL: Record<EvalModelProvider, LlmModel> = {
+  'kimi-k2': 'kimi-k2',
+  'zai-glm-4.7': 'glm-4.7',
+  'zai-glm-5.1': 'glm-5.1',
+}
+
+/** Invoke an `EvalProfile` with a user message. The profile carries the
+ *  system prompt + model pick; the caller passes the per-call user
+ *  input. Wraps `llmCall` so output-schema-aware variants share the
+ *  same backend wiring + timeout handling. */
+export async function runProfile(
+  profile: EvalProfile,
+  input: { message: string },
+): Promise<LlmCallResult> {
+  return llmCall({
+    prompt: `${profile.prompt.system}\n\n---\n\n${input.message}`,
+    model: PROVIDER_TO_LLM_MODEL[profile.model.provider],
+    ...(profile.timeoutMs ? { timeoutMs: profile.timeoutMs } : {}),
+  })
+}
+
+/** Profile-driven variant of `llmCallJson` — invokes the profile,
+ *  extracts a JSON object from the response. Returns null on any
+ *  failure so judge sites can fall back gracefully. */
+export async function runProfileJson<T>(
+  profile: EvalProfile,
+  input: { message: string },
+): Promise<{ result: T | null; raw: LlmCallResult }> {
+  const raw = await runProfile(profile, input)
+  if (!raw.ok) return { result: null, raw }
+  return { result: extractJson<T>(raw.output), raw }
+}
