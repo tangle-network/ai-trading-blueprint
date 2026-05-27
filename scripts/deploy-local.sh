@@ -38,6 +38,12 @@ OPERATOR1_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690
 OPERATOR1_ADDR="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 OPERATOR2_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
 OPERATOR2_ADDR="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+# Operator3 is a dormant on-chain identity — registered + joined to services so
+# VaultFactory's 3-signer floor (contracts/src/VaultFactory.sol:275, audit H-2/H-4)
+# is satisfied. With requiredSigs = supermajority(3) = 2, operator1+operator2
+# signatures alone meet quorum, so no third runtime binary is needed.
+OPERATOR3_KEY="0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"
+OPERATOR3_ADDR="0x90F79bf6EB2c4f870365E785982E1f101E93b906"
 SINGLETON_VAULT_DEPLOYER_KEY="${SINGLETON_VAULT_DEPLOYER_KEY:-0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6}"
 SINGLETON_VAULT_DEPLOYER_ADDR="${SINGLETON_VAULT_DEPLOYER_ADDR:-0x90F79bf6EB2c4f870365E785982E1f101E93b906}"
 USER_ACCOUNT="0x68FF20459d48917748CA13afCbDA3B265a449D48"
@@ -51,6 +57,10 @@ TANGLE="0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
 # connects via gRPC-Web to these addresses.
 OPERATOR1_RPC="http://localhost:50051"
 OPERATOR2_RPC="http://localhost:50052"
+# operator3 has no running pricing-engine binary on devnet — use a sentinel URL
+# so updateOperatorPreferences accepts a non-empty string. Quotes are sourced
+# from operator1/operator2; operator3 is only on-chain to meet the signer floor.
+OPERATOR3_RPC="http://localhost:50053"
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -471,6 +481,7 @@ derive_pubkey() {
 
 OPERATOR1_PUBKEY=$(derive_pubkey "$OPERATOR1_KEY")
 OPERATOR2_PUBKEY=$(derive_pubkey "$OPERATOR2_KEY")
+OPERATOR3_PUBKEY=$(derive_pubkey "$OPERATOR3_KEY")
 
 # Register operators for each blueprint variant (trading + validator)
 ALL_BLUEPRINT_IDS=("$BLUEPRINT_ID" "$INSTANCE_BLUEPRINT_ID" "$TEE_BLUEPRINT_ID")
@@ -481,6 +492,43 @@ if [[ "$ENABLE_VALIDATOR_SERVICE" == "true" ]]; then
 else
   echo "  Skipping validator blueprint operator registration in this mode"
 fi
+
+# Activate operator3 in MultiAssetDelegation staking before the blueprint
+# registration loop. Tangle.registerOperator(blueprintId, ...) checks
+# `_staking.isOperatorActive(msg.sender)` (tnt-core/src/core/Operators.sol:108)
+# which is the MAD diamond — NOT ValidatorPodManager (a separate ETH-validator
+# subsystem). Operator1+operator2 stake 100 TNT in the loaded anvil snapshot via
+# `registerOperatorWithAsset(TNT, 100e18)` (selector 0xe0a5825b) — see
+# blueprint/crates/chain-setup/anvil/snapshots/localtestnet-broadcast.json.
+# Replay the same call for operator3 with TNT funded from the deployer.
+MAD_ADDR="0xe7f1725e7734ce288f8367e1bb143e90bb3f0512"
+TNT_ADDR="0x5eb3bc0a489c5a8288765d2336659ebca68fcd00"
+OPERATOR_BOND_AMOUNT="100000000000000000000"  # 100 TNT
+
+# Fund operator3 with TNT from the deployer (anvil account 0, has >100 TNT in snapshot).
+if ! cast send "$TNT_ADDR" "transfer(address,uint256)" "$OPERATOR3_ADDR" "$OPERATOR_BOND_AMOUNT" \
+  --gas-price 0 --priority-gas-price 0 --gas-limit 200000 \
+  --rpc-url "$RPC_URL" --from "$DEPLOYER_ADDR" --unlocked > /dev/null 2>&1; then
+  echo "ERROR: failed to transfer 100 TNT from deployer to operator3 (TNT @ $TNT_ADDR)"
+  exit 1
+fi
+# Approve MAD diamond to pull the bond.
+if ! cast send "$TNT_ADDR" "approve(address,uint256)" "$MAD_ADDR" "$OPERATOR_BOND_AMOUNT" \
+  --gas-price 0 --priority-gas-price 0 --gas-limit 200000 \
+  --rpc-url "$RPC_URL" --from "$OPERATOR3_ADDR" --unlocked > /dev/null 2>&1; then
+  echo "ERROR: operator3 TNT approve to MAD diamond failed"
+  exit 1
+fi
+# Register operator3 in MAD with TNT bond → makes _staking.isOperatorActive return true.
+if ! cast send "$MAD_ADDR" "registerOperatorWithAsset(address,uint256)" "$TNT_ADDR" "$OPERATOR_BOND_AMOUNT" \
+  --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+  --rpc-url "$RPC_URL" --from "$OPERATOR3_ADDR" --unlocked > /dev/null 2>&1; then
+  echo "ERROR: operator3 MAD registerOperatorWithAsset failed"
+  cast call "$MAD_ADDR" "registerOperatorWithAsset(address,uint256)" "$TNT_ADDR" "$OPERATOR_BOND_AMOUNT" \
+    --from "$OPERATOR3_ADDR" --rpc-url "$RPC_URL" 2>&1 | head -10
+  exit 1
+fi
+echo "  Operator3 bonded 100 TNT → MultiAssetDelegation (now active in staking)"
 
 for idx in "${!ALL_BLUEPRINT_IDS[@]}"; do
   BP_ID="${ALL_BLUEPRINT_IDS[$idx]}"
@@ -532,7 +580,34 @@ for idx in "${!ALL_BLUEPRINT_IDS[@]}"; do
     fi
   fi
 
-  echo "  $BP_NAME (blueprint $BP_ID): both operators registered"
+  # Register operator 3 (dormant — exists only to satisfy the VaultFactory
+  # 3-signer floor; no pricing-engine or runtime binary is started for it).
+  if ! REG_OUTPUT="$(
+    send_with_retry "$TANGLE" \
+    "registerOperator(uint64,bytes,string)" \
+    "$BP_ID" "$OPERATOR3_PUBKEY" "$OPERATOR3_RPC" \
+    --gas-price 0 --priority-gas-price 0 --gas-limit "$OPERATOR_REGISTRATION_GAS_LIMIT" \
+    --rpc-url "$RPC_URL" --from "$OPERATOR3_ADDR" --unlocked 2>&1
+  )"; then
+    if ! PREF_OUTPUT="$(
+      send_with_retry "$TANGLE" \
+      "updateOperatorPreferences(uint64,bytes,string)" \
+      "$BP_ID" 0x "$OPERATOR3_RPC" \
+      --gas-price 0 --priority-gas-price 0 --gas-limit "$OPERATOR_REGISTRATION_GAS_LIMIT" \
+      --rpc-url "$RPC_URL" --from "$OPERATOR3_ADDR" --unlocked 2>&1
+    )"; then
+      echo "ERROR: operator 3 registration/update failed for $BP_NAME blueprint $BP_ID"
+      echo "$REG_OUTPUT"
+      echo "$PREF_OUTPUT"
+      echo "---- diagnostic: cast call (read-only) to capture revert reason ----"
+      cast call "$TANGLE" \
+        "registerOperator(uint64,bytes,string)" "$BP_ID" "$OPERATOR3_PUBKEY" "$OPERATOR3_RPC" \
+        --from "$OPERATOR3_ADDR" --rpc-url "$RPC_URL" 2>&1 | head -20
+      exit 1
+    fi
+  fi
+
+  echo "  $BP_NAME (blueprint $BP_ID): all 3 operators registered"
 done
 
 # ── [4/9] Request services for all blueprints ────────────────────
@@ -593,7 +668,7 @@ submit_service_request() {
   if ! send_with_retry "$TANGLE" \
     "requestService(uint64,address[],bytes,address[],uint64,address,uint256,uint8)" \
     "$bp_id" \
-    "[$OPERATOR1_ADDR,$OPERATOR2_ADDR]" \
+    "[$OPERATOR1_ADDR,$OPERATOR2_ADDR,$OPERATOR3_ADDR]" \
     "$config" \
     "$PERMITTED_CALLERS" \
     31536000 \
@@ -665,6 +740,15 @@ for REQ_ID in "$CLOUD_REQUEST_ID" "$INSTANCE_REQUEST_ID" "$TEE_REQUEST_ID"; do
     echo "$APPROVE_OUTPUT"
     exit 1
   fi
+  if ! APPROVE_OUTPUT="$(
+    send_with_retry "$TANGLE" "approveService(uint64,uint8)" "$REQ_ID" 100 \
+    --legacy --gas-price "$TRADING_APPROVE_GAS_PRICE_WEI" --gas-limit "$TRADING_APPROVE_GAS_LIMIT" \
+    --rpc-url "$RPC_URL" --from "$OPERATOR3_ADDR" --unlocked 2>&1
+  )"; then
+    echo "ERROR: operator 3 approval failed for request $REQ_ID"
+    echo "$APPROVE_OUTPUT"
+    exit 1
+  fi
 done
 
 if [[ "$ENABLE_VALIDATOR_SERVICE" == "true" ]]; then
@@ -679,6 +763,12 @@ if [[ "$ENABLE_VALIDATOR_SERVICE" == "true" ]]; then
       --gas-price 0 --priority-gas-price 0 --gas-limit 10000000 \
       --rpc-url "$RPC_URL" --from "$OPERATOR2_ADDR" --unlocked > /dev/null; then
       echo "ERROR: validator operator 2 approval failed for request $REQ_ID"
+      exit 1
+    fi
+    if ! send_with_retry "$TANGLE" "approveService(uint64,uint8)" "$REQ_ID" 100 \
+      --gas-price 0 --priority-gas-price 0 --gas-limit 10000000 \
+      --rpc-url "$RPC_URL" --from "$OPERATOR3_ADDR" --unlocked > /dev/null; then
+      echo "ERROR: validator operator 3 approval failed for request $REQ_ID"
       exit 1
     fi
   done
@@ -777,8 +867,12 @@ for idx in 0 1 2; do
     "$SVC_ID" "$OPERATOR2_ADDR" 10000 \
     --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
     --rpc-url "$RPC_URL" > /dev/null 2>&1
+  cast send "$SVC_BSM" "onOperatorJoined(uint64,address,uint16)" \
+    "$SVC_ID" "$OPERATOR3_ADDR" 10000 \
+    --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+    --rpc-url "$RPC_URL" > /dev/null 2>&1
 done
-echo "  Trading BSMs: OPERATOR_ROLE granted on services $CLOUD_SERVICE_ID, $INSTANCE_SERVICE_ID, $TEE_SERVICE_ID"
+echo "  Trading BSMs: OPERATOR_ROLE granted on services $CLOUD_SERVICE_ID, $INSTANCE_SERVICE_ID, $TEE_SERVICE_ID (3 operators each)"
 
 # Validator services (use validator BSM — no vaults, just operator tracking)
 if [[ "$ENABLE_VALIDATOR_SERVICE" == "true" ]]; then
@@ -789,6 +883,10 @@ if [[ "$ENABLE_VALIDATOR_SERVICE" == "true" ]]; then
       --rpc-url "$RPC_URL" > /dev/null 2>&1
     cast send "$VALIDATOR_BSM" "onOperatorJoined(uint64,address,uint16)" \
       "$SVC_ID" "$OPERATOR2_ADDR" 10000 \
+      --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
+      --rpc-url "$RPC_URL" > /dev/null 2>&1
+    cast send "$VALIDATOR_BSM" "onOperatorJoined(uint64,address,uint16)" \
+      "$SVC_ID" "$OPERATOR3_ADDR" 10000 \
       --from "$TANGLE" --unlocked --gas-price 0 --priority-gas-price 0 --gas-limit 500000 \
       --rpc-url "$RPC_URL" > /dev/null 2>&1
   done
@@ -971,6 +1069,7 @@ echo "╠═══════════════════════�
 echo "║ User:      $USER_ACCOUNT"
 echo "║ Operator1: $OPERATOR1_ADDR → gRPC :50051, HTTP :$OPERATOR_API_PORT"
 echo "║ Operator2: $OPERATOR2_ADDR → gRPC :50052, HTTP :$INSTANCE_OPERATOR_API_PORT"
+echo "║ Operator3: $OPERATOR3_ADDR → dormant (signer-floor only; no binary)"
 echo "╚════════════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Next steps:"

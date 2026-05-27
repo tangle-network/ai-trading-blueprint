@@ -48,6 +48,14 @@ fn trading_agent_package_json() -> String {
 fn trading_agent_opencode_config_json() -> String {
     json!({
         "$schema": "https://opencode.ai/config.json",
+        // Pin the default model for ALL agents (build, title, etc.) — without
+        // this opencode falls back to its bundled default (currently
+        // `openrouter/google/gemini-3-pro-image-preview`) which requires a
+        // Gemini API key. The configureSecrets payload ships ZAI creds, so
+        // selecting glm-4.7 by default keeps the conversation tick functional.
+        // Per-agent overrides (e.g. cheaper model for `title`) can be added
+        // under `agent.<name>.model` if/when we want them.
+        "model": "zai-coding-plan/glm-4.7",
         "provider": {
             "zai-coding-plan": {
                 "npm": "@ai-sdk/openai-compatible",

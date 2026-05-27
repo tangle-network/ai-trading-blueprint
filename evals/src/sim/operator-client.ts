@@ -22,7 +22,12 @@
 
 import { spawnSync } from 'node:child_process'
 
-const DEFAULT_TIMEOUT_MS = 15_000
+// 90s default — most operator-api calls return in <1s, but session creation
+// triggers sandbox-agent container spin-up which can take 30-60s on a cold
+// devnet. A 15s ceiling here surfaced as AbortError ("This operation was
+// aborted") on the first cell of every smoke run; 90s gives the slowest path
+// (createSession) headroom while still failing fast on truly hung requests.
+const DEFAULT_TIMEOUT_MS = 90_000
 const DEFAULT_POLL_INTERVAL_MS = 5_000
 
 export type StrategyType = 'yield' | 'prediction' | 'perp' | 'dex'
@@ -36,11 +41,22 @@ export interface OperatorClientConfig {
 }
 
 export interface TranscriptMessage {
+  // Some operator-api endpoints return id/role at the top level; the trading
+  // blueprint's session endpoint nests them under `info`. Accept both.
   id?: string
   role?: string
+  info?: { id?: string; role?: string; timestamp?: string }
   parts?: Array<{ type?: string; text?: string }>
   content?: string | Array<{ type?: string; text?: string }>
   text?: string
+}
+
+function msgId(m: TranscriptMessage): string | undefined {
+  return m.id ?? m.info?.id
+}
+
+function msgRole(m: TranscriptMessage): string {
+  return (m.role ?? m.info?.role ?? '').toLowerCase()
 }
 
 export interface WaitForReplyOptions {
@@ -246,9 +262,14 @@ export class OperatorClient {
   }
 
   async getTranscript(botId: string, sessionId: string, limit = 200): Promise<TranscriptMessage[]> {
-    const res = await this.get<{ messages?: TranscriptMessage[]; items?: TranscriptMessage[] }>(
+    // The trading-blueprint operator-api returns this endpoint as a bare JSON
+    // array. Earlier sandbox-runtime builds wrapped it in `{messages: [...]}`
+    // or `{items: [...]}`. Accept all three shapes so the eval doesn't break
+    // when run against a different operator-api version.
+    const res = await this.get<TranscriptMessage[] | { messages?: TranscriptMessage[]; items?: TranscriptMessage[] }>(
       `/api/bots/${encodeURIComponent(botId)}/session/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}`,
     )
+    if (Array.isArray(res)) return res
     return res.messages ?? res.items ?? []
   }
 
@@ -295,7 +316,8 @@ export function messageText(msg: TranscriptMessage): string {
 export function lastAssistantId(msgs: TranscriptMessage[]): string | null {
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i]!
-    if ((m.role ?? '').toLowerCase() === 'assistant' && m.id) return m.id
+    const id = msgId(m)
+    if (msgRole(m) === 'assistant' && id) return id
   }
   return null
 }
@@ -308,13 +330,14 @@ export function collectAssistantTextAfter(
   let latestId: string | null = sinceMessageId
   const parts: string[] = []
   for (const m of msgs) {
+    const id = msgId(m)
     if (!collecting) {
-      if (m.id === sinceMessageId) collecting = true
+      if (id === sinceMessageId) collecting = true
       continue
     }
-    if ((m.role ?? '').toLowerCase() === 'assistant') {
+    if (msgRole(m) === 'assistant') {
       parts.push(messageText(m))
-      if (m.id) latestId = m.id
+      if (id) latestId = id
     }
   }
   return { text: parts.join('\n').trim(), latestAssistantId: latestId }
@@ -338,6 +361,15 @@ export function deterministicAgentEnv(): Record<string, string> {
       OPENCODE_MODEL_PROVIDER: 'zai-coding-plan',
       OPENCODE_MODEL_NAME: 'glm-4.7',
       OPENCODE_MODEL_API_KEY: zaiKey,
+      // opencode's CLI defaults the `build` and `title` agents to its bundled
+      // model (currently `openrouter/google/gemini-3-pro-image-preview`),
+      // which requires a Gemini key the eval substrate doesn't ship. Setting
+      // OPENCODE_MODEL pins every agent (build, title, plan, ...) to the
+      // provider/model the configureSecrets payload actually has credentials
+      // for. Confirmed via the bot's `/home/agent/.local/share/opencode/log/`
+      // session log: without this the build agent fails with "Missing
+      // Authentication header" and the conversation tick never produces a reply.
+      OPENCODE_MODEL: 'zai-coding-plan/glm-4.7',
       SIDECAR_DEFAULT_HARNESS: 'opencode',
     }
   }
