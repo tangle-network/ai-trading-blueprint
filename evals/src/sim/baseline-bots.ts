@@ -16,8 +16,7 @@
  * underlying LLM config and a real product stack, which is a follow-up.
  */
 
-import { spawnSync } from 'node:child_process'
-
+import { llmCallJson } from './llm-call.js'
 import type { UserIntent, UserSimSessionResult, UserSimTurn } from './user-sim-driver.js'
 
 const POLL_INTERVAL_MS = 100  // local-stub bots reply instantly; just a placeholder
@@ -157,25 +156,21 @@ Score four dimensions, each 0.0 to 1.0, using STRICT criteria:
 
 Output ONE JSON object, no prose, no fences:
   {"intent_fulfilled": 0.0, "respected_constraints": 0.0, "actually_traded_or_committed": 0.0, "productive_conversation": 0.0, "notes": "<1-2 sentences, skeptical voice>"}`
-  const proc = spawnSync('claude', ['--print', '--model', SECONDARY_JUDGE_MODEL, '--output-format', 'text'], {
-    input: prompt,
-    encoding: 'utf8',
-    maxBuffer: 8 * 1024 * 1024,
-  })
-  if (proc.status !== 0) {
+  const { result, raw } = llmCallJson<{
+    intent_fulfilled: number
+    respected_constraints: number
+    actually_traded_or_committed: number
+    productive_conversation: number
+    notes: string
+  }>({ prompt, model: SECONDARY_JUDGE_MODEL })
+  if (!result) {
     return {
-      intent_fulfilled: 0, respected_constraints: 0, actually_traded_or_committed: 0,
-      productive_conversation: 0, notes: `secondary_judge_failed: ${proc.stderr.slice(0, 200)}`,
+      intent_fulfilled: 0,
+      respected_constraints: 0,
+      actually_traded_or_committed: 0,
+      productive_conversation: 0,
+      notes: !raw.ok ? `secondary_judge_failed: ${raw.stderr.slice(0, 200)}` : `secondary_judge_unparseable: ${raw.output.slice(0, 200)}`,
     }
   }
-  const out = proc.stdout
-  const start = out.indexOf('{')
-  const end = out.lastIndexOf('}')
-  if (start < 0 || end < 0) {
-    return {
-      intent_fulfilled: 0, respected_constraints: 0, actually_traded_or_committed: 0,
-      productive_conversation: 0, notes: `secondary_judge_unparseable: ${out.slice(0, 200)}`,
-    }
-  }
-  return JSON.parse(out.slice(start, end + 1))
+  return result
 }

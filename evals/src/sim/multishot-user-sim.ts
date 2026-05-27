@@ -15,8 +15,6 @@
  * bot does; the user-sim sees only what a user would see.
  */
 
-import { spawnSync } from 'node:child_process'
-
 import type {
   CampaignResult,
   JudgeConfig,
@@ -31,6 +29,10 @@ import {
   runNullBotSession,
   runStallBotSession,
 } from './baseline-bots.js'
+import { llmCallJson } from './llm-call.js'
+import { OperatorClient } from './operator-client.js'
+import { inferStrategyTypeFromVenues } from './strategy-type.js'
+import type { UserPersona } from './user-personas.js'
 import {
   nextUserTurn,
   runUserSimSession,
@@ -46,6 +48,9 @@ const JUDGE_MODEL = 'claude-haiku-4-5'
 
 export interface UserIntentScenario extends Scenario {
   intent: UserIntent
+  /** Optional user-sim persona. When set, the user-sim's voice is the
+   *  persona's system prompt prepended to the base instructions. */
+  persona?: UserPersona
 }
 
 export function intentScenarios(intents: UserIntent[]): UserIntentScenario[] {
@@ -55,6 +60,27 @@ export function intentScenarios(intents: UserIntent[]): UserIntentScenario[] {
     tags: ['user-sim', ...intent.venues],
     intent,
   }))
+}
+
+/** Build scenarios over the cross-product of personas × intents.
+ *  Scenario id = `${persona.id}__${intent.id}`. */
+export function personaIntentScenarios(
+  personas: UserPersona[],
+  intents: UserIntent[],
+): UserIntentScenario[] {
+  const out: UserIntentScenario[] = []
+  for (const persona of personas) {
+    for (const intent of intents) {
+      out.push({
+        id: `${persona.id}__${intent.id}`,
+        kind: 'user-sim',
+        tags: ['user-sim', persona.id, ...persona.tags, ...intent.venues],
+        intent,
+        persona,
+      })
+    }
+  }
+  return out
 }
 
 // ─── Dispatch: provision a fresh bot + run one user-sim session ────────
@@ -67,59 +93,38 @@ export interface MultishotDispatchOptions {
   perTurnTimeoutMs: number
 }
 
-async function postJson<T>(url: string, token: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) throw new Error(`POST ${url} failed ${res.status}: ${await res.text()}`)
-  return res.json() as Promise<T>
-}
-
-interface BotCreateResponse { id?: string; bot_id?: string; bot?: { id?: string } }
-interface SessionCreateResponse { id?: string; session_id?: string; session?: { id?: string } }
-
-function classifyStrategyType(intent: UserIntent): string {
-  const p = intent.text.toLowerCase()
-  if (p.includes('yield') || p.includes('lending') || p.includes('aave')) return 'yield'
-  if (p.includes('polymarket') || p.includes('prediction') || p.includes('politics')) return 'prediction'
-  if (p.includes('perp') || p.includes('leverage') || p.includes('futures')) return 'perp'
-  return 'dex'
-}
-
 export function makeUserSimDispatch(opts: MultishotDispatchOptions, botKind: BotKind = 'real') {
   return async (scenario: UserIntentScenario): Promise<UserSimSessionResult> => {
+    // Bind the persona to nextUserTurn so the stub bots (null/stall) get
+    // persona-flavoured user turns the same way the real bot path does.
+    const persona = scenario.persona ?? null
+    const turnGen = (intent: UserIntent, priorTurns: Parameters<typeof nextUserTurn>[1]) =>
+      nextUserTurn(intent, priorTurns, persona)
     // Stub bots (null / stall) don't touch the product stack at all.
     if (botKind === 'null') {
-      return runNullBotSession(scenario.intent, nextUserTurn, {
+      return runNullBotSession(scenario.intent, turnGen, {
         maxTurns: opts.maxTurnsPerShot,
         perTurnTimeoutMs: opts.perTurnTimeoutMs,
       })
     }
     if (botKind === 'stall') {
-      return runStallBotSession(scenario.intent, nextUserTurn, {
+      return runStallBotSession(scenario.intent, turnGen, {
         maxTurns: opts.maxTurnsPerShot,
         perTurnTimeoutMs: opts.perTurnTimeoutMs,
       })
     }
-    // Real bot: full provision + chat flow through the operator product API.
-    const created = await postJson<BotCreateResponse>(`${opts.operatorUrl}/api/bots`, opts.token, {
+    // Real bot: full provision + chat flow through OperatorClient — same
+    // path as research/robustness drivers, single source of truth.
+    const client = new OperatorClient({ operatorUrl: opts.operatorUrl, token: opts.token })
+    const botId = await client.provisionBot({
       prompt: scenario.intent.text,
       name: scenario.intent.text.slice(0, 50),
-      strategy_type: classifyStrategyType(scenario.intent),
+      strategy_type: inferStrategyTypeFromVenues(scenario.intent.venues),
     })
-    const botId = created.id ?? created.bot_id ?? created.bot?.id
-    if (!botId) throw new Error(`bot create did not return an id: ${JSON.stringify(created)}`)
-    const session = await postJson<SessionCreateResponse>(
-      `${opts.operatorUrl}/api/bots/${encodeURIComponent(botId)}/session/sessions`,
-      opts.token,
-      { title: `user-sim:${scenario.id}` },
-    )
-    const sessionId = session.id ?? session.session_id ?? session.session?.id
-    if (!sessionId) throw new Error(`session create did not return an id: ${JSON.stringify(session)}`)
+    const sessionId = await client.createSession(botId, `user-sim:${scenario.id}`)
     return runUserSimSession({
       intent: scenario.intent,
+      persona,
       operatorUrl: opts.operatorUrl,
       token: opts.token,
       botId,
@@ -163,27 +168,14 @@ Score four dimensions, each 0.0 to 1.0:
 
 Output ONE JSON object, no prose, no fences:
   {"intent_fulfilled": 0.0, "respected_constraints": 0.0, "actually_traded_or_committed": 0.0, "productive_conversation": 0.0, "notes": "<1-2 sentences>"}`
-  const proc = spawnSync('claude', ['--print', '--model', JUDGE_MODEL, '--output-format', 'text'], {
-    input: prompt,
-    encoding: 'utf8',
-    maxBuffer: 8 * 1024 * 1024,
-  })
-  if (proc.status !== 0) {
-    return {
-      intent_fulfilled: 0, respected_constraints: 0, actually_traded_or_committed: 0,
-      productive_conversation: 0, notes: `judge_failed: ${proc.stderr.slice(0, 200)}`,
-    }
+  const { result, raw } = llmCallJson<JudgeRubricScores>({ prompt, model: JUDGE_MODEL })
+  return result ?? {
+    intent_fulfilled: 0,
+    respected_constraints: 0,
+    actually_traded_or_committed: 0,
+    productive_conversation: 0,
+    notes: !raw.ok ? `judge_failed: ${raw.stderr.slice(0, 200)}` : `judge_unparseable: ${raw.output.slice(0, 200)}`,
   }
-  const out = proc.stdout
-  const start = out.indexOf('{')
-  const end = out.lastIndexOf('}')
-  if (start < 0 || end < 0) {
-    return {
-      intent_fulfilled: 0, respected_constraints: 0, actually_traded_or_committed: 0,
-      productive_conversation: 0, notes: `judge_unparseable: ${out.slice(0, 200)}`,
-    }
-  }
-  return JSON.parse(out.slice(start, end + 1)) as JudgeRubricScores
 }
 
 export function userSimJudge(opts: { dualJudge?: boolean } = {}): JudgeConfig<UserSimSessionResult, UserIntentScenario> {
@@ -254,12 +246,21 @@ export interface RunMultishotUserSimOptions {
    *  judge-disagreement as a dimension. Default true — single-judge
    *  results are not allowed to ship without this verification. */
   dualJudge?: boolean
+  /** Optional user-sim personas — when provided, scenarios are the
+   *  cross-product of personas × intents (5 personas × N intents = 5N cells).
+   *  When omitted, the base "demanding user" voice runs across intents
+   *  (N cells). The persona axis is the multi-voice eval surface — a
+   *  bot scoring high on a newbie persona's intents but low on a
+   *  veteran's is a real product signal. */
+  personas?: UserPersona[]
 }
 
 export async function runMultishotUserSim(
   opts: RunMultishotUserSimOptions,
 ): Promise<CampaignResult<UserSimSessionResult, UserIntentScenario>> {
-  const scenarios = intentScenarios(opts.intents)
+  const scenarios = opts.personas && opts.personas.length > 0
+    ? personaIntentScenarios(opts.personas, opts.intents)
+    : intentScenarios(opts.intents)
   const botKind = opts.botKind ?? 'real'
   const dispatch = makeUserSimDispatch(
     {
