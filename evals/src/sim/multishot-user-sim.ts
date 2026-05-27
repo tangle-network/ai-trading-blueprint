@@ -87,8 +87,14 @@ export function personaIntentScenarios(
 
 export interface MultishotDispatchOptions {
   operatorUrl: string
-  /** Bearer token resolved by `local-stack-runner.ts::createOperatorSession`. */
+  /** Bearer token resolved by `local-stack-runner.ts::createOperatorSession`.
+   *  Used directly when `privateKey` isn't supplied; ignored otherwise. */
   token: string
+  /** If set, the dispatch will (re)authenticate via OperatorClient.authenticate(),
+   *  enabling automatic token refresh on expiry — required for campaigns longer
+   *  than the operator-api session lifetime (~60min). When omitted, falls back
+   *  to the legacy no-refresh path that 401s mid-run on long campaigns. */
+  privateKey?: string
   maxTurnsPerShot: number
   perTurnTimeoutMs: number
 }
@@ -132,7 +138,11 @@ async function dispatchInner(
     }
     // Real bot: full provision + chat flow through OperatorClient — same
     // path as research/robustness drivers, single source of truth.
-    const client = new OperatorClient({ operatorUrl: opts.operatorUrl, token: opts.token })
+    // Prefer authenticate() so the token can self-refresh mid-cell; fall
+    // back to the raw-token constructor when no privateKey is wired through.
+    const client = opts.privateKey
+      ? await OperatorClient.authenticate(opts.operatorUrl, opts.privateKey)
+      : new OperatorClient({ operatorUrl: opts.operatorUrl, token: opts.token })
     const botId = await client.provisionBot({
       prompt: scenario.intent.text,
       name: scenario.intent.text.slice(0, 50),
@@ -149,6 +159,7 @@ async function dispatchInner(
       persona,
       operatorUrl: opts.operatorUrl,
       token: opts.token,
+      ...(opts.privateKey ? { privateKey: opts.privateKey } : {}),
       botId,
       sessionId,
       maxTurns: opts.maxTurnsPerShot,
@@ -253,6 +264,10 @@ export interface RunMultishotUserSimOptions {
   intents: UserIntent[]
   operatorUrl: string
   token: string
+  /** Optional — passed through to dispatch so cells can auto-refresh tokens
+   *  on expiry. Strongly recommended for any campaign with >12 real-arm cells
+   *  (each cell is ~3-5min wall, and the operator-api token only lives 60min). */
+  privateKey?: string
   runDir?: string
   /** Reps per scenario for bootstrap CI bands. Default 5 — refuse to
    *  publish a mean without an interval. */
@@ -287,8 +302,11 @@ export async function runMultishotUserSim(
     {
       operatorUrl: opts.operatorUrl,
       token: opts.token,
+      ...(opts.privateKey ? { privateKey: opts.privateKey } : {}),
       maxTurnsPerShot: opts.maxTurnsPerShot ?? 8,
-      perTurnTimeoutMs: opts.perTurnTimeoutMs ?? 240_000,
+      // 480s default = conversation cron is 5min cycle + margin. Earlier 240s
+      // killed 9/12 real-arm cells before the bot's reply landed.
+      perTurnTimeoutMs: opts.perTurnTimeoutMs ?? 480_000,
     },
     botKind,
   )

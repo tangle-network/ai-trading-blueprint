@@ -56,6 +56,9 @@ function argValue(name: string): string | undefined {
 interface RunEvalOpts {
   operatorUrl: string
   token: string
+  /** Threaded through to drivers so they can OperatorClient.authenticate()
+   *  and self-refresh tokens — required for >50min campaigns. */
+  privateKey: string
   outDir: string
   intents: UserIntent[]
   /** Persona ids to cross with intents. Empty = base voice across intents only. */
@@ -107,6 +110,7 @@ async function runEvals(args: RunEvalOpts): Promise<EvalPartial> {
       ...(personas.length > 0 ? { personas } : {}),
       operatorUrl: args.operatorUrl,
       token: args.token,
+      privateKey: args.privateKey,
       runDir: `${args.outDir}/multishot`,
       reps: args.reps,
       maxTurnsPerShot: args.maxTurnsPerShot,
@@ -323,6 +327,7 @@ async function main(): Promise<void> {
         const partial = await runEvals({
           operatorUrl: context.operatorUrl,
           token: context.token,
+          privateKey: process.env.ARENA_E2E_PRIVATE_KEY ?? DEFAULT_E2E_PRIVATE_KEY,
           outDir,
           intents,
           personaIds,
@@ -366,6 +371,7 @@ async function main(): Promise<void> {
   const partial = await runEvals({
     operatorUrl,
     token: session.token,
+    privateKey,
     outDir,
     intents,
     personaIds,

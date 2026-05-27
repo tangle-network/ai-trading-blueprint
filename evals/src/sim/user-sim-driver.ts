@@ -45,6 +45,9 @@ export interface UserSimSessionOptions {
   persona?: UserPersona | null
   operatorUrl: string
   token: string
+  /** If set, use OperatorClient.authenticate() (auto-refresh) instead of the
+   *  raw-token constructor. Required for sessions longer than ~50min. */
+  privateKey?: string
   botId: string
   sessionId: string
   maxTurns: number
@@ -127,7 +130,9 @@ Your next message (just the message, nothing else):`
 
 export async function runUserSimSession(opts: UserSimSessionOptions): Promise<UserSimSessionResult> {
   const startedAt = Date.now()
-  const client = new OperatorClient({ operatorUrl: opts.operatorUrl, token: opts.token })
+  const client = opts.privateKey
+    ? await OperatorClient.authenticate(opts.operatorUrl, opts.privateKey)
+    : new OperatorClient({ operatorUrl: opts.operatorUrl, token: opts.token })
   const turns: UserSimTurn[] = []
   let lastSeenAssistantId: string | null = null
   let ended: UserSimSessionResult['ended_by'] = 'max_turns'
