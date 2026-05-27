@@ -137,27 +137,41 @@ function composeBotReportData(headerIntent: UserIntent, partial: EvalPartial): B
   let baselineComparison: { null_bot_composite: number; stall_bot_composite: number; frontier_bot_composite: number } | undefined
   if (partial.multishot) {
     multishotReps = partial.multishot.real.aggregates.byJudge['user-sim-outcome']?.n ?? 0
-    // Walk EVERY scenario aggregate, not just the header intent. With
-    // persona × intent matrices, the report needs per-scenario rollups
-    // not a single intent-id match. Aggregate-derived single-shot
-    // per scenario is HIGH #4 in the audit; tracked there.
-    for (const [scenId, agg] of Object.entries(partial.multishot.real.aggregates.byScenario)) {
+    // CampaignResult.cells carries per-cell artifact + judge scores —
+    // the per-rep transcript data lives here, NOT in aggregates.byScenario
+    // (which was the audit HIGH #4 bug). Walk cells directly.
+    for (const cell of partial.multishot.real.cells) {
+      // Failed cells (dispatch threw) carry null artifact + error. Surface
+      // them as a stub shot so the operator sees the failure in the
+      // report instead of silently dropping it.
+      if (!cell.artifact) {
+        process.stderr.write(`  ! cell ${cell.cellId} (${cell.scenarioId} rep ${cell.rep}) FAILED: ${cell.error ?? 'unknown error'}\n`)
+        multishotShots.push({
+          rep: cell.rep,
+          composite: 0,
+          dimensions: { intent_fulfilled: 0, respected_constraints: 0, actually_traded_or_committed: 0, productive_conversation: 0 },
+          turns: [],
+          ended_by: 'stall',
+          total_wall_ms: cell.durationMs,
+        })
+        continue
+      }
+      const artifact = cell.artifact as import('../sim/user-sim-driver.js').UserSimSessionResult
+      const judgeScore = cell.judgeScores['user-sim-outcome']
+      const dims = (judgeScore?.dimensions ?? {}) as Record<string, number>
       multishotShots.push({
-        rep: 0,
-        composite: agg.meanComposite,
+        rep: cell.rep,
+        composite: judgeScore?.composite ?? 0,
         dimensions: {
-          intent_fulfilled: agg.meanComposite,
-          respected_constraints: agg.meanComposite,
-          actually_traded_or_committed: agg.meanComposite,
-          productive_conversation: agg.meanComposite,
+          intent_fulfilled: dims.intent_fulfilled ?? 0,
+          respected_constraints: dims.respected_constraints ?? 0,
+          actually_traded_or_committed: dims.actually_traded_or_committed ?? 0,
+          productive_conversation: dims.productive_conversation ?? 0,
         },
-        turns: [],
-        ended_by: 'done',
-        total_wall_ms: 0,
-        // Stash the scenario id in notes-equivalent so the renderer can
-        // surface per-scenario breakdown (proper field add is a follow-up).
+        turns: artifact.turns ?? [],
+        ended_by: artifact.ended_by ?? 'done',
+        total_wall_ms: artifact.total_wall_ms ?? 0,
       })
-      void scenId
     }
     // Baselines: aggregate the null/stall mean across all scenarios for the
     // top-line bot-quality comparison.
@@ -176,11 +190,14 @@ function composeBotReportData(headerIntent: UserIntent, partial: EvalPartial): B
   // the "did the bot do the work" surface — self-improvement runs, trades,
   // PnL. Surfaces ahead of conversation judges in the report.
   const allBotArtifacts = [
-    // From the multishot real-arm cells (only — null/stall stubs return null)
-    ...((partial.multishot?.real as { aggregates: unknown; _shotArtifacts?: unknown } | undefined)?._shotArtifacts as unknown[] ?? []),
+    // Multishot real-arm cells carry bot_artifacts via UserSimSessionResult.
+    // Skip failed cells (null artifact).
+    ...(partial.multishot?.real.cells
+      .filter((c) => c.artifact !== null && c.artifact !== undefined)
+      .map((c) => (c.artifact as import('../sim/user-sim-driver.js').UserSimSessionResult).bot_artifacts ?? null) ?? []),
     ...(partial.research?.shots.map((s) => s.bot_artifacts) ?? []),
     ...(partial.robustness?.shots.map((s) => s.bot_artifacts) ?? []),
-  ].filter((a): a is import('../sim/bot-artifacts.js').BotArtifacts | null => true)
+  ]
   const artifactsAggregate = aggregateBotArtifacts(allBotArtifacts)
 
   // Composite weights — renormalised across the slices that actually ran

@@ -15,7 +15,7 @@
 
 import type { ResearchEvalData } from '../report/types.js'
 import { inspectBotArtifacts, type BotArtifacts } from '../sim/bot-artifacts.js'
-import { OperatorClient } from '../sim/operator-client.js'
+import { deterministicAgentEnv, OperatorClient } from '../sim/operator-client.js'
 import { inferStrategyTypeFromSourceClasses } from '../sim/strategy-type.js'
 import { STANDARD_THESIS_QUESTIONS, type ThesisQuestion } from './thesis-questions.js'
 
@@ -50,6 +50,12 @@ export async function runResearchEval(opts: RunResearchEvalOptions): Promise<{ s
     // and can't research prediction markets.
     const strategyType = inferStrategyTypeFromSourceClasses(q.expected_source_classes)
     const botId = await client.provisionBot({ prompt: q.question, name: q.id, strategy_type: strategyType })
+    // Bot create is instant in the operator DB but vault resolution is
+    // async (on-chain). configureSecrets requires a resolved vault.
+    await client.waitForVaultResolved(botId)
+    // Then configure sandbox-agent LLM credentials BEFORE chatting —
+    // without this the bot accepts messages but never replies.
+    await client.configureSecrets(botId, deterministicAgentEnv())
     const sessionId = await client.createSession(botId, `research:${q.id}`)
     const startedAt = Date.now()
     await client.sendMessage(botId, sessionId, q.question)

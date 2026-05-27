@@ -170,6 +170,62 @@ export class OperatorClient {
     return botId
   }
 
+  /** Block until the bot's on-chain vault is resolved (vault_address
+   *  goes from 0x0000... to a real address). Required before
+   *  `configureSecrets` — without resolution the operator returns 500
+   *  "No vault found for service N call M. Refusing to trade with
+   *  unresolved vault address."
+   *
+   *  Blueprint factory is async: the bot exists in the operator DB
+   *  immediately but the on-chain vault creation takes 30-60s on the
+   *  local devnet. Polls every 5s up to `timeoutMs` (default 4 min). */
+  async waitForVaultResolved(botId: string, timeoutMs = 240_000): Promise<string> {
+    const deadline = Date.now() + timeoutMs
+    let lastSeen = ''
+    while (Date.now() < deadline) {
+      try {
+        const res = await this.get<{ bots?: Array<{ id?: string; vault_address?: string }> }>(
+          `/api/bots?limit=200`,
+        )
+        const bot = res.bots?.find((b) => b.id === botId)
+        const va = bot?.vault_address ?? ''
+        lastSeen = va
+        if (va && !/^0x0+$/i.test(va)) return va
+      } catch {
+        // transient; retry
+      }
+      await sleep(5_000)
+    }
+    throw new Error(`waitForVaultResolved timeout for ${botId} after ${timeoutMs}ms (last vault_address=${lastSeen || '<missing>'})`)
+  }
+
+  /** Provision a bot's sandbox-agent LLM credentials. Without this the
+   *  bot's chat endpoint accepts messages but the agent inside the
+   *  sidecar has no LLM credentials and never replies (we found this
+   *  the hard way on the first smoke). Mirrors the existing
+   *  `configureDeterministicEvalSecrets` in chat-mcp-strategy-runner.ts.
+   *
+   *  Retries on "no such container" (sandbox still booting) up to 5×. */
+  async configureSecrets(botId: string, envJson: Record<string, string>): Promise<void> {
+    const url = `${this.url}/api/bots/${encodeURIComponent(botId)}/secrets`
+    let lastError = ''
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      // DELETE first to clear any stale config — same pattern the existing runner uses.
+      await this.fetchImpl(url, { method: 'DELETE', headers: { Authorization: `Bearer ${this.token}` } }).catch(() => undefined)
+      const res = await this.fetchImpl(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ env_json: envJson }),
+      })
+      if (res.ok) return
+      lastError = `${res.status} ${await res.text()}`
+      // Retry only on sandbox-still-booting errors.
+      if (!lastError.includes('No such container') && !lastError.includes('load_container failed')) break
+      await new Promise<void>((r) => setTimeout(r, 2_000 * attempt))
+    }
+    throw new Error(`configureSecrets failed for ${botId}: ${lastError}`)
+  }
+
   async createSession(botId: string, title: string): Promise<string> {
     const created = await this.post<{ id?: string; session_id?: string; session?: { id?: string } }>(
       `/api/bots/${encodeURIComponent(botId)}/session/sessions`,
@@ -266,4 +322,35 @@ export function collectAssistantTextAfter(
 
 function sleep(ms: number): Promise<void> {
   return new Promise<void>((r) => setTimeout(r, ms))
+}
+
+/** Build the LLM-credential env the sandbox agent needs to function.
+ *  Without these the chat endpoint accepts user messages but the
+ *  in-sandbox agent (opencode/gemini/etc.) has no LLM credentials and
+ *  never replies. Mirrors `deterministicAgentEnv` in
+ *  chat-mcp-strategy-runner.ts so the eval substrate uses the same
+ *  bot-side LLM the existing chat-* runners use. */
+export function deterministicAgentEnv(): Record<string, string> {
+  const zaiKey = process.env.ZAI_API_KEY
+  if (zaiKey) {
+    return {
+      ZAI_API_KEY: zaiKey,
+      OPENCODE_MODEL_PROVIDER: 'zai-coding-plan',
+      OPENCODE_MODEL_NAME: 'glm-4.7',
+      OPENCODE_MODEL_API_KEY: zaiKey,
+      SIDECAR_DEFAULT_HARNESS: 'opencode',
+    }
+  }
+  const geminiKey = process.env.GOOGLE_AI_KEY || process.env.GEMINI_API_KEY
+  if (geminiKey) {
+    return {
+      GEMINI_API_KEY: geminiKey,
+      GOOGLE_API_KEY: geminiKey,
+      SIDECAR_DEFAULT_HARNESS: 'gemini',
+    }
+  }
+  throw new Error(
+    'sandbox-agent eval requires GOOGLE_AI_KEY, GEMINI_API_KEY, or ZAI_API_KEY for the in-sandbox agent. ' +
+      'Without one the bot accepts messages but cannot reply.',
+  )
 }

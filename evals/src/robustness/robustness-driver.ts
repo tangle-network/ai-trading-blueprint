@@ -15,7 +15,7 @@
 import type { RobustnessEvalData } from '../report/types.js'
 import { inspectBotArtifacts, type BotArtifacts } from '../sim/bot-artifacts.js'
 import { llmCallJson } from '../sim/llm-call.js'
-import { OperatorClient } from '../sim/operator-client.js'
+import { deterministicAgentEnv, OperatorClient } from '../sim/operator-client.js'
 import { inferStrategyTypeFromVenues } from '../sim/strategy-type.js'
 import { ROBUSTNESS_SCENARIOS, type RobustnessScenario } from './scenarios.js'
 
@@ -105,6 +105,8 @@ export async function runRobustnessEval(opts: RunRobustnessEvalOptions): Promise
       name: `robustness:${scenario.id}`,
       strategy_type: inferStrategyTypeFromVenues(scenario.venues),
     })
+    await client.waitForVaultResolved(botId)
+    await client.configureSecrets(botId, deterministicAgentEnv())
     const sessionId = await client.createSession(botId, `robustness:${scenario.id}`)
     const responses: string[] = []
     let lastSeenAssistantId: string | null = null

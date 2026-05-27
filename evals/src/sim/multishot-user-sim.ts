@@ -30,7 +30,7 @@ import {
   runStallBotSession,
 } from './baseline-bots.js'
 import { llmCallJson } from './llm-call.js'
-import { OperatorClient } from './operator-client.js'
+import { deterministicAgentEnv, OperatorClient } from './operator-client.js'
 import { inferStrategyTypeFromVenues } from './strategy-type.js'
 import type { UserPersona } from './user-personas.js'
 import {
@@ -95,6 +95,23 @@ export interface MultishotDispatchOptions {
 
 export function makeUserSimDispatch(opts: MultishotDispatchOptions, botKind: BotKind = 'real') {
   return async (scenario: UserIntentScenario): Promise<UserSimSessionResult> => {
+    try {
+      return await dispatchInner(opts, botKind, scenario)
+    } catch (e) {
+      // Surface the failure reason immediately to stderr — the campaign
+      // substrate records cellsFailed but swallows the error text. We
+      // want to SEE what broke without waiting for the post-mortem.
+      process.stderr.write(`  ✗ dispatch failed (${botKind}/${scenario.id}): ${(e as Error).message?.slice(0, 400) ?? e}\n`)
+      throw e
+    }
+  }
+}
+
+async function dispatchInner(
+  opts: MultishotDispatchOptions,
+  botKind: BotKind,
+  scenario: UserIntentScenario,
+): Promise<UserSimSessionResult> {
     // Bind the persona to nextUserTurn so the stub bots (null/stall) get
     // persona-flavoured user turns the same way the real bot path does.
     const persona = scenario.persona ?? null
@@ -121,6 +138,11 @@ export function makeUserSimDispatch(opts: MultishotDispatchOptions, botKind: Bot
       name: scenario.intent.text.slice(0, 50),
       strategy_type: inferStrategyTypeFromVenues(scenario.intent.venues),
     })
+    // Bot create is instant in operator DB; vault resolution is async
+    // (on-chain). configureSecrets returns 500 without a resolved vault.
+    await client.waitForVaultResolved(botId)
+    // Then configure sandbox-agent LLM credentials before chatting.
+    await client.configureSecrets(botId, deterministicAgentEnv())
     const sessionId = await client.createSession(botId, `user-sim:${scenario.id}`)
     return runUserSimSession({
       intent: scenario.intent,
@@ -133,7 +155,6 @@ export function makeUserSimDispatch(opts: MultishotDispatchOptions, botKind: Bot
       perTurnTimeoutMs: opts.perTurnTimeoutMs,
       stallMs: opts.perTurnTimeoutMs,
     })
-  }
 }
 
 // ─── Judge: an LLM rubric over the session artifact ────────────────────
