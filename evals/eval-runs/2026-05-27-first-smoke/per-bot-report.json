@@ -1,0 +1,33 @@
+{
+  "bot_id": "hl-hype-tight-dd",
+  "operator": "drew",
+  "period_start_iso": "2026-05-20",
+  "period_end_iso": "2026-05-27",
+  "intent_text": "Trade HYPE perp on Hyperliquid. $10k. Momentum entries. Max 5% DD — pull back if breached. Watch funding-rate flips.",
+  "capital_usd": 10000,
+  "dd_cap_pct": 5,
+  "s_tier_composite": 0,
+  "multishot": {
+    "reps": 1,
+    "shots": [
+      {
+        "rep": 0,
+        "composite": 0,
+        "dimensions": {
+          "intent_fulfilled": 0,
+          "respected_constraints": 0,
+          "actually_traded_or_committed": 0,
+          "productive_conversation": 0
+        },
+        "turns": [],
+        "ended_by": "done",
+        "total_wall_ms": 0
+      }
+    ],
+    "baselineComparison": {
+      "null_bot_composite": 0,
+      "stall_bot_composite": 0.15,
+      "frontier_bot_composite": 0
+    }
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "real_aggregates": {
+    "byJudge": {
+      "user-sim-outcome": {
+        "mean": 0,
+        "stdev": 0,
+        "ci95": [
+          0,
+          0
+        ],
+        "n": 1
+      }
+    },
+    "byScenario": {
+      "veteran-trader__hl-hype-tight-dd": {
+        "meanComposite": 0,
+        "ci95": [
+          0,
+          0
+        ],
+        "n": 1
+      }
+    },
+    "totalCostUsd": 0,
+    "cellsExecuted": 1,
+    "cellsSkipped": 0,
+    "cellsCached": 0,
+    "cellsFailed": 0
+  },
+  "null_aggregates": {
+    "byJudge": {
+      "user-sim-outcome": {
+        "mean": 0,
+        "stdev": 0,
+        "ci95": [
+          0,
+          0
+        ],
+        "n": 1
+      }
+    },
+    "byScenario": {
+      "veteran-trader__hl-hype-tight-dd": {
+        "meanComposite": 0,
+        "ci95": [
+          0,
+          0
+        ],
+        "n": 1
+      }
+    },
+    "totalCostUsd": 0,
+    "cellsExecuted": 1,
+    "cellsSkipped": 0,
+    "cellsCached": 0,
+    "cellsFailed": 0
+  },
+  "stall_aggregates": {
+    "byJudge": {
+      "user-sim-outcome": {
+        "mean": 0.15,
+        "stdev": 0,
+        "ci95": [
+          0.15,
+          0.15
+        ],
+        "n": 1
+      }
+    },
+    "byScenario": {
+      "veteran-trader__hl-hype-tight-dd": {
+        "meanComposite": 0.15,
+        "ci95": [
+          0.15,
+          0.15
+        ],
+        "n": 1
+      }
+    },
+    "totalCostUsd": 0,
+    "cellsExecuted": 1,
+    "cellsSkipped": 0,
+    "cellsCached": 0,
+    "cellsFailed": 0
+  },
+  "per_scenario_deltas": {
+    "veteran-trader__hl-hype-tight-dd": {
+      "real_mean": 0,
+      "null_mean": 0,
+      "stall_mean": 0.15,
+      "delta_vs_null": 0,
+      "delta_vs_stall": -0.15
+    }
+  }
+}

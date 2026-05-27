@@ -31,8 +31,8 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@tangle-network/agent-eval": "^0.45.0",
+    "@tangle-network/agent-eval": "^0.48.0",
     "@tangle-network/agent-knowledge": "^1.5.0",
-    "@tangle-network/agent-runtime": "^0.25.2"
+    "@tangle-network/agent-runtime": "^0.27.0"
   }
 }

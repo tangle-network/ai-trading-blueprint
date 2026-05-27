@@ -35,6 +35,37 @@ export interface BotReportData {
   robustness?: RobustnessEvalData
   cost?: CostEvalData
   consistency?: ConsistencyEvalData
+
+  /** Work-product artifact rollup across all cells — self-improvement
+   *  lineage, trades placed, PnL. Surfaces the "did the bot do the
+   *  job" measurement alongside conversation judges (SPEC.md §1 — bot
+   *  is supposed to self-improve, so we evaluate evidence of that). */
+  artifacts?: BotArtifactsAggregate
+}
+
+// ─── Bot work-product artifacts (aggregate across cells) ────────────
+
+export interface BotArtifactsAggregate {
+  /** How many cells we inspected after the conversation ended. */
+  cells_inspected: number
+  /** Sum of self-improvement runs across all cells. */
+  total_self_improvement_runs: number
+  /** Sum of revisions promoted across all cells. */
+  total_revisions_promoted: number
+  /** Sum of revisions rejected by the gate across all cells. */
+  total_revisions_rejected: number
+  /** Mean Sharpe delta across promoted revisions where both before/after are known. */
+  mean_sharpe_delta_on_promotion: number | null
+  /** Total trades placed (paper + live) across cells. */
+  total_trades: number
+  /** Sum of realized PnL across cells (USD). */
+  total_realized_pnl_usd: number
+  /** Cells that placed at least one trade. */
+  cells_with_trades: number
+  /** Cells that fired ≥1 self-improvement cycle. */
+  cells_with_self_improvement: number
+  /** Top-5 flag counts across all cells (e.g., "no-trades-placed", "self-improvement-never-fired"). */
+  top_flags: Array<{ flag: string; count: number }>
 }
 
 // ─── Eval #1: multishot user-sim ─────────────────────────────────────
