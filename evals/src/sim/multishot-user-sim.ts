@@ -21,7 +21,7 @@ import type {
   LabeledScenarioStore,
   Scenario,
 } from '@tangle-network/agent-eval/campaign'
-import { inMemoryCampaignStorage, runEval } from '@tangle-network/agent-eval/campaign'
+import { fsCampaignStorage, runEval } from '@tangle-network/agent-eval/campaign'
 
 import { resolveRepo } from '../lib/repo.js'
 import {
@@ -316,7 +316,12 @@ export async function runMultishotUserSim(
     judges: [userSimJudge({ dualJudge: opts.dualJudge ?? true })],
     runDir: opts.runDir ?? resolveRepo(`.evolve/eval-runs/multishot-user-sim-${botKind}-${Date.now()}`),
     reps: opts.reps ?? 5,
-    storage: inMemoryCampaignStorage(),
+    // Disk-backed storage gives the campaign substrate cell-level
+    // resumability — each cell's artifact + judge scores land in
+    // <runDir>/cells/<cellId>/ as soon as the cell finishes. A SIGKILL
+    // mid-campaign loses ONE cell, not all of them; the next run with the
+    // same runDir resumes from where the last left off.
+    storage: fsCampaignStorage(),
     ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
     ...(opts.labeledStore ? { labeledStore: opts.labeledStore } : {}),
     captureSource: 'eval-run',
@@ -346,10 +351,15 @@ export interface BaselineComparisonResult {
 export async function runMultishotWithBaselines(
   opts: RunMultishotUserSimOptions,
 ): Promise<BaselineComparisonResult> {
+  // Each arm gets its own runDir so the fs-backed campaign storage doesn't
+  // collide on cells/<cellId>/ across arms. Resumability works per-arm:
+  // re-running with the same outer runDir picks up where each arm left off.
+  const armRunDir = (arm: BotKind): string | undefined =>
+    opts.runDir ? `${opts.runDir}/${arm}` : undefined
   const [real, nullBot, stallBot] = await Promise.all([
-    runMultishotUserSim({ ...opts, botKind: 'real' }),
-    runMultishotUserSim({ ...opts, botKind: 'null' }),
-    runMultishotUserSim({ ...opts, botKind: 'stall' }),
+    runMultishotUserSim({ ...opts, botKind: 'real', ...(armRunDir('real') ? { runDir: armRunDir('real')! } : {}) }),
+    runMultishotUserSim({ ...opts, botKind: 'null', ...(armRunDir('null') ? { runDir: armRunDir('null')! } : {}) }),
+    runMultishotUserSim({ ...opts, botKind: 'stall', ...(armRunDir('stall') ? { runDir: armRunDir('stall')! } : {}) }),
   ])
   const per_scenario_deltas: BaselineComparisonResult['per_scenario_deltas'] = {}
   for (const id of Object.keys(real.aggregates.byScenario)) {
