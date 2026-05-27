@@ -8,6 +8,29 @@ fn env_or(name: &str, default: &str) -> String {
     env::var(name).unwrap_or_else(|_| default.to_string())
 }
 
+fn env_address(name: &str, default: &str) -> Address {
+    env_or(name, default).parse().unwrap_or_else(|e| {
+        panic!("{name} must be an address: {e}");
+    })
+}
+
+fn env_signers() -> Vec<Address> {
+    env::var("SIGNERS")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| {
+                    value.parse::<Address>().unwrap_or_else(|e| {
+                        panic!("SIGNERS contains invalid address '{value}': {e}");
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn main() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -49,20 +72,20 @@ fn main() {
                 r#"{"paper_trade":false,"custom_instructions":"Use Aave on the Ethereum fork. Prefer simple conservative supply/withdraw decisions over leverage. Do not paper trade."}"#,
             ),
             risk_params_json: env_or("RISK_PARAMS_JSON", "{}"),
-            factory_address: env_or(
+            factory_address: env_address(
                 "VAULT_FACTORY_ADDRESS",
                 "0xe70f935c32dA4dB13e7876795f1e175465e6458e",
-            )
-            .parse::<Address>()
-            .expect("VAULT_FACTORY_ADDRESS"),
-            asset_token: env_or(
+            ),
+            asset_token: env_address(
                 "ASSET_TOKEN_ADDRESS",
                 "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-            )
-            .parse::<Address>()
-            .expect("ASSET_TOKEN_ADDRESS"),
-            signers: vec![],
-            required_signatures: U256::ZERO,
+            ),
+            signers: env_signers(),
+            required_signatures: U256::from(
+                env_or("REQUIRED_SIGNATURES", "0")
+                    .parse::<u64>()
+                    .expect("REQUIRED_SIGNATURES"),
+            ),
             chain_id: U256::from(
                 env_or("CHAIN_ID", "31338")
                     .parse::<u64>()
@@ -77,7 +100,7 @@ fn main() {
                 .expect("MAX_LIFETIME_DAYS"),
             validator_service_ids: vec![],
             max_collateral_bps: U256::ZERO,
-        validation_trust: 0,
+            validation_trust: 0,
         };
 
         let output = provision_core(request, None, call_id, service_id, caller, None, None)
