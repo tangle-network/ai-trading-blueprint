@@ -19,11 +19,9 @@
  */
 
 import type { BotArtifacts } from './bot-artifacts.js'
-import { llmCall } from './llm-call.js'
+import { EVAL_MODELS, llmCall } from './llm-call.js'
 import { OperatorClient } from './operator-client.js'
 import type { UserPersona } from './user-personas.js'
-
-const USER_SIM_MODEL = 'claude-haiku-4-5'
 
 export interface UserIntent {
   /** Stable id used as the scenario id + cell id. */
@@ -97,11 +95,11 @@ function buildSystemPrompt(persona: UserPersona | null | undefined): string {
   return `You are simulating a user chatting with an autonomous trading bot. Concise, direct, demanding.\n\n${BASE_USER_SIM_INSTRUCTIONS}`
 }
 
-export function nextUserTurn(
+export async function nextUserTurn(
   intent: UserIntent,
   priorTurns: UserSimTurn[],
   persona?: UserPersona | null,
-): string {
+): Promise<string> {
   if (priorTurns.length === 0) {
     // Opening turn IS the intent text, verbatim — closest possible
     // simulation of a real user typing their first message. (The persona
@@ -121,7 +119,7 @@ Conversation so far:
 ${convo}
 
 Your next message (just the message, nothing else):`
-  const res = llmCall({ prompt, model: USER_SIM_MODEL })
+  const res = await llmCall({ prompt, model: EVAL_MODELS.USER_SIM })
   if (!res.ok) throw new Error(`user-sim turn generation failed: ${res.stderr.slice(0, 200)}`)
   return res.output.trim()
 }
@@ -138,7 +136,7 @@ export async function runUserSimSession(opts: UserSimSessionOptions): Promise<Us
   let ended: UserSimSessionResult['ended_by'] = 'max_turns'
 
   for (let i = 0; i < opts.maxTurns; i++) {
-    const userMessage = nextUserTurn(opts.intent, turns, opts.persona ?? null)
+    const userMessage = await nextUserTurn(opts.intent, turns, opts.persona ?? null)
     const signalledDone = userMessage.toLowerCase().includes('[done]')
 
     const turnStart = Date.now()

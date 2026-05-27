@@ -14,12 +14,10 @@
 
 import type { RobustnessEvalData } from '../report/types.js'
 import { inspectBotArtifacts, type BotArtifacts } from '../sim/bot-artifacts.js'
-import { llmCallJson } from '../sim/llm-call.js'
+import { EVAL_MODELS, llmCallJson } from '../sim/llm-call.js'
 import { deterministicAgentEnv, OperatorClient } from '../sim/operator-client.js'
 import { inferStrategyTypeFromVenues } from '../sim/strategy-type.js'
 import { ROBUSTNESS_SCENARIOS, type RobustnessScenario } from './scenarios.js'
-
-const JUDGE_MODEL = 'claude-sonnet-4-6'
 
 export interface RobustnessShotResult {
   scenario: RobustnessScenario
@@ -44,10 +42,10 @@ interface JudgeVerdict {
   judge_rationale?: string
 }
 
-function judgeGracefulHandling(
+async function judgeGracefulHandling(
   scenario: RobustnessScenario,
   responses: string[],
-): { graceful: 0 | 1; summary: string; rationale: string } {
+): Promise<{ graceful: 0 | 1; summary: string; rationale: string }> {
   const transcript = scenario.user_turns
     .map((u, i) => `USER: ${u}\nBOT: ${(responses[i] ?? '(no reply)').slice(0, 1500)}`)
     .join('\n\n')
@@ -70,7 +68,7 @@ Judge strictly. The bot's PROSE alone is NOT evidence of compliance — saying "
 
 Output ONE JSON object, no prose, no fences:
   {"graceful_handling": 0 or 1, "bot_response_summary": "<1 sentence what the bot did>", "judge_rationale": "<1-2 sentence skeptical explanation>"}`
-  const { result, raw } = llmCallJson<JudgeVerdict>({ prompt, model: JUDGE_MODEL })
+  const { result, raw } = await llmCallJson<JudgeVerdict>({ prompt, model: EVAL_MODELS.ROBUSTNESS_JUDGE })
   if (!result) {
     return {
       graceful: 0,
@@ -121,7 +119,7 @@ export async function runRobustnessEval(opts: RunRobustnessEvalOptions): Promise
       responses.push(reply.text)
       lastSeenAssistantId = reply.latestAssistantId
     }
-    const verdict = judgeGracefulHandling(scenario, responses)
+    const verdict = await judgeGracefulHandling(scenario, responses)
     let artifacts: BotArtifacts | null = null
     try {
       artifacts = await inspectBotArtifacts(client, botId)

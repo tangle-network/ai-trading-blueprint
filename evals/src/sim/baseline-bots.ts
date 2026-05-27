@@ -16,7 +16,7 @@
  * underlying LLM config and a real product stack, which is a follow-up.
  */
 
-import { llmCallJson } from './llm-call.js'
+import { EVAL_MODELS, llmCallJson } from './llm-call.js'
 import type { UserIntent, UserSimSessionResult, UserSimTurn } from './user-sim-driver.js'
 
 const POLL_INTERVAL_MS = 100  // local-stub bots reply instantly; just a placeholder
@@ -28,7 +28,7 @@ interface StubBotOptions {
   /** The function that generates the next user-sim turn (typically the same
    *  claude-driven nextUserTurn from user-sim-driver.ts, exposed via the
    *  callback so this module stays generator-agnostic). */
-  nextUserTurn: (intent: UserIntent, priorTurns: UserSimTurn[]) => string
+  nextUserTurn: (intent: UserIntent, priorTurns: UserSimTurn[]) => Promise<string>
   /** The function that generates the bot's "reply" given the user message. */
   botReply: (userMessage: string) => string
   botKindLabel: 'null' | 'stall'
@@ -39,7 +39,7 @@ async function runStubSession(opts: StubBotOptions): Promise<UserSimSessionResul
   const turns: UserSimTurn[] = []
   let ended: UserSimSessionResult['ended_by'] = 'max_turns'
   for (let i = 0; i < opts.maxTurns; i++) {
-    const userMessage = opts.nextUserTurn(opts.intent, turns)
+    const userMessage = await opts.nextUserTurn(opts.intent, turns)
     const signalledDone = userMessage.toLowerCase().includes('[done]')
     const reply = opts.botReply(userMessage)
     turns.push({
@@ -75,7 +75,7 @@ async function runStubSession(opts: StubBotOptions): Promise<UserSimSessionResul
  *  every dimension — if the judge says otherwise, the judge is broken. */
 export async function runNullBotSession(
   intent: UserIntent,
-  nextUserTurn: (intent: UserIntent, priorTurns: UserSimTurn[]) => string,
+  nextUserTurn: (intent: UserIntent, priorTurns: UserSimTurn[]) => Promise<string>,
   opts: { maxTurns?: number; perTurnTimeoutMs?: number } = {},
 ): Promise<UserSimSessionResult> {
   return runStubSession({
@@ -91,7 +91,7 @@ export async function runNullBotSession(
 /** Stall-bot: always says "I'll think about it" — never acts, never asks. */
 export async function runStallBotSession(
   intent: UserIntent,
-  nextUserTurn: (intent: UserIntent, priorTurns: UserSimTurn[]) => string,
+  nextUserTurn: (intent: UserIntent, priorTurns: UserSimTurn[]) => Promise<string>,
   opts: { maxTurns?: number; perTurnTimeoutMs?: number } = {},
 ): Promise<UserSimSessionResult> {
   const stallReplies = [
@@ -117,8 +117,6 @@ export async function runStallBotSession(
 
 // ─── Cross-perspective secondary judge ────────────────────────────────
 
-const SECONDARY_JUDGE_MODEL = 'claude-sonnet-4-6'
-
 /** Calls a second LLM judge with a more skeptical system prompt and a
  *  different model. Returns its scores so the renderer can show
  *  agreement/disagreement vs the primary haiku judge.
@@ -128,10 +126,10 @@ const SECONDARY_JUDGE_MODEL = 'claude-sonnet-4-6'
  *  system prompt as the cross-perspective lens. Documents the agreement
  *  ceiling that within-family judging can give us; landing the real
  *  cross-family judge later only tightens the bound. */
-export function judgeViaSkepticalSecondary(
+export async function judgeViaSkepticalSecondary(
   intent: UserIntent,
   artifact: UserSimSessionResult,
-): { intent_fulfilled: number; respected_constraints: number; actually_traded_or_committed: number; productive_conversation: number; notes: string } {
+): Promise<{ intent_fulfilled: number; respected_constraints: number; actually_traded_or_committed: number; productive_conversation: number; notes: string }> {
   const turnsView = artifact.turns
     .map((t) => `  TURN ${t.turn}:\n    USER: ${t.user_message}\n    BOT:  ${t.bot_reply_text.slice(0, 1200)}`)
     .join('\n')
@@ -157,13 +155,13 @@ Score four dimensions, each 0.0 to 1.0, using STRICT criteria:
 
 Output ONE JSON object, no prose, no fences:
   {"intent_fulfilled": 0.0, "respected_constraints": 0.0, "actually_traded_or_committed": 0.0, "productive_conversation": 0.0, "notes": "<1-2 sentences, skeptical voice>"}`
-  const { result, raw } = llmCallJson<{
+  const { result, raw } = await llmCallJson<{
     intent_fulfilled: number
     respected_constraints: number
     actually_traded_or_committed: number
     productive_conversation: number
     notes: string
-  }>({ prompt, model: SECONDARY_JUDGE_MODEL })
+  }>({ prompt, model: EVAL_MODELS.SECONDARY_JUDGE })
   if (!result) {
     return {
       intent_fulfilled: 0,

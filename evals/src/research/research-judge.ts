@@ -13,11 +13,9 @@
  * — no spawnSync inline; no JSON.parse-without-try-catch hazards.
  */
 
-import { llmCallJson } from '../sim/llm-call.js'
+import { EVAL_MODELS, llmCallJson } from '../sim/llm-call.js'
 import type { ResearchShot } from './research-driver.js'
 import type { SourceClass, ThesisQuestion } from './thesis-questions.js'
-
-const JUDGE_MODEL = 'claude-sonnet-4-6'
 
 export interface ResearchJudgeScore {
   question_id: string
@@ -96,9 +94,9 @@ export async function judgeResearchShot(
   opts: JudgeShotOptions = {},
 ): Promise<ResearchJudgeScore> {
   // ── LLM judge call (with safe JSON extraction) ─────────────────────
-  const { result: llm, raw } = llmCallJson<JudgeLlmOutput>({
+  const { result: llm, raw } = await llmCallJson<JudgeLlmOutput>({
     prompt: judgePromptFor(shot.question, shot.bot_response_text),
-    model: JUDGE_MODEL,
+    model: EVAL_MODELS.RESEARCH_JUDGE,
   })
   const j = llm ?? fallbackJudgement(
     shot.question,

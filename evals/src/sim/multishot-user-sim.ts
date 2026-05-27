@@ -60,7 +60,7 @@ import {
   runNullBotSession,
   runStallBotSession,
 } from './baseline-bots.js'
-import { llmCallJson } from './llm-call.js'
+import { EVAL_MODELS, llmCallJson } from './llm-call.js'
 import { deterministicAgentEnv, OperatorClient } from './operator-client.js'
 import { inferStrategyTypeFromVenues } from './strategy-type.js'
 import type { UserPersona } from './user-personas.js'
@@ -73,7 +73,6 @@ import {
 
 export type BotKind = 'real' | 'null' | 'stall'
 
-const JUDGE_MODEL = 'claude-haiku-4-5'
 
 // ─── Scenario shape ────────────────────────────────────────────────────
 
@@ -152,7 +151,7 @@ async function dispatchInner(
     // Bind the persona to nextUserTurn so the stub bots (null/stall) get
     // persona-flavoured user turns the same way the real bot path does.
     const persona = scenario.persona ?? null
-    const turnGen = (intent: UserIntent, priorTurns: Parameters<typeof nextUserTurn>[1]) =>
+    const turnGen = async (intent: UserIntent, priorTurns: Parameters<typeof nextUserTurn>[1]) =>
       nextUserTurn(intent, priorTurns, persona)
     // Stub bots (null / stall) don't touch the product stack at all.
     if (botKind === 'null') {
@@ -209,7 +208,7 @@ interface JudgeRubricScores {
   notes: string
 }
 
-function judgeViaClaude(intent: UserIntent, artifact: UserSimSessionResult): JudgeRubricScores {
+async function judgePrimaryRubric(intent: UserIntent, artifact: UserSimSessionResult): Promise<JudgeRubricScores> {
   const turnsView = artifact.turns
     .map((t) => `  TURN ${t.turn}:\n    USER: ${t.user_message}\n    BOT:  ${t.bot_reply_text.slice(0, 1200)}`)
     .join('\n')
@@ -231,7 +230,7 @@ Score four dimensions, each 0.0 to 1.0:
 
 Output ONE JSON object, no prose, no fences:
   {"intent_fulfilled": 0.0, "respected_constraints": 0.0, "actually_traded_or_committed": 0.0, "productive_conversation": 0.0, "notes": "<1-2 sentences>"}`
-  const { result, raw } = llmCallJson<JudgeRubricScores>({ prompt, model: JUDGE_MODEL })
+  const { result, raw } = await llmCallJson<JudgeRubricScores>({ prompt, model: EVAL_MODELS.PRIMARY_JUDGE })
   return result ?? {
     intent_fulfilled: 0,
     respected_constraints: 0,
@@ -259,7 +258,7 @@ export function userSimJudge(opts: { dualJudge?: boolean } = {}): JudgeConfig<Us
         : []),
     ],
     async score({ scenario, artifact }: { scenario: UserIntentScenario; artifact: UserSimSessionResult }) {
-      const r = judgeViaClaude(scenario.intent, artifact)
+      const r = await judgePrimaryRubric(scenario.intent, artifact)
       const composite =
         0.3 * r.intent_fulfilled +
         0.3 * r.respected_constraints +
@@ -273,7 +272,7 @@ export function userSimJudge(opts: { dualJudge?: boolean } = {}): JudgeConfig<Us
       }
       let notes = r.notes
       if (useDual) {
-        const s = judgeViaSkepticalSecondary(scenario.intent, artifact)
+        const s = await judgeViaSkepticalSecondary(scenario.intent, artifact)
         dimensions.secondary_intent_fulfilled = s.intent_fulfilled
         dimensions.secondary_actually_traded_or_committed = s.actually_traded_or_committed
         const disagreement =
