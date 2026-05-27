@@ -181,7 +181,7 @@ Rules:
 - When you have what you wanted (the bot is trading, has set up a strategy, has answered your question), emit the literal token [done] anywhere in your message and stop.
 - Cap each message at ~200 characters unless you genuinely need more.`
 
-function nextUserTurn(intent: UserIntent, priorTurns: UserSimTurn[]): string {
+export function nextUserTurn(intent: UserIntent, priorTurns: UserSimTurn[]): string {
   if (priorTurns.length === 0) {
     // Opening turn IS the intent text, verbatim — that's the cleanest
     // simulation of a user typing their first message.

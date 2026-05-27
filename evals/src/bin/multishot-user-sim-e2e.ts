@@ -28,7 +28,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 import { runLocalProductE2E } from '../product/local-stack-runner.js'
-import { runMultishotUserSim } from '../sim/multishot-user-sim.js'
+import { runMultishotUserSim, runMultishotWithBaselines } from '../sim/multishot-user-sim.js'
 import type { UserIntent } from '../sim/user-sim-driver.js'
 
 const INTENTS: UserIntent[] = [
@@ -74,35 +74,47 @@ function numberArg(name: string): number | undefined {
 async function main(): Promise<void> {
   const outArg = argValue('--out')
   const outputPath = outArg ? resolve(process.cwd(), outArg) : undefined
+  const withBaselines = process.argv.includes('--with-baselines')
+  const reps = numberArg('--reps') ?? 5
 
   // Boot (or reuse) the local product stack — same wiring the other e2e
   // bins use. The user-sim multishot runs inside `afterProvision` so it
   // sees the operator token; the default product flow's single-bot
   // provisioning is treated as a warm-up, not the eval body.
-  let campaign: Awaited<ReturnType<typeof runMultishotUserSim>> | undefined
+  let realCampaign: Awaited<ReturnType<typeof runMultishotUserSim>> | undefined
+  let baselineResult: Awaited<ReturnType<typeof runMultishotWithBaselines>> | undefined
   const product = await runLocalProductE2E({
     startStack: !process.argv.includes('--no-start-stack'),
     keepStack: process.argv.includes('--keep-stack'),
     ...(argValue('--base-url') ? { baseUrl: argValue('--base-url')! } : {}),
     ...(argValue('--operator-url') ? { operatorUrl: argValue('--operator-url')! } : {}),
     afterProvision: async (context) => {
-      campaign = await runMultishotUserSim({
+      const common = {
         intents: INTENTS,
         operatorUrl: context.operatorUrl,
         token: context.token,
         runDir: `${context.outputDir}/multishot-user-sim`,
+        reps,
         ...(numberArg('--max-turns') !== undefined ? { maxTurnsPerShot: numberArg('--max-turns')! } : {}),
         ...(numberArg('--per-turn-timeout-ms') !== undefined ? { perTurnTimeoutMs: numberArg('--per-turn-timeout-ms')! } : {}),
-      })
+      }
+      if (withBaselines) {
+        baselineResult = await runMultishotWithBaselines(common)
+        realCampaign = baselineResult.real
+      } else {
+        realCampaign = await runMultishotUserSim(common)
+      }
       return {
         intents: INTENTS.length,
-        cells_executed: campaign.aggregates.cellsExecuted,
-        cells_failed: campaign.aggregates.cellsFailed,
+        reps,
+        with_baselines: withBaselines,
+        cells_executed: realCampaign.aggregates.cellsExecuted,
+        cells_failed: realCampaign.aggregates.cellsFailed,
       }
     },
     maxTurns: 0,
   })
-  if (!campaign) throw new Error('multishot user-sim did not run (afterProvision was not invoked)')
+  if (!realCampaign) throw new Error('multishot user-sim did not run (afterProvision was not invoked)')
 
   const summary = {
     suite: 'multishot-user-sim-e2e',
@@ -110,22 +122,39 @@ async function main(): Promise<void> {
     base_url: product.base_url,
     output_dir: product.output_dir,
     intents: INTENTS.length,
-    cells_executed: campaign.aggregates.cellsExecuted,
-    cells_failed: campaign.aggregates.cellsFailed,
+    reps,
+    with_baselines: withBaselines,
+    cells_executed: realCampaign.aggregates.cellsExecuted,
+    cells_failed: realCampaign.aggregates.cellsFailed,
     by_scenario: Object.fromEntries(
-      Object.entries(campaign.aggregates.byScenario).map(([id, agg]) => [
+      Object.entries(realCampaign.aggregates.byScenario).map(([id, agg]) => [
         id,
         { mean_composite: agg.meanComposite, n: agg.n, ci95: agg.ci95 },
       ]),
     ),
+    ...(baselineResult
+      ? {
+          baseline_comparison: {
+            per_scenario: baselineResult.per_scenario_deltas,
+            // Judge sanity: real should dominate null + stall by ≥0.4 on every intent.
+            judge_validity_flags: Object.entries(baselineResult.per_scenario_deltas)
+              .filter(([, d]) => d.delta_vs_null < 0.4 || d.delta_vs_stall < 0.4)
+              .map(([id, d]) => ({ scenario: id, ...d })),
+          },
+        }
+      : {}),
   }
 
   if (outputPath) {
     mkdirSync(dirname(outputPath), { recursive: true })
-    writeFileSync(outputPath, `${JSON.stringify({ summary, campaign }, null, 2)}\n`, 'utf8')
+    writeFileSync(
+      outputPath,
+      `${JSON.stringify({ summary, real_campaign: realCampaign, baseline_comparison: baselineResult }, null, 2)}\n`,
+      'utf8',
+    )
   }
   console.log(JSON.stringify(summary, null, 2))
-  if (campaign.aggregates.cellsFailed > 0) process.exit(1)
+  if (realCampaign.aggregates.cellsFailed > 0) process.exit(1)
 }
 
 await main()

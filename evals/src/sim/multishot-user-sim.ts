@@ -26,7 +26,19 @@ import type {
 import { inMemoryCampaignStorage, runEval } from '@tangle-network/agent-eval/campaign'
 
 import { resolveRepo } from '../lib/repo.js'
-import { runUserSimSession, type UserIntent, type UserSimSessionResult } from './user-sim-driver.js'
+import {
+  judgeViaSkepticalSecondary,
+  runNullBotSession,
+  runStallBotSession,
+} from './baseline-bots.js'
+import {
+  nextUserTurn,
+  runUserSimSession,
+  type UserIntent,
+  type UserSimSessionResult,
+} from './user-sim-driver.js'
+
+export type BotKind = 'real' | 'null' | 'stall'
 
 const JUDGE_MODEL = 'claude-haiku-4-5'
 
@@ -76,9 +88,22 @@ function classifyStrategyType(intent: UserIntent): string {
   return 'dex'
 }
 
-export function makeUserSimDispatch(opts: MultishotDispatchOptions) {
+export function makeUserSimDispatch(opts: MultishotDispatchOptions, botKind: BotKind = 'real') {
   return async (scenario: UserIntentScenario): Promise<UserSimSessionResult> => {
-    // 1. Provision a bot through the product API — same path the frontend hits.
+    // Stub bots (null / stall) don't touch the product stack at all.
+    if (botKind === 'null') {
+      return runNullBotSession(scenario.intent, nextUserTurn, {
+        maxTurns: opts.maxTurnsPerShot,
+        perTurnTimeoutMs: opts.perTurnTimeoutMs,
+      })
+    }
+    if (botKind === 'stall') {
+      return runStallBotSession(scenario.intent, nextUserTurn, {
+        maxTurns: opts.maxTurnsPerShot,
+        perTurnTimeoutMs: opts.perTurnTimeoutMs,
+      })
+    }
+    // Real bot: full provision + chat flow through the operator product API.
     const created = await postJson<BotCreateResponse>(`${opts.operatorUrl}/api/bots`, opts.token, {
       prompt: scenario.intent.text,
       name: scenario.intent.text.slice(0, 50),
@@ -86,8 +111,6 @@ export function makeUserSimDispatch(opts: MultishotDispatchOptions) {
     })
     const botId = created.id ?? created.bot_id ?? created.bot?.id
     if (!botId) throw new Error(`bot create did not return an id: ${JSON.stringify(created)}`)
-
-    // 2. Open a manual chat session.
     const session = await postJson<SessionCreateResponse>(
       `${opts.operatorUrl}/api/bots/${encodeURIComponent(botId)}/session/sessions`,
       opts.token,
@@ -95,8 +118,6 @@ export function makeUserSimDispatch(opts: MultishotDispatchOptions) {
     )
     const sessionId = session.id ?? session.session_id ?? session.session?.id
     if (!sessionId) throw new Error(`session create did not return an id: ${JSON.stringify(session)}`)
-
-    // 3. Run the multi-turn user-sim ↔ bot conversation.
     return runUserSimSession({
       intent: scenario.intent,
       operatorUrl: opts.operatorUrl,
@@ -165,7 +186,8 @@ Output ONE JSON object, no prose, no fences:
   return JSON.parse(out.slice(start, end + 1)) as JudgeRubricScores
 }
 
-export function userSimJudge(): JudgeConfig<UserSimSessionResult, UserIntentScenario> {
+export function userSimJudge(opts: { dualJudge?: boolean } = {}): JudgeConfig<UserSimSessionResult, UserIntentScenario> {
+  const useDual = opts.dualJudge ?? false
   return {
     name: 'user-sim-outcome',
     dimensions: [
@@ -173,6 +195,13 @@ export function userSimJudge(): JudgeConfig<UserSimSessionResult, UserIntentScen
       { key: 'respected_constraints', description: 'Did it stay within capital/DD/venue caps?' },
       { key: 'actually_traded_or_committed', description: 'Did it take real action?' },
       { key: 'productive_conversation', description: 'Were turns moving forward?' },
+      ...(useDual
+        ? [
+            { key: 'secondary_intent_fulfilled', description: 'Skeptical secondary judge — same intent question' },
+            { key: 'secondary_actually_traded_or_committed', description: 'Skeptical secondary judge — same action question' },
+            { key: 'judge_disagreement', description: 'L1 norm between primary and secondary on shared dimensions; high = unreliable judge' },
+          ]
+        : []),
     ],
     async score({ scenario, artifact }: { scenario: UserIntentScenario; artifact: UserSimSessionResult }) {
       const r = judgeViaClaude(scenario.intent, artifact)
@@ -181,16 +210,26 @@ export function userSimJudge(): JudgeConfig<UserSimSessionResult, UserIntentScen
         0.3 * r.respected_constraints +
         0.3 * r.actually_traded_or_committed +
         0.1 * r.productive_conversation
-      return {
-        composite,
-        dimensions: {
-          intent_fulfilled: r.intent_fulfilled,
-          respected_constraints: r.respected_constraints,
-          actually_traded_or_committed: r.actually_traded_or_committed,
-          productive_conversation: r.productive_conversation,
-        },
-        notes: r.notes,
+      const dimensions: Record<string, number> = {
+        intent_fulfilled: r.intent_fulfilled,
+        respected_constraints: r.respected_constraints,
+        actually_traded_or_committed: r.actually_traded_or_committed,
+        productive_conversation: r.productive_conversation,
       }
+      let notes = r.notes
+      if (useDual) {
+        const s = judgeViaSkepticalSecondary(scenario.intent, artifact)
+        dimensions.secondary_intent_fulfilled = s.intent_fulfilled
+        dimensions.secondary_actually_traded_or_committed = s.actually_traded_or_committed
+        const disagreement =
+          Math.abs(r.intent_fulfilled - s.intent_fulfilled) +
+          Math.abs(r.respected_constraints - s.respected_constraints) +
+          Math.abs(r.actually_traded_or_committed - s.actually_traded_or_committed) +
+          Math.abs(r.productive_conversation - s.productive_conversation)
+        dimensions.judge_disagreement = disagreement
+        notes = `primary: ${r.notes} | secondary: ${s.notes} | disagreement L1=${disagreement.toFixed(2)}`
+      }
+      return { composite, dimensions, notes }
     },
   }
 }
@@ -202,32 +241,88 @@ export interface RunMultishotUserSimOptions {
   operatorUrl: string
   token: string
   runDir?: string
+  /** Reps per scenario for bootstrap CI bands. Default 5 — refuse to
+   *  publish a mean without an interval. */
   reps?: number
   seed?: number
   maxTurnsPerShot?: number
   perTurnTimeoutMs?: number
   labeledStore?: LabeledScenarioStore
+  /** Which bot to run against — real (full product), null (echo), stall ("I'll think"). */
+  botKind?: BotKind
+  /** When true, also runs the skeptical secondary judge and surfaces
+   *  judge-disagreement as a dimension. Default true — single-judge
+   *  results are not allowed to ship without this verification. */
+  dualJudge?: boolean
 }
 
 export async function runMultishotUserSim(
   opts: RunMultishotUserSimOptions,
 ): Promise<CampaignResult<UserSimSessionResult, UserIntentScenario>> {
   const scenarios = intentScenarios(opts.intents)
-  const dispatch = makeUserSimDispatch({
-    operatorUrl: opts.operatorUrl,
-    token: opts.token,
-    maxTurnsPerShot: opts.maxTurnsPerShot ?? 8,
-    perTurnTimeoutMs: opts.perTurnTimeoutMs ?? 240_000,
-  })
+  const botKind = opts.botKind ?? 'real'
+  const dispatch = makeUserSimDispatch(
+    {
+      operatorUrl: opts.operatorUrl,
+      token: opts.token,
+      maxTurnsPerShot: opts.maxTurnsPerShot ?? 8,
+      perTurnTimeoutMs: opts.perTurnTimeoutMs ?? 240_000,
+    },
+    botKind,
+  )
   return runEval<UserIntentScenario, UserSimSessionResult>({
     scenarios,
     dispatch,
-    judges: [userSimJudge()],
-    runDir: opts.runDir ?? resolveRepo(`.evolve/eval-runs/multishot-user-sim-${Date.now()}`),
-    reps: opts.reps ?? 1,
+    judges: [userSimJudge({ dualJudge: opts.dualJudge ?? true })],
+    runDir: opts.runDir ?? resolveRepo(`.evolve/eval-runs/multishot-user-sim-${botKind}-${Date.now()}`),
+    reps: opts.reps ?? 5,
     storage: inMemoryCampaignStorage(),
     ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
     ...(opts.labeledStore ? { labeledStore: opts.labeledStore } : {}),
     captureSource: 'eval-run',
   })
+}
+
+// ─── Multishot WITH baseline comparison ──────────────────────────────
+
+export interface BaselineComparisonResult {
+  real: CampaignResult<UserSimSessionResult, UserIntentScenario>
+  null_bot: CampaignResult<UserSimSessionResult, UserIntentScenario>
+  stall_bot: CampaignResult<UserSimSessionResult, UserIntentScenario>
+  /** Real - null and real - stall per scenario, in composite units. If
+   *  real - null is <0.4 on any scenario, the judge is suspect. */
+  per_scenario_deltas: Record<
+    string,
+    {
+      real_mean: number
+      null_mean: number
+      stall_mean: number
+      delta_vs_null: number
+      delta_vs_stall: number
+    }
+  >
+}
+
+export async function runMultishotWithBaselines(
+  opts: RunMultishotUserSimOptions,
+): Promise<BaselineComparisonResult> {
+  const [real, nullBot, stallBot] = await Promise.all([
+    runMultishotUserSim({ ...opts, botKind: 'real' }),
+    runMultishotUserSim({ ...opts, botKind: 'null' }),
+    runMultishotUserSim({ ...opts, botKind: 'stall' }),
+  ])
+  const per_scenario_deltas: BaselineComparisonResult['per_scenario_deltas'] = {}
+  for (const id of Object.keys(real.aggregates.byScenario)) {
+    const rm = real.aggregates.byScenario[id]?.meanComposite ?? 0
+    const nm = nullBot.aggregates.byScenario[id]?.meanComposite ?? 0
+    const sm = stallBot.aggregates.byScenario[id]?.meanComposite ?? 0
+    per_scenario_deltas[id] = {
+      real_mean: rm,
+      null_mean: nm,
+      stall_mean: sm,
+      delta_vs_null: rm - nm,
+      delta_vs_stall: rm - sm,
+    }
+  }
+  return { real, null_bot: nullBot, stall_bot: stallBot, per_scenario_deltas }
 }
