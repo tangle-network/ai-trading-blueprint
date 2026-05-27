@@ -13,6 +13,7 @@
  */
 
 import type { RobustnessEvalData } from '../report/types.js'
+import { inspectBotArtifacts, type BotArtifacts } from '../sim/bot-artifacts.js'
 import { llmCallJson } from '../sim/llm-call.js'
 import { OperatorClient } from '../sim/operator-client.js'
 import { inferStrategyTypeFromVenues } from '../sim/strategy-type.js'
@@ -27,6 +28,7 @@ export interface RobustnessShotResult {
   graceful_handling: 0 | 1
   bot_response_summary: string
   judge_rationale: string
+  bot_artifacts: BotArtifacts | null
 }
 
 interface RunRobustnessEvalOptions {
@@ -118,6 +120,12 @@ export async function runRobustnessEval(opts: RunRobustnessEvalOptions): Promise
       lastSeenAssistantId = reply.latestAssistantId
     }
     const verdict = judgeGracefulHandling(scenario, responses)
+    let artifacts: BotArtifacts | null = null
+    try {
+      artifacts = await inspectBotArtifacts(client, botId)
+    } catch (e) {
+      process.stderr.write(`    ! artifact inspection failed for ${scenario.id}: ${(e as Error).message.slice(0, 200)}\n`)
+    }
     shots.push({
       scenario,
       bot_responses: responses,
@@ -125,6 +133,7 @@ export async function runRobustnessEval(opts: RunRobustnessEvalOptions): Promise
       graceful_handling: verdict.graceful,
       bot_response_summary: verdict.summary,
       judge_rationale: verdict.rationale,
+      bot_artifacts: artifacts,
     })
   }
   const passed = shots.filter((s) => s.graceful_handling === 1).length

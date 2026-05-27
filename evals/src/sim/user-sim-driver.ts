@@ -18,6 +18,7 @@
  *   - bot stops responding for > stallMs (timeout in OperatorClient)
  */
 
+import type { BotArtifacts } from './bot-artifacts.js'
 import { llmCall } from './llm-call.js'
 import { OperatorClient } from './operator-client.js'
 import type { UserPersona } from './user-personas.js'
@@ -72,6 +73,9 @@ export interface UserSimSessionResult {
   final_transcript: unknown
   ended_by: 'done' | 'max_turns' | 'wall_clock' | 'stall'
   total_wall_ms: number
+  /** Work-product artifacts inspected from operator-api state at session
+   *  end — self-improvement lineage, trades, PnL. null = not inspected. */
+  bot_artifacts: BotArtifacts | null
 }
 
 // ─── User-sim turn generation ──────────────────────────────────────────
@@ -157,6 +161,15 @@ export async function runUserSimSession(opts: UserSimSessionOptions): Promise<Us
   }
 
   const finalTranscript = await client.getTranscript(opts.botId, opts.sessionId)
+  // Inspect work-product artifacts at session end (best-effort; the
+  // session result is still returned even if inspection fails).
+  let artifacts: import('./bot-artifacts.js').BotArtifacts | null = null
+  try {
+    const { inspectBotArtifacts } = await import('./bot-artifacts.js')
+    artifacts = await inspectBotArtifacts(client, opts.botId)
+  } catch {
+    // swallow — artifact inspection is observational, not load-bearing
+  }
   return {
     intent: opts.intent,
     bot_id: opts.botId,
@@ -165,5 +178,6 @@ export async function runUserSimSession(opts: UserSimSessionOptions): Promise<Us
     final_transcript: finalTranscript,
     ended_by: ended,
     total_wall_ms: Date.now() - startedAt,
+    bot_artifacts: artifacts,
   }
 }

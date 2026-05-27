@@ -1,28 +1,31 @@
 /**
- * User-sim personas — multiple voices the user-sim agent can adopt when
- * driving a conversation against the bot. The single generic
- * "demanding user" prompt is a starting point but doesn't cover the
- * realistic distribution of user types a deployed bot meets.
+ * User-sim personas — multiple voices AND multiple strategy goals.
  *
- * Each persona changes:
- *   - vocabulary (jargon vs plain English)
- *   - patience (terse vs verbose)
- *   - what they push the bot on (PnL vs risk vs research vs UX)
- *   - what counts as "done" for them
+ * Two orthogonal axes a real user has:
  *
- * The cross-product persona × UserIntent is the multishot scenario
- * space. With 5 personas × 8 intents we cover 40 cells; with reps=3
- * + 3 adversarial-bot arms = 360 cells = a real eval surface.
+ *   1. VOICE / personality — newbie vs veteran vs quant vs risk-first.
+ *      How they talk. What jargon they use. How they push the bot.
  *
- * Why not pure-LLM persona generation (an upstream persona-gen agent):
+ *   2. STRATEGY GOAL — market-maker vs momentum vs mean-rev vs LP vs
+ *      yield vs event-driven vs arb vs degen. WHAT they want the bot to
+ *      do. A "veteran market maker" and a "veteran momentum trader"
+ *      both talk like vets but want completely different artifacts.
+ *
+ * The catalog below covers both axes. Some personas are voice-pure
+ * (newbie-retail, quant-skeptic) — useful baselines for testing the
+ * bot's UX. Some are strategy-flavored (mm-operator-experienced,
+ * momentum-chaser-impatient) — they encode the goal in the voice.
+ *
+ * Cross-product persona × UserIntent is the multishot scenario space.
+ * Currently 15 personas × 8 intents = 120 cells. Pick subsets via the
+ * bin's --personas / --intents flags for tractable runs.
+ *
+ * Why not pure-LLM persona generation:
  *   - Reproducibility — fixed personas mean a re-run scores against the
- *     same population; an LLM-generated persona population drifts run-to-run
- *   - Coverage guarantee — hand-curated personas ensure we hit
- *     {newbie, veteran, quant, risk-first, passive} explicitly; LLM
- *     generation would over-sample the median
- *   - When we want a richer population, drop in `runKnowledgeResearchLoop`
- *     from agent-knowledge to *expand* this catalog from real product
- *     chat logs — not replace it
+ *     same population; LLM-generated personas drift run-to-run.
+ *   - Coverage guarantee — hand-curated ensures we hit each archetype.
+ *   - When we want richer breadth, expand THIS catalog from real
+ *     product chat logs (when we have them) via knowledge-research-loop.
  */
 
 export interface UserPersona {

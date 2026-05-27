@@ -36,6 +36,7 @@ import { renderBotReport } from '../report/render.js'
 import type { BotReportData, MultishotShot } from '../report/types.js'
 import { runRobustnessEval } from '../robustness/robustness-driver.js'
 import { buildFleetView, writeFleetView } from '../fleet/fleet-aggregator.js'
+import { aggregateBotArtifacts } from '../sim/bot-artifacts.js'
 import { OperatorClient } from '../sim/operator-client.js'
 import { runMultishotWithBaselines } from '../sim/multishot-user-sim.js'
 import { STANDARD_USER_INTENTS, getIntent } from '../sim/user-intents.js'
@@ -144,6 +145,17 @@ function composeBotReportData(headerIntent: UserIntent, partial: EvalPartial): B
     }
   }
 
+  // Aggregate bot-artifacts across every cell that captured them. This is
+  // the "did the bot do the work" surface — self-improvement runs, trades,
+  // PnL. Surfaces ahead of conversation judges in the report.
+  const allBotArtifacts = [
+    // From the multishot real-arm cells (only — null/stall stubs return null)
+    ...((partial.multishot?.real as { aggregates: unknown; _shotArtifacts?: unknown } | undefined)?._shotArtifacts as unknown[] ?? []),
+    ...(partial.research?.shots.map((s) => s.bot_artifacts) ?? []),
+    ...(partial.robustness?.shots.map((s) => s.bot_artifacts) ?? []),
+  ].filter((a): a is import('../sim/bot-artifacts.js').BotArtifacts | null => true)
+  const artifactsAggregate = aggregateBotArtifacts(allBotArtifacts)
+
   // Composite weights — renormalised across the slices that actually ran
   // so a perfect bot scores 10.00 even when WF is absent (audit fix #5).
   const w = { multishot: 0.3, research: 0.25, robustness: 0.25, walkforward: 0.2 }
@@ -184,6 +196,7 @@ function composeBotReportData(headerIntent: UserIntent, partial: EvalPartial): B
       : {}),
     ...(researchData ? { research: researchData } : {}),
     ...(partial.robustness ? { robustness: partial.robustness.summary } : {}),
+    ...(artifactsAggregate.cells_inspected > 0 ? { artifacts: artifactsAggregate } : {}),
   }
 }
 

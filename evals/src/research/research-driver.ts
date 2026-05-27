@@ -14,6 +14,7 @@
  */
 
 import type { ResearchEvalData } from '../report/types.js'
+import { inspectBotArtifacts, type BotArtifacts } from '../sim/bot-artifacts.js'
 import { OperatorClient } from '../sim/operator-client.js'
 import { inferStrategyTypeFromSourceClasses } from '../sim/strategy-type.js'
 import { STANDARD_THESIS_QUESTIONS, type ThesisQuestion } from './thesis-questions.js'
@@ -24,6 +25,9 @@ export interface ResearchShot {
   duration_ms: number
   /** Sources cited in the response — extracted via URL regex from the bot's reply. */
   cited_urls: string[]
+  /** Work-product artifacts inspected from the bot's operator-api state
+   *  AFTER the research session ends. null if inspection failed. */
+  bot_artifacts: BotArtifacts | null
 }
 
 export interface RunResearchEvalOptions {
@@ -60,11 +64,22 @@ export async function runResearchEval(opts: RunResearchEvalOptions): Promise<{ s
       timeoutMs: opts.perQuestionTimeoutMs ?? 180_000,
     })
     const urls = Array.from(new Set(reply.text.match(URL_REGEX) ?? []))
+    // Inspect bot's work-product artifacts AFTER the research session
+    // ends — strategies created, backtests run, self-improvement
+    // cycles, trades, PnL. Best-effort: null if the inspection itself
+    // fails (judge falls back; doesn't crash the eval).
+    let artifacts: BotArtifacts | null = null
+    try {
+      artifacts = await inspectBotArtifacts(client, botId)
+    } catch (e) {
+      process.stderr.write(`    ! artifact inspection failed for ${q.id}: ${(e as Error).message.slice(0, 200)}\n`)
+    }
     shots.push({
       question: q,
       bot_response_text: reply.text,
       duration_ms: Date.now() - startedAt,
       cited_urls: urls,
+      bot_artifacts: artifacts,
     })
   }
   return { shots }

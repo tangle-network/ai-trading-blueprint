@@ -67,6 +67,7 @@ async function runStubSession(opts: StubBotOptions): Promise<UserSimSessionResul
     ]) },
     ended_by: ended,
     total_wall_ms: Date.now() - startedAt,
+    bot_artifacts: null, // stub bots don't have artifact state
   }
 }
 

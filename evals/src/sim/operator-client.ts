@@ -123,9 +123,10 @@ export class OperatorClient {
     return new OperatorClient({ operatorUrl, token: session.token, ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}) })
   }
 
-  // ── Core HTTP ─────────────────────────────────────────────────────────
+  // ── Core HTTP (exposed so bot-artifacts.ts can probe arbitrary
+  //    operator-api paths without having to re-implement auth+timeout). ──
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
+  async post<T>(path: string, body: unknown): Promise<T> {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs)
     try {
@@ -143,7 +144,7 @@ export class OperatorClient {
     }
   }
 
-  private async get<T>(path: string): Promise<T> {
+  async get<T>(path: string): Promise<T> {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs)
     try {
