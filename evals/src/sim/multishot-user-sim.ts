@@ -21,7 +21,38 @@ import type {
   LabeledScenarioStore,
   Scenario,
 } from '@tangle-network/agent-eval/campaign'
-import { fsCampaignStorage, runEval } from '@tangle-network/agent-eval/campaign'
+import { runEval } from '@tangle-network/agent-eval/campaign'
+import {
+  existsSync as fsExistsSync,
+  mkdirSync as fsMkdirSync,
+  readFileSync as fsReadFileSync,
+  writeFileSync as fsWriteFileSync,
+} from 'node:fs'
+
+/** Local disk-backed CampaignStorage. The bundled `fsCampaignStorage`
+ *  from @tangle-network/agent-eval uses a dynamic `require('fs')` that
+ *  fails under ESM ("Dynamic require of 'fs' is not supported"), so we
+ *  re-implement the four-method interface inline against `node:fs`. */
+function localFsCampaignStorage() {
+  return {
+    ensureDir(dir: string): void {
+      fsMkdirSync(dir, { recursive: true })
+    },
+    exists(path: string): boolean {
+      return fsExistsSync(path)
+    },
+    read(path: string): string | undefined {
+      try {
+        return fsReadFileSync(path, 'utf8')
+      } catch {
+        return undefined
+      }
+    },
+    write(path: string, content: string | Uint8Array): void {
+      fsWriteFileSync(path, content)
+    },
+  }
+}
 
 import { resolveRepo } from '../lib/repo.js'
 import {
@@ -321,7 +352,7 @@ export async function runMultishotUserSim(
     // <runDir>/cells/<cellId>/ as soon as the cell finishes. A SIGKILL
     // mid-campaign loses ONE cell, not all of them; the next run with the
     // same runDir resumes from where the last left off.
-    storage: fsCampaignStorage(),
+    storage: localFsCampaignStorage(),
     ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
     ...(opts.labeledStore ? { labeledStore: opts.labeledStore } : {}),
     captureSource: 'eval-run',
