@@ -73,6 +73,27 @@ interface EvalPartial {
   robustness?: Awaited<ReturnType<typeof runRobustnessEval>>
 }
 
+function writeCheckpoint(outDir: string, partial: EvalPartial): void {
+  // Write a phase-by-phase checkpoint so a runner kill (SSH teardown,
+  // OOM, ^C) doesn't lose hours of work. The bin's final
+  // `writeArtifacts` call still runs at the end and overwrites these
+  // with the canonical artifacts; this is the resilience layer.
+  if (partial.multishot) {
+    writeFileSync(resolve(outDir, 'checkpoint-multishot.json'), JSON.stringify({
+      real_aggregates: partial.multishot.real.aggregates,
+      null_aggregates: partial.multishot.null_bot.aggregates,
+      stall_aggregates: partial.multishot.stall_bot.aggregates,
+      per_scenario_deltas: partial.multishot.per_scenario_deltas,
+    }, null, 2))
+  }
+  if (partial.research) {
+    writeFileSync(resolve(outDir, 'checkpoint-research.json'), JSON.stringify(partial.research, null, 2))
+  }
+  if (partial.robustness) {
+    writeFileSync(resolve(outDir, 'checkpoint-robustness.json'), JSON.stringify(partial.robustness, null, 2))
+  }
+}
+
 async function runEvals(args: RunEvalOpts): Promise<EvalPartial> {
   const partial: EvalPartial = {}
   if (!args.skipMultishot) {
@@ -90,16 +111,22 @@ async function runEvals(args: RunEvalOpts): Promise<EvalPartial> {
       reps: args.reps,
       maxTurnsPerShot: args.maxTurnsPerShot,
     })
+    writeCheckpoint(args.outDir, partial)
+    process.stderr.write(`  ✓ multishot complete, checkpoint written\n`)
   }
   if (!args.skipResearch) {
     process.stderr.write('── Research depth eval ──\n')
     const r = await runResearchEval({ operatorUrl: args.operatorUrl, token: args.token })
     const scores = await judgeAllResearchShots(r.shots, { resolveCitations: false })
     partial.research = { shots: r.shots, scores }
+    writeCheckpoint(args.outDir, partial)
+    process.stderr.write(`  ✓ research complete, checkpoint written\n`)
   }
   if (!args.skipRobustness) {
     process.stderr.write('── Adversarial robustness eval ──\n')
     partial.robustness = await runRobustnessEval({ operatorUrl: args.operatorUrl, token: args.token })
+    writeCheckpoint(args.outDir, partial)
+    process.stderr.write(`  ✓ robustness complete, checkpoint written\n`)
   }
   return partial
 }
