@@ -22,12 +22,14 @@
 
 import { spawnSync } from 'node:child_process'
 
-// 90s default — most operator-api calls return in <1s, but session creation
+// 180s default — most operator-api calls return in <1s, but session creation
 // triggers sandbox-agent container spin-up which can take 30-60s on a cold
-// devnet. A 15s ceiling here surfaced as AbortError ("This operation was
-// aborted") on the first cell of every smoke run; 90s gives the slowest path
-// (createSession) headroom while still failing fast on truly hung requests.
-const DEFAULT_TIMEOUT_MS = 90_000
+// devnet, and message-send + transcript-poll can stretch when the bot is
+// mid-reply on a long turn. Earlier ceilings (15s, then 90s) both surfaced as
+// AbortError ("This operation was aborted") on real-arm cells; 180s clears
+// every observed slow path while still failing fast on genuinely hung
+// requests (anything past 3min IS a hang, not a slow reply).
+const DEFAULT_TIMEOUT_MS = 180_000
 const DEFAULT_POLL_INTERVAL_MS = 5_000
 
 export type StrategyType = 'yield' | 'prediction' | 'perp' | 'dex'
