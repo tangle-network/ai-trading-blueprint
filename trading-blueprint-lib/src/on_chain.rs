@@ -10,6 +10,8 @@
 use alloy::primitives::{Address, Bytes, FixedBytes, U256, Uint, keccak256};
 use alloy::providers::Provider;
 use alloy::sol_types::SolCall;
+use std::sync::OnceLock;
+use tokio::sync::{Mutex, MutexGuard};
 use trading_runtime::chain::ChainClient;
 use trading_runtime::contracts::{
     IAssetValuator, IFeeDistributor, IPolicyEngine, IStrategyRegistry, ITangleServices,
@@ -18,6 +20,15 @@ use trading_runtime::contracts::{
 use trading_runtime::supported_assets::ValuationAdapterKind;
 
 type Uint24 = Uint<24, 1>;
+
+static EXECUTION_CHAIN_TX_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+async fn execution_chain_tx_guard() -> MutexGuard<'static, ()> {
+    EXECUTION_CHAIN_TX_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await
+}
 
 /// Result of deploying a vault via VaultFactory.
 #[derive(Debug, Clone)]
@@ -99,6 +110,7 @@ pub async fn deploy_vault(
         .to(factory_address)
         .input(Bytes::from(call.abi_encode()).into());
 
+    let _tx_guard = execution_chain_tx_guard().await;
     let pending = chain
         .provider
         .send_transaction(tx)
@@ -167,6 +179,7 @@ pub async fn deploy_bot_vault(
         .to(factory_address)
         .input(Bytes::from(call.abi_encode()).into());
 
+    let _tx_guard = execution_chain_tx_guard().await;
     let pending = chain
         .provider
         .send_transaction(tx)
@@ -439,6 +452,7 @@ async fn send_contract_call_with_hash(
     let tx = alloy::rpc::types::TransactionRequest::default()
         .to(to)
         .input(data.into());
+    let _tx_guard = execution_chain_tx_guard().await;
     let pending = chain
         .provider
         .send_transaction(tx)
@@ -506,6 +520,7 @@ pub async fn register_strategy(
         .to(registry_address)
         .input(Bytes::from(call.abi_encode()).into());
 
+    let _tx_guard = execution_chain_tx_guard().await;
     let pending = chain
         .provider
         .send_transaction(tx)
@@ -562,6 +577,7 @@ pub async fn update_strategy_metrics(
         .to(registry_address)
         .input(Bytes::from(call.abi_encode()).into());
 
+    let _tx_guard = execution_chain_tx_guard().await;
     chain
         .provider
         .send_transaction(tx)
@@ -592,6 +608,7 @@ pub async fn settle_fees(
         .to(fee_distributor_address)
         .input(Bytes::from(call.abi_encode()).into());
 
+    let _tx_guard = execution_chain_tx_guard().await;
     let pending = chain
         .provider
         .send_transaction(tx)
@@ -665,6 +682,7 @@ pub async fn bill_subscription(
         .to(tangle_address)
         .input(Bytes::from(call.abi_encode()).into());
 
+    let _tx_guard = execution_chain_tx_guard().await;
     let pending = chain
         .provider
         .send_transaction(tx)

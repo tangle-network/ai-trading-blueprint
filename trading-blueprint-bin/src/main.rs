@@ -438,7 +438,15 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     }
 
     // ── 7. Set up Tangle producer/consumer + cron workflow tick ───────────────
-    let tangle_producer = TangleProducer::new(tangle_client.clone(), service_id);
+    let disable_tangle_producer = std::env::var("DISABLE_TANGLE_PRODUCER")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let tangle_producer = if disable_tangle_producer {
+        tracing::warn!("DISABLE_TANGLE_PRODUCER=true; skipping on-chain Tangle job producer");
+        None
+    } else {
+        Some(TangleProducer::new(tangle_client.clone(), service_id))
+    };
     let tangle_consumer = GracefulConsumer::new(TangleConsumer::new(tangle_client));
 
     let tangle_config = {
@@ -588,9 +596,12 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     // ── 9. Build and run the blueprint ───────────────────────────────────────
     let mut runner = BlueprintRunner::builder(tangle_config, env)
         .router(trading_blueprint_lib::router())
-        .producer(tangle_producer)
         .producer(workflow_cron)
         .consumer(tangle_consumer);
+
+    if let Some(tangle_producer) = tangle_producer {
+        runner = runner.producer(tangle_producer);
+    }
 
     if let Some((gateway, producer)) = webhook_producer {
         runner = runner.producer(producer).background_service(gateway);
