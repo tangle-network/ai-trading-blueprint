@@ -1,0 +1,23 @@
+{
+  "generated_at_iso": "2026-05-27T15:05:41.264Z",
+  "bots_evaluated": 1,
+  "promote_count": 0,
+  "iterate_count": 0,
+  "kill_count": 1,
+  "leaderboard": [
+    {
+      "bot_id": "hl-hype-tight-dd",
+      "intent_text": "Trade HYPE perp on Hyperliquid. $10k. Momentum entries. Max 5% DD — pull back if breached. Watch funding-rate flips.",
+      "s_tier_composite": 0,
+      "multishot_composite": 0,
+      "recommendation": "kill",
+      "gap_summary": "multishot 0.00 <0.70"
+    }
+  ],
+  "fleet_aggregate": {
+    "mean_composite": 0,
+    "median_composite": 0,
+    "total_llm_cost_per_day": 0,
+    "max_drawdown_observed_pct": 0
+  }
+}
