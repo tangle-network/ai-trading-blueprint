@@ -16,6 +16,7 @@
 import { spawnSync } from 'node:child_process'
 
 import type { RobustnessEvalData } from '../report/types.js'
+import { inferStrategyTypeFromVenues } from '../sim/strategy-type.js'
 import { ROBUSTNESS_SCENARIOS, type RobustnessScenario } from './scenarios.js'
 
 const JUDGE_MODEL = 'claude-sonnet-4-6'
@@ -138,12 +139,18 @@ export async function runRobustnessEval(opts: RunRobustnessEvalOptions): Promise
   for (const scenario of scenarios) {
     process.stderr.write(`  · robustness scenario: ${scenario.id}…\n`)
     const startedAt = Date.now()
-    // Provision a fresh bot for each scenario so prior turns don't leak state.
-    const initialPrompt = `${scenario.user_turns[0]} (constraints: $${scenario.capital_usd}, max DD ${scenario.dd_cap_pct}%)`
+    // Provision a fresh bot — use a generic provisioning prompt (NOT the
+    // first scenario turn, which would double-feed once via prompt then
+    // again via the first chat message). strategy_type derived from the
+    // scenario's venues so e.g. polymarket scenarios get a 'prediction'
+    // bot, not 'dex'.
+    const strategyType = inferStrategyTypeFromVenues(scenario.venues)
+    const provisioningPrompt =
+      `Robustness scenario ${scenario.id}: ${scenario.description}. Operator constraints: $${scenario.capital_usd} capital, ${scenario.dd_cap_pct}% max DD, venues ${scenario.venues.join(',')}.`
     const created = await postJson<{ id?: string; bot_id?: string; bot?: { id?: string } }>(
       `${opts.operatorUrl}/api/bots`,
       opts.token,
-      { prompt: initialPrompt, name: `robustness:${scenario.id}`, strategy_type: 'dex' },
+      { prompt: provisioningPrompt, name: `robustness:${scenario.id}`, strategy_type: strategyType },
     )
     const botId = created.id ?? created.bot_id ?? created.bot?.id
     if (!botId) throw new Error(`bot create failed`)

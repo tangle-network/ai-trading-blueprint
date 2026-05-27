@@ -13,6 +13,7 @@
  */
 
 import type { ResearchEvalData } from '../report/types.js'
+import { inferStrategyTypeFromSourceClasses } from '../sim/strategy-type.js'
 import { STANDARD_THESIS_QUESTIONS, type ThesisQuestion } from './thesis-questions.js'
 
 const POLL_INTERVAL_MS = 5_000
@@ -82,10 +83,14 @@ export async function runResearchEval(opts: RunResearchEvalOptions): Promise<{ s
   for (const q of questions) {
     process.stderr.write(`  · research thesis: ${q.id}…\n`)
     // 1. Provision a fresh research-mode bot through the operator API.
+    //    strategy_type picks the bot's tool surface — must match the
+    //    question's asset class (e.g., a Polymarket question needs a
+    //    'prediction' bot, not 'dex').
+    const strategyType = inferStrategyTypeFromSourceClasses(q.expected_source_classes)
     const created = await postJson<{ id?: string; bot_id?: string; bot?: { id?: string } }>(
       `${opts.operatorUrl}/api/bots`,
       opts.token,
-      { prompt: q.question, name: q.id, strategy_type: 'dex' /* generic */ },
+      { prompt: q.question, name: q.id, strategy_type: strategyType },
     )
     const botId = created.id ?? created.bot_id ?? created.bot?.id
     if (!botId) throw new Error(`bot create failed: ${JSON.stringify(created)}`)

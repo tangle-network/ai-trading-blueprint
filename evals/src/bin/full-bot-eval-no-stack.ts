@@ -148,16 +148,30 @@ async function main(): Promise<void> {
       frontier_bot_composite: 0,
     } as never
   }
+  // Composite weights — renormalised across the slices that actually
+  // ran. Without renormalisation, a "perfect" bot would cap at 8.0
+  // because the walkforward slice (weight 0.2) is missing in this
+  // pipeline, contributing zero. Operator would then see
+  // "iterate (A-tier)" for a bot that's actually S-tier on what was
+  // measured.
   const w = { multishot: 0.3, research: 0.25, robustness: 0.25, walkforward: 0.2 }
   const multishotMean = multishotShots.length === 0
     ? 0
     : multishotShots.reduce((a, s) => a + s.composite, 0) / multishotShots.length
   const researchData = researchPart ? aggregateResearchData(researchPart.shots, researchPart.scores) : undefined
-  const sTier =
-    10 * w.multishot * multishotMean +
-    w.research * (researchData?.depth_score ?? 0) +
-    10 * w.robustness * (robustness?.summary.pass_rate ?? 0) +
-    10 * w.walkforward * 0
+  // Each slice's contribution in 0..10 (multishot 0..1 * 10, research is already 0..10, robustness 0..1 * 10).
+  const sliceContribs: Array<{ weight: number; score: number; present: boolean }> = [
+    { weight: w.multishot, score: 10 * multishotMean, present: multishot !== undefined },
+    { weight: w.research, score: researchData?.depth_score ?? 0, present: researchData !== undefined },
+    { weight: w.robustness, score: 10 * (robustness?.summary.pass_rate ?? 0), present: robustness !== undefined },
+    // walkforward is structurally absent in this pipeline today; flag it
+    // so the renderer can note "WF not run" and the composite isn't capped.
+    { weight: w.walkforward, score: 0, present: false },
+  ]
+  const activeSum = sliceContribs.filter((s) => s.present).reduce((acc, s) => acc + s.weight, 0)
+  const sTier = activeSum === 0
+    ? 0
+    : sliceContribs.filter((s) => s.present).reduce((acc, s) => acc + s.weight * s.score, 0) / activeSum
   const periodEnd = new Date()
   const periodStart = new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000)
   const reportData: BotReportData = {
