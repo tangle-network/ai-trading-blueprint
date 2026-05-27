@@ -320,6 +320,7 @@ async function main() {
 
   let decision;
   let fundingAction = { attempted: false };
+  let apiWalletApprovalAction = { attempted: false };
   let tradeAction = { attempted: false };
 
   if (modeValue === 'liquidity' || modeValue === 'emergency_wind_down') {
@@ -365,6 +366,23 @@ async function main() {
           available_margin_usdc: availableMargin,
         };
       } else {
+        if (setup.action.startsWith('open')) {
+          apiWalletApprovalAction = { attempted: true };
+          const approval = await api.approveHyperliquidApiWallet();
+          apiWalletApprovalAction.status = approval.status;
+          apiWalletApprovalAction.response = body(approval);
+          if (!(body(approval) || {}).verified_corewriter_approval) {
+            decision = {
+              action: 'skip',
+              reason: 'api-wallet-approval-not-verified',
+              setup,
+              approval: body(approval),
+            };
+          }
+        }
+      }
+
+      if (!decision) {
         const config = api.loadConfig();
         const intent = {
           strategy_id: api.normalizeIntent({}).strategy_id,
@@ -414,6 +432,7 @@ async function main() {
     ...decision,
     state,
     funding_action: fundingAction,
+    api_wallet_approval_action: apiWalletApprovalAction,
     trade_action: tradeAction,
     run_started_at: runStartedAt,
   };
@@ -436,6 +455,7 @@ async function main() {
     checked_state: state,
     decision,
     funding_action: fundingAction,
+    api_wallet_approval_action: apiWalletApprovalAction,
     trade_action: tradeAction,
     logs_written: lineCount(DECISION_LOG) > decisionCountBefore,
     metrics_written: fileMtimeMs(METRICS_FILE) >= metricsMtimeBefore,
@@ -456,6 +476,7 @@ main().catch((error) => {
       error: error.message || String(error),
     },
     funding_action: { attempted: false },
+    api_wallet_approval_action: { attempted: false },
     trade_action: { attempted: false },
     logs_written: false,
     metrics_written: false,

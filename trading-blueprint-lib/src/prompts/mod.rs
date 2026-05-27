@@ -243,6 +243,7 @@ Authorization: Bearer {token}
 - GET /hyperliquid/settlement — Withdrawal pressure tool. Reports FIFO queue pressure, idle buffer target, cash needed, next settlement, cutoff, and rollover status.
 - GET /hyperliquid/funding/status — Separates idle HyperEVM USDC, Core spot USDC, and usable perp margin.
 - POST /hyperliquid/funding/prepare-perp-margin — Safest funding path. Body: {{ "amount_usdc": "10" }}. Moves idle HyperEVM USDC to HyperCore spot when needed, waits for Core spot balance, then moves Core spot USDC to perp margin.
+- POST /hyperliquid/funding/api-wallet-approval — Run after funding activates the vault account. Verifies the dedicated API wallet in `extraAgents` before live trades are allowed.
 - POST /hyperliquid/funding/usd-class-transfer — Lower-level validated Core spot USDC → perp margin movement. Prefer `/hyperliquid/funding/prepare-perp-margin` in the bot loop.
 - Live orders must go through POST /validate then POST /execute with `target_protocol: "hyperliquid"`; direct native order/leverage routes are unavailable for live bots.
 - Do not include `metadata.leverage` in live Hyperliquid execute intents; leverage is account-level configuration outside this tick loop.

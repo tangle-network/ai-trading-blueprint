@@ -25,7 +25,14 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{Duration, sleep};
 
-use crate::routes::hyperliquid::{get_hl_client, require_hyperliquid_account_address};
+use crate::routes::hyperliquid::{
+    HYPERLIQUID_EXTRA_AGENT_TIMEOUT_MESSAGE, get_hl_client,
+    hyperliquid_api_wallet_address_from_private_key, hyperliquid_extra_agents,
+    hyperliquid_extra_agents_contains, hyperliquid_user_role,
+    normalize_hyperliquid_api_wallet_name, require_hyperliquid_account_address,
+    require_hyperliquid_api_wallet_signing_config_for_approval,
+    wait_for_hyperliquid_api_wallet_extra_agent,
+};
 use crate::{BotContext, MultiBotTradingState};
 use trading_runtime::execution_hash::{
     ACTION_EVM_USDC_TO_CORE, ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT, HyperliquidFundMovementPolicy,
@@ -62,6 +69,7 @@ sol! {
         ) external view returns (bytes32 intentHash, bytes32 executionHash);
         function returnUsdClassLiquidity(uint64 ntl, bool toPerp, FundMovementAuthorization calldata authorization) external;
         function returnSpotLiquidity(address destination, uint64 token, uint64 weiAmount, FundMovementAuthorization calldata authorization) external;
+        function approveHyperliquidApiWallet(address agentWallet, string calldata agentName) external;
     }
 
     interface ITradeValidatorFundingPreflight {
@@ -164,6 +172,18 @@ pub struct PreparePerpMarginResponse {
     pub funding_status_after: HyperliquidFundingStatus,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ApiWalletApprovalResponse {
+    pub status: String,
+    pub vault_account: String,
+    pub api_wallet_address: String,
+    pub hyperliquid_user_role: String,
+    pub tx_hash: Option<String>,
+    pub verified_corewriter_approval: bool,
+    pub extra_agents: Vec<crate::routes::hyperliquid::HyperliquidExtraAgent>,
+    pub strategy_config_patch: serde_json::Value,
+}
+
 pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
     Router::new()
         .route("/hyperliquid/funding/status", get(get_funding_status))
@@ -178,6 +198,10 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
         .route(
             "/hyperliquid/funding/prepare-perp-margin",
             post(post_prepare_perp_margin),
+        )
+        .route(
+            "/hyperliquid/funding/api-wallet-approval",
+            post(post_api_wallet_approval),
         )
 }
 
@@ -370,6 +394,164 @@ async fn post_prepare_perp_margin(
         funding_status_after_evm_to_core: after_evm_to_core,
         funding_status_after: after,
     }))
+}
+
+async fn post_api_wallet_approval(
+    State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
+) -> Result<Json<ApiWalletApprovalResponse>, (StatusCode, String)> {
+    if bot.paper_trade {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Hyperliquid API wallet approval is only available for live vault bots".to_string(),
+        ));
+    }
+
+    let account = require_hyperliquid_account_address(&bot)?;
+    let vault = parse_address(&bot.vault_address, "vault address")?;
+    let account_address = parse_address(&account, "Hyperliquid vault account")?;
+    if account_address != vault {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Hyperliquid API wallet approval must target the authoritative bot vault account"
+                .to_string(),
+        ));
+    }
+
+    let signing = require_hyperliquid_api_wallet_signing_config_for_approval(
+        &state,
+        allow_local_operator_key_for_api_wallet_approval(&bot),
+    )?;
+    let api_wallet = hyperliquid_api_wallet_address_from_private_key(&signing.private_key)?;
+    if let Some(expected) = config_string(&bot.strategy_config, "hyperliquid_api_wallet_address")
+        && !expected.eq_ignore_ascii_case(&api_wallet)
+    {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Configured Hyperliquid API wallet does not match HYPERLIQUID_API_WALLET_PRIVATE_KEY"
+                .to_string(),
+        ));
+    }
+
+    let user_role = hyperliquid_user_role(&account).await?;
+    if user_role.eq_ignore_ascii_case("missing") {
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "Hyperliquid vault account {account} is still missing on HyperCore; fund/activate it before API wallet approval"
+            ),
+        ));
+    }
+
+    let existing_agents = hyperliquid_extra_agents(&account).await?;
+    if hyperliquid_extra_agents_contains(&existing_agents, &api_wallet) {
+        return Ok(Json(api_wallet_approval_response(
+            "already_verified",
+            account,
+            api_wallet,
+            user_role,
+            None,
+            existing_agents,
+            true,
+        )));
+    }
+
+    let chain_client = matching_chain_client(&state, &bot)?;
+    let agent_name = normalize_hyperliquid_api_wallet_name(
+        bot.strategy_config
+            .get("hyperliquid_api_wallet_name")
+            .and_then(serde_json::Value::as_str),
+        &bot.bot_id,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid Hyperliquid API wallet name: {e}"),
+        )
+    })?;
+    let calldata = IHyperliquidVaultFunding::approveHyperliquidApiWalletCall {
+        agentWallet: parse_address(&api_wallet, "API wallet address")?,
+        agentName: agent_name,
+    }
+    .abi_encode();
+    let tx_hash = send_funding_tx(&chain_client, vault, calldata).await?;
+    match wait_for_hyperliquid_api_wallet_extra_agent(&account, &api_wallet).await {
+        Ok(verified_agents) => Ok(Json(api_wallet_approval_response(
+            "verified_corewriter_approval",
+            account,
+            api_wallet,
+            user_role,
+            Some(tx_hash),
+            verified_agents,
+            true,
+        ))),
+        Err((StatusCode::BAD_GATEWAY, message))
+            if message == HYPERLIQUID_EXTRA_AGENT_TIMEOUT_MESSAGE =>
+        {
+            Ok(Json(api_wallet_approval_response(
+                "submitted_corewriter_approval",
+                account,
+                api_wallet,
+                user_role,
+                Some(tx_hash),
+                Vec::new(),
+                false,
+            )))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn api_wallet_approval_response(
+    status: &str,
+    vault_account: String,
+    api_wallet_address: String,
+    hyperliquid_user_role: String,
+    tx_hash: Option<String>,
+    extra_agents: Vec<crate::routes::hyperliquid::HyperliquidExtraAgent>,
+    verified_corewriter_approval: bool,
+) -> ApiWalletApprovalResponse {
+    let approval_status = if verified_corewriter_approval {
+        "verified_corewriter_approval"
+    } else {
+        status
+    };
+    let mut patch = serde_json::json!({
+        "hyperliquid_api_wallet_approval": "corewriter_after_funding",
+        "hyperliquid_api_wallet_approval_status": approval_status,
+        "hyperliquid_api_wallet_address": api_wallet_address,
+    });
+    if verified_corewriter_approval && let Some(map) = patch.as_object_mut() {
+        map.insert(
+            "hyperliquid_api_wallet_verified_at".to_string(),
+            serde_json::Value::String(Utc::now().to_rfc3339()),
+        );
+    }
+    if let Some(tx_hash) = tx_hash.as_ref()
+        && let Some(map) = patch.as_object_mut()
+    {
+        map.insert(
+            "hyperliquid_api_wallet_approval_tx".to_string(),
+            serde_json::Value::String(tx_hash.clone()),
+        );
+    }
+
+    ApiWalletApprovalResponse {
+        status: status.to_string(),
+        vault_account,
+        api_wallet_address,
+        hyperliquid_user_role,
+        tx_hash,
+        verified_corewriter_approval,
+        extra_agents,
+        strategy_config_patch: patch,
+    }
+}
+
+fn allow_local_operator_key_for_api_wallet_approval(bot: &BotContext) -> bool {
+    !matches!(bot.chain_id, 998 | 999)
+        && std::env::var("ALLOW_OPERATOR_KEY_FOR_HYPERLIQUID")
+            .is_ok_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
 }
 
 struct UsdClassTransferSubmission {
@@ -1296,6 +1478,15 @@ fn parse_address(value: &str, field: &str) -> Result<Address, (StatusCode, Strin
             format!("Invalid Hyperliquid funding {field}: {e}"),
         )
     })
+}
+
+fn config_string(config: &serde_json::Value, key: &str) -> Option<String> {
+    config
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn next_nonce() -> U256 {

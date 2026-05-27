@@ -362,6 +362,10 @@ async function fundHyperliquidMargin({ amount_usdc, amountUsdc }) {
   });
 }
 
+async function approveHyperliquidApiWallet() {
+  return apiCall('POST', '/hyperliquid/funding/api-wallet-approval');
+}
+
 async function getMetrics() {
   return apiCall('GET', '/metrics');
 }
@@ -395,5 +399,6 @@ module.exports = {
   bridgeHyperliquidEvmUsdcToCore,
   transferHyperliquidUsdClass,
   fundHyperliquidMargin,
+  approveHyperliquidApiWallet,
   getMetrics,
 };

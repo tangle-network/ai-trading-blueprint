@@ -782,7 +782,7 @@ export function buildProvisionStrategyConfig({
     ) {
       config.hyperliquid_execution_model = 'hyperevm_vault_agent';
       config.hyperliquid_account_source = 'hyperevm_vault_contract';
-      config.hyperliquid_api_wallet_approval = 'corewriter_on_provision';
+      config.hyperliquid_api_wallet_approval = 'corewriter_after_funding';
     }
     if (
       executionConfig.vaultBinding === 'direct' &&

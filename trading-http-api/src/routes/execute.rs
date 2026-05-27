@@ -2642,7 +2642,7 @@ async fn execute_hyperliquid_trade(
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 
-    super::hyperliquid::require_hyperliquid_execution_ready(state, bot)?;
+    super::hyperliquid::require_hyperliquid_execution_ready(state, bot).await?;
     let hl_client = super::hyperliquid::get_hl_client(state)?;
     let account_address = super::hyperliquid::require_hyperliquid_account_address(bot)?;
     let intent_account = req
@@ -3267,7 +3267,7 @@ async fn execute_multi_bot(
 
         let max_drawdown = effective_max_drawdown(signed_envelope.as_ref(), &bot.strategy_config);
         if normalized_req.intent.target_protocol == "hyperliquid" {
-            super::hyperliquid::require_hyperliquid_execution_ready(&state, &bot)?;
+            super::hyperliquid::require_hyperliquid_execution_ready(&state, &bot).await?;
             enforce_hyperliquid_live_risk(&state, &bot, max_drawdown).await?;
         } else if is_clob_trade {
             let clob = state.clob_client.as_ref().ok_or_else(|| {

@@ -3,7 +3,7 @@
 //! Tests route handlers with a real axum router, using wiremock for market
 //! data and in-memory state for portfolio/executor.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::RwLock;
 
 use axum::http::StatusCode;
@@ -41,6 +41,11 @@ const TEST_VALIDATOR_PRIVATE_KEY: &str =
     "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const TEST_VERIFYING_CONTRACT: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 const DEFAULT_TEST_VAULT_ADDRESS: &str = "0x0000000000000000000000000000000000000001";
+const TEST_API_WALLET_PRIVATE_KEY: &str =
+    "0x59c6995e998f97a5a0044966f094538b292d11b7e6c370b55f6ec3b87cebf452";
+const TEST_API_WALLET_ADDRESS: &str = "0x2f6e0183e7803e655910a84093032d6da5639ea7";
+
+static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 /// Ensure a shared temp state dir is set for the entire test binary.
 /// OnceCell-backed stores in trade_store/metrics_store init once per process.
@@ -53,6 +58,45 @@ fn ensure_state_dir() {
         unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
         std::mem::forget(tmp);
     });
+}
+
+struct EnvVarGuard {
+    saved: Vec<(&'static str, Option<String>)>,
+}
+
+impl EnvVarGuard {
+    fn set(values: &[(&'static str, Option<&str>)]) -> Self {
+        let saved = values
+            .iter()
+            .map(|(name, _)| (*name, std::env::var(name).ok()))
+            .collect();
+        for (name, value) in values {
+            // SAFETY: tests that mutate shared process env hold ENV_LOCK.
+            unsafe {
+                if let Some(value) = value {
+                    std::env::set_var(name, value);
+                } else {
+                    std::env::remove_var(name);
+                }
+            }
+        }
+        Self { saved }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        for (name, value) in self.saved.iter().rev() {
+            // SAFETY: tests that mutate shared process env hold ENV_LOCK.
+            unsafe {
+                if let Some(value) = value {
+                    std::env::set_var(name, value);
+                } else {
+                    std::env::remove_var(name);
+                }
+            }
+        }
+    }
 }
 
 /// Create a test state with wiremock-backed market data client.
@@ -688,6 +732,26 @@ async fn mock_hyperliquid_mode_queue(rpc_mock: &MockServer) {
                 .set_body_json(rpc_result_hex(U256::from(1_000u64).abi_encode())),
         )
         .mount(rpc_mock)
+        .await;
+}
+
+async fn mock_hyperliquid_user_role(info_mock: &MockServer, role: &str) {
+    Mock::given(method("POST"))
+        .and(path("/info"))
+        .and(body_string_contains("\"type\":\"userRole\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "role": role
+        })))
+        .mount(info_mock)
+        .await;
+}
+
+async fn mock_hyperliquid_extra_agents(info_mock: &MockServer, agents: serde_json::Value) {
+    Mock::given(method("POST"))
+        .and(path("/info"))
+        .and(body_string_contains("\"type\":\"extraAgents\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(agents))
+        .mount(info_mock)
         .await;
 }
 
@@ -3096,7 +3160,321 @@ async fn test_live_hyperliquid_execute_rejects_pending_api_wallet_approval_befor
     let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
-    assert!(String::from_utf8_lossy(&body).contains("API wallet approval is not submitted"));
+    assert!(String::from_utf8_lossy(&body).contains("API wallet approval is not verified"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_submitted_api_wallet_approval_before_verification() {
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, true).await;
+
+    let bot_id = format!("bot-hl-submitted-approval-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_api_wallet_approval_status": "submitted_corewriter_approval"
+    });
+    mock_hyperliquid_normal_mode(&rpc_mock, &bot).await;
+    let state = multi_bot_state_for_bot("bot-token-hl-submitted-approval", bot);
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-submitted-approval")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("API wallet approval is not verified"));
+}
+
+#[tokio::test]
+async fn test_live_hyperliquid_execute_rejects_missing_extra_agents_after_verified_status() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let info_mock = MockServer::start().await;
+    let _env = EnvVarGuard::set(&[
+        (
+            "HYPERLIQUID_INFO_URL",
+            Some(&format!("{}/info", info_mock.uri())),
+        ),
+        (
+            "HYPERLIQUID_API_WALLET_PRIVATE_KEY",
+            Some(TEST_API_WALLET_PRIVATE_KEY),
+        ),
+        ("HYPERLIQUID_API_PRIVATE_KEY", None),
+        ("ALLOW_OPERATOR_KEY_FOR_HYPERLIQUID", None),
+    ]);
+    mock_hyperliquid_extra_agents(&info_mock, serde_json::json!([])).await;
+
+    ensure_state_dir();
+    let rpc_mock = MockServer::start().await;
+    mock_direct_validator_approval(&rpc_mock, true).await;
+
+    let bot_id = format!("bot-hl-missing-extra-agent-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.rpc_url = rpc_mock.uri();
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_api_wallet_approval": "corewriter_after_funding",
+        "hyperliquid_api_wallet_approval_status": "verified_corewriter_approval",
+        "hyperliquid_api_wallet_address": TEST_API_WALLET_ADDRESS
+    });
+    mock_hyperliquid_normal_mode(&rpc_mock, &bot).await;
+    let state = multi_bot_state_for_bot("bot-token-hl-missing-extra-agent", bot);
+    let app = build_multi_bot_router(state);
+    let mut body = hyperliquid_execute_body(&format!("strategy-{}", uuid::Uuid::new_v4()));
+    body["validation"]["aggregate_score"] = serde_json::json!(75);
+    attach_signed_validation(
+        &mut body,
+        31337,
+        DEFAULT_TEST_VAULT_ADDRESS,
+        ACTION_KIND_HYPERLIQUID_ORDER,
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/execute")
+                .header("authorization", "Bearer bot-token-hl-missing-extra-agent")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("extraAgents"));
+}
+
+#[tokio::test]
+async fn test_hyperliquid_api_wallet_approval_rejects_missing_hypercore_account() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let info_mock = MockServer::start().await;
+    let _env = EnvVarGuard::set(&[
+        (
+            "HYPERLIQUID_INFO_URL",
+            Some(&format!("{}/info", info_mock.uri())),
+        ),
+        (
+            "HYPERLIQUID_API_WALLET_PRIVATE_KEY",
+            Some(TEST_API_WALLET_PRIVATE_KEY),
+        ),
+        ("HYPERLIQUID_API_PRIVATE_KEY", None),
+        ("ALLOW_OPERATOR_KEY_FOR_HYPERLIQUID", None),
+    ]);
+    mock_hyperliquid_user_role(&info_mock, "missing").await;
+
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-approval-missing-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_api_wallet_approval": "corewriter_after_funding",
+        "hyperliquid_api_wallet_approval_status": "pending_corewriter_approval"
+    });
+    let state = multi_bot_state_for_bot("bot-token-hl-approval-missing", bot);
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/hyperliquid/funding/api-wallet-approval")
+                .header("authorization", "Bearer bot-token-hl-approval-missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 409, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("still missing on HyperCore"));
+}
+
+#[tokio::test]
+async fn test_hyperliquid_api_wallet_approval_returns_already_verified_for_extra_agent() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let info_mock = MockServer::start().await;
+    let _env = EnvVarGuard::set(&[
+        (
+            "HYPERLIQUID_INFO_URL",
+            Some(&format!("{}/info", info_mock.uri())),
+        ),
+        (
+            "HYPERLIQUID_API_WALLET_PRIVATE_KEY",
+            Some(TEST_API_WALLET_PRIVATE_KEY),
+        ),
+        ("HYPERLIQUID_API_PRIVATE_KEY", None),
+        ("ALLOW_OPERATOR_KEY_FOR_HYPERLIQUID", None),
+    ]);
+    mock_hyperliquid_user_role(&info_mock, "user").await;
+    mock_hyperliquid_extra_agents(
+        &info_mock,
+        serde_json::json!([
+            {
+                "name": "bot-1",
+                "address": TEST_API_WALLET_ADDRESS,
+                "validUntil": 0
+            }
+        ]),
+    )
+    .await;
+
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-approval-already-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_api_wallet_approval": "corewriter_after_funding",
+        "hyperliquid_api_wallet_approval_status": "pending_corewriter_approval",
+        "hyperliquid_api_wallet_address": TEST_API_WALLET_ADDRESS
+    });
+    let state = multi_bot_state_for_bot("bot-token-hl-approval-already", bot);
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/hyperliquid/funding/api-wallet-approval")
+                .header("authorization", "Bearer bot-token-hl-approval-already")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "already_verified");
+    assert_eq!(json["verified_corewriter_approval"], true);
+    assert_eq!(
+        json["strategy_config_patch"]["hyperliquid_api_wallet_approval_status"],
+        "verified_corewriter_approval"
+    );
+}
+
+#[tokio::test]
+async fn test_hyperliquid_api_wallet_approval_rejects_operator_key_fallback() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let _env = EnvVarGuard::set(&[
+        ("HYPERLIQUID_API_WALLET_PRIVATE_KEY", None),
+        ("HYPERLIQUID_API_PRIVATE_KEY", None),
+        ("ALLOW_OPERATOR_KEY_FOR_HYPERLIQUID", Some("true")),
+    ]);
+
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-approval-operator-key-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.chain_id = 998;
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_api_wallet_approval": "corewriter_after_funding",
+        "hyperliquid_api_wallet_approval_status": "pending_corewriter_approval"
+    });
+    let state = multi_bot_state_for_bot("bot-token-hl-approval-operator-key", bot);
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/hyperliquid/funding/api-wallet-approval")
+                .header("authorization", "Bearer bot-token-hl-approval-operator-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 503, "{}", String::from_utf8_lossy(&body));
+    assert!(String::from_utf8_lossy(&body).contains("refusing operator-key fallback"));
+}
+
+#[tokio::test]
+async fn test_hyperliquid_api_wallet_approval_allows_operator_key_for_explicit_local_qa() {
+    let _env_lock = ENV_LOCK.lock().await;
+    let info_mock = MockServer::start().await;
+    let _env = EnvVarGuard::set(&[
+        (
+            "HYPERLIQUID_INFO_URL",
+            Some(&format!("{}/info", info_mock.uri())),
+        ),
+        ("HYPERLIQUID_API_WALLET_PRIVATE_KEY", None),
+        ("HYPERLIQUID_API_PRIVATE_KEY", None),
+        ("ALLOW_OPERATOR_KEY_FOR_HYPERLIQUID", Some("true")),
+    ]);
+    mock_hyperliquid_user_role(&info_mock, "user").await;
+    mock_hyperliquid_extra_agents(
+        &info_mock,
+        serde_json::json!([
+            {
+                "name": "local-qa",
+                "address": TEST_ENVELOPE_SIGNER,
+                "validUntil": 0
+            }
+        ]),
+    )
+    .await;
+
+    ensure_state_dir();
+    let bot_id = format!("bot-hl-approval-local-qa-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.strategy_config = serde_json::json!({
+        "hyperliquid_account_source": "hyperevm_vault_contract",
+        "hyperliquid_api_wallet_approval": "corewriter_after_funding",
+        "hyperliquid_api_wallet_approval_status": "pending_corewriter_approval"
+    });
+    let state = multi_bot_state_for_bot("bot-token-hl-approval-local-qa", bot);
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/hyperliquid/funding/api-wallet-approval")
+                .header("authorization", "Bearer bot-token-hl-approval-local-qa")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "already_verified");
+    assert_eq!(json["api_wallet_address"], TEST_ENVELOPE_SIGNER);
 }
 
 #[tokio::test]

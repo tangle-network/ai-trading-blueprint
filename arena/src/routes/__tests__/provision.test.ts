@@ -884,7 +884,7 @@ describe('provision runtime backend helpers', () => {
       vault_binding: 'factory',
       hyperliquid_execution_model: 'hyperevm_vault_agent',
       hyperliquid_account_source: 'hyperevm_vault_contract',
-      hyperliquid_api_wallet_approval: 'corewriter_on_provision',
+      hyperliquid_api_wallet_approval: 'corewriter_after_funding',
     });
   });
 
