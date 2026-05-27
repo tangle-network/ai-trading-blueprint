@@ -1220,10 +1220,17 @@ fn latest_execution_runs_for_workflows(workflow_ids: &[u64]) -> Vec<WorkflowRunR
 }
 
 fn map_bot_run(bot: &TradingBotRecord, run: WorkflowRunRecord) -> BotRunResponse {
-    let transcript_available = run
+    let has_session = run
         .session_id
         .as_deref()
         .is_some_and(|session_id| !session_id.is_empty());
+    let has_stored_transcript =
+        trading_blueprint_lib::workflow_compat::get_workflow_run_transcript(&run.run_id)
+            .ok()
+            .flatten()
+            .is_some();
+    let transcript_available =
+        has_stored_transcript || (run.status == WorkflowRunStatus::Running && has_session);
 
     BotRunResponse {
         run_id: run.run_id,
@@ -1449,16 +1456,18 @@ async fn run_transcript_fallback_response(
 
 fn synthesize_run_transcript_messages(run: &WorkflowRunRecord) -> serde_json::Value {
     let timestamp = run.completed_at.unwrap_or(run.started_at);
-    let text = if let Some(result) = run.result.as_deref() {
-        format!(
-            "Stored transcript was unavailable, so this view is replaying the saved run summary.\n\n{result}"
-        )
+    let parts = if let Some(result) = run.result.as_deref() {
+        synthesize_run_result_transcript_parts(result)
     } else if let Some(error) = run.error.as_deref() {
-        format!(
-            "Stored transcript was unavailable, so this view is replaying the saved run outcome.\n\n{error}"
-        )
+        vec![serde_json::json!({
+            "type": "text",
+            "text": format!("The saved run ended with an error.\n\n{error}"),
+        })]
     } else {
-        "Stored transcript was unavailable for this run.".to_string()
+        vec![serde_json::json!({
+            "type": "text",
+            "text": "Saved run details were unavailable for this run.",
+        })]
     };
 
     serde_json::json!([
@@ -1467,15 +1476,178 @@ fn synthesize_run_transcript_messages(run: &WorkflowRunRecord) -> serde_json::Va
                 "id": format!("run-summary-{}", run.run_id),
                 "role": "assistant",
                 "timestamp": timestamp,
+                "success": run.status != WorkflowRunStatus::Failed,
             },
-            "parts": [
-                {
-                    "type": "text",
-                    "text": text,
-                }
-            ]
+            "parts": parts
         }
     ])
+}
+
+fn summarize_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(value) if !value.is_empty() => Some(value.clone()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        serde_json::Value::Array(values) => Some(values.len().to_string()),
+        _ => None,
+    }
+}
+
+fn transcript_string(value: Option<&serde_json::Value>, fallback: &str) -> String {
+    value
+        .and_then(summarize_value)
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn push_reasoning_part(parts: &mut Vec<serde_json::Value>, text: impl Into<String>) {
+    parts.push(serde_json::json!({
+        "type": "reasoning",
+        "text": text.into(),
+    }));
+}
+
+fn push_tool_part(
+    parts: &mut Vec<serde_json::Value>,
+    id: &str,
+    tool: &str,
+    input: serde_json::Value,
+    output: serde_json::Value,
+) {
+    parts.push(serde_json::json!({
+        "type": "tool",
+        "id": id,
+        "tool": tool,
+        "state": {
+            "status": "completed",
+            "input": input,
+            "output": output,
+        }
+    }));
+}
+
+fn synthesize_run_result_transcript_parts(result: &str) -> Vec<serde_json::Value> {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(result) else {
+        return vec![serde_json::json!({
+            "type": "text",
+            "text": format!("Saved run summary.\n\n{result}"),
+        })];
+    };
+
+    let mut parts = Vec::new();
+
+    if let Some(state) = parsed.get("checked_state") {
+        let nav_status = transcript_string(state.get("nav_status"), "unknown");
+        let total_nav = transcript_string(state.get("total_nav_usdc"), "unknown");
+        let margin = transcript_string(state.get("perp_margin_usdc"), "unknown");
+        let positions = transcript_string(state.get("positions_count"), "unknown");
+        push_reasoning_part(
+            &mut parts,
+            format!(
+                "I checked the trading account before deciding. NAV was {nav_status}, total value was {total_nav} USDC, available perp margin was {margin} USDC, and there were {positions} open positions.",
+            ),
+        );
+        push_tool_part(
+            &mut parts,
+            "tool-checked-state",
+            "hyperliquid_nav",
+            serde_json::json!({ "scope": "vault_and_hyperliquid_state" }),
+            state.clone(),
+        );
+    }
+
+    if let Some(decision) = parsed.get("decision") {
+        let action = transcript_string(decision.get("action"), "unknown");
+        let reason = transcript_string(decision.get("reason"), "no reason recorded");
+        let mut reasoning = format!("I decided to {action} because {reason}.");
+
+        if let Some(setup) = decision.get("setup") {
+            let setup_action = transcript_string(setup.get("action"), "prepare a trade");
+            let asset = transcript_string(setup.get("asset"), "the selected asset");
+            let amount = transcript_string(setup.get("amount_in"), "the configured amount");
+            let rationale = transcript_string(setup.get("rationale"), "the configured signal");
+            reasoning.push_str(&format!(
+                " The candidate setup was to {setup_action} {asset} with {amount} USDC because {rationale}.",
+            ));
+        }
+
+        push_reasoning_part(&mut parts, reasoning);
+
+        if let Some(approval) = decision.get("approval") {
+            push_tool_part(
+                &mut parts,
+                "tool-api-wallet-approval-check",
+                "hyperliquid_api_wallet_approval",
+                serde_json::json!({ "check": "corewriter_approval" }),
+                approval.clone(),
+            );
+        }
+    }
+
+    if let Some(funding) = parsed.get("funding_action") {
+        let attempted = transcript_string(funding.get("attempted"), "unknown");
+        push_reasoning_part(
+            &mut parts,
+            format!("Funding step recorded attempted = {attempted}."),
+        );
+        push_tool_part(
+            &mut parts,
+            "tool-funding-action",
+            "hyperliquid_funding",
+            serde_json::json!({ "action": "ensure_margin" }),
+            funding.clone(),
+        );
+    }
+
+    if let Some(approval_action) = parsed.get("api_wallet_approval_action") {
+        let attempted = transcript_string(approval_action.get("attempted"), "unknown");
+        push_reasoning_part(
+            &mut parts,
+            format!("API wallet approval step recorded attempted = {attempted}."),
+        );
+        push_tool_part(
+            &mut parts,
+            "tool-api-wallet-approval-action",
+            "hyperliquid_api_wallet_approval",
+            serde_json::json!({ "action": "approve_api_wallet" }),
+            approval_action.clone(),
+        );
+    }
+
+    if let Some(trade) = parsed.get("trade_action") {
+        let attempted = transcript_string(trade.get("attempted"), "unknown");
+        push_reasoning_part(
+            &mut parts,
+            format!("Trade execution step recorded attempted = {attempted}."),
+        );
+        push_tool_part(
+            &mut parts,
+            "tool-trade-action",
+            "hyperliquid_trade",
+            serde_json::json!({ "action": "execute_validated_trade" }),
+            trade.clone(),
+        );
+    }
+
+    let final_text = if let Some(decision) = parsed.get("decision") {
+        let action = transcript_string(decision.get("action"), "finish");
+        let reason = transcript_string(decision.get("reason"), "no final reason recorded");
+        format!("Final outcome: {action}. Reason: {reason}.")
+    } else {
+        "Final outcome was saved for this run.".to_string()
+    };
+    parts.push(serde_json::json!({
+        "type": "text",
+        "text": final_text,
+    }));
+
+    if parts.is_empty() {
+        vec![serde_json::json!({
+            "type": "text",
+            "text": "Saved run details were unavailable for this run.",
+        })]
+    } else {
+        parts
+    }
 }
 
 async fn list_bot_runs(
