@@ -240,15 +240,65 @@ Output ONE JSON object, no prose, no fences:
   }
 }
 
+/** State-based signals derived from the bot's OBSERVABLE work-product
+ *  (bot_artifacts), not from transcript prose. This is the Gen-2 core:
+ *  "did the world change the way the brief asked" beats "did the chat
+ *  sound good." A bot that wrote a strategy + placed a (paper) trade
+ *  scores high even with terse prose; a bot with eloquent prose and zero
+ *  state change cannot exceed the prose-only ceiling.
+ *
+ *  - committed: 1.0 if it actually traded (observable), 0.5 if it
+ *    committed a strategy (harness present / self-improvement fired) but
+ *    didn't trade yet, else falls back to a DISCOUNTED prose claim (0.3×)
+ *    because prose claims of action are cheap and gameable.
+ *  - selfImprovement: did the headline capability (self-improve cycle)
+ *    fire? Bonus for promotions. */
+function deriveStateScores(
+  artifact: UserSimSessionResult,
+  proseTradedClaim: number,
+): { committed: number; selfImprovement: number; evidence: string } {
+  const a = artifact.bot_artifacts
+  if (!a) {
+    // No artifact inspection — fall back to a heavily-discounted prose claim.
+    return {
+      committed: 0.3 * proseTradedClaim,
+      selfImprovement: 0,
+      evidence: 'no bot_artifacts (inspection failed); prose claim discounted 0.3×',
+    }
+  }
+  const trades = a.execution.trades_total
+  const hasStrategy = a.current_strategy.harness_version !== undefined && a.current_strategy.harness_version > 0
+  const cycles = a.self_improvement.cycles_fired
+  const promoted = a.self_improvement.revisions_promoted
+
+  let committed: number
+  let evidence: string
+  if (trades > 0) {
+    committed = 1.0
+    evidence = `${trades} trade(s) placed (${a.execution.trades_paper} paper / ${a.execution.trades_live} live)`
+  } else if (hasStrategy || cycles > 0) {
+    committed = 0.5
+    evidence = `strategy committed (v${a.current_strategy.harness_version ?? '?'}, ${cycles} self-improve cycle(s)) but no trade yet`
+  } else {
+    committed = 0.3 * proseTradedClaim
+    evidence = `no observable trade or strategy; prose claim discounted 0.3×`
+  }
+
+  const selfImprovement = cycles > 0 ? Math.min(1, 0.5 + 0.5 * (promoted > 0 ? 1 : 0)) : 0
+  return { committed, selfImprovement, evidence }
+}
+
 export function userSimJudge(opts: { dualJudge?: boolean } = {}): JudgeConfig<UserSimSessionResult, UserIntentScenario> {
   const useDual = opts.dualJudge ?? false
   return {
     name: 'user-sim-outcome',
     dimensions: [
-      { key: 'intent_fulfilled', description: 'Did the bot address the user intent?' },
-      { key: 'respected_constraints', description: 'Did it stay within capital/DD/venue caps?' },
-      { key: 'actually_traded_or_committed', description: 'Did it take real action?' },
-      { key: 'productive_conversation', description: 'Were turns moving forward?' },
+      { key: 'intent_fulfilled', description: 'Did the bot address the user intent? (prose)' },
+      { key: 'respected_constraints', description: 'Did it stay within capital/DD/venue caps? (prose)' },
+      { key: 'actually_traded_or_committed', description: 'Observable state: did it trade/commit a strategy? (artifact-derived)' },
+      { key: 'self_improvement', description: 'Did the self-improvement cycle fire? (artifact-derived)' },
+      { key: 'productive_conversation', description: 'Were turns moving forward? (prose)' },
+      { key: 'prose_traded_claim', description: 'What the prose judge CLAIMED re: action — for prose-vs-state gap analysis' },
       ...(useDual
         ? [
             { key: 'secondary_intent_fulfilled', description: 'Skeptical secondary judge — same intent question' },
@@ -259,18 +309,26 @@ export function userSimJudge(opts: { dualJudge?: boolean } = {}): JudgeConfig<Us
     ],
     async score({ scenario, artifact }: { scenario: UserIntentScenario; artifact: UserSimSessionResult }) {
       const r = await judgePrimaryRubric(scenario.intent, artifact)
+      // State-based override: actually_traded_or_committed comes from the
+      // bot's OBSERVABLE work-product, not the prose judge's guess.
+      const state = deriveStateScores(artifact, r.actually_traded_or_committed)
+      // Composite weights observable state as the dominant signal (0.40 +
+      // 0.15 self-improve = 55% from artifacts), prose as supporting.
       const composite =
-        0.3 * r.intent_fulfilled +
-        0.3 * r.respected_constraints +
-        0.3 * r.actually_traded_or_committed +
-        0.1 * r.productive_conversation
+        0.20 * r.intent_fulfilled +
+        0.15 * r.respected_constraints +
+        0.40 * state.committed +
+        0.15 * state.selfImprovement +
+        0.10 * r.productive_conversation
       const dimensions: Record<string, number> = {
         intent_fulfilled: r.intent_fulfilled,
         respected_constraints: r.respected_constraints,
-        actually_traded_or_committed: r.actually_traded_or_committed,
+        actually_traded_or_committed: state.committed,
+        self_improvement: state.selfImprovement,
         productive_conversation: r.productive_conversation,
+        prose_traded_claim: r.actually_traded_or_committed,
       }
-      let notes = r.notes
+      let notes = `${r.notes} | STATE: ${state.evidence}`
       if (useDual) {
         const s = await judgeViaSkepticalSecondary(scenario.intent, artifact)
         dimensions.secondary_intent_fulfilled = s.intent_fulfilled
@@ -281,7 +339,7 @@ export function userSimJudge(opts: { dualJudge?: boolean } = {}): JudgeConfig<Us
           Math.abs(r.actually_traded_or_committed - s.actually_traded_or_committed) +
           Math.abs(r.productive_conversation - s.productive_conversation)
         dimensions.judge_disagreement = disagreement
-        notes = `primary: ${r.notes} | secondary: ${s.notes} | disagreement L1=${disagreement.toFixed(2)}`
+        notes = `primary: ${notes} | secondary: ${s.notes} | disagreement L1=${disagreement.toFixed(2)}`
       }
       return { composite, dimensions, notes }
     },
@@ -334,9 +392,13 @@ export async function runMultishotUserSim(
       token: opts.token,
       ...(opts.privateKey ? { privateKey: opts.privateKey } : {}),
       maxTurnsPerShot: opts.maxTurnsPerShot ?? 8,
-      // 480s default = conversation cron is 5min cycle + margin. Earlier 240s
-      // killed 9/12 real-arm cells before the bot's reply landed.
-      perTurnTimeoutMs: opts.perTurnTimeoutMs ?? 480_000,
+      // 900s default = 3× the bot's 5-min conversation cron. smoke v5 traces
+      // showed turn-1 work spans multiple ticks (bot reads protocol, configures
+      // integration, writes strategy) and 480s caught 0/12 turn-1 replies. The
+      // bot is async-cron-driven; the per-turn budget must cover ≥3 ticks for
+      // multi-step work to land. (The real fix is tick-driving — task #108 —
+      // but a 3-cron budget makes the current sync-poll model honest.)
+      perTurnTimeoutMs: opts.perTurnTimeoutMs ?? 900_000,
     },
     botKind,
   )

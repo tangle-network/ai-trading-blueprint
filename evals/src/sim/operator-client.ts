@@ -32,7 +32,11 @@ import { spawnSync } from 'node:child_process'
 const DEFAULT_TIMEOUT_MS = 180_000
 const DEFAULT_POLL_INTERVAL_MS = 5_000
 
-export type StrategyType = 'yield' | 'prediction' | 'perp' | 'dex'
+// StrategyType SOT lives in strategy-type.ts (the venue→pack inference module).
+// Imported + re-exported here so existing importers of `OperatorClient`'s
+// StrategyType keep working, but there is now ONE definition, not two that drift.
+import type { StrategyType } from './strategy-type.js'
+export type { StrategyType }
 
 export interface OperatorClientConfig {
   operatorUrl: string
