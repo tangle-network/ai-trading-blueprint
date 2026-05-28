@@ -102,7 +102,13 @@ export interface LlmCallResult {
 
 /** Resolve a logical model id to its provider routing. Throws on unknown
  *  model id so call sites can't silently ship a typo to prod. */
-function resolveModel(model: LlmModel): ModelRouting {
+export type { ModelRouting }
+
+/** Resolve a model alias to its provider routing, validating the API key is
+ *  set. Exported so other eval surfaces (e.g. the RLM trace analyst) reuse the
+ *  single provider table instead of duplicating it. Throws on unknown model or
+ *  missing key. */
+export function resolveModel(model: LlmModel): ModelRouting {
   const cfg = MODEL_CONFIG[model]
   if (!cfg) {
     const known = Object.keys(MODEL_CONFIG).join(', ')
