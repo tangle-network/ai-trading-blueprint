@@ -545,12 +545,47 @@ async fn set_leverage(
     }))
 }
 
+/// Starting capital for a paper bot, read from strategy_config
+/// (initial_capital_usd / initial_capital / cash_balance). Defaults to
+/// 10_000 so a paper bot provisioned without explicit capital still has a
+/// realistic book to trade — otherwise it reads the real (empty) HL account
+/// of its dummy address, sees ~$0, and responsibly safe-skips every trade
+/// (the Gen-3 "no usable margin" blocker).
+fn paper_account_capital_usd(config: &serde_json::Value) -> String {
+    config
+        .get("initial_capital_usd")
+        .or_else(|| config.get("initial_capital"))
+        .or_else(|| config.get("cash_balance"))
+        .and_then(|v| match v {
+            serde_json::Value::String(s) => Some(s.trim().to_string()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+        .filter(|s| !s.is_empty() && s != "0")
+        .unwrap_or_else(|| "10000".to_string())
+}
+
 async fn get_account(
     State(state): State<Arc<MultiBotTradingState>>,
     Extension(bot): Extension<BotContext>,
 ) -> Result<Json<AccountInfo>, (StatusCode, String)> {
-    // Read-only public query — use the read client so paper bots without a
-    // signing key can still fetch account state (dummy-key fallback).
+    // Paper bots: synthesize a seeded account from strategy_config capital.
+    // The real HL account of a paper bot's (dummy) address is empty, so
+    // querying it returns ~$0 and the bot safe-skips. Paper is simulation —
+    // the account reflects the configured book, not an on-chain balance.
+    if bot.paper_trade {
+        let capital = paper_account_capital_usd(&bot.strategy_config);
+        return Ok(Json(AccountInfo {
+            account_value: capital.clone(),
+            total_margin_used: "0".to_string(),
+            total_ntl_pos: "0".to_string(),
+            total_raw_usd: capital.clone(),
+            withdrawable: capital,
+            positions: Vec::new(),
+            open_orders: Vec::new(),
+        }))
+    }
+    // Live: read-only public query via the dummy-key-tolerant read client.
     let client = get_hl_read_client(&state)?;
     let account_address = require_optional_hyperliquid_account_address(&bot)?;
     let account = client
