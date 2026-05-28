@@ -177,7 +177,10 @@ async function dispatchInner(
     const botId = await client.provisionBot({
       prompt: scenario.intent.text,
       name: scenario.intent.text.slice(0, 50),
-      strategy_type: inferStrategyTypeFromVenues(scenario.intent.venues),
+      // Explicit intent override wins (MM on a DEX venue, multi-venue
+      // portfolio); otherwise infer from venues. This is the single
+      // provisioning SOT — same call the product's create path makes.
+      strategy_type: scenario.intent.strategy_type ?? inferStrategyTypeFromVenues(scenario.intent.venues),
     })
     // Bot create is instant in operator DB; vault resolution is async
     // (on-chain). configureSecrets returns 500 without a resolved vault.

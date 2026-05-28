@@ -22,6 +22,7 @@ import type { BotArtifacts } from './bot-artifacts.js'
 import { runProfile } from './llm-call.js'
 import { userSimTurnProfile } from '../profiles/user-sim-turn.js'
 import { OperatorClient } from './operator-client.js'
+import type { StrategyType } from './strategy-type.js'
 import type { UserPersona } from './user-personas.js'
 
 export interface UserIntent {
@@ -34,6 +35,12 @@ export interface UserIntent {
   dd_cap_pct: number
   /** Allow-listed venues; the judge flags trades outside this list. */
   venues: string[]
+  /** Explicit strategy_type → pack override. REQUIRED when venue-inference
+   *  picks the wrong pack — e.g. market-making on a DEX venue (aerodrome,
+   *  uniswap) infers 'dex' (swap-routing) but needs 'mm' (the market-maker
+   *  pack); a multi-venue portfolio intent needs 'multi'. When omitted,
+   *  the dispatch falls back to inferStrategyTypeFromVenues(venues). */
+  strategy_type?: StrategyType
 }
 
 export interface UserSimSessionOptions {
