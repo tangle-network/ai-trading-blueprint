@@ -184,7 +184,7 @@ TANGLE_ARGS=(
   --ws-rpc-url  "$TANGLE_RPC"
   --keystore-path "$LOCAL_KEYSTORE_DIR"
   --tangle-contract "$TANGLE_CONTRACT"
-  --staking-contract "$STAKING_CONTRACT"
+  --restaking-contract "$STAKING_CONTRACT"
   --status-registry-contract "$STATUS_REGISTRY_CONTRACT"
 )
 
