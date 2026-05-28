@@ -650,6 +650,10 @@ pub fn build_operator_router() -> Router {
         )
         .route("/api/bots/{bot_id}/trades", get(get_bot_trades))
         .route(
+            "/api/bots/{bot_id}/tick-artifacts",
+            get(get_bot_tick_artifacts),
+        )
+        .route(
             "/api/bots/{bot_id}/baseline-backtest",
             get(get_bot_baseline_backtest),
         )
@@ -1217,6 +1221,21 @@ async fn get_bot(
 ) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
     let record = resolve_bot(&bot_id)?;
     Ok(Json(BotDetailResponse::from_record(record)))
+}
+
+/// Read the bot's deterministic-tick side effects (decisions.jsonl, metrics,
+/// strategy files) out of its sandbox. The eval consumes this so the RLM trace
+/// analyst can adjudicate real execution vs fabricated prose claims. Bad gateway
+/// when the sandbox is unreachable — never fabricates a "captured" payload.
+async fn get_bot_tick_artifacts(
+    SessionAuth(_caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    let artifacts = trading_blueprint_lib::jobs::tick_artifacts::read_bot_tick_artifacts(&bot)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(artifacts))
 }
 
 fn workflow_ids_for_bot(bot: &TradingBotRecord) -> Vec<u64> {
