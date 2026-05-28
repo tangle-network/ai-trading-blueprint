@@ -420,7 +420,35 @@ Completion means verified behavior, not an answer:
 Never ask for live keys to build a new capability. Start with research, paper trading, fixtures/replay/backtests, risk gates, and promotion blockers."#;
 
 /// Build the FAST trading tick prompt — 3 turns, <15s, trade or skip.
+/// Map a strategy type to its deterministic fast-tick tool filename under
+/// `/home/agent/tools/`, or `None` when the family has no deterministic tick and
+/// falls through to the generic LLM runner (prediction/volatility/perp). Single
+/// source of truth shared by the Rust direct runner (workflow_tick.rs) and the
+/// fast-tick prompt below, so the gate and the prompt never diverge. Each tool
+/// emits the same schema-v1 result + decisions.jsonl/metrics side effects.
+pub fn tick_tool_for_strategy(strategy_type: &str) -> Option<&'static str> {
+    match strategy_type {
+        "hyperliquid_perp" => Some("hyperliquid-tick.js"),
+        "dex" => Some("dex-tick.js"),
+        "mm" => Some("dex-mm-tick.js"),
+        "yield" => Some("yield-tick.js"),
+        "multi" => Some("multi-tick.js"),
+        _ => None,
+    }
+}
+
 pub fn build_fast_tick_prompt(strategy_type: &str, validation_trust: ValidationTrust) -> String {
+    // Families with a deterministic tick delegate to it verbatim — the Rust
+    // workflow tick execs the tool directly, and this prompt is the LLM-runner
+    // fallback that must run the same tool rather than narrate a trade.
+    if let Some(tool) = tick_tool_for_strategy(strategy_type) {
+        return format!(
+            "FAST TICK ({strategy_type}). Run exactly this command:\n\n\
+             `node /home/agent/tools/{tool}`\n\n\
+             Return only the final JSON object it prints. Do not summarize it, \
+             rewrite it, or place trades outside that tool. You have 3 turns."
+        );
+    }
     let envelope_check = match validation_trust {
         ValidationTrust::Envelope => {
             "3a. Run `await api.envelopeStatus()`. If `is_active === false`, `consumed_pct > 95`, or `expires_in_seconds < 3600`: SKIP and call `api.requestEnvelopeRenewal('envelope_unhealthy')`, then log via `log-decision.js`.\n             "
@@ -846,7 +874,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_treats_vault_spot_as_tradeable() {
-        let prompt = build_fast_tick_prompt("dex", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("volatility", ValidationTrust::PerTrade);
 
         assert!(
             prompt.contains("get-portfolio.js"),
@@ -1092,7 +1120,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_envelope_mode_skips_validate() {
-        let prompt = build_fast_tick_prompt("dex", ValidationTrust::Envelope);
+        let prompt = build_fast_tick_prompt("volatility", ValidationTrust::Envelope);
 
         assert!(prompt.contains("envelopeStatus"));
         assert!(prompt.contains("executeWithEnvelope"));
@@ -1104,10 +1132,51 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_per_trade_keeps_validate() {
-        let prompt = build_fast_tick_prompt("dex", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("volatility", ValidationTrust::PerTrade);
         assert!(prompt.contains("api.validate(intent)"));
         assert!(prompt.contains("api.execute(intent, validation)"));
         assert!(!prompt.contains("executeWithEnvelope"));
+    }
+
+    #[test]
+    fn test_tick_tool_for_strategy_maps_every_deterministic_family() {
+        assert_eq!(
+            tick_tool_for_strategy("hyperliquid_perp"),
+            Some("hyperliquid-tick.js")
+        );
+        assert_eq!(tick_tool_for_strategy("dex"), Some("dex-tick.js"));
+        assert_eq!(tick_tool_for_strategy("mm"), Some("dex-mm-tick.js"));
+        assert_eq!(tick_tool_for_strategy("yield"), Some("yield-tick.js"));
+        assert_eq!(tick_tool_for_strategy("multi"), Some("multi-tick.js"));
+        // Families with no deterministic tick fall through to the LLM runner.
+        assert_eq!(tick_tool_for_strategy("prediction"), None);
+        assert_eq!(tick_tool_for_strategy("volatility"), None);
+        assert_eq!(tick_tool_for_strategy("perp"), None);
+    }
+
+    #[test]
+    fn test_fast_tick_prompt_delegates_for_deterministic_families() {
+        // A tool-backed family must produce a delegation prompt that runs the
+        // exact tool and nothing else — never the swap-narration fallback.
+        for (strategy, tool) in [
+            ("dex", "dex-tick.js"),
+            ("mm", "dex-mm-tick.js"),
+            ("yield", "yield-tick.js"),
+            ("multi", "multi-tick.js"),
+        ] {
+            let prompt = build_fast_tick_prompt(strategy, ValidationTrust::PerTrade);
+            assert!(
+                prompt.contains(&format!("node /home/agent/tools/{tool}")),
+                "{strategy} fast tick must delegate to {tool}"
+            );
+            assert!(
+                !prompt.contains("quoteUniswapSwap"),
+                "{strategy} delegation prompt must not include the LLM swap fallback"
+            );
+        }
+        // Envelope mode does not change the delegation — the tool handles it.
+        let env = build_fast_tick_prompt("dex", ValidationTrust::Envelope);
+        assert!(env.contains("node /home/agent/tools/dex-tick.js"));
     }
 
     #[test]
@@ -1208,7 +1277,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_references_slippage_learner_and_bandit() {
-        let prompt = build_fast_tick_prompt("dex", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("volatility", ValidationTrust::PerTrade);
         assert!(
             prompt.contains("recommendSlippageBps"),
             "fast tick must consult the slippage learner before quoting"

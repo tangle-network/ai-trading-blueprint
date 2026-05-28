@@ -1050,6 +1050,45 @@ pub(crate) async fn write_prebuilt_tools(
         include_str!("../prompts/tools/hyperliquid_tick.js"),
     )
     .await?;
+    // Shared deterministic-tick runtime + per-family tick tools (dex, mm, yield,
+    // multi). The Rust workflow tick (workflow_tick.rs `tick_tool_for_strategy`)
+    // execs the matching tool directly, bypassing the LLM, so every family has
+    // the same machine-checkable execution guarantee as Hyperliquid.
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/tick-common.js",
+        include_str!("../prompts/tools/tick_common.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/dex-tick.js",
+        include_str!("../prompts/tools/dex_tick.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/dex-mm-tick.js",
+        include_str!("../prompts/tools/dex_mm_tick.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/yield-tick.js",
+        include_str!("../prompts/tools/yield_tick.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/multi-tick.js",
+        include_str!("../prompts/tools/multi_tick.js"),
+    )
+    .await?;
     write_file_to_sidecar(
         sidecar_url,
         token,
@@ -1298,6 +1337,51 @@ mod tests {
         assert!(tool.contains("metrics_written"));
         assert!(tool.contains("fundHyperliquidMargin"));
         assert!(tool.contains("no-clear-hyperliquid-setup"));
+    }
+
+    #[test]
+    fn shared_tick_runtime_emits_contract() {
+        let common = include_str!("../prompts/tools/tick_common.js");
+        // The harness is what guarantees the machine-checkable contract.
+        assert!(common.contains("result_schema_version"));
+        assert!(common.contains("logs_written"));
+        assert!(common.contains("metrics_written"));
+        assert!(common.contains("function runTick"));
+        assert!(common.contains("module.exports"));
+    }
+
+    #[test]
+    fn family_tick_tools_are_bundled_and_delegate_to_shared_runtime() {
+        // Each non-HL family tool must require the shared runtime and run it via
+        // runTick with its own family tag — that is what wires it to the same
+        // schema + side-effect contract the Rust verifier checks.
+        for (tool, src, family) in [
+            ("dex", include_str!("../prompts/tools/dex_tick.js"), "'dex'"),
+            (
+                "mm",
+                include_str!("../prompts/tools/dex_mm_tick.js"),
+                "'mm'",
+            ),
+            (
+                "yield",
+                include_str!("../prompts/tools/yield_tick.js"),
+                "'yield'",
+            ),
+            (
+                "multi",
+                include_str!("../prompts/tools/multi_tick.js"),
+                "'multi'",
+            ),
+        ] {
+            assert!(
+                src.contains("require('/home/agent/tools/tick-common')"),
+                "{tool} tick must require the shared runtime"
+            );
+            assert!(
+                src.contains(&format!("runTick({family}")),
+                "{tool} tick must run via the shared harness with its family tag"
+            );
+        }
     }
 
     #[test]

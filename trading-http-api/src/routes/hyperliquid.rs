@@ -108,7 +108,8 @@ pub(crate) fn get_hl_read_client(
     state: &MultiBotTradingState,
 ) -> Result<&'static HyperliquidClient, (StatusCode, String)> {
     let network = hyperliquid_network_from_env();
-    let private_key = hyperliquid_api_wallet_private_key(state)
+    let private_key = hyperliquid_api_wallet_signing_config(state)
+        .map(|config| config.private_key)
         .ok()
         .filter(|k| !k.is_empty())
         .unwrap_or_else(|| HL_READ_DUMMY_KEY.to_string());
