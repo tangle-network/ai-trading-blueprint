@@ -24,7 +24,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@react-router/node": "^7.13.0",
-    "@tangle-network/blueprint-ui": "^0.1.1",
+    "@tangle-network/blueprint-ui": "^0.3.1",
     "@tangle-network/sandbox-ui": "^0.17.0",
     "@tanstack/react-query": "^5.90.16",
     "@xterm/addon-fit": "^0.11.0",

@@ -48,6 +48,18 @@ pub fn trade_fee(size_usd: Decimal, fee_bps: u32) -> Decimal {
     size_usd * Decimal::new(fee_bps as i64, 4)
 }
 
+/// Compute the fee on a trade using the canonical per-protocol schedule
+/// (`crate::protocol_fees::SCHEDULES`). This is the single source of truth
+/// shared with the live execute path — backtests use the same numbers the
+/// runtime gates on, so a strategy that's profitable in backtest cannot be
+/// unprofitable live solely because of fee-model drift. Returns `None` when
+/// the protocol has no schedule entry (caller should treat that as
+/// "do not trade" — same as the live gate).
+pub fn trade_fee_for_protocol(size_usd: Decimal, protocol: &str) -> Option<Decimal> {
+    let schedule = crate::protocol_fees::schedule_for(protocol)?;
+    Some(crate::protocol_fees::estimate_fee_usd(schedule, size_usd))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

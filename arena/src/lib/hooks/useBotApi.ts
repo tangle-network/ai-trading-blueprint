@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   HyperliquidTradeMetadata,
   PredictionTradeMetadata,
@@ -162,6 +162,11 @@ export interface RevisionArenaEntry {
   tests: string[];
   promotion_approved?: boolean | null;
   promotion_blockers: string[];
+  rejection?: {
+    revision_id?: string;
+    reason?: string;
+    rejected_at?: string;
+  } | null;
   paper_evidence?: {
     trades?: number;
     total_return_pct?: number;
@@ -561,5 +566,42 @@ export function useRevisionArena(botId: string, options: BotApiQueryOptions = {}
     refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
+  });
+}
+
+export function useRevisionDecision(botId: string, options: BotApiQueryOptions = {}) {
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (decision: {
+      revisionId: string;
+      action: 'approve' | 'reject';
+      reason?: string;
+      confirmLive?: boolean;
+    }) => {
+      const path = buildBotScopedPathForDeploymentKind(
+        deploymentKind,
+        botId,
+        '/evolution/revision-arena/decision',
+      );
+      return operatorJsonWithAuth<unknown>(apiUrl, path, auth, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          revision_id: decision.revisionId,
+          action: decision.action,
+          reason: decision.reason,
+          confirm_live: decision.confirmLive ?? (decision.action === 'approve'),
+        }),
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ['revision-arena', apiUrl, botId, deploymentKind, auth.authCacheKey],
+      });
+    },
   });
 }

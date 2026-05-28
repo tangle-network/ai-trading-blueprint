@@ -405,6 +405,17 @@ async fn run_backed_chat_response(
 }
 
 async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: String) {
+    if should_block_live_promotion_request(&message) {
+        append_transcript_message(
+            &target,
+            &session_id,
+            "assistant",
+            live_promotion_blocker_response(),
+            json!({ "transport": "operator-chat", "status": "live_promotion_blocked" }),
+        );
+        return;
+    }
+
     if should_route_owner_message_to_self_improvement(&message) {
         run_self_improvement_mcp_turn(&target, &session_id, &message).await;
         return;
@@ -518,6 +529,45 @@ fn should_route_owner_message_to_self_improvement(message: &str) -> bool {
     .any(|needle| lower.contains(needle));
 
     asks_for_change && code_surface
+}
+
+fn should_block_live_promotion_request(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    includes_live_intent(&lower)
+        && includes_approval_intent(&lower)
+        && !lower.contains("paper")
+        && !lower.contains("shadow")
+}
+
+fn includes_live_intent(lower: &str) -> bool {
+    [
+        "live",
+        "real funds",
+        "mainnet",
+        "on-chain",
+        "execute for real",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn includes_approval_intent(lower: &str) -> bool {
+    [
+        "run this", "turn on", "enable", "promote", "approve", "go live", "switch", "deploy",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn live_promotion_blocker_response() -> String {
+    [
+        "Live promotion is blocked.",
+        "",
+        "I need an approved candidate with deterministic paper/shadow evidence, passing checks, validator/risk gates, configured live execution credentials, and an explicit promotion handoff before I can run anything live.",
+        "",
+        "I will keep the current strategy in paper/shadow mode. Ask me to inspect the latest self-improvement run or continue the failing checks if you want this candidate moved toward promotion readiness.",
+    ]
+    .join("\n")
 }
 
 async fn run_self_improvement_mcp_turn(
@@ -760,6 +810,16 @@ fn append_transcript_message(
     }
 }
 
+pub fn append_operator_transcript_message(
+    target: &SidecarChatTarget,
+    session_id: &str,
+    role: &str,
+    text: String,
+    metadata: Value,
+) {
+    append_transcript_message(target, session_id, role, text, metadata);
+}
+
 pub async fn proxy_chat_events(
     target: SidecarChatTarget,
     session_id: Option<String>,
@@ -838,6 +898,8 @@ mod tests {
         assert!(should_route_owner_message_to_self_improvement(
             "Integrate Rain and market make with a paper strategy first"
         ));
+        assert!(should_block_live_promotion_request("ok now run this live"));
+        assert!(live_promotion_blocker_response().contains("Live promotion is blocked"));
         assert!(!should_route_owner_message_to_self_improvement(
             "What is my current ETH position?"
         ));

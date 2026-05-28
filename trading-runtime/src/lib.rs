@@ -1,14 +1,15 @@
 pub mod aave_v3_registry;
 pub mod adapters;
+pub mod analytics;
 pub mod backtest;
 pub mod calldata_decoder;
+pub mod candle_sources;
 pub mod chain;
 #[allow(clippy::too_many_arguments)]
 pub mod contracts;
 pub mod envelope;
 pub mod envelope_registry;
 pub mod error;
-pub mod evals;
 pub mod execution_hash;
 pub mod executor;
 pub mod fees;
@@ -21,6 +22,7 @@ pub mod market_data;
 pub mod multicall;
 pub mod polymarket_clob;
 pub mod portfolio;
+pub mod protocol_fees;
 pub mod signature_verify;
 pub mod simulator;
 pub mod solana;

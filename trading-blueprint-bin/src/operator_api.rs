@@ -10,6 +10,7 @@ use sandbox_runtime::api_types::{
 };
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::time::Duration;
@@ -625,6 +626,22 @@ pub fn build_operator_router() -> Router {
         .route("/api/bots/{bot_id}/run-now", post(run_now))
         .route("/api/bots/{bot_id}/runs", get(list_bot_runs))
         .route("/api/bots/{bot_id}/runs/{run_id}", get(get_bot_run))
+        .route(
+            "/api/bots/{bot_id}/evolution/self-improve/runs",
+            get(list_self_improvement_runs),
+        )
+        .route(
+            "/api/bots/{bot_id}/evolution/revision-arena",
+            get(get_revision_arena),
+        )
+        .route(
+            "/api/bots/{bot_id}/evolution/revision-arena/promote",
+            post(promote_revision_candidate),
+        )
+        .route(
+            "/api/bots/{bot_id}/evolution/revision-arena/decision",
+            post(decide_revision_candidate),
+        )
         .route("/api/bots/{bot_id}/config", patch(update_config))
         .route("/api/bots/{bot_id}/metrics", get(get_bot_metrics))
         .route(
@@ -2285,6 +2302,579 @@ async fn fetch_trading_api_json_with_method(
         .map_err(|e| format!("failed to decode trading api response: {e}"))
 }
 
+// ── Self-improvement / revision arena handlers ─────────────────────────
+
+async fn list_self_improvement_runs(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
+    let tasks = read_self_improvement_tasks(&target, &bot.id).await?;
+    Ok(Json(json!({
+        "bot_id": bot.id,
+        "runs": tasks.get("runs").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
+    })))
+}
+
+async fn get_revision_arena(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let (bot, target) = resolve_live_chat_target(&bot_id, &caller)?;
+    let tasks = read_self_improvement_tasks(&target, &bot.id).await?;
+    let runs = tasks
+        .get("runs")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let canary_revision = bot_canary_revision(&bot);
+    let canary_revision_id = canary_revision
+        .as_ref()
+        .and_then(|revision| revision.get("revision_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let rejected_revisions = bot_rejected_revisions(&bot);
+    let revisions = runs
+        .into_iter()
+        .filter_map(|run| {
+            let status = run.get("status").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+            let tests_passed = run.get("tests_passed").and_then(serde_json::Value::as_bool).unwrap_or(false);
+            let patch_sha = run.get("patch_sha256").and_then(serde_json::Value::as_str);
+            let task_id = run.get("task_id").and_then(serde_json::Value::as_str).unwrap_or("unknown");
+            let revision_id = revision_id_for_task(task_id);
+            if canary_revision_id.as_deref() == Some(revision_id.as_str()) {
+                return None;
+            }
+            let rejection = rejected_revisions.get(&revision_id);
+            let ready = status == "completed" && tests_passed && patch_sha.is_some();
+            let blockers = if let Some(rejection) = rejection {
+                vec![format!(
+                    "Rejected by owner: {}",
+                    rejection
+                        .get("reason")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("No reason provided")
+                )]
+            } else if ready && bot_allows_live_revision_promotion(&bot) {
+                vec!["User approval can promote this candidate into the live path; trades still require configured trading API and validator/risk gates.".to_string()]
+            } else if ready {
+                vec!["User approval can stage this candidate as canary paper/live-sim; configure live mode and user secrets before fund access.".to_string()]
+            } else {
+                vec![
+                    "Candidate has not passed deterministic MCP checks.".to_string(),
+                    "Live execution remains blocked until an approved paper/shadow candidate exists.".to_string(),
+                ]
+            };
+            Some(json!({
+                "revision_id": revision_id,
+                "display_name": format!("Self-improvement {task_id}"),
+                "source": "self-improvement-mcp",
+                "status": if rejection.is_some() { "rejected" } else if ready { "candidate" } else if status == "failed" { "failed" } else { status },
+                "run_mode": "paper",
+                "can_execute_live": false,
+                "parent_revision_id": "rev-0",
+                "run_id": task_id,
+                "created_at": run.get("created_at").cloned().unwrap_or(serde_json::Value::Null),
+                "user_intent": run.get("spec").and_then(serde_json::Value::as_str).unwrap_or("Self-improvement task"),
+                "patch_sha256": patch_sha,
+                "files_changed": run.get("files_changed").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
+                "tests": run.get("tests").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
+                "promotion_approved": false,
+                "promotion_blockers": blockers,
+                "rejection": rejection.cloned(),
+                "paper_evidence": serde_json::Value::Null,
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    let mut all_revisions = vec![json!({
+        "revision_id": "rev-0",
+        "display_name": "Current deployed bot",
+        "source": "provisioned-bot",
+        "status": "active",
+        "run_mode": if bot.paper_trade { "paper" } else { "live" },
+        "can_execute_live": !bot.paper_trade,
+        "parent_revision_id": serde_json::Value::Null,
+        "run_id": bot.workflow_id.map(|id| id.to_string()),
+        "created_at": serde_json::Value::Null,
+        "user_intent": bot.strategy_config.get("user_prompt").and_then(serde_json::Value::as_str).unwrap_or("Initial provisioned strategy"),
+        "patch_sha256": serde_json::Value::Null,
+        "files_changed": [],
+        "tests": [],
+        "promotion_approved": !bot.paper_trade,
+        "promotion_blockers": if bot.paper_trade {
+            vec!["Bot is currently paper trading; live execution requires explicit approval and validator gates."]
+        } else {
+            Vec::<&str>::new()
+        },
+        "paper_evidence": bot.baseline_backtest,
+    })];
+    all_revisions.extend(revisions);
+    if let Some(canary) = canary_revision {
+        all_revisions.push(canary);
+    }
+    let active_revision_id = canary_revision_id.unwrap_or_else(|| "rev-0".to_string());
+    let active_revision_can_execute_live = all_revisions.iter().any(|revision| {
+        revision
+            .get("revision_id")
+            .and_then(serde_json::Value::as_str)
+            == Some(active_revision_id.as_str())
+            && revision
+                .get("can_execute_live")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+    });
+
+    Ok(Json(json!({
+        "bot_id": bot.id,
+        "invariant": "Only the active approved revision may touch execution keys or vault funds; MCP candidates are paper/shadow until deterministic checks, user approval, and validator gates pass.",
+        "active_revision_id": active_revision_id.clone(),
+        "live_revision_id": if active_revision_can_execute_live {
+            serde_json::Value::String(active_revision_id)
+        } else if bot.paper_trade {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::String("rev-0".to_string())
+        },
+        "revisions": all_revisions,
+        "modes": [
+            { "mode": "research", "can_touch_funds": false, "description": "Research-only investigation and source grounding." },
+            { "mode": "backtest", "can_touch_funds": false, "description": "Offline replay against deterministic data." },
+            { "mode": "paper", "can_touch_funds": false, "description": "Paper execution with no live transaction authority." },
+            { "mode": "shadow", "can_touch_funds": false, "description": "Observe live markets without submitting orders." },
+            { "mode": "canary", "can_touch_funds": false, "description": "Approved paper/live-sim observation before validator-gated live exposure." },
+            { "mode": "live", "can_touch_funds": true, "description": "Full live execution only for approved active revisions." }
+        ]
+    })))
+}
+
+#[derive(Deserialize)]
+struct PromoteRevisionRequest {
+    revision_id: Option<String>,
+    confirm_live: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct RevisionDecisionRequest {
+    revision_id: Option<String>,
+    action: String,
+    reason: Option<String>,
+    confirm_live: Option<bool>,
+}
+
+fn revision_id_for_task(task_id: &str) -> String {
+    format!("mcp-{task_id}")
+}
+
+fn bot_canary_revision(bot: &TradingBotRecord) -> Option<serde_json::Value> {
+    bot.strategy_config
+        .get("revision_arena")
+        .and_then(|value| value.get("canary_revision"))
+        .cloned()
+}
+
+fn bot_rejected_revisions(bot: &TradingBotRecord) -> serde_json::Map<String, serde_json::Value> {
+    bot.strategy_config
+        .get("revision_arena")
+        .and_then(|value| value.get("rejected_revisions"))
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn bot_has_user_secrets(bot: &TradingBotRecord) -> bool {
+    sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id)
+        .map(|sandbox| sandbox.has_user_secrets())
+        .unwrap_or(false)
+}
+
+fn bot_allows_live_revision_promotion(bot: &TradingBotRecord) -> bool {
+    !bot.paper_trade && bot_has_user_secrets(bot)
+}
+
+fn revision_from_candidate(
+    run: &serde_json::Value,
+    live_enabled: bool,
+) -> Option<serde_json::Value> {
+    let task_id = run.get("task_id").and_then(serde_json::Value::as_str)?;
+    let patch_sha = run
+        .get("patch_sha256")
+        .and_then(serde_json::Value::as_str)?;
+    let mode = if live_enabled { "live" } else { "canary" };
+    let blockers = if live_enabled {
+        Vec::<&str>::new()
+    } else {
+        vec![
+            "Canary is approved for paper/live-sim observation only.",
+            "Configure the bot for live mode with user secrets before fund execution.",
+        ]
+    };
+    Some(json!({
+        "revision_id": revision_id_for_task(task_id),
+        "display_name": format!("{} {}", if live_enabled { "Live" } else { "Canary" }, task_id),
+        "source": "self-improvement-mcp",
+        "status": "active",
+        "run_mode": mode,
+        "can_execute_live": live_enabled,
+        "can_touch_funds": live_enabled,
+        "parent_revision_id": "rev-0",
+        "run_id": task_id,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "user_intent": run.get("spec").and_then(serde_json::Value::as_str).unwrap_or("Approved paper candidate"),
+        "patch_sha256": patch_sha,
+        "files_changed": run.get("files_changed").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
+        "tests": run.get("tests").cloned().unwrap_or_else(|| serde_json::Value::Array(vec![])),
+        "promotion_approved": true,
+        "promotion_blockers": blockers,
+        "paper_evidence": {
+            "candidate_hash": patch_sha,
+            "revision_id": revision_id_for_task(task_id),
+            "trades": 0,
+            "total_return_pct": 0,
+            "max_drawdown_pct": 0
+        }
+    }))
+}
+
+fn persist_canary_revision(
+    bot: &TradingBotRecord,
+    revision: serde_json::Value,
+) -> Result<(), ApiError> {
+    let mut config = bot.strategy_config.clone();
+    if !config.is_object() {
+        config = json!({});
+    }
+    let object = config.as_object_mut().ok_or_else(|| {
+        ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, "invalid strategy config")
+    })?;
+    let revision_arena = object.entry("revision_arena").or_insert_with(|| json!({}));
+    if !revision_arena.is_object() {
+        *revision_arena = json!({});
+    }
+    revision_arena
+        .as_object_mut()
+        .expect("revision arena object")
+        .insert("canary_revision".to_string(), revision);
+
+    state::bots()
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .update(&state::bot_key(&bot.id), |record| {
+            record.strategy_config = config.clone();
+        })
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(())
+}
+
+fn persist_rejected_revision(
+    bot: &TradingBotRecord,
+    revision_id: &str,
+    reason: &str,
+) -> Result<serde_json::Value, ApiError> {
+    let mut config = bot.strategy_config.clone();
+    if !config.is_object() {
+        config = json!({});
+    }
+    let object = config.as_object_mut().ok_or_else(|| {
+        ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, "invalid strategy config")
+    })?;
+    let revision_arena = object.entry("revision_arena").or_insert_with(|| json!({}));
+    if !revision_arena.is_object() {
+        *revision_arena = json!({});
+    }
+    let arena = revision_arena
+        .as_object_mut()
+        .expect("revision arena object");
+    let rejected = arena
+        .entry("rejected_revisions")
+        .or_insert_with(|| json!({}));
+    if !rejected.is_object() {
+        *rejected = json!({});
+    }
+    let rejection = json!({
+        "revision_id": revision_id,
+        "reason": reason,
+        "rejected_at": chrono::Utc::now().to_rfc3339(),
+    });
+    rejected
+        .as_object_mut()
+        .expect("rejected revisions object")
+        .insert(revision_id.to_string(), rejection.clone());
+
+    state::bots()
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .update(&state::bot_key(&bot.id), |record| {
+            record.strategy_config = config.clone();
+        })
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(rejection)
+}
+
+async fn promote_revision_candidate(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+    Json(body): Json<PromoteRevisionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
+    let (bot, target) =
+        resolve_live_chat_target(&bot_id, &caller).map_err(|(status, message)| {
+            error_json(
+                status,
+                "operator_error",
+                message,
+                Some(bot_id.clone()),
+                None,
+                None,
+            )
+        })?;
+    promote_revision_for_bot(
+        &bot,
+        &target,
+        body.revision_id.unwrap_or_else(|| "latest".to_string()),
+        body.confirm_live.unwrap_or(false),
+    )
+    .await
+    .map(Json)
+}
+
+async fn decide_revision_candidate(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+    Json(body): Json<RevisionDecisionRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<OperatorErrorResponse>)> {
+    let (bot, target) =
+        resolve_live_chat_target(&bot_id, &caller).map_err(|(status, message)| {
+            error_json(
+                status,
+                "operator_error",
+                message,
+                Some(bot_id.clone()),
+                None,
+                None,
+            )
+        })?;
+    let revision_id = body.revision_id.unwrap_or_else(|| "latest".to_string());
+    match body.action.as_str() {
+        "approve" => promote_revision_for_bot(
+            &bot,
+            &target,
+            revision_id,
+            body.confirm_live.unwrap_or(true),
+        )
+        .await
+        .map(Json),
+        "reject" => {
+            let tasks = read_self_improvement_tasks(&target, &bot.id)
+                .await
+                .map_err(api_error_response)?;
+            let runs = tasks
+                .get("runs")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let selected = runs.iter().rev().find(|run| {
+                revision_id == "latest"
+                    || run
+                        .get("task_id")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|task_id| {
+                            revision_id == task_id || revision_id == format!("mcp-{task_id}")
+                        })
+            });
+            let Some(run) = selected else {
+                return Err(error_json(
+                    StatusCode::NOT_FOUND,
+                    "revision_not_found",
+                    format!("No self-improvement candidate matched {revision_id}"),
+                    Some(bot.id),
+                    Some(bot.sandbox_id),
+                    None,
+                ));
+            };
+            let task_id = run
+                .get("task_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            let revision_id = revision_id_for_task(task_id);
+            let reason = body.reason.as_deref().unwrap_or("Rejected by owner");
+            let rejection = persist_rejected_revision(&bot, &revision_id, reason)
+                .map_err(api_error_response)?;
+            Ok(Json(json!({
+                "status": "rejected",
+                "bot_id": bot.id,
+                "sandbox_id": bot.sandbox_id,
+                "revision_id": revision_id,
+                "rejection": rejection,
+            })))
+        }
+        _ => Err(error_json(
+            StatusCode::BAD_REQUEST,
+            "invalid_revision_decision",
+            "Revision decision action must be approve or reject.",
+            Some(bot.id),
+            Some(bot.sandbox_id),
+            None,
+        )),
+    }
+}
+
+async fn promote_revision_for_bot(
+    bot: &TradingBotRecord,
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
+    revision_id: String,
+    confirm_live: bool,
+) -> Result<serde_json::Value, (StatusCode, Json<OperatorErrorResponse>)> {
+    let tasks = read_self_improvement_tasks(target, &bot.id)
+        .await
+        .map_err(api_error_response)?;
+    let runs = tasks
+        .get("runs")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let selected = runs.iter().rev().find(|run| {
+        revision_id == "latest"
+            || run
+                .get("task_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|task_id| {
+                    revision_id == task_id || revision_id == format!("mcp-{task_id}")
+                })
+    });
+    let Some(run) = selected else {
+        return Err(error_json(
+            StatusCode::NOT_FOUND,
+            "revision_not_found",
+            format!("No self-improvement candidate matched {revision_id}"),
+            Some(bot.id.clone()),
+            Some(bot.sandbox_id.clone()),
+            None,
+        ));
+    };
+    let status = run
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let tests_passed = run
+        .get("tests_passed")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let patch_sha = run.get("patch_sha256").and_then(serde_json::Value::as_str);
+    let task_revision_id = run
+        .get("task_id")
+        .and_then(serde_json::Value::as_str)
+        .map(revision_id_for_task)
+        .unwrap_or_else(|| revision_id.clone());
+    if bot_rejected_revisions(bot).contains_key(&task_revision_id) {
+        return Err(error_json(
+            StatusCode::CONFLICT,
+            "promotion_blocked",
+            "Live promotion blocked: candidate was rejected by the owner.",
+            Some(bot.id.clone()),
+            Some(bot.sandbox_id.clone()),
+            None,
+        ));
+    }
+    if !(confirm_live && status == "completed" && tests_passed && patch_sha.is_some()) {
+        return Err(error_json(
+            StatusCode::CONFLICT,
+            "promotion_blocked",
+            "Live promotion blocked: candidate must be completed, have deterministic tests passed, have a patch hash, and include explicit user confirmation.",
+            Some(bot.id.clone()),
+            Some(bot.sandbox_id.clone()),
+            None,
+        ));
+    }
+    let live_enabled = bot_allows_live_revision_promotion(&bot);
+    let revision = revision_from_candidate(run, live_enabled).ok_or_else(|| {
+        error_json(
+            StatusCode::CONFLICT,
+            "promotion_blocked",
+            "Live promotion blocked: candidate is missing task id or patch hash.",
+            Some(bot.id.clone()),
+            Some(bot.sandbox_id.clone()),
+            None,
+        )
+    })?;
+    persist_canary_revision(&bot, revision.clone()).map_err(api_error_response)?;
+    let status = if live_enabled {
+        "live_promoted"
+    } else {
+        "canary_promoted"
+    };
+    let message = if live_enabled {
+        "Candidate approved into the live execution path. Trades still flow through the configured trading API and validator/risk gates."
+    } else {
+        "Candidate approved into canary paper/live-sim mode. Configure live mode and user secrets before fund execution."
+    };
+    Ok(json!({
+        "status": status,
+        "bot_id": bot.id.clone(),
+        "sandbox_id": bot.sandbox_id.clone(),
+        "revision": revision,
+        "message": message
+    }))
+}
+
+async fn read_self_improvement_tasks(
+    target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
+    _bot_id: &str,
+) -> Result<serde_json::Value, ApiError> {
+    let command = r#"node <<'NODE'
+const fs = require('node:fs')
+const p = '/home/agent/.evolve/mcp-self-improvement/tasks'
+const files = fs.existsSync(p) ? fs.readdirSync(p).filter((f) => f.endsWith('.json')).sort() : []
+const runs = files.map((file) => {
+  const task = JSON.parse(fs.readFileSync(`${p}/${file}`, 'utf8'))
+  const variants = task.variants || []
+  const winner = variants.find((v) => v.variant_id === task.winner_variant_id) || variants[variants.length - 1] || {}
+  const shots = winner.shots || []
+  return {
+    task_id: task.task_id,
+    status: task.status,
+    created_at: task.created_at || task.started_at || null,
+    updated_at: task.updated_at || null,
+    spec: task.spec || '',
+    winner_variant_id: task.winner_variant_id || null,
+    patch_sha256: task.patch_sha256 || null,
+    files_changed: task.files_changed || winner.files_changed || [],
+    tests: task.test_commands || [],
+    tests_passed: Boolean(winner.test_passed || shots.some((shot) => (shot.tests || []).length > 0 && (shot.tests || []).every((test) => test.ok))),
+    rounds_used: winner.rounds_used || shots.length || 0,
+    failure: task.failure || winner.errored_reason || null,
+    latest_shot: shots[shots.length - 1] || null,
+  }
+})
+console.log(JSON.stringify({ runs }))
+NODE"#;
+    let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: target.sidecar_url.clone(),
+        command: command.to_string(),
+        cwd: "/home/agent".to_string(),
+        env_json: "{}".to_string(),
+        timeout_ms: 30_000,
+    };
+    let response =
+        ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, &target.sidecar_token)
+            .await
+            .map_err(|e| {
+                ApiError::message(
+                    StatusCode::BAD_GATEWAY,
+                    format!("failed to read MCP tasks: {e}"),
+                )
+            })?;
+    if response.exit_code != 0 {
+        return Err(ApiError::message(
+            StatusCode::BAD_GATEWAY,
+            format!("failed to read MCP tasks: {}", response.stderr),
+        ));
+    }
+    serde_json::from_str(&response.stdout).map_err(|e| {
+        ApiError::message(
+            StatusCode::BAD_GATEWAY,
+            format!("failed to parse MCP task state: {e}: {}", response.stdout),
+        )
+    })
+}
+
 // ── Chat session proxy handlers ─────────────────────────────────────────
 
 async fn list_chat_sessions(
@@ -2503,6 +3093,54 @@ try{
             // Keep msg_owned alive until the spawn completes
             let _ = msg_owned;
         });
+
+        if is_live_revision_approval_message(msg_text) {
+            trading_blueprint_lib::operator_chat::append_operator_transcript_message(
+                &target,
+                &session_id,
+                "user",
+                msg_text.to_string(),
+                json!({ "transport": "operator-chat", "source": "owner" }),
+            );
+            let promotion = promote_revision_for_bot(&bot, &target, "latest".to_string(), true)
+                .await
+                .map_err(|(status, Json(error))| (status, error.message));
+            let mut promotion_status = "live_promotion_blocked".to_string();
+            let assistant = match promotion {
+                Ok(value) => {
+                    let status = value
+                        .get("status")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("promotion_updated");
+                    promotion_status = status.to_string();
+                    let message = value
+                        .get("message")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("Revision promotion updated.");
+                    let revision_id = value
+                        .get("revision")
+                        .and_then(|revision| revision.get("revision_id"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown");
+                    format!("{status}\nrevision_id: {revision_id}\n\n{message}")
+                }
+                Err((_, message)) => format!("Live promotion is blocked.\n\n{message}"),
+            };
+            trading_blueprint_lib::operator_chat::append_operator_transcript_message(
+                &target,
+                &session_id,
+                "assistant",
+                assistant,
+                json!({ "transport": "operator-chat", "status": promotion_status }),
+            );
+            return Ok(Json(json!({
+                "ok": true,
+                "sessionId": session_id,
+                "transport": "operator-chat",
+                "status": "accepted"
+            }))
+            .into_response());
+        }
     }
 
     trading_blueprint_lib::operator_chat::proxy_chat_request(
@@ -2513,6 +3151,26 @@ try{
         None,
     )
     .await
+}
+
+fn is_live_revision_approval_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    [
+        "live",
+        "real funds",
+        "mainnet",
+        "on-chain",
+        "execute for real",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+        && [
+            "run this", "turn on", "enable", "promote", "approve", "go live", "switch", "deploy",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+        && !lower.contains("paper")
+        && !lower.contains("shadow")
 }
 
 async fn abort_chat_session(

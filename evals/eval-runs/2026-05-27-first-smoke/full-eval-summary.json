@@ -1,0 +1,12 @@
+{
+  "bot_id": "hl-hype-tight-dd",
+  "s_tier_composite": 0,
+  "recommendation": "kill",
+  "gaps": "multishot 0.00 <0.70",
+  "artifacts": {
+    "report_md": "/tmp/full-eval-smoke-1779894053/per-bot-report.md",
+    "report_json": "/tmp/full-eval-smoke-1779894053/per-bot-report.json",
+    "fleet_md": "/tmp/full-eval-smoke-1779894053/fleet-view.md",
+    "fleet_json": "/tmp/full-eval-smoke-1779894053/fleet-view.json"
+  }
+}
