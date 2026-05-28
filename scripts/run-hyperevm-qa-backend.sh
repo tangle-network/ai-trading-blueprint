@@ -96,11 +96,6 @@ if [[ ! -f "$PRIVATE_KEY_FILE" ]]; then
   echo "ERROR: missing HyperEVM private key file: $PRIVATE_KEY_FILE" >&2
   exit 2
 fi
-if [[ "$HYPEREVM_CHAIN_ID" == "998" || "$HYPEREVM_CHAIN_ID" == "999" ]]; then
-  if [[ ! -f "$API_WALLET_KEY_FILE" && -z "${HYPERLIQUID_API_WALLET_PRIVATE_KEY:-}" ]]; then
-    echo "WARN: missing dedicated Hyperliquid API wallet key file; using PRIVATE_KEY as the API wallet key for local QA" >&2
-  fi
-fi
 
 PRIVATE_KEY="$(tr -d '\r\n\t ' < "$PRIVATE_KEY_FILE")"
 if [[ -n "${HYPERLIQUID_API_WALLET_PRIVATE_KEY:-}" ]]; then
@@ -108,6 +103,11 @@ if [[ -n "${HYPERLIQUID_API_WALLET_PRIVATE_KEY:-}" ]]; then
 elif [[ -f "$API_WALLET_KEY_FILE" ]]; then
   API_WALLET_PRIVATE_KEY="$(tr -d '\r\n\t ' < "$API_WALLET_KEY_FILE")"
 else
+  if [[ "$HYPEREVM_CHAIN_ID" == "998" || "$HYPEREVM_CHAIN_ID" == "999" ]]; then
+    echo "ERROR: missing dedicated Hyperliquid API wallet key for HyperEVM chain $HYPEREVM_CHAIN_ID" >&2
+    echo "Set HYPERLIQUID_API_WALLET_PRIVATE_KEY or create $API_WALLET_KEY_FILE with a fresh trading-only key." >&2
+    exit 2
+  fi
   API_WALLET_PRIVATE_KEY="$PRIVATE_KEY"
 fi
 
@@ -115,6 +115,14 @@ OPERATOR_ADDRESS="$(cast wallet address --private-key "$PRIVATE_KEY")"
 if [[ "$(printf '%s' "$OPERATOR_ADDRESS" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$EXPECTED_OPERATOR_ADDRESS" | tr '[:upper:]' '[:lower:]')" ]]; then
   echo "ERROR: private key resolves to $OPERATOR_ADDRESS, expected $EXPECTED_OPERATOR_ADDRESS" >&2
   exit 2
+fi
+API_WALLET_ADDRESS="$(cast wallet address --private-key "$API_WALLET_PRIVATE_KEY")"
+if [[ "$HYPEREVM_CHAIN_ID" == "998" || "$HYPEREVM_CHAIN_ID" == "999" ]]; then
+  if [[ "$(printf '%s' "$API_WALLET_ADDRESS" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "$OPERATOR_ADDRESS" | tr '[:upper:]' '[:lower:]')" ]]; then
+    echo "ERROR: HyperEVM chain $HYPEREVM_CHAIN_ID requires a dedicated API wallet key; $API_WALLET_ADDRESS matches the operator wallet" >&2
+    echo "Set HYPERLIQUID_API_WALLET_PRIVATE_KEY or create $API_WALLET_KEY_FILE with a fresh trading-only key." >&2
+    exit 2
+  fi
 fi
 
 if [[ "$(cast chain-id --rpc-url "$LOCAL_RPC_URL")" != "$LOCAL_CHAIN_ID" ]]; then
