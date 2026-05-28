@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { deriveTradeAmountOut, getTradeStatus, mapApiTrade } from './useBotApi';
+import { protocolToVenue } from '~/lib/types/trade';
 
 describe('useBotApi trade mapping helpers', () => {
   it('uses backend execution valuation when the trade is priced', () => {
@@ -209,5 +210,43 @@ describe('useBotApi trade mapping helpers', () => {
     expect(trade.harnessVersion).toBe(3);
     expect(trade.candidateHash).toBe('0xcandidate');
     expect(trade.revisionId).toBe('rev-3');
+  });
+
+  it('maps Hyperliquid perp rows without swap-unit conversion', () => {
+    const trade = mapApiTrade({
+      id: 'trade-7',
+      bot_id: 'bot-1',
+      timestamp: '2026-05-27T10:05:09Z',
+      action: 'open_long',
+      token_in: 'USDC',
+      token_out: 'USDC',
+      amount_in: '10.934753',
+      min_amount_out: '0',
+      target_protocol: 'hyperliquid',
+      tx_hash: 'hl:ok',
+      paper_trade: false,
+      entry_price_usd: '0.999687',
+      notional_usd: '10.931330422311',
+      valuation_status: 'priced',
+      hyperliquid_metadata: {
+        asset: 'ETH',
+        asset_size: '0.0052',
+        order_type: 'market',
+        reduce_only: false,
+      },
+    }, 'Bot', 999);
+
+    expect(protocolToVenue('hyperliquid', false)).toBe('perp');
+    expect(trade.action).toBe('open_long');
+    expect(trade.amountIn).toBe(10.934753);
+    expect(trade.amountOut).toBe(0);
+    expect(trade.venue).toBe('perp');
+    expect(trade.notionalUsd).toBe(10.931330422311);
+    expect(trade.hyperliquidMetadata).toEqual({
+      asset: 'ETH',
+      assetSize: '0.0052',
+      orderType: 'market',
+      reduceOnly: false,
+    });
   });
 });

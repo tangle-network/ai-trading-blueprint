@@ -4,7 +4,7 @@ import type { Chart as ChartType } from 'chart.js';
 import type { Bot } from '~/lib/types/bot';
 import { Card, CardHeader, CardTitle, CardContent } from '@tangle-network/blueprint-ui/components';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
-import { useBotMetrics, useBotMetricsSummary } from '~/lib/hooks/useBotApi';
+import { useBotMetrics, useBotMetricsSummary, useBotPortfolio } from '~/lib/hooks/useBotApi';
 import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
@@ -18,6 +18,14 @@ import {
 
 const CHART_TOOLTIP_FONT_FAMILY = "'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 const CHART_DATA_FONT_FAMILY = "'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
+
+const freshnessTimestampFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+});
 
 function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number | null {
   const raw = strategyConfig?.initial_capital_usd
@@ -25,6 +33,18 @@ function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number
     ?? strategyConfig?.cash_balance;
   const value = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : null;
   return value != null && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function parseTimestampMs(timestamp?: string | null): number | null {
+  if (!timestamp) return null;
+  const parsed = new Date(timestamp).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatFreshnessTimestamp(timestamp?: string | null): string {
+  const parsed = parseTimestampMs(timestamp);
+  if (parsed == null) return 'unavailable';
+  return freshnessTimestampFormatter.format(new Date(parsed));
 }
 
 interface PerformanceTabProps {
@@ -37,6 +57,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<ChartType | null>(null);
   const chartTheme = useChartTheme();
+  const isHyperliquidPerpBot = bot.strategyType === 'hyperliquid_perp';
 
   const {
     data: apiMetrics,
@@ -52,8 +73,50 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 30_000 : false,
   });
+  const { data: livePortfolio } = useBotPortfolio(bot.id, {
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+    chainId: bot.chainId,
+    enabled: isLive && isHyperliquidPerpBot,
+    refetchInterval: isLive ? 30_000 : false,
+  });
 
   const initialCapitalUsd = readInitialCapitalUsd(bot.strategyConfig);
+  const latestMetrics = apiMetrics && apiMetrics.length > 0 ? apiMetrics[apiMetrics.length - 1] : null;
+  const renderableMetrics = useMemo(() => {
+    const normalizedMetrics = apiMetrics ?? [];
+    const positiveMetrics = normalizedMetrics.filter((metric) => metric.account_value_usd > 0);
+    return positiveMetrics.length > 0 ? positiveMetrics : normalizedMetrics;
+  }, [apiMetrics]);
+  const firstRenderableMetric = renderableMetrics[0] ?? null;
+  const latestRenderableMetric = renderableMetrics[renderableMetrics.length - 1] ?? latestMetrics;
+  const latestSavedTimestampMs = parseTimestampMs(latestRenderableMetric?.timestamp);
+  const liveObservedTimestampMs = parseTimestampMs(livePortfolio?.observedAt);
+  const shouldAppendLiveNavPoint = isHyperliquidPerpBot
+    && livePortfolio?.displayTotalValueUsd != null
+    && livePortfolio.displayTotalValueUsd > 0
+    && livePortfolio.stale !== true
+    && liveObservedTimestampMs != null
+    && (
+      latestSavedTimestampMs == null
+        || liveObservedTimestampMs - latestSavedTimestampMs >= LIVE_NAV_APPEND_THRESHOLD_MS
+    );
+  const liveNavPoint = useMemo(
+    () => shouldAppendLiveNavPoint && livePortfolio?.displayTotalValueUsd != null
+      ? {
+          value: livePortfolio.displayTotalValueUsd,
+          timestamp: livePortfolio.observedAt ?? undefined,
+          label: 'Live',
+        }
+      : null,
+    [livePortfolio?.displayTotalValueUsd, livePortfolio?.observedAt, shouldAppendLiveNavPoint],
+  );
+  const lastCheckpointLabel = latestRenderableMetric
+    ? formatFreshnessTimestamp(latestRenderableMetric.timestamp)
+    : null;
+  const liveNavLabel = shouldAppendLiveNavPoint
+    ? formatFreshnessTimestamp(livePortfolio?.observedAt)
+    : null;
 
   const chartPoints = useMemo(
     () => buildPerformanceChartPoints(
@@ -65,8 +128,9 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
             value: initialCapitalUsd,
             timestamp: new Date(bot.createdAt).toISOString(),
           },
+      liveNavPoint,
     ),
-    [apiMetrics, bot.createdAt, initialCapitalUsd],
+    [apiMetrics, bot.createdAt, initialCapitalUsd, liveNavPoint],
   );
 
   useEffect(() => {
@@ -178,14 +242,6 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     };
   }, [chartPoints, chartTheme]);
 
-  const latestMetrics = apiMetrics && apiMetrics.length > 0 ? apiMetrics[apiMetrics.length - 1] : null;
-  const renderableMetrics = useMemo(() => {
-    const normalizedMetrics = apiMetrics ?? [];
-    const positiveMetrics = normalizedMetrics.filter((metric) => metric.account_value_usd > 0);
-    return positiveMetrics.length > 0 ? positiveMetrics : normalizedMetrics;
-  }, [apiMetrics]);
-  const firstRenderableMetric = renderableMetrics[0] ?? null;
-  const latestRenderableMetric = renderableMetrics[renderableMetrics.length - 1] ?? latestMetrics;
   const hasWindowedReturn = latestRenderableMetric != null
     && firstRenderableMetric != null
     && renderableMetrics.length > 1;
@@ -277,6 +333,12 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
           <p className="text-sm text-arena-elements-textSecondary">
             {PERFORMANCE_SECTION_COPY.description}
           </p>
+          {(lastCheckpointLabel || liveNavLabel) && (
+            <p className="text-xs font-data text-arena-elements-textTertiary">
+              {lastCheckpointLabel ? `Last checkpoint: ${lastCheckpointLabel}` : 'Last checkpoint: unavailable'}
+              {liveNavLabel ? ` · Live NAV: ${liveNavLabel}` : ''}
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           {chartPoints.length > 0 ? (

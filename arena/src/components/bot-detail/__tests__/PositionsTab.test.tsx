@@ -188,4 +188,60 @@ describe('PositionsTab', () => {
     expect(screen.queryByText('Balance')).not.toBeInTheDocument();
     expect(screen.queryByText(/Live portfolio is unavailable while this bot is stopped/i)).not.toBeInTheDocument();
   });
+
+  it('renders Hyperliquid perp positions with perp-specific labels', () => {
+    mockPortfolio = makePortfolio({
+      totalValueUsd: 8.187387,
+      cashBalance: 0,
+      displayTotalValueUsd: 8.187387,
+      displayCashBalance: 0,
+      hasValueOnlyPositions: true,
+      positions: [
+        {
+          asset: resolveAssetDisplay('ETH'),
+          token: 'ETH',
+          symbol: 'WETH',
+          amount: 0.026,
+          valueUsd: 2.57049,
+          entryPrice: 2084.22,
+          currentPrice: null,
+          pnlPercent: null,
+          weight: 31.4,
+          protocol: 'hyperliquid',
+          positionType: 'long_perp',
+          marginUsedUsd: 2.57049,
+          notionalUsd: 51.4098,
+          unrealizedPnlUsd: -2.77992,
+          leverage: 20,
+          liquidationPrice: 1696.3270408163,
+          displayValueUsd: 2.57049,
+          displayPnlPercent: null,
+          displayWeight: 31.4,
+          warnings: ['Current price is unavailable.'],
+          valuationStatus: 'value_only',
+        },
+      ],
+    });
+
+    render(<PositionsTab botId="bot-1" status="active" operatorApiUrl="/operator-api" operatorKind="cloud" />);
+
+    expect(screen.getByText('Bot Equity')).toBeInTheDocument();
+    expect(screen.getAllByText('Margin Usage').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole('columnheader', { name: 'Position' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Notional' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Margin Used' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Weight' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Current' })).not.toBeInTheDocument();
+    expect(screen.getByText('ETH Perp')).toBeInTheDocument();
+    expect(screen.getByText('Long')).toBeInTheDocument();
+    expect(screen.getByText('0.026 ETH')).toBeInTheDocument();
+    expect(screen.getByText('$51.41')).toBeInTheDocument();
+    expect(screen.getByText('$2.57')).toBeInTheDocument();
+    expect(screen.getAllByText('31.4%').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('20x')).toBeInTheDocument();
+    expect(screen.getByText('-$2.78')).toBeInTheDocument();
+    expect(screen.getByText('$1,696.33')).toBeInTheDocument();
+    expect(screen.queryByText('Wrapped Ether')).not.toBeInTheDocument();
+    expect(screen.queryByText('Value only')).not.toBeInTheDocument();
+  });
 });

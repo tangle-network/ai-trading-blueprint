@@ -10,6 +10,13 @@ export interface Position {
   currentPrice: number | null;
   pnlPercent: number | null;
   weight: number | null;
+  protocol?: string;
+  positionType?: string;
+  marginUsedUsd?: number | null;
+  notionalUsd?: number | null;
+  unrealizedPnlUsd?: number | null;
+  leverage?: number | null;
+  liquidationPrice?: number | null;
   displayValueUsd: number | null;
   displayPnlPercent: number | null;
   displayWeight: number | null;
@@ -23,6 +30,9 @@ export interface Portfolio {
   cashBalance: number | null;
   displayTotalValueUsd: number | null;
   displayCashBalance: number | null;
+  source?: string | null;
+  observedAt?: string | null;
+  stale?: boolean;
   warnings: string[];
   hasUnpricedPositions: boolean;
   hasValueOnlyPositions: boolean;

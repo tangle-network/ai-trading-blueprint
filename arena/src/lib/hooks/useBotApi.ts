@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type {
+  HyperliquidTradeMetadata,
   PredictionTradeMetadata,
   Trade,
   TradeExecutionDetails,
@@ -24,7 +25,7 @@ interface ApiTrade {
   id: string;
   bot_id: string;
   timestamp: string;
-  action: 'buy' | 'sell';
+  action: Trade['action'];
   token_in: string;
   token_out: string;
   amount_in: string;
@@ -74,6 +75,12 @@ interface ApiTrade {
     outcome_index?: number;
     market_slug?: string;
   };
+  hyperliquid_metadata?: {
+    asset?: string;
+    asset_size?: string;
+    order_type?: string;
+    reduce_only?: boolean;
+  };
   valuation_status?: 'priced' | 'value_only' | 'unpriced';
   decision_source?: string;
   runner_signal?: unknown;
@@ -86,6 +93,7 @@ interface ApiTrade {
 type TradeStatusInput = {
   paper_trade: boolean;
   tx_hash?: string;
+  target_protocol?: string;
   validation?: {
     approved: boolean;
     simulation?: {
@@ -224,8 +232,14 @@ function parseTradeAmount(value: string | undefined): number {
   return Number(value ?? 0);
 }
 
+function parseHumanAmount(value: string | undefined): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export function getTradeStatus(trade: TradeStatusInput): Trade['status'] {
   if (trade.validation?.approved === false) return 'rejected';
+  if (trade.target_protocol === 'hyperliquid' && trade.tx_hash === 'hl:err') return 'rejected';
   if (trade.paper_trade && trade.validation?.simulation?.success === false) return 'failed';
   if (trade.paper_trade) return 'paper';
   if (trade.tx_hash) return 'executed';
@@ -242,6 +256,11 @@ function getTradePriceUsd(trade: ApiTrade): number | null {
   if (trade.valuation_status !== 'priced') return null;
   const priceUsd = parseTradeAmount(trade.entry_price_usd);
   return Number.isFinite(priceUsd) && priceUsd > 0 ? priceUsd : null;
+}
+
+function getTradeNotionalUsd(trade: ApiTrade): number | null {
+  const notionalUsd = parseTradeAmount(trade.notional_usd);
+  return Number.isFinite(notionalUsd) && notionalUsd > 0 ? notionalUsd : null;
 }
 
 function mapExecutionDetails(trade: ApiTrade): TradeExecutionDetails | undefined {
@@ -301,6 +320,22 @@ function mapPredictionMetadata(trade: ApiTrade): PredictionTradeMetadata | undef
   };
 }
 
+function mapHyperliquidMetadata(trade: ApiTrade): HyperliquidTradeMetadata | undefined {
+  const metadata = trade.hyperliquid_metadata;
+  if (!metadata) return undefined;
+
+  if (!metadata.asset && !metadata.asset_size && !metadata.order_type && metadata.reduce_only == null) {
+    return undefined;
+  }
+
+  return {
+    asset: metadata.asset,
+    assetSize: metadata.asset_size,
+    orderType: metadata.order_type,
+    reduceOnly: metadata.reduce_only,
+  };
+}
+
 export function mapApiTrade(
   trade: ApiTrade,
   botName: string,
@@ -310,6 +345,8 @@ export function mapApiTrade(
   const validation = mapApiValidation(trade);
   const execution = mapExecutionDetails(trade);
   const predictionMetadata = mapPredictionMetadata(trade);
+  const hyperliquidMetadata = mapHyperliquidMetadata(trade);
+  const isHyperliquid = trade.target_protocol === 'hyperliquid';
   const amountOut = deriveTradeAmountOut(trade);
   const chainId = trade.validation?.responses?.[0]?.chain_id ?? fallbackChainId;
   const assetIn = resolveAssetDisplay(trade.token_in, chainId, assetMetadata);
@@ -326,9 +363,12 @@ export function mapApiTrade(
     tokenOut: assetOut.symbol,
     rawTokenIn: trade.token_in,
     rawTokenOut: trade.token_out,
-    amountIn: parseTradeDisplayAmount(trade.amount_in, trade.token_in, chainId, assetMetadata),
+    amountIn: isHyperliquid
+      ? parseHumanAmount(trade.amount_in)
+      : parseTradeDisplayAmount(trade.amount_in, trade.token_in, chainId, assetMetadata),
     amountOut,
     priceUsd: getTradePriceUsd(trade),
+    notionalUsd: getTradeNotionalUsd(trade),
     timestamp: new Date(trade.timestamp).getTime(),
     status: getTradeStatus(trade),
     txHash: trade.tx_hash,
@@ -343,6 +383,7 @@ export function mapApiTrade(
     validation,
     execution,
     predictionMetadata,
+    hyperliquidMetadata,
     decisionSource: trade.decision_source,
     strategyModuleId: extractStrategyModuleId(trade.runner_signal),
     revisionId: trade.revision_id,
