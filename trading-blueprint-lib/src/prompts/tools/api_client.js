@@ -117,18 +117,34 @@ function normalizeIntent(intent = {}) {
   const amountIn = intent.amount_in || intent.amountIn || intent.amount || '0';
   const minAmountOut =
     intent.min_amount_out || intent.minAmountOut || intent.min_amount || intent.minAmount || '0';
+  const targetProtocol =
+    intent.target_protocol || intent.targetProtocol || intent.protocol || 'uniswap_v3';
+  const isHyperliquid = String(targetProtocol).toLowerCase() === 'hyperliquid';
+  const metadata = {
+    ...(intent.metadata || {}),
+  };
+  const configuredHlAccount =
+    (config.strategy_config && config.strategy_config.hyperliquid_account_address)
+    || config.hyperliquid_account_address;
+  if (isHyperliquid && configuredHlAccount && !metadata.hyperliquid_account_address) {
+    metadata.hyperliquid_account_address = configuredHlAccount;
+  }
   return {
     ...intent,
     strategy_id: intent.strategy_id || defaultStrategyId(config),
     action,
-    token_in: resolveTokenAddress(intent.token_in || intent.tokenIn),
-    token_out: resolveTokenAddress(intent.token_out || intent.tokenOut),
+    token_in: isHyperliquid
+      ? String(intent.token_in || intent.tokenIn || 'USDC')
+      : resolveTokenAddress(intent.token_in || intent.tokenIn),
+    token_out: isHyperliquid
+      ? String(intent.token_out || intent.tokenOut || 'USDC')
+      : resolveTokenAddress(intent.token_out || intent.tokenOut),
     amount_in: String(amountIn),
     min_amount_out: String(minAmountOut),
     amount_format: intent.amount_format || intent.amountFormat,
-    target_protocol:
-      intent.target_protocol || intent.targetProtocol || intent.protocol || 'uniswap_v3',
+    target_protocol: targetProtocol,
     deadline_secs: intent.deadline_secs || intent.deadlineSecs || 300,
+    metadata,
   };
 }
 
@@ -323,6 +339,33 @@ async function getHyperliquidSettlement() {
   return apiCall('GET', '/hyperliquid/settlement');
 }
 
+async function getHyperliquidFundingStatus() {
+  return apiCall('GET', '/hyperliquid/funding/status');
+}
+
+async function bridgeHyperliquidEvmUsdcToCore({ amount_usdc, amountUsdc }) {
+  return apiCall('POST', '/hyperliquid/funding/evm-usdc-to-core', {
+    amount_usdc: String(amount_usdc || amountUsdc),
+  });
+}
+
+async function transferHyperliquidUsdClass({ amount_usdc, amountUsdc, to_perp, toPerp }) {
+  return apiCall('POST', '/hyperliquid/funding/usd-class-transfer', {
+    amount_usdc: String(amount_usdc || amountUsdc),
+    to_perp: to_perp !== undefined ? Boolean(to_perp) : toPerp,
+  });
+}
+
+async function fundHyperliquidMargin({ amount_usdc, amountUsdc }) {
+  return apiCall('POST', '/hyperliquid/funding/prepare-perp-margin', {
+    amount_usdc: String(amount_usdc || amountUsdc),
+  });
+}
+
+async function approveHyperliquidApiWallet() {
+  return apiCall('POST', '/hyperliquid/funding/api-wallet-approval');
+}
+
 async function getMetrics() {
   return apiCall('GET', '/metrics');
 }
@@ -352,5 +395,10 @@ module.exports = {
   getHyperliquidNav,
   getHyperliquidMode,
   getHyperliquidSettlement,
+  getHyperliquidFundingStatus,
+  bridgeHyperliquidEvmUsdcToCore,
+  transferHyperliquidUsdClass,
+  fundHyperliquidMargin,
+  approveHyperliquidApiWallet,
   getMetrics,
 };

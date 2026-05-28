@@ -4,8 +4,8 @@ use crate::live_portfolio::{
 };
 use crate::routes::metrics::capture_metrics_snapshot_for_bot_with_state;
 use crate::trade_store::{
-    self, PredictionTradeMetadata, StoredSimulation, StoredValidation, StoredValidatorResponse,
-    TradeExecutionStatus, TradeRecord,
+    self, HyperliquidTradeMetadata, PredictionTradeMetadata, StoredSimulation, StoredValidation,
+    StoredValidatorResponse, TradeExecutionStatus, TradeRecord,
 };
 use crate::{MultiBotTradingState, TradingApiState, sandbox_store};
 use alloy::primitives::{Address, B256, Bytes, U256};
@@ -727,7 +727,38 @@ fn format_action(action: &trading_runtime::types::Action) -> String {
     .to_string()
 }
 
-fn hyperliquid_order_from_intent(intent: &TradeIntent) -> PlaceOrderRequest {
+fn hyperliquid_order_size(
+    metadata: &serde_json::Value,
+    fallback: &Decimal,
+) -> Result<String, (StatusCode, String)> {
+    let raw = ["asset_size", "sz", "size", "base_size"]
+        .into_iter()
+        .find_map(|key| {
+            metadata.get(key).and_then(|value| match value {
+                serde_json::Value::String(s) => Some(s.trim().to_string()),
+                serde_json::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            })
+        })
+        .unwrap_or_else(|| fallback.to_string());
+    let size = raw.parse::<Decimal>().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid Hyperliquid asset_size '{raw}': {e}"),
+        )
+    })?;
+    if size <= Decimal::ZERO {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Hyperliquid asset_size must be greater than zero".to_string(),
+        ));
+    }
+    Ok(size.normalize().to_string())
+}
+
+fn hyperliquid_order_from_intent(
+    intent: &TradeIntent,
+) -> Result<PlaceOrderRequest, (StatusCode, String)> {
     let is_buy = matches!(
         intent.action,
         trading_runtime::types::Action::OpenLong
@@ -779,14 +810,14 @@ fn hyperliquid_order_from_intent(intent: &TradeIntent) -> PlaceOrderRequest {
         AssetId::Symbol(intent.token_out.clone())
     };
 
-    PlaceOrderRequest {
+    Ok(PlaceOrderRequest {
         asset,
         is_buy,
-        size: intent.amount_in.to_string(),
+        size: hyperliquid_order_size(&intent.metadata, &intent.amount_in)?,
         order_type,
         reduce_only,
         cloid: None,
-    }
+    })
 }
 
 fn expected_validation_hashes(
@@ -817,7 +848,7 @@ fn expected_validation_hashes(
     }
 
     if intent.target_protocol == "hyperliquid" {
-        let order = hyperliquid_order_from_intent(intent);
+        let order = hyperliquid_order_from_intent(intent)?;
         let account = hyperliquid_account_from_intent(intent)?;
         let execution_hash =
             hash_hyperliquid_order(&order, &account, intent_hash, deadline, execution_chain_id);
@@ -1313,6 +1344,51 @@ fn current_hyperliquid_exposure_usd(
         )
     })?;
     Ok(total.abs())
+}
+
+fn hyperliquid_exchange_error(resp_json: &serde_json::Value) -> Option<String> {
+    let status = resp_json
+        .get("status")
+        .and_then(serde_json::Value::as_str)?;
+    if status.eq_ignore_ascii_case("err") {
+        return Some(
+            resp_json
+                .get("response")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("exchange returned status=err")
+                .to_string(),
+        );
+    }
+    if !status.eq_ignore_ascii_case("ok") {
+        return Some(format!("unexpected exchange status '{status}'"));
+    }
+
+    fn collect_status_errors(value: &serde_json::Value, errors: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Some(error) = map
+                    .get("error")
+                    .or_else(|| map.get("Error"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    errors.push(error.to_string());
+                }
+                for child in map.values() {
+                    collect_status_errors(child, errors);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for child in values {
+                    collect_status_errors(child, errors);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut errors = Vec::new();
+    collect_status_errors(resp_json.get("response").unwrap_or(resp_json), &mut errors);
+    (!errors.is_empty()).then(|| errors.join("; "))
 }
 
 fn effective_max_drawdown(
@@ -1964,6 +2040,7 @@ async fn execute_paper_trade(
             "Paper trade recorded without live execution reconciliation".to_string(),
         ),
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: None,
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
@@ -2058,6 +2135,7 @@ async fn execute_paper_clob_trade(
         slippage_bps: clob_slippage_bps(params.price, fill.average_price),
         execution_reason: Some(fill.fill_reason()),
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: None,
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
@@ -2336,6 +2414,7 @@ async fn execute_real_envelope_trade_inner(
         slippage_bps: None,
         execution_reason: Some("Confirmed via envelope-mode execution".into()),
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: None,
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
@@ -2503,6 +2582,7 @@ async fn execute_real_trade_inner(
             .output_gained
             .map(|_| "Confirmed from TradingVault execution event".to_string()),
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: None,
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
@@ -2603,6 +2683,7 @@ async fn execute_clob_trade(
             "Order submitted to Polymarket CLOB; fill details pending reconciliation".to_string(),
         ),
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: None,
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
@@ -2651,7 +2732,7 @@ async fn execute_hyperliquid_trade(
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
 
-    super::hyperliquid::require_hyperliquid_execution_ready(state, bot)?;
+    super::hyperliquid::require_hyperliquid_execution_ready(state, bot).await?;
     let hl_client = super::hyperliquid::get_hl_client(state)?;
     let account_address = super::hyperliquid::require_hyperliquid_account_address(bot)?;
     let intent_account = req
@@ -2726,7 +2807,7 @@ async fn execute_hyperliquid_trade(
     ) || metadata_reduce_only;
 
     // Determine order type from intent metadata
-    let order_type = if let Some(trigger_px) = req
+    let (order_type, order_type_label) = if let Some(trigger_px) = req
         .intent
         .metadata
         .get("trigger_price")
@@ -2745,15 +2826,21 @@ async fn execute_hyperliquid_trade(
             .and_then(|v| v.as_str())
             .unwrap_or("sl");
         if tpsl == "tp" {
-            HlOrderType::TakeProfit {
-                trigger_price: trigger_px.to_string(),
-                is_market,
-            }
+            (
+                HlOrderType::TakeProfit {
+                    trigger_price: trigger_px.to_string(),
+                    is_market,
+                },
+                "take_profit",
+            )
         } else {
-            HlOrderType::StopLoss {
-                trigger_price: trigger_px.to_string(),
-                is_market,
-            }
+            (
+                HlOrderType::StopLoss {
+                    trigger_price: trigger_px.to_string(),
+                    is_market,
+                },
+                "stop_loss",
+            )
         }
     } else if let Some(price) = req
         .intent
@@ -2761,35 +2848,57 @@ async fn execute_hyperliquid_trade(
         .get("limit_price")
         .and_then(|v| v.as_str())
     {
-        HlOrderType::Limit {
-            price: price.to_string(),
-        }
+        (
+            HlOrderType::Limit {
+                price: price.to_string(),
+            },
+            "limit",
+        )
     } else {
-        HlOrderType::Market
+        (HlOrderType::Market, "market")
     };
 
     // Resolve asset — prefer metadata.asset, fall back to token_out symbol
-    let asset = if let Some(asset_str) = req.intent.metadata.get("asset").and_then(|v| v.as_str()) {
-        AssetId::Symbol(asset_str.to_string())
-    } else {
-        AssetId::Symbol(req.intent.token_out.clone())
-    };
+    let asset_symbol =
+        if let Some(asset_str) = req.intent.metadata.get("asset").and_then(|v| v.as_str()) {
+            asset_str.to_string()
+        } else {
+            req.intent.token_out.clone()
+        };
+    let asset = AssetId::Symbol(asset_symbol.clone());
+    let asset_size = hyperliquid_order_size(
+        &req.intent.metadata,
+        &req.intent.amount_in.parse::<Decimal>().map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid amount_in '{}': {e}", req.intent.amount_in),
+            )
+        })?,
+    )?;
 
     let hl_req = PlaceOrderRequest {
         asset,
         is_buy,
-        size: req.intent.amount_in.clone(),
+        size: asset_size.clone(),
         order_type,
         reduce_only,
         cloid: None,
     };
 
+    let exchange_vault_address =
+        super::hyperliquid::hyperliquid_exchange_vault_address(&account_address).await?;
     let resp = hl_client
-        .place_order_for_account(&hl_req, Some(&account_address))
+        .place_order_for_account(&hl_req, exchange_vault_address.as_deref())
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
     let resp_json = serde_json::to_value(&resp).unwrap_or_default();
+    if let Some(error) = hyperliquid_exchange_error(&resp_json) {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("Hyperliquid order rejected: {error}"),
+        ));
+    }
     let tx_hash = format!(
         "hl:{}",
         resp_json
@@ -2824,6 +2933,12 @@ async fn execute_hyperliquid_trade(
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: Some(HyperliquidTradeMetadata {
+            asset: Some(asset_symbol),
+            asset_size: Some(asset_size.to_string()),
+            order_type: Some(order_type_label.to_string()),
+            reduce_only: Some(reduce_only),
+        }),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
@@ -3276,7 +3391,7 @@ async fn execute_multi_bot(
 
         let max_drawdown = effective_max_drawdown(signed_envelope.as_ref(), &bot.strategy_config);
         if normalized_req.intent.target_protocol == "hyperliquid" {
-            super::hyperliquid::require_hyperliquid_execution_ready(&state, &bot)?;
+            super::hyperliquid::require_hyperliquid_execution_ready(&state, &bot).await?;
             enforce_hyperliquid_live_risk(&state, &bot, max_drawdown).await?;
         } else if is_clob_trade {
             let clob = state.clob_client.as_ref().ok_or_else(|| {
@@ -4062,5 +4177,59 @@ mod tests {
 
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("intent_hash") || err.1.contains("execution_hash"));
+    }
+
+    #[test]
+    fn hyperliquid_order_hash_uses_explicit_asset_size() {
+        let mut req = make_execute_request(Some(1_999_999_999));
+        req.intent.action = "open_long".to_string();
+        req.intent.target_protocol = "hyperliquid".to_string();
+        req.intent.token_in = "USDC".to_string();
+        req.intent.token_out = "USDC".to_string();
+        req.intent.amount_in = "11".to_string();
+        req.intent.min_amount_out = "0".to_string();
+        req.intent.metadata = serde_json::json!({
+            "asset": "ETH",
+            "asset_size": "0.0052",
+            "hyperliquid_account_address": "0x0000000000000000000000000000000000000001"
+        });
+
+        let intent = parse_execute_request(&req, Some(42161)).expect("intent");
+        let order = hyperliquid_order_from_intent(&intent).expect("order");
+
+        assert_eq!(order.size, "0.0052");
+    }
+
+    #[test]
+    fn hyperliquid_exchange_error_rejects_top_level_err() {
+        let response = serde_json::json!({
+            "status": "err",
+            "response": "Insufficient margin"
+        });
+
+        assert_eq!(
+            hyperliquid_exchange_error(&response),
+            Some("Insufficient margin".to_string())
+        );
+    }
+
+    #[test]
+    fn hyperliquid_exchange_error_rejects_per_order_error_status() {
+        let response = serde_json::json!({
+            "status": "ok",
+            "response": {
+                "type": "order",
+                "data": {
+                    "statuses": [
+                        { "error": "Order must have minimum value of $10." }
+                    ]
+                }
+            }
+        });
+
+        assert_eq!(
+            hyperliquid_exchange_error(&response),
+            Some("Order must have minimum value of $10.".to_string())
+        );
     }
 }

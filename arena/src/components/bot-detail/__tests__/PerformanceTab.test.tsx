@@ -13,6 +13,7 @@ let mockMetricsSummary: Record<string, number> | undefined = {
   total_pnl: 0,
   trade_count: 0,
 };
+let mockPortfolio: Record<string, unknown> | undefined;
 let metricsIsLoading = false;
 let metricsIsError = false;
 
@@ -24,6 +25,10 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
   }),
   useBotMetricsSummary: () => ({
     data: mockMetricsSummary,
+  }),
+  useBotPortfolio: () => ({
+    data: mockPortfolio,
+    isLoading: false,
   }),
 }));
 
@@ -93,6 +98,7 @@ describe('PerformanceTab', () => {
     };
     metricsIsLoading = false;
     metricsIsError = false;
+    mockPortfolio = undefined;
   });
 
   it('shows an unavailable state when verified metrics fail to load', () => {
@@ -142,5 +148,60 @@ describe('PerformanceTab', () => {
     );
 
     expect(screen.getByText('$-7.87')).toBeInTheDocument();
+  });
+
+  it('labels live NAV separately when it is newer than the latest checkpoint', () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-05-27T10:05:11.000Z',
+        account_value_usd: 10.93,
+        realized_pnl: 0,
+        unrealized_pnl: -0.1,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockPortfolio = {
+      displayTotalValueUsd: 8.2,
+      observedAt: '2026-05-27T10:07:12.000Z',
+      stale: false,
+    };
+
+    render(
+      <PerformanceTab
+        bot={makeBot({ strategyType: 'hyperliquid_perp' })}
+        isLive
+      />,
+    );
+
+    expect(screen.getByText(/Last checkpoint: .*Live NAV:/)).toBeInTheDocument();
+  });
+
+  it('does not label live NAV when the latest checkpoint is already fresh', () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-05-27T10:05:11.000Z',
+        account_value_usd: 10.93,
+        realized_pnl: 0,
+        unrealized_pnl: -0.1,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockPortfolio = {
+      displayTotalValueUsd: 8.2,
+      observedAt: '2026-05-27T10:05:41.000Z',
+      stale: false,
+    };
+
+    render(
+      <PerformanceTab
+        bot={makeBot({ strategyType: 'hyperliquid_perp' })}
+        isLive
+      />,
+    );
+
+    expect(screen.getByText(/Last checkpoint:/)).toBeInTheDocument();
+    expect(screen.queryByText(/Live NAV:/)).not.toBeInTheDocument();
   });
 });

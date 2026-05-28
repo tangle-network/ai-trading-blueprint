@@ -51,6 +51,8 @@ pub struct TradeRecord {
     #[serde(default)]
     pub prediction_metadata: Option<PredictionTradeMetadata>,
     #[serde(default)]
+    pub hyperliquid_metadata: Option<HyperliquidTradeMetadata>,
+    #[serde(default)]
     pub valuation_status: TradeValuationStatus,
     pub validation: StoredValidation,
 
@@ -92,6 +94,18 @@ pub struct TradeRecord {
     /// Candidate paper equity after this trade, used to derive drawdown.
     #[serde(default)]
     pub paper_equity_after: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct HyperliquidTradeMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_size: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reduce_only: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]

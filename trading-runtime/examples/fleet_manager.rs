@@ -67,21 +67,93 @@ struct BotConfig {
 fn fleet() -> Vec<BotConfig> {
     vec![
         // ── Hyperliquid perps (native venue for the live testnet bot) ──
-        BotConfig { name: "hl-btc",     source: Source::Hyperliquid,   symbol: "BTC",       venue: "hyperliquid",    fee_protocol: "hyperliquid_perp" },
-        BotConfig { name: "hl-eth",     source: Source::Hyperliquid,   symbol: "ETH",       venue: "hyperliquid",    fee_protocol: "hyperliquid_perp" },
-        BotConfig { name: "hl-sol",     source: Source::Hyperliquid,   symbol: "SOL",       venue: "hyperliquid",    fee_protocol: "hyperliquid_perp" },
-        BotConfig { name: "hl-hype",    source: Source::Hyperliquid,   symbol: "HYPE",      venue: "hyperliquid",    fee_protocol: "hyperliquid_perp" },
+        BotConfig {
+            name: "hl-btc",
+            source: Source::Hyperliquid,
+            symbol: "BTC",
+            venue: "hyperliquid",
+            fee_protocol: "hyperliquid_perp",
+        },
+        BotConfig {
+            name: "hl-eth",
+            source: Source::Hyperliquid,
+            symbol: "ETH",
+            venue: "hyperliquid",
+            fee_protocol: "hyperliquid_perp",
+        },
+        BotConfig {
+            name: "hl-sol",
+            source: Source::Hyperliquid,
+            symbol: "SOL",
+            venue: "hyperliquid",
+            fee_protocol: "hyperliquid_perp",
+        },
+        BotConfig {
+            name: "hl-hype",
+            source: Source::Hyperliquid,
+            symbol: "HYPE",
+            venue: "hyperliquid",
+            fee_protocol: "hyperliquid_perp",
+        },
         // ── CEX cross-venue references for BTC/ETH (sanity check fills) ──
-        BotConfig { name: "bin-btc",    source: Source::Binance,       symbol: "BTC",       venue: "binance",        fee_protocol: "binance" },
-        BotConfig { name: "bin-eth",    source: Source::Binance,       symbol: "ETH",       venue: "binance",        fee_protocol: "binance" },
-        BotConfig { name: "cb-btc",     source: Source::Coinbase,      symbol: "BTC",       venue: "coinbase",       fee_protocol: "coinbase" },
-        BotConfig { name: "cb-eth",     source: Source::Coinbase,      symbol: "ETH",       venue: "coinbase",       fee_protocol: "coinbase" },
+        BotConfig {
+            name: "bin-btc",
+            source: Source::Binance,
+            symbol: "BTC",
+            venue: "binance",
+            fee_protocol: "binance",
+        },
+        BotConfig {
+            name: "bin-eth",
+            source: Source::Binance,
+            symbol: "ETH",
+            venue: "binance",
+            fee_protocol: "binance",
+        },
+        BotConfig {
+            name: "cb-btc",
+            source: Source::Coinbase,
+            symbol: "BTC",
+            venue: "coinbase",
+            fee_protocol: "coinbase",
+        },
+        BotConfig {
+            name: "cb-eth",
+            source: Source::Coinbase,
+            symbol: "ETH",
+            venue: "coinbase",
+            fee_protocol: "coinbase",
+        },
         // ── Drift: Solana perps native venue ──
-        BotConfig { name: "drift-sol",  source: Source::Drift,         symbol: "SOL",       venue: "drift",          fee_protocol: "drift" },
-        BotConfig { name: "drift-btc",  source: Source::Drift,         symbol: "BTC",       venue: "drift",          fee_protocol: "drift" },
+        BotConfig {
+            name: "drift-sol",
+            source: Source::Drift,
+            symbol: "SOL",
+            venue: "drift",
+            fee_protocol: "drift",
+        },
+        BotConfig {
+            name: "drift-btc",
+            source: Source::Drift,
+            symbol: "BTC",
+            venue: "drift",
+            fee_protocol: "drift",
+        },
         // ── DEX pools via GeckoTerminal (Aerodrome on Base, Uniswap V3 on eth) ──
-        BotConfig { name: "aerodrome-eth", source: Source::GeckoTerminal, symbol: "base:ETH", venue: "aerodrome",    fee_protocol: "aerodrome" },
-        BotConfig { name: "uni-eth-usdc",  source: Source::GeckoTerminal, symbol: "eth:ETH",  venue: "uniswap_v3",   fee_protocol: "uniswap_v3" },
+        BotConfig {
+            name: "aerodrome-eth",
+            source: Source::GeckoTerminal,
+            symbol: "base:ETH",
+            venue: "aerodrome",
+            fee_protocol: "aerodrome",
+        },
+        BotConfig {
+            name: "uni-eth-usdc",
+            source: Source::GeckoTerminal,
+            symbol: "eth:ETH",
+            venue: "uniswap_v3",
+            fee_protocol: "uniswap_v3",
+        },
     ]
 }
 
@@ -108,7 +180,10 @@ fn strategies() -> Vec<Strategy> {
                         tokens: vec![],
                     },
                     EntryRule {
-                        signal: SignalType::EmaCross { short_period: 12, long_period: 26 },
+                        signal: SignalType::EmaCross {
+                            short_period: 12,
+                            long_period: 26,
+                        },
                         condition: EntryCondition::CrossAbove,
                         weight: 0.5,
                         tokens: vec![],
@@ -137,7 +212,10 @@ fn strategies() -> Vec<Strategy> {
                         tokens: vec![],
                     },
                     EntryRule {
-                        signal: SignalType::EmaCross { short_period: 9, long_period: 21 },
+                        signal: SignalType::EmaCross {
+                            short_period: 9,
+                            long_period: 21,
+                        },
                         condition: EntryCondition::CrossAbove,
                         weight: 0.5,
                         tokens: vec![],
@@ -166,7 +244,10 @@ fn strategies() -> Vec<Strategy> {
                         tokens: vec![],
                     },
                     EntryRule {
-                        signal: SignalType::EmaCross { short_period: 20, long_period: 50 },
+                        signal: SignalType::EmaCross {
+                            short_period: 20,
+                            long_period: 50,
+                        },
                         condition: EntryCondition::CrossAbove,
                         weight: 0.6,
                         tokens: vec![],
@@ -209,13 +290,19 @@ fn strategies() -> Vec<Strategy> {
             harness: HarnessConfig {
                 version: 5,
                 entry_rules: vec![EntryRule {
-                    signal: SignalType::AtrBreakout { period: 14, multiplier: 2.0 },
+                    signal: SignalType::AtrBreakout {
+                        period: 14,
+                        multiplier: 2.0,
+                    },
                     condition: EntryCondition::Positive,
                     weight: 1.0,
                     tokens: vec![],
                 }],
                 exit_rules: vec![
-                    ExitRule::TrailingStop { activation_pct: 3.0, trail_pct: 2.0 },
+                    ExitRule::TrailingStop {
+                        activation_pct: 3.0,
+                        trail_pct: 2.0,
+                    },
                     ExitRule::StopLoss { pct: 4.0 },
                 ],
                 filters: vec![Filter::VolatilityGate {
@@ -307,10 +394,26 @@ fn expectancy(trades: &[SimulatedTrade]) -> f64 {
 
 /// Payoff ratio = avg(winning trade PnL%) / |avg(losing trade PnL%)|.
 fn payoff_ratio(trades: &[SimulatedTrade]) -> (f64, f64, f64) {
-    let wins: Vec<f64> = trades.iter().filter(|t| t.pnl_pct > 0.0).map(|t| t.pnl_pct).collect();
-    let losses: Vec<f64> = trades.iter().filter(|t| t.pnl_pct < 0.0).map(|t| t.pnl_pct).collect();
-    let avg_win = if wins.is_empty() { 0.0 } else { wins.iter().sum::<f64>() / wins.len() as f64 };
-    let avg_loss = if losses.is_empty() { 0.0 } else { losses.iter().sum::<f64>() / losses.len() as f64 };
+    let wins: Vec<f64> = trades
+        .iter()
+        .filter(|t| t.pnl_pct > 0.0)
+        .map(|t| t.pnl_pct)
+        .collect();
+    let losses: Vec<f64> = trades
+        .iter()
+        .filter(|t| t.pnl_pct < 0.0)
+        .map(|t| t.pnl_pct)
+        .collect();
+    let avg_win = if wins.is_empty() {
+        0.0
+    } else {
+        wins.iter().sum::<f64>() / wins.len() as f64
+    };
+    let avg_loss = if losses.is_empty() {
+        0.0
+    } else {
+        losses.iter().sum::<f64>() / losses.len() as f64
+    };
     let payoff = if avg_loss == 0.0 {
         if avg_win == 0.0 { 0.0 } else { f64::INFINITY }
     } else {
@@ -328,7 +431,8 @@ fn trade_returns(trades: &[SimulatedTrade]) -> Vec<f64> {
 }
 
 fn bot_seed(name: &str) -> u64 {
-    name.bytes().fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(b as u64))
+    name.bytes()
+        .fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(b as u64))
 }
 
 fn buy_and_hold_pct(candles: &[Candle]) -> f64 {
@@ -337,7 +441,11 @@ fn buy_and_hold_pct(candles: &[Candle]) -> f64 {
     }
     let open = d(candles.first().unwrap().open);
     let close = d(candles.last().unwrap().close);
-    if open == 0.0 { 0.0 } else { (close - open) / open * 100.0 }
+    if open == 0.0 {
+        0.0
+    } else {
+        (close - open) / open * 100.0
+    }
 }
 
 fn calibrated_fees(fee_protocol: &str) -> (u32, u32) {
@@ -355,27 +463,29 @@ fn run_backtest(strategy: &Strategy, candles: &[Candle], fee_protocol: &str) -> 
         gas_cost_usd: Decimal::new(gas_usd as i64, 0),
         taker_fee_bps: taker_bps,
     };
-    BacktestEngine::new(config).run(candles, &[]).unwrap_or_else(|_| BacktestResult {
-        trades: vec![],
-        equity_curve: vec![],
-        stats: trading_runtime::leaderboard::LeaderboardStats {
-            bot_id: String::new(),
-            total_return_pct: 0.0,
-            sharpe_ratio: 0.0,
-            sortino_ratio: 0.0,
-            max_drawdown_pct: 0.0,
-            calmar_ratio: 0.0,
-            win_rate: 0.0,
-            total_trades: 0,
-            profitable_trades: 0,
-            days_active: 0.0,
-        },
-        total_fees: Decimal::ZERO,
-        total_slippage: Decimal::ZERO,
-        total_gas: Decimal::ZERO,
-        candles_processed: 0,
-        tokens_traded: vec![],
-    })
+    BacktestEngine::new(config)
+        .run(candles, &[])
+        .unwrap_or_else(|_| BacktestResult {
+            trades: vec![],
+            equity_curve: vec![],
+            stats: trading_runtime::leaderboard::LeaderboardStats {
+                bot_id: String::new(),
+                total_return_pct: 0.0,
+                sharpe_ratio: 0.0,
+                sortino_ratio: 0.0,
+                max_drawdown_pct: 0.0,
+                calmar_ratio: 0.0,
+                win_rate: 0.0,
+                total_trades: 0,
+                profitable_trades: 0,
+                days_active: 0.0,
+            },
+            total_fees: Decimal::ZERO,
+            total_slippage: Decimal::ZERO,
+            total_gas: Decimal::ZERO,
+            candles_processed: 0,
+            tokens_traded: vec![],
+        })
 }
 
 fn analyze(bot: &BotConfig, strategy: &Strategy, candles: &[Candle]) -> Performance {
@@ -403,7 +513,8 @@ fn analyze(bot: &BotConfig, strategy: &Strategy, candles: &[Candle]) -> Performa
     // invariant estimator like Sharpe this collapses (see monte_carlo tests),
     // but we record it so the report can show whether a more path-dependent
     // statistic (e.g. max-drawdown) signals timing edge later.
-    let mc = monte_carlo::trade_order_shuffle(&returns, MONTE_CARLO_SHUFFLES, seed, bootstrap::sharpe);
+    let mc =
+        monte_carlo::trade_order_shuffle(&returns, MONTE_CARLO_SHUFFLES, seed, bootstrap::sharpe);
 
     let bnh = buy_and_hold_pct(candles);
 
@@ -449,16 +560,26 @@ fn pick_best<'a>(
 ) -> Option<(&'a String, &'a Performance)> {
     let mut best: Option<(&String, &Performance)> = None;
     for ((b, s), stats) in results {
-        if b != bot || stats.n_trades < MIN_TRADES_FOR_BEST { continue; }
-        if best.map(|(_, bs)| stats.sharpe_ratio > bs.sharpe_ratio).unwrap_or(true) {
+        if b != bot || stats.n_trades < MIN_TRADES_FOR_BEST {
+            continue;
+        }
+        if best
+            .map(|(_, bs)| stats.sharpe_ratio > bs.sharpe_ratio)
+            .unwrap_or(true)
+        {
             best = Some((s, stats));
         }
     }
     // Fallback when no strategy actually traded ≥MIN_TRADES_FOR_BEST.
     if best.is_none() {
         for ((b, s), stats) in results {
-            if b != bot { continue; }
-            if best.map(|(_, bs)| stats.sharpe_ratio > bs.sharpe_ratio).unwrap_or(true) {
+            if b != bot {
+                continue;
+            }
+            if best
+                .map(|(_, bs)| stats.sharpe_ratio > bs.sharpe_ratio)
+                .unwrap_or(true)
+            {
                 best = Some((s, stats));
             }
         }
@@ -477,13 +598,27 @@ fn pick_best_strategy<'a>(
 }
 
 fn fmt_f(v: f64, prec: usize) -> String {
-    if v.is_nan() { "    n/a".into() }
-    else if v.is_infinite() { if v.is_sign_positive() { "   inf".into() } else { "  -inf".into() } }
-    else { format!("{:>7.*}", prec, v) }
+    if v.is_nan() {
+        "    n/a".into()
+    } else if v.is_infinite() {
+        if v.is_sign_positive() {
+            "   inf".into()
+        } else {
+            "  -inf".into()
+        }
+    } else {
+        format!("{:>7.*}", prec, v)
+    }
 }
 
 fn fmt_pf(v: f64) -> String {
-    if v.is_infinite() { "  ∞ ".into() } else if v.is_nan() { " n/a".into() } else { format!("{:>4.2}", v) }
+    if v.is_infinite() {
+        "  ∞ ".into()
+    } else if v.is_nan() {
+        " n/a".into()
+    } else {
+        format!("{:>4.2}", v)
+    }
 }
 
 fn section(title: &str) {
@@ -496,27 +631,56 @@ fn print_executive_summary(results: &BTreeMap<(String, String), Performance>) {
     section("§1 — Executive summary");
     let total_runs = results.len();
     let positive = results.values().filter(|s| s.sharpe_ratio > 0.0).count();
-    let beats_bnh = results.values().filter(|s| s.excess_vs_bnh_pct > 0.0).count();
+    let beats_bnh = results
+        .values()
+        .filter(|s| s.excess_vs_bnh_pct > 0.0)
+        .count();
     let total_trades: usize = results.values().map(|s| s.n_trades).sum();
     let total_fees: f64 = results.values().map(|s| s.total_fees_usd).sum();
     let total_slip: f64 = results.values().map(|s| s.total_slippage_usd).sum();
     let avg_sharpe = results.values().map(|s| s.sharpe_ratio).sum::<f64>() / total_runs as f64;
     let avg_dd = results.values().map(|s| s.max_drawdown_pct).sum::<f64>() / total_runs as f64;
-    println!("  Universe.................. {} (bot, strategy) runs", total_runs);
+    println!(
+        "  Universe.................. {} (bot, strategy) runs",
+        total_runs
+    );
     println!("  Capital per run........... ${} (paper)", INITIAL_CAPITAL);
-    println!("  Bars per bot.............. {} hourly (~{:.0} days)", LIMIT, LIMIT as f64 / 24.0);
+    println!(
+        "  Bars per bot.............. {} hourly (~{:.0} days)",
+        LIMIT,
+        LIMIT as f64 / 24.0
+    );
     println!("  Total simulated trades.... {}", total_trades);
-    println!("  Total realised fees....... ${:.2}   (venue-calibrated taker rates)", total_fees);
-    println!("  Total realised slippage... ${:.2}   (FixedBps 10 across the board — see caveats)", total_slip);
+    println!(
+        "  Total realised fees....... ${:.2}   (venue-calibrated taker rates)",
+        total_fees
+    );
+    println!(
+        "  Total realised slippage... ${:.2}   (FixedBps 10 across the board — see caveats)",
+        total_slip
+    );
     println!("  Avg Sharpe (trade)........ {:.2}", avg_sharpe);
     println!("  Avg max drawdown.......... {:.1}%", avg_dd);
-    println!("  Runs with positive Sharpe. {} / {}  ({:.0}%)", positive, total_runs, 100.0 * positive as f64 / total_runs as f64);
-    println!("  Runs beating buy-and-hold. {} / {}  ({:.0}%)", beats_bnh, total_runs, 100.0 * beats_bnh as f64 / total_runs as f64);
+    println!(
+        "  Runs with positive Sharpe. {} / {}  ({:.0}%)",
+        positive,
+        total_runs,
+        100.0 * positive as f64 / total_runs as f64
+    );
+    println!(
+        "  Runs beating buy-and-hold. {} / {}  ({:.0}%)",
+        beats_bnh,
+        total_runs,
+        100.0 * beats_bnh as f64 / total_runs as f64
+    );
 }
 
 fn print_best_per_bot(results: &BTreeMap<(String, String), Performance>, bots: &[BotConfig]) {
     section("§2 — Best strategy per bot (with 95% bootstrap CI on Sharpe vs buy-and-hold)");
-    println!("  {:<18} {:<14} {:<18}    Sharpe (95% CI)    DD%    Win%   Trades   BnH%    Excess%", "bot", "venue", "best strategy");
+    println!(
+        "  {:<18} {:<14} {:<18}    Sharpe (95% CI)    DD%    Win%   Trades   BnH%    Excess%",
+        "bot", "venue", "best strategy"
+    );
     println!("  {}", "-".repeat(108));
     for bot in bots {
         // Pick the strategy with the highest Sharpe AMONG those with ≥10
@@ -544,10 +708,16 @@ fn print_best_per_bot(results: &BTreeMap<(String, String), Performance>, bots: &
     }
 }
 
-fn print_strategy_matrix(results: &BTreeMap<(String, String), Performance>, bots: &[BotConfig], strats: &[Strategy]) {
+fn print_strategy_matrix(
+    results: &BTreeMap<(String, String), Performance>,
+    bots: &[BotConfig],
+    strats: &[Strategy],
+) {
     section("§3 — Strategy × bot Sharpe matrix");
     print!("  {:<18}", "bot");
-    for s in strats { print!(" {:>14}", s.name); }
+    for s in strats {
+        print!(" {:>14}", s.name);
+    }
     println!();
     println!("  {}", "-".repeat(18 + strats.len() * 15));
     for bot in bots {
@@ -564,10 +734,16 @@ fn print_strategy_matrix(results: &BTreeMap<(String, String), Performance>, bots
     }
 }
 
-fn print_risk_decomposition(results: &BTreeMap<(String, String), Performance>, bots: &[BotConfig], strats: &[Strategy]) {
+fn print_risk_decomposition(
+    results: &BTreeMap<(String, String), Performance>,
+    bots: &[BotConfig],
+    strats: &[Strategy],
+) {
     section("§4 — Risk decomposition (best-strategy row per bot)");
-    println!("  {:<18} {:<14}  Sharpe  Sortino  Calmar   DD%   ProfitFactor  Expectancy$  Payoff",
-             "bot", "best-strat");
+    println!(
+        "  {:<18} {:<14}  Sharpe  Sortino  Calmar   DD%   ProfitFactor  Expectancy$  Payoff",
+        "bot", "best-strat"
+    );
     println!("  {}", "-".repeat(105));
     for bot in bots {
         let best = pick_best_strategy(results, bot.name, strats);
@@ -587,17 +763,33 @@ fn print_risk_decomposition(results: &BTreeMap<(String, String), Performance>, b
     }
 }
 
-fn print_walk_forward(results: &BTreeMap<(String, String), Performance>, bots: &[BotConfig], strats: &[Strategy]) {
-    section("§5 — Walk-forward (70/30 in-sample → out-of-sample). Large positive gap = likely overfit.");
-    println!("  {:<18} {:<16}   IS Sharpe    OOS Sharpe     Gap (IS - OOS)",
-             "bot", "strategy");
+fn print_walk_forward(
+    results: &BTreeMap<(String, String), Performance>,
+    bots: &[BotConfig],
+    strats: &[Strategy],
+) {
+    section(
+        "§5 — Walk-forward (70/30 in-sample → out-of-sample). Large positive gap = likely overfit.",
+    );
+    println!(
+        "  {:<18} {:<16}   IS Sharpe    OOS Sharpe     Gap (IS - OOS)",
+        "bot", "strategy"
+    );
     println!("  {}", "-".repeat(80));
     for bot in bots {
         for s in strats {
             if let Some(st) = results.get(&(bot.name.to_string(), s.name.to_string())) {
-                if st.n_trades < 3 { continue; }
+                if st.n_trades < 3 {
+                    continue;
+                }
                 let gap = st.in_sample_sharpe - st.out_of_sample_sharpe;
-                let flag = if gap > 1.0 { " ← potential overfit" } else if gap < -0.5 { " (OOS stronger)" } else { "" };
+                let flag = if gap > 1.0 {
+                    " ← potential overfit"
+                } else if gap < -0.5 {
+                    " (OOS stronger)"
+                } else {
+                    ""
+                };
                 println!(
                     "  {:<18} {:<16}   {:>9.2}    {:>9.2}     {:>+8.2}{}",
                     bot.name, s.name, st.in_sample_sharpe, st.out_of_sample_sharpe, gap, flag,
@@ -607,26 +799,45 @@ fn print_walk_forward(results: &BTreeMap<(String, String), Performance>, bots: &
     }
 }
 
-fn print_trade_stats(results: &BTreeMap<(String, String), Performance>, bots: &[BotConfig], strats: &[Strategy]) {
+fn print_trade_stats(
+    results: &BTreeMap<(String, String), Performance>,
+    bots: &[BotConfig],
+    strats: &[Strategy],
+) {
     section("§6 — Trade quality (best-strategy row per bot)");
-    println!("  {:<18} {:<14} Trades  Win%   AvgWin%   AvgLoss%   Expectancy$   Payoff   ProfitFactor",
-             "bot", "best-strat");
+    println!(
+        "  {:<18} {:<14} Trades  Win%   AvgWin%   AvgLoss%   Expectancy$   Payoff   ProfitFactor",
+        "bot", "best-strat"
+    );
     println!("  {}", "-".repeat(108));
     for bot in bots {
         let best = pick_best_strategy(results, bot.name, strats);
         let Some((s, st)) = best else { continue };
         println!(
             "  {:<18} {:<14} {:>6}  {:>4.1}  {:>+7.2}  {:>+8.2}   {:>+10.2}     {}    {}",
-            bot.name, s.name, st.n_trades, st.win_rate_pct, st.avg_win_pct, st.avg_loss_pct,
-            st.expectancy_usd, fmt_pf(st.payoff_ratio), fmt_pf(st.profit_factor),
+            bot.name,
+            s.name,
+            st.n_trades,
+            st.win_rate_pct,
+            st.avg_win_pct,
+            st.avg_loss_pct,
+            st.expectancy_usd,
+            fmt_pf(st.payoff_ratio),
+            fmt_pf(st.profit_factor),
         );
     }
 }
 
-fn print_cost_breakdown(results: &BTreeMap<(String, String), Performance>, bots: &[BotConfig], strats: &[Strategy]) {
+fn print_cost_breakdown(
+    results: &BTreeMap<(String, String), Performance>,
+    bots: &[BotConfig],
+    strats: &[Strategy],
+) {
     section("§7 — Cost breakdown (best-strategy row per bot, venue-calibrated taker bps)");
-    println!("  {:<18} {:<14} Fee$   Slip$    Gas$   Total$   bps of $10k init",
-             "bot", "best-strat");
+    println!(
+        "  {:<18} {:<14} Fee$   Slip$    Gas$   Total$   bps of $10k init",
+        "bot", "best-strat"
+    );
     println!("  {}", "-".repeat(78));
     for bot in bots {
         let best = pick_best_strategy(results, bot.name, strats);
@@ -635,12 +846,22 @@ fn print_cost_breakdown(results: &BTreeMap<(String, String), Performance>, bots:
         let bps = total / INITIAL_CAPITAL as f64 * 10_000.0;
         println!(
             "  {:<18} {:<14} {:>5.2}  {:>5.2}  {:>5.2}   {:>6.2}    {:>6.1}",
-            bot.name, s.name, st.total_fees_usd, st.total_slippage_usd, st.total_gas_usd, total, bps,
+            bot.name,
+            s.name,
+            st.total_fees_usd,
+            st.total_slippage_usd,
+            st.total_gas_usd,
+            total,
+            bps,
         );
     }
 }
 
-fn print_monte_carlo(results: &BTreeMap<(String, String), Performance>, bots: &[BotConfig], strats: &[Strategy]) {
+fn print_monte_carlo(
+    results: &BTreeMap<(String, String), Performance>,
+    bots: &[BotConfig],
+    strats: &[Strategy],
+) {
     section("§9 — Monte Carlo trade-order stability (best-strategy row per bot)");
     println!(
         "  {:<18} {:<14}    Realised   shuffled P05  P50   P95   percentile-of-realised   verdict",
@@ -648,7 +869,9 @@ fn print_monte_carlo(results: &BTreeMap<(String, String), Performance>, bots: &[
     );
     println!("  {}", "-".repeat(105));
     for bot in bots {
-        let Some((s, st)) = pick_best_strategy(results, bot.name, strats) else { continue };
+        let Some((s, st)) = pick_best_strategy(results, bot.name, strats) else {
+            continue;
+        };
         // Sharpe is permutation-invariant so the shuffled distribution collapses;
         // percentile ≈ 100% by the ≤-rule. We surface this honestly rather than
         // hide it — the column has real signal once we extend Performance to
@@ -666,7 +889,14 @@ fn print_monte_carlo(results: &BTreeMap<(String, String), Performance>, bots: &[
         };
         println!(
             "  {:<18} {:<14}    {:>+7.2}   {:>+7.2}  {:>+5.2} {:>+5.2}   {:>10.1}%             {}",
-            bot.name, s.name, st.mc_realised, st.mc_p05, st.mc_p50, st.mc_p95, st.mc_percentile, verdict,
+            bot.name,
+            s.name,
+            st.mc_realised,
+            st.mc_p05,
+            st.mc_p50,
+            st.mc_p95,
+            st.mc_percentile,
+            verdict,
         );
     }
 }
@@ -679,13 +909,21 @@ fn print_regime_distribution(by_bot: &BTreeMap<String, Vec<regime::Regime>>, bot
     );
     println!("  {}", "-".repeat(85));
     for bot in bots {
-        let Some(regimes) = by_bot.get(bot.name) else { continue };
+        let Some(regimes) = by_bot.get(bot.name) else {
+            continue;
+        };
         let total = regimes.len().max(1);
         let pct = |label: &str| {
-            let n = regime::distribution(regimes).get(label).copied().unwrap_or(0);
+            let n = regime::distribution(regimes)
+                .get(label)
+                .copied()
+                .unwrap_or(0);
             100.0 * n as f64 / total as f64
         };
-        let unknown = regimes.iter().filter(|r| matches!(r, regime::Regime::Unknown)).count();
+        let unknown = regimes
+            .iter()
+            .filter(|r| matches!(r, regime::Regime::Unknown))
+            .count();
         println!(
             "  {:<18} {:<14}    {:>5.1}%   {:>4.1}%   {:>6.1}%   {:>5.1}%   {:>5.1}%",
             bot.name,
@@ -701,61 +939,131 @@ fn print_regime_distribution(by_bot: &BTreeMap<String, Vec<regime::Regime>>, bot
 
 fn print_caveats() {
     section("§11 — Caveats & disclosures (read carefully before believing any number above)");
-    println!("  1. Sample size. {} hourly bars (~{:.0} days) is a single macro-regime — these stats are", LIMIT, LIMIT as f64 / 24.0);
-    println!("     point estimates from one period of crypto's recent history. They are NOT a base-rate");
-    println!("     for next year. Bootstrap CIs widen the range honestly; the 30%-tile of resamples is");
+    println!(
+        "  1. Sample size. {} hourly bars (~{:.0} days) is a single macro-regime — these stats are",
+        LIMIT,
+        LIMIT as f64 / 24.0
+    );
+    println!(
+        "     point estimates from one period of crypto's recent history. They are NOT a base-rate"
+    );
+    println!(
+        "     for next year. Bootstrap CIs widen the range honestly; the 30%-tile of resamples is"
+    );
     println!("     what you should anchor on, not the median.");
     println!();
-    println!("  2. Look-ahead in indicators. RSI / EMA / ATR computed up to candle N are causal in this");
-    println!("     engine — confirmed by reading `backtest::indicators` — so there is no inadvertent");
+    println!(
+        "  2. Look-ahead in indicators. RSI / EMA / ATR computed up to candle N are causal in this"
+    );
+    println!(
+        "     engine — confirmed by reading `backtest::indicators` — so there is no inadvertent"
+    );
     println!("     peeking. The exit rules use the OPEN of the next candle, also causal.");
     println!();
-    println!("  3. Slippage. Modelled as fixed 10 bps across every venue. That is honest for HL native");
-    println!("     orders (which trade against a deep clearinghouse book), generous for thin DEX pools,");
-    println!("     and pessimistic for Binance / Coinbase deep books. Switch to SqrtImpact for the");
+    println!(
+        "  3. Slippage. Modelled as fixed 10 bps across every venue. That is honest for HL native"
+    );
+    println!(
+        "     orders (which trade against a deep clearinghouse book), generous for thin DEX pools,"
+    );
+    println!(
+        "     and pessimistic for Binance / Coinbase deep books. Switch to SqrtImpact for the"
+    );
     println!("     DEX bots to model thinner liquidity properly — that's an N+1 PR.");
     println!();
-    println!("  4. Fees. Venue-calibrated taker rates from `protocol_fees::SCHEDULES` — the same table");
-    println!("     the live execute path and the agent's loop prompt read. No tier discounts assumed");
+    println!(
+        "  4. Fees. Venue-calibrated taker rates from `protocol_fees::SCHEDULES` — the same table"
+    );
+    println!(
+        "     the live execute path and the agent's loop prompt read. No tier discounts assumed"
+    );
     println!("     (conservative — high-volume operators would pay less).");
     println!();
-    println!("  5. Walk-forward. 70/30 train/test on the SAME period; this is a within-sample temporal");
-    println!("     split, not k-fold across years. A positive OOS Sharpe is encouraging; it is not a");
+    println!(
+        "  5. Walk-forward. 70/30 train/test on the SAME period; this is a within-sample temporal"
+    );
+    println!(
+        "     split, not k-fold across years. A positive OOS Sharpe is encouraging; it is not a"
+    );
     println!("     guarantee. A large IS→OOS gap is a strong overfitting signal (flagged in §5).");
     println!();
     println!("  6. Funding. Perp funding rates are NOT modelled here — the engine accepts a");
-    println!("     FundingSnapshot input but the live HL adapter doesn't snapshot it yet. For carry-");
-    println!("     sensitive strategies (long-short basis), wire the funding snapshot before trusting");
-    println!("     the perp Sharpes. Today's strategies are momentum / mean-rev — relatively funding-");
+    println!(
+        "     FundingSnapshot input but the live HL adapter doesn't snapshot it yet. For carry-"
+    );
+    println!(
+        "     sensitive strategies (long-short basis), wire the funding snapshot before trusting"
+    );
+    println!(
+        "     the perp Sharpes. Today's strategies are momentum / mean-rev — relatively funding-"
+    );
     println!("     neutral on 1h horizons — but it's a known omission.");
     println!();
-    println!("  7. Capital. Each bot runs in isolation with $10k. A real portfolio would correlate-");
-    println!("     adjust position sizes and would NOT take 12 independent BTC/ETH positions across");
-    println!("     venues — they're collinear. Treat the per-bot Sharpe as a strategy quality signal,");
+    println!(
+        "  7. Capital. Each bot runs in isolation with $10k. A real portfolio would correlate-"
+    );
+    println!(
+        "     adjust position sizes and would NOT take 12 independent BTC/ETH positions across"
+    );
+    println!(
+        "     venues — they're collinear. Treat the per-bot Sharpe as a strategy quality signal,"
+    );
     println!("     not as a recommended allocation.");
     println!();
-    println!("  8. Survivorship. The HL universe used here (BTC/ETH/SOL/HYPE) was selected because they");
-    println!("     exist on HL today. The same selection for 6 months ago would have included tokens");
+    println!(
+        "  8. Survivorship. The HL universe used here (BTC/ETH/SOL/HYPE) was selected because they"
+    );
+    println!(
+        "     exist on HL today. The same selection for 6 months ago would have included tokens"
+    );
     println!("     that have since delisted. Mild survivorship bias; explicit.");
     println!();
-    println!("  9. Promotion gate. \"Promote if Sharpe ≥ +10% AND drawdown regression ≤ +5pp\" matches the");
-    println!("     playbook. A single-period gate on a noisy estimator overfits in expectation — the");
-    println!("     production loop accumulates evidence over many runs and never bets on a single observation;");
-    println!("     this snapshot is one observation per (bot, strategy), not a converged decision.");
+    println!(
+        "  9. Promotion gate. \"Promote if Sharpe ≥ +10% AND drawdown regression ≤ +5pp\" matches the"
+    );
+    println!(
+        "     playbook. A single-period gate on a noisy estimator overfits in expectation — the"
+    );
+    println!(
+        "     production loop accumulates evidence over many runs and never bets on a single observation;"
+    );
+    println!(
+        "     this snapshot is one observation per (bot, strategy), not a converged decision."
+    );
     println!();
-    println!(" 10. Monte Carlo on Sharpe is informational here, not load-bearing. Sharpe is permutation-");
-    println!("     invariant (mean/std are symmetric in their arguments), so the shuffled distribution");
-    println!("     collapses by construction — §9's percentile column reflects floating-point order");
-    println!("     drift, not strategy timing edge. Wire a path-dependent statistic (max-drawdown,");
-    println!("     terminal equity, longest losing run) into Performance + the trade-order shuffle to");
-    println!("     give that column real signal; analytics::monte_carlo accepts any closure today.");
+    println!(
+        " 10. Monte Carlo on Sharpe is informational here, not load-bearing. Sharpe is permutation-"
+    );
+    println!(
+        "     invariant (mean/std are symmetric in their arguments), so the shuffled distribution"
+    );
+    println!(
+        "     collapses by construction — §9's percentile column reflects floating-point order"
+    );
+    println!(
+        "     drift, not strategy timing edge. Wire a path-dependent statistic (max-drawdown,"
+    );
+    println!(
+        "     terminal equity, longest losing run) into Performance + the trade-order shuffle to"
+    );
+    println!(
+        "     give that column real signal; analytics::monte_carlo accepts any closure today."
+    );
     println!();
-    println!(" 11. Still missing for a fully-defensible institutional brief: regime-conditioned P&L");
+    println!(
+        " 11. Still missing for a fully-defensible institutional brief: regime-conditioned P&L"
+    );
     println!("     (slice §10's regime labels by trade entry, report Sharpe per bucket), per-tick");
-    println!("     latency budget, per-signal P&L attribution (needs SimulatedTrade.triggered_signals),");
-    println!("     correlation-aware position sizing, funding-rate carry on perps, and a return-stream");
+    println!(
+        "     latency budget, per-signal P&L attribution (needs SimulatedTrade.triggered_signals),"
+    );
+    println!(
+        "     correlation-aware position sizing, funding-rate carry on perps, and a return-stream"
+    );
     println!("     shuffle vs random walk. The analytics primitives (`analytics::{{bootstrap,");
-    println!("     walk_forward, monte_carlo, regime}}`) all support these by construction — they're now");
+    println!(
+        "     walk_forward, monte_carlo, regime}}`) all support these by construction — they're now"
+    );
     println!("     platform code, NOT per-strategy work. Every new strategy gets them for free.");
 }
 
@@ -766,7 +1074,11 @@ async fn main() {
     println!("\nAI Trading Blueprint — Fleet Review (institutional grade)");
     println!("Generated: {}", chrono::Utc::now().to_rfc3339());
     println!("Commit: {}", env!("CARGO_PKG_VERSION"));
-    println!("Bars per bot: {} (1h interval) — ~{:.0} days of native-venue data\n", LIMIT, LIMIT as f64 / 24.0);
+    println!(
+        "Bars per bot: {} (1h interval) — ~{:.0} days of native-venue data\n",
+        LIMIT,
+        LIMIT as f64 / 24.0
+    );
 
     let bots = fleet();
     let strats = strategies();
@@ -776,13 +1088,27 @@ async fn main() {
     println!("Phase 1/3 — fetching candles from native venues…");
     for bot in &bots {
         let t0 = Instant::now();
-        match candle_sources::fetch_from_source(bot.source, bot.symbol, Interval::Hour1, LIMIT).await {
+        match candle_sources::fetch_from_source(bot.source, bot.symbol, Interval::Hour1, LIMIT)
+            .await
+        {
             Ok(c) if !c.is_empty() => {
-                println!("  ✓ {:<18} {:<13} {:>5} bars in {:>6.2}s", bot.name, bot.venue, c.len(), t0.elapsed().as_secs_f64());
+                println!(
+                    "  ✓ {:<18} {:<13} {:>5} bars in {:>6.2}s",
+                    bot.name,
+                    bot.venue,
+                    c.len(),
+                    t0.elapsed().as_secs_f64()
+                );
                 candles_by_bot.insert(bot.name.to_string(), c);
             }
-            Ok(_) => println!("  ⚠ {:<18} {:<13} returned 0 bars (skipped)", bot.name, bot.venue),
-            Err(e) => println!("  ✗ {:<18} {:<13} fetch failed: {} (skipped)", bot.name, bot.venue, e),
+            Ok(_) => println!(
+                "  ⚠ {:<18} {:<13} returned 0 bars (skipped)",
+                bot.name, bot.venue
+            ),
+            Err(e) => println!(
+                "  ✗ {:<18} {:<13} fetch failed: {} (skipped)",
+                bot.name, bot.venue, e
+            ),
         }
     }
 
@@ -795,7 +1121,9 @@ async fn main() {
     let mut regime_by_bot: BTreeMap<String, Vec<regime::Regime>> = BTreeMap::new();
     let t_bt = Instant::now();
     for bot in &bots {
-        let Some(candles) = candles_by_bot.get(bot.name) else { continue };
+        let Some(candles) = candles_by_bot.get(bot.name) else {
+            continue;
+        };
         for s in &strats {
             let stats = analyze(bot, s, candles);
             results.insert((bot.name.to_string(), s.name.to_string()), stats);
@@ -826,6 +1154,9 @@ async fn main() {
     print_regime_distribution(&regime_by_bot, &bots);
     print_caveats();
     println!("\n{}", "═".repeat(110));
-    println!("  end of fleet review — total wall clock {:.2}s", started.elapsed().as_secs_f64());
+    println!(
+        "  end of fleet review — total wall clock {:.2}s",
+        started.elapsed().as_secs_f64()
+    );
     println!("{}\n", "═".repeat(110));
 }

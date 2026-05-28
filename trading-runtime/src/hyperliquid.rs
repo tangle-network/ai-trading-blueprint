@@ -110,7 +110,21 @@ pub struct HyperliquidClient {
     exchange: Exchange,
     info: Info,
     wallet: Arc<LocalWallet>,
+    info_api_url: &'static str,
     asset_map: tokio::sync::RwLock<Option<Vec<String>>>,
+}
+
+const HYPERLIQUID_INFO_URL_MAINNET: &str = "https://api.hyperliquid.xyz/info";
+const HYPERLIQUID_INFO_URL_TESTNET: &str = "https://api.hyperliquid-testnet.xyz/info";
+
+#[derive(Debug, Deserialize)]
+struct HlMetaResponse {
+    universe: Vec<HlAssetMeta>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HlAssetMeta {
+    name: String,
 }
 
 impl HyperliquidClient {
@@ -127,6 +141,7 @@ impl HyperliquidClient {
             exchange,
             info,
             wallet: Arc::new(wallet),
+            info_api_url: HYPERLIQUID_INFO_URL_MAINNET,
             asset_map: tokio::sync::RwLock::new(None),
         })
     }
@@ -144,6 +159,7 @@ impl HyperliquidClient {
             exchange,
             info,
             wallet: Arc::new(wallet),
+            info_api_url: HYPERLIQUID_INFO_URL_TESTNET,
             asset_map: tokio::sync::RwLock::new(None),
         })
     }
@@ -165,12 +181,7 @@ impl HyperliquidClient {
                         return Ok(idx as u32);
                     }
                 }
-                let meta = self
-                    .info
-                    .metadata()
-                    .await
-                    .map_err(|e| format!("HL metadata: {e}"))?;
-                let names: Vec<String> = meta.universe.iter().map(|a| a.name.clone()).collect();
+                let names = self.metadata_asset_names().await?;
                 let idx = names
                     .iter()
                     .position(|n| n.to_uppercase() == upper)
@@ -180,6 +191,75 @@ impl HyperliquidClient {
                 Ok(idx)
             }
         }
+    }
+
+    async fn metadata_asset_names(&self) -> Result<Vec<String>, String> {
+        let response = reqwest::Client::new()
+            .post(self.info_api_url)
+            .json(&serde_json::json!({ "type": "meta" }))
+            .send()
+            .await
+            .map_err(|e| format!("HL metadata: {e}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("HL metadata returned {status}: {body}"));
+        }
+        let meta = response
+            .json::<HlMetaResponse>()
+            .await
+            .map_err(|e| format!("HL metadata: {e}"))?;
+        Ok(meta.universe.into_iter().map(|asset| asset.name).collect())
+    }
+
+    async fn asset_name(&self, asset: u32) -> Result<String, String> {
+        {
+            let cache = self.asset_map.read().await;
+            if let Some(ref names) = *cache
+                && let Some(name) = names.get(asset as usize)
+            {
+                return Ok(name.clone());
+            }
+        }
+        let names = self.metadata_asset_names().await?;
+        let name = names
+            .get(asset as usize)
+            .cloned()
+            .ok_or_else(|| format!("unknown HL asset index: {asset}"))?;
+        *self.asset_map.write().await = Some(names);
+        Ok(name)
+    }
+
+    async fn market_ioc_price(&self, asset: u32, is_buy: bool) -> Result<String, String> {
+        let symbol = self.asset_name(asset).await?;
+        let mids = self
+            .info
+            .mids()
+            .await
+            .map_err(|e| format!("HL mids: {e}"))?;
+        let mid = mids
+            .get(&symbol)
+            .or_else(|| mids.get(&symbol.to_uppercase()))
+            .or_else(|| mids.get(&symbol.to_lowercase()))
+            .ok_or_else(|| format!("HL mid price missing for {symbol}"))?;
+        let mid: f64 = mid
+            .parse()
+            .map_err(|e| format!("HL mid price for {symbol} is invalid: {e}"))?;
+        if !mid.is_finite() || mid <= 0.0 {
+            return Err(format!("HL mid price for {symbol} must be positive"));
+        }
+        let slippage_bps = std::env::var("HYPERLIQUID_MARKET_SLIPPAGE_BPS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<f64>().ok())
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .unwrap_or(100.0)
+            .min(1_000.0);
+        let multiplier = if is_buy {
+            1.0 + slippage_bps / 10_000.0
+        } else {
+            1.0 - slippage_bps / 10_000.0
+        };
+        Ok(format_hyperliquid_price(mid * multiplier.max(0.0001)))
     }
 
     fn parse_account_address<T>(account_address: Option<&str>) -> Result<Option<T>, String>
@@ -214,11 +294,7 @@ impl HyperliquidClient {
                 req.reduce_only,
             ),
             HlOrderType::Market => {
-                let price = if req.is_buy {
-                    "999999999".to_string()
-                } else {
-                    "0.0001".to_string()
-                };
+                let price = self.market_ioc_price(asset, req.is_buy).await?;
                 (
                     price,
                     OrderType::Limit(Limit { tif: Tif::Ioc }),
@@ -740,6 +816,19 @@ pub struct ReconciliationResult {
     pub hl_positions: Vec<PositionInfo>,
 }
 
+fn format_hyperliquid_price(price: f64) -> String {
+    if !price.is_finite() || price <= 0.0 {
+        return "0.0001".to_string();
+    }
+    let order = price.abs().log10().floor() as i32;
+    let decimals = (4 - order).clamp(0, 8) as usize;
+    let formatted = format!("{price:.decimals$}");
+    formatted
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -806,6 +895,33 @@ mod tests {
         let json = r#"{"asset": 1, "leverage": 10}"#;
         let req: SetLeverageRequest = serde_json::from_str(json).unwrap();
         assert!(req.is_cross); // default true
+    }
+
+    #[test]
+    fn market_ioc_price_format_uses_bounded_significant_figures() {
+        assert_eq!(format_hyperliquid_price(2084.3 * 1.01), "2105.1");
+        assert_eq!(format_hyperliquid_price(75862.5 * 1.01), "76621");
+        assert_eq!(format_hyperliquid_price(83.7915 * 0.99), "82.954");
+    }
+
+    #[test]
+    fn metadata_response_allows_assets_without_only_isolated() {
+        let json = r#"{
+            "universe": [
+                {"szDecimals": 5, "name": "BTC", "maxLeverage": 40, "marginTableId": 56},
+                {"szDecimals": 4, "name": "ETH", "maxLeverage": 25, "marginTableId": 55}
+            ]
+        }"#;
+
+        let meta: HlMetaResponse = serde_json::from_str(json).unwrap();
+
+        assert_eq!(
+            meta.universe
+                .into_iter()
+                .map(|asset| asset.name)
+                .collect::<Vec<_>>(),
+            vec!["BTC", "ETH"]
+        );
     }
 
     #[test]

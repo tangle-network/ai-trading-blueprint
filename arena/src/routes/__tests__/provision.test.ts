@@ -431,6 +431,36 @@ describe('provision runtime backend helpers', () => {
     });
   });
 
+  it('includes owner position sizing when it differs from the default', async () => {
+    const { buildProvisionStrategyConfig, parsePositionSizePct } =
+      await import('../provision');
+
+    expect(parsePositionSizePct('15')).toEqual({
+      ok: true,
+      pct: 15,
+      fraction: 0.15,
+    });
+    expect(parsePositionSizePct('0.5')).toEqual({
+      ok: false,
+      message: 'Position size must be between 1% and 100%.',
+    });
+
+    expect(
+      buildProvisionStrategyConfig({
+        strategyType: 'hyperliquid_perp',
+        runtimeBackend: 'docker',
+        isTeeBlueprint: false,
+        includeExecutionTarget: false,
+        positionSizePct: '15',
+      }),
+    ).toMatchObject({
+      position_sizing: {
+        method: 'fixed_fraction',
+        fraction: 0.15,
+      },
+    });
+  });
+
   it('resolves a complete execution target into provision-safe values', async () => {
     const { resolveExecutionTargetProvisionConfig } =
       await import('../provision');
@@ -854,7 +884,7 @@ describe('provision runtime backend helpers', () => {
       vault_binding: 'factory',
       hyperliquid_execution_model: 'hyperevm_vault_agent',
       hyperliquid_account_source: 'hyperevm_vault_contract',
-      hyperliquid_api_wallet_approval: 'corewriter_on_provision',
+      hyperliquid_api_wallet_approval: 'corewriter_after_funding',
     });
   });
 

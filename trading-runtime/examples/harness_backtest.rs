@@ -151,7 +151,11 @@ async fn main() -> ExitCode {
         .unwrap_or_else(|_| empty_result());
 
     // ── Bootstrap Sharpe CI over per-trade returns ───────────────────────────
-    let returns: Vec<f64> = main_result.trades.iter().map(|t| t.pnl_pct / 100.0).collect();
+    let returns: Vec<f64> = main_result
+        .trades
+        .iter()
+        .map(|t| t.pnl_pct / 100.0)
+        .collect();
     let seed = req.seed.unwrap_or_else(|| deterministic_seed(&req.harness));
     let (sharpe_ci_lo, sharpe_ci_hi) = bootstrap::sharpe_ci_95(&returns, seed);
 
@@ -187,7 +191,8 @@ fn fail(msg: String) -> ExitCode {
     let _ = writeln!(
         io::stdout(),
         "{}",
-        serde_json::to_string(&ErrorResponse { error: msg }).unwrap_or_else(|_| "{\"error\":\"unknown\"}".into()),
+        serde_json::to_string(&ErrorResponse { error: msg })
+            .unwrap_or_else(|_| "{\"error\":\"unknown\"}".into()),
     );
     ExitCode::FAILURE
 }

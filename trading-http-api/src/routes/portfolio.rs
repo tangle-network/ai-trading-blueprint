@@ -47,11 +47,21 @@ pub struct PositionEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value_usd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_used_usd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notional_usd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub entry_price: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_price: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unrealized_pnl: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unrealized_pnl_usd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leverage: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub liquidation_price: Option<String>,
     pub protocol: String,
     pub position_type: String,
     pub valuation_status: ValuationStatus,
@@ -214,9 +224,14 @@ fn portfolio_response_from_hyperliquid_nav(nav: &HyperliquidNavSnapshot) -> Port
             token: "USDC".to_string(),
             amount: nav.idle_usdc.clone(),
             value_usd: Some(nav.idle_usdc.clone()),
+            margin_used_usd: None,
+            notional_usd: None,
             entry_price: None,
             current_price: Some("1".to_string()),
             unrealized_pnl: None,
+            unrealized_pnl_usd: None,
+            leverage: None,
+            liquidation_price: None,
             protocol: "hyperevm_vault".to_string(),
             position_type: "spot".to_string(),
             valuation_status: ValuationStatus::ValueOnly,
@@ -229,9 +244,14 @@ fn portfolio_response_from_hyperliquid_nav(nav: &HyperliquidNavSnapshot) -> Port
             token: position.asset.clone(),
             amount: position.size.clone(),
             value_usd: Some(position.margin_used.clone()),
+            margin_used_usd: Some(position.margin_used.clone()),
+            notional_usd: hyperliquid_position_notional(position),
             entry_price: Some(position.entry_price.clone()),
             current_price: None,
             unrealized_pnl: Some(position.unrealized_pnl.clone()),
+            unrealized_pnl_usd: Some(position.unrealized_pnl.clone()),
+            leverage: Some(position.leverage),
+            liquidation_price: position.liquidation_price.clone(),
             protocol: "hyperliquid".to_string(),
             position_type: hyperliquid_position_type(&position.size).to_string(),
             valuation_status: ValuationStatus::ValueOnly,
@@ -258,6 +278,13 @@ fn hyperliquid_position_type(size: &str) -> &'static str {
         Some(size) if size.is_sign_negative() => "short_perp",
         _ => "long_perp",
     }
+}
+
+fn hyperliquid_position_notional(
+    position: &crate::hyperliquid_nav::HyperliquidPositionNav,
+) -> Option<String> {
+    let margin = parse_decimal_maybe(&position.margin_used)?;
+    Some((margin * Decimal::from(position.leverage)).to_string())
 }
 
 pub(crate) async fn build_multi_bot_portfolio_response(
@@ -488,6 +515,8 @@ async fn synthesize_trade_positions(
             token: position.token,
             amount: position.amount.to_string(),
             value_usd: value_usd.map(|value| value.to_string()),
+            margin_used_usd: None,
+            notional_usd: None,
             entry_price: if valuation_status == ValuationStatus::Priced {
                 position.entry_price.map(|price| price.to_string())
             } else {
@@ -495,6 +524,9 @@ async fn synthesize_trade_positions(
             },
             current_price: effective_price.map(|price| price.to_string()),
             unrealized_pnl: unrealized_pnl.map(|value| value.to_string()),
+            unrealized_pnl_usd: None,
+            leverage: None,
+            liquidation_price: None,
             protocol: position.protocol,
             position_type: serde_json::to_value(&position.position_type)
                 .ok()
@@ -906,9 +938,14 @@ async fn read_vault_cash_position(
         token: token_symbol,
         amount: amount_display,
         value_usd: value_usd.clone(),
+        margin_used_usd: None,
+        notional_usd: None,
         entry_price: None,
         current_price,
         unrealized_pnl: None,
+        unrealized_pnl_usd: None,
+        leverage: None,
+        liquidation_price: None,
         protocol: "vault".to_string(),
         position_type: "spot".to_string(),
         valuation_status: if value_usd.is_some() {
@@ -931,6 +968,8 @@ fn position_entry_from_runtime(p: &trading_runtime::types::Position) -> Position
         token: p.token.clone(),
         amount: p.amount.to_string(),
         value_usd,
+        margin_used_usd: None,
+        notional_usd: None,
         entry_price: match p.valuation_status {
             ValuationStatus::Priced => p.entry_price.map(|value| value.to_string()),
             ValuationStatus::ValueOnly | ValuationStatus::Unpriced => None,
@@ -945,6 +984,9 @@ fn position_entry_from_runtime(p: &trading_runtime::types::Position) -> Position
             ValuationStatus::Priced => p.unrealized_pnl.map(|value| value.to_string()),
             ValuationStatus::ValueOnly | ValuationStatus::Unpriced => None,
         },
+        unrealized_pnl_usd: None,
+        leverage: None,
+        liquidation_price: None,
         protocol: p.protocol.clone(),
         position_type: serde_json::to_value(&p.position_type)
             .ok()

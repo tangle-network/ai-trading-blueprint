@@ -18,10 +18,153 @@ import "../src/WrappedAssetValuator.sol";
 import "../src/interfaces/IAssetValuator.sol";
 import "../test/helpers/Setup.sol";
 
+/// @notice Minimal tnt-core v0.10 blueprint type surface for local snapshot compatibility.
+library TypesV010 {
+    enum MembershipModel {
+        Fixed,
+        Dynamic
+    }
+
+    enum PricingModel {
+        PayOnce,
+        Subscription,
+        EventDriven
+    }
+
+    struct BlueprintConfig {
+        MembershipModel membership;
+        PricingModel pricing;
+        uint32 minOperators;
+        uint32 maxOperators;
+        uint256 subscriptionRate;
+        uint64 subscriptionInterval;
+        uint256 eventRate;
+    }
+
+    struct BlueprintMetadata {
+        string name;
+        string description;
+        string author;
+        string category;
+        string codeRepository;
+        string logo;
+        string website;
+        string license;
+        string profilingData;
+    }
+
+    struct JobDefinition {
+        string name;
+        string description;
+        string metadataUri;
+        bytes paramsSchema;
+        bytes resultSchema;
+    }
+
+    enum BlueprintSourceKind {
+        Container,
+        Wasm,
+        Native
+    }
+
+    enum BlueprintFetcherKind {
+        None,
+        Ipfs,
+        Http,
+        Github
+    }
+
+    enum WasmRuntime {
+        Unknown,
+        Wasmtime,
+        Wasmer
+    }
+
+    struct ImageRegistrySource {
+        string registry;
+        string image;
+        string tag;
+    }
+
+    struct WasmSource {
+        WasmRuntime runtime;
+        BlueprintFetcherKind fetcher;
+        string artifactUri;
+        string entrypoint;
+    }
+
+    struct NativeSource {
+        BlueprintFetcherKind fetcher;
+        string artifactUri;
+        string entrypoint;
+    }
+
+    struct TestingSource {
+        string cargoPackage;
+        string cargoBin;
+        string basePath;
+    }
+
+    enum BlueprintArchitecture {
+        Wasm32,
+        Wasm64,
+        Wasi32,
+        Wasi64,
+        Amd32,
+        Amd64,
+        Arm32,
+        Arm64,
+        RiscV32,
+        RiscV64
+    }
+
+    enum BlueprintOperatingSystem {
+        Unknown,
+        Linux,
+        Windows,
+        MacOS,
+        BSD
+    }
+
+    struct BlueprintBinary {
+        BlueprintArchitecture arch;
+        BlueprintOperatingSystem os;
+        string name;
+        bytes32 sha256;
+    }
+
+    struct BlueprintSource {
+        BlueprintSourceKind kind;
+        ImageRegistrySource container;
+        WasmSource wasm;
+        NativeSource native;
+        TestingSource testing;
+        BlueprintBinary[] binaries;
+    }
+
+    struct BlueprintDefinition {
+        string metadataUri;
+        address manager;
+        uint32 masterManagerRevision;
+        bool hasConfig;
+        BlueprintConfig config;
+        BlueprintMetadata metadata;
+        JobDefinition[] jobs;
+        bytes registrationSchema;
+        bytes requestSchema;
+        BlueprintSource[] sources;
+        MembershipModel[] supportedMemberships;
+    }
+}
+
 /// @notice Minimal interface for Tangle contract blueprint registration
 interface ITangle {
     function createBlueprint(Types.BlueprintDefinition calldata def) external returns (uint64);
     function blueprintCount() external view returns (uint64);
+}
+
+interface ITangleV010 {
+    function createBlueprint(TypesV010.BlueprintDefinition calldata def) external returns (uint64);
 }
 
 /// @title RegisterBlueprint
@@ -270,7 +413,8 @@ contract RegisterBlueprint is Script {
         // as jobs, while instance/TEE variants expose only state-changing bot jobs.
 
         // 1. Cloud (multi-bot fleet)
-        uint64 cloudId = tangle.createBlueprint(
+        uint64 cloudId = _createBlueprint(
+            tangle,
             _buildDefinition(
                 address(bsm),
                 "AI Trading Cloud",
@@ -282,7 +426,8 @@ contract RegisterBlueprint is Script {
         );
 
         // 2. Instance (single-bot per service)
-        uint64 instanceId = tangle.createBlueprint(
+        uint64 instanceId = _createBlueprint(
+            tangle,
             _buildDefinition(
                 address(instanceBsm),
                 "AI Trading Instance",
@@ -294,7 +439,8 @@ contract RegisterBlueprint is Script {
         );
 
         // 3. TEE Instance (hardware-isolated single-bot)
-        uint64 teeId = tangle.createBlueprint(
+        uint64 teeId = _createBlueprint(
+            tangle,
             _buildDefinition(
                 address(teeBsm),
                 "AI Trading TEE Instance",
@@ -306,7 +452,7 @@ contract RegisterBlueprint is Script {
         );
 
         // 4. Validator (shared trade validation network)
-        uint64 validatorId = tangle.createBlueprint(_buildValidatorDefinition(address(validatorBsm)));
+        uint64 validatorId = _createBlueprint(tangle, _buildValidatorDefinition(address(validatorBsm)));
 
         vm.stopBroadcast();
 
@@ -523,6 +669,99 @@ contract RegisterBlueprint is Script {
         vaultFactory.setDefaultWhitelistedToken(token, true);
     }
 
+    function _createBlueprint(ITangle tangle, Types.BlueprintDefinition memory def) internal returns (uint64) {
+        if (_isLocalChain()) {
+            return ITangleV010(address(tangle)).createBlueprint(_toV010Definition(def));
+        }
+        return tangle.createBlueprint(def);
+    }
+
+    function _toV010Definition(Types.BlueprintDefinition memory def)
+        internal
+        pure
+        returns (TypesV010.BlueprintDefinition memory v010)
+    {
+        v010.metadataUri = def.metadataUri;
+        v010.manager = def.manager;
+        v010.masterManagerRevision = def.masterManagerRevision;
+        v010.hasConfig = def.hasConfig;
+        v010.config = TypesV010.BlueprintConfig({
+            membership: TypesV010.MembershipModel(uint8(def.config.membership)),
+            pricing: TypesV010.PricingModel(uint8(def.config.pricing)),
+            minOperators: def.config.minOperators,
+            maxOperators: def.config.maxOperators,
+            subscriptionRate: def.config.subscriptionRate,
+            subscriptionInterval: def.config.subscriptionInterval,
+            eventRate: def.config.eventRate
+        });
+        v010.metadata = TypesV010.BlueprintMetadata({
+            name: def.metadata.name,
+            description: def.metadata.description,
+            author: def.metadata.author,
+            category: def.metadata.category,
+            codeRepository: def.metadata.codeRepository,
+            logo: def.metadata.logo,
+            website: def.metadata.website,
+            license: def.metadata.license,
+            profilingData: def.metadata.profilingData
+        });
+
+        v010.jobs = new TypesV010.JobDefinition[](def.jobs.length);
+        for (uint256 i = 0; i < def.jobs.length; i++) {
+            v010.jobs[i] = TypesV010.JobDefinition({
+                name: def.jobs[i].name,
+                description: def.jobs[i].description,
+                metadataUri: def.jobs[i].metadataUri,
+                paramsSchema: def.jobs[i].paramsSchema,
+                resultSchema: def.jobs[i].resultSchema
+            });
+        }
+
+        v010.registrationSchema = def.registrationSchema;
+        v010.requestSchema = def.requestSchema;
+        v010.sources = new TypesV010.BlueprintSource[](def.sources.length);
+        for (uint256 i = 0; i < def.sources.length; i++) {
+            Types.BlueprintSource memory source = def.sources[i];
+            TypesV010.BlueprintBinary[] memory bins = new TypesV010.BlueprintBinary[](source.binaries.length);
+            for (uint256 j = 0; j < source.binaries.length; j++) {
+                bins[j] = TypesV010.BlueprintBinary({
+                    arch: TypesV010.BlueprintArchitecture(uint8(source.binaries[j].arch)),
+                    os: TypesV010.BlueprintOperatingSystem(uint8(source.binaries[j].os)),
+                    name: source.binaries[j].name,
+                    sha256: source.binaries[j].sha256
+                });
+            }
+            v010.sources[i] = TypesV010.BlueprintSource({
+                kind: TypesV010.BlueprintSourceKind(uint8(source.kind)),
+                container: TypesV010.ImageRegistrySource({
+                    registry: source.container.registry, image: source.container.image, tag: source.container.tag
+                }),
+                wasm: TypesV010.WasmSource({
+                    runtime: TypesV010.WasmRuntime(uint8(source.wasm.runtime)),
+                    fetcher: TypesV010.BlueprintFetcherKind(uint8(source.wasm.fetcher)),
+                    artifactUri: source.wasm.artifactUri,
+                    entrypoint: source.wasm.entrypoint
+                }),
+                native: TypesV010.NativeSource({
+                    fetcher: TypesV010.BlueprintFetcherKind(uint8(source.native.fetcher)),
+                    artifactUri: source.native.artifactUri,
+                    entrypoint: source.native.entrypoint
+                }),
+                testing: TypesV010.TestingSource({
+                    cargoPackage: source.testing.cargoPackage,
+                    cargoBin: source.testing.cargoBin,
+                    basePath: source.testing.basePath
+                }),
+                binaries: bins
+            });
+        }
+
+        v010.supportedMemberships = new TypesV010.MembershipModel[](def.supportedMemberships.length);
+        for (uint256 i = 0; i < def.supportedMemberships.length; i++) {
+            v010.supportedMemberships[i] = TypesV010.MembershipModel(uint8(def.supportedMemberships[i]));
+        }
+    }
+
     /// @notice True only when the script is running against a local Anvil
     ///         chain (31337/31338 or TARGET_NETWORK=local). Used to gate
     ///         test-account funding so live deploys don't burn real ETH.
@@ -550,9 +789,12 @@ contract RegisterBlueprint is Script {
         string memory crateName,
         string memory binaryName,
         bool instanceVariant
-    ) internal pure returns (Types.BlueprintDefinition memory def) {
+    ) internal view returns (Types.BlueprintDefinition memory def) {
         def.metadataUri = "ipfs://QmTradingBlueprint";
-        def.metadataHash = keccak256(abi.encodePacked("ai-trading-blueprint:", bpName, ":", binaryName));
+        string memory salt = vm.envOr("LOCAL_BLUEPRINT_SALT", string(""));
+        def.metadataHash = bytes(salt).length == 0
+            ? keccak256(abi.encodePacked("ai-trading-blueprint:", bpName, ":", binaryName))
+            : keccak256(abi.encodePacked("ai-trading-blueprint:", salt, ":", bpName, ":", binaryName));
         def.manager = manager;
         def.masterManagerRevision = 0;
         def.hasConfig = true;
@@ -635,9 +877,12 @@ contract RegisterBlueprint is Script {
 
     /// @notice Construct the BlueprintDefinition for the validator blueprint.
     /// @dev Separate from trading variants: different BSM, different jobs (3 vs 7).
-    function _buildValidatorDefinition(address manager) internal pure returns (Types.BlueprintDefinition memory def) {
+    function _buildValidatorDefinition(address manager) internal view returns (Types.BlueprintDefinition memory def) {
         def.metadataUri = "ipfs://QmValidatorBlueprint";
-        def.metadataHash = keccak256("ai-trading-blueprint:validator:trading-validator");
+        string memory salt = vm.envOr("LOCAL_BLUEPRINT_SALT", string(""));
+        def.metadataHash = bytes(salt).length == 0
+            ? keccak256("ai-trading-blueprint:validator:trading-validator")
+            : keccak256(abi.encodePacked("ai-trading-blueprint:", salt, ":validator:trading-validator"));
         def.manager = manager;
         def.masterManagerRevision = 0;
         def.hasConfig = true;

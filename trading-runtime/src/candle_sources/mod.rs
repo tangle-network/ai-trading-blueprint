@@ -182,7 +182,10 @@ mod tests {
             Source::Hyperliquid
         );
         assert_eq!(Source::default_for_protocol("drift"), Source::Drift);
-        assert_eq!(Source::default_for_protocol("polymarket"), Source::Polymarket);
+        assert_eq!(
+            Source::default_for_protocol("polymarket"),
+            Source::Polymarket
+        );
         // DEX adapters → GeckoTerminal (caller passes network:pool)
         assert_eq!(
             Source::default_for_protocol("uniswap_v3"),
@@ -192,7 +195,10 @@ mod tests {
             Source::default_for_protocol("pancakeswap_v3"),
             Source::GeckoTerminal
         );
-        assert_eq!(Source::default_for_protocol("aerodrome"), Source::GeckoTerminal);
+        assert_eq!(
+            Source::default_for_protocol("aerodrome"),
+            Source::GeckoTerminal
+        );
         // Yield / unmodeled venues fall back to Binance for the broadest universe
         assert_eq!(Source::default_for_protocol("aave_v3"), Source::Binance);
         assert_eq!(Source::default_for_protocol("gmx_v2"), Source::Binance);
@@ -203,7 +209,10 @@ mod tests {
         assert_eq!(Source::parse("drift").unwrap(), Source::Drift);
         assert_eq!(Source::parse("polymarket").unwrap(), Source::Polymarket);
         assert_eq!(Source::parse("poly").unwrap(), Source::Polymarket);
-        assert_eq!(Source::parse("geckoterminal").unwrap(), Source::GeckoTerminal);
+        assert_eq!(
+            Source::parse("geckoterminal").unwrap(),
+            Source::GeckoTerminal
+        );
         assert_eq!(Source::parse("gecko").unwrap(), Source::GeckoTerminal);
         assert_eq!(Source::parse("gt").unwrap(), Source::GeckoTerminal);
     }

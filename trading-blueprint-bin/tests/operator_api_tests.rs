@@ -1406,6 +1406,140 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
 }
 
 #[tokio::test]
+async fn test_run_transcript_fallback_replays_json_results_as_chat_parts() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("runs-json-bot", "hyperliquid_perp", true, Some(9_100_051));
+    let auth = test_auth_header(SUBMITTER);
+    let result = json!({
+        "result_schema_version": 1,
+        "run_started_at": "2026-05-27T06:00:01.100Z",
+        "run_completed_at": "2026-05-27T06:02:28.046Z",
+        "checked_state": {
+            "nav_status": "fresh",
+            "mode": "normal",
+            "total_nav_usdc": 11,
+            "hyperliquid_equity_usdc": 11,
+            "perp_margin_usdc": 11,
+            "positions_count": 0,
+            "open_orders_count": 0
+        },
+        "decision": {
+            "action": "skip",
+            "reason": "api-wallet-approval-not-verified",
+            "setup": {
+                "action": "open_long",
+                "asset": "ETH",
+                "amount_in": "11",
+                "rationale": "rsi-oversold"
+            },
+            "approval": {
+                "status": "submitted_corewriter_approval",
+                "api_wallet_address": "0x030999fbbcb39976413805a09c6b5a93f010ed80",
+                "tx_hash": "0xbeeb",
+                "verified_corewriter_approval": false,
+                "extra_agents": []
+            }
+        },
+        "funding_action": { "attempted": false },
+        "api_wallet_approval_action": {
+            "attempted": true,
+            "status": 200,
+            "response": {
+                "status": "submitted_corewriter_approval",
+                "verified_corewriter_approval": false,
+                "tx_hash": "0xbeeb"
+            }
+        },
+        "trade_action": { "attempted": false }
+    })
+    .to_string();
+    let session_id = "fast-runs-json-bot-1775824100";
+
+    trading_blueprint_lib::workflow_compat::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "run-json".to_string(),
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
+                run_id: "run-json".to_string(),
+                workflow_id: bot.workflow_id.expect("workflow id"),
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
+                started_at: 1_775_824_100,
+                completed_at: Some(1_775_824_228),
+                session_id: Some(session_id.to_string()),
+                trace_id: None,
+                duration_ms: 128_000,
+                input_tokens: 0,
+                output_tokens: 0,
+                result: Some(result),
+                error: None,
+            },
+        )
+        .expect("insert JSON run");
+
+    let runs_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/runs", bot.id))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(runs_response.status(), StatusCode::OK);
+    let runs_body = runs_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let runs_json: serde_json::Value = serde_json::from_slice(&runs_body).unwrap();
+    assert_eq!(runs_json["runs"][0]["run_id"], "run-json");
+    assert_eq!(runs_json["runs"][0]["transcript_available"], false);
+
+    let transcript_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/session/sessions/{session_id}/messages?limit=200",
+                    bot.id
+                ))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(transcript_response.status(), StatusCode::OK);
+    let transcript_body = transcript_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let transcript_json: serde_json::Value = serde_json::from_slice(&transcript_body).unwrap();
+    let parts = transcript_json[0]["parts"].as_array().expect("parts");
+    assert!(parts.iter().any(|part| {
+        part["type"] == "reasoning"
+            && part["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("api-wallet-approval-not-verified"))
+    }));
+    assert!(parts.iter().any(|part| part["type"] == "tool"
+        && part["tool"] == "hyperliquid_nav"
+        && part["state"]["output"]["nav_status"] == "fresh"));
+    assert!(parts.iter().any(|part| part["type"] == "tool"
+        && part["tool"] == "hyperliquid_api_wallet_approval"
+        && part["state"]["output"]["tx_hash"] == "0xbeeb"));
+    assert!(parts.iter().any(|part| part["type"] == "tool"
+        && part["tool"] == "hyperliquid_trade"
+        && part["state"]["output"]["attempted"] == false));
+    let serialized = serde_json::to_string(&transcript_json).unwrap();
+    assert!(!serialized.contains("result_schema_version"));
+    assert!(!serialized.contains("Stored transcript was unavailable"));
+}
+
+#[tokio::test]
 async fn test_running_autonomous_sessions_preserve_live_message_errors() {
     let _ = init_test_env();
     let bot = seed_bot_with_workflow("runs-live-error-bot", "dex", true, Some(9_100_101));
@@ -2714,6 +2848,7 @@ async fn test_fallback_portfolio_recovers_swap_trade_store_positions() {
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: None,
+        hyperliquid_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Unpriced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -2852,6 +2987,7 @@ async fn test_get_bot_metrics_history_falls_back_when_remote_payload_is_empty() 
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: None,
+        hyperliquid_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -2950,6 +3086,7 @@ async fn test_get_bot_metrics_history_fallback_respects_limit_query() {
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: None,
+        hyperliquid_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,

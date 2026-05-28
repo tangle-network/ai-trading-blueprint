@@ -2,11 +2,10 @@ import { useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades } from '~/lib/hooks/useBotApi';
 import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
-import { ValidatorCard, SimulationBadge, SimulationDetail } from './shared/ValidatorComponents';
+import { ValidatorCard, SimulationDetail } from './shared/ValidatorComponents';
 import { AssetDisplay, AssetPairDisplay } from './shared/AssetDisplay';
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
-import { getTradePairLabel, VENUE_CONFIG } from '~/lib/types/trade';
-import type { TradeVenue } from '~/lib/types/trade';
+import { getTradePairLabel } from '~/lib/types/trade';
 import type { Trade, TradeStatus } from '~/lib/types/trade';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
@@ -24,16 +23,6 @@ interface TradeHistoryTabProps {
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
   assetMetadata?: TokenMetadata[];
-}
-
-function VenueBadge({ venue }: { venue: TradeVenue }) {
-  const config = VENUE_CONFIG[venue];
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs font-data font-semibold ${config.color}`}>
-      <span className={`${config.icon} text-sm`} />
-      {config.label}
-    </span>
-  );
 }
 
 const EXPLORER_URLS: Record<number, { name: string; base: string }> = {
@@ -57,59 +46,13 @@ function TradeTableHead() {
       <TableRow className="hover:bg-transparent">
         <TableHead>Time</TableHead>
         <TableHead>Action</TableHead>
-        <TableHead className="hidden md:table-cell">Source</TableHead>
-        <TableHead className="hidden sm:table-cell">Venue</TableHead>
         <TableHead>Trade</TableHead>
-        <TableHead className="text-right">Price</TableHead>
         <TableHead className="text-right hidden sm:table-cell">Validation</TableHead>
-        <TableHead className="text-center hidden md:table-cell">Sim</TableHead>
-        <TableHead>Tx Hash</TableHead>
+        <TableHead>Ref</TableHead>
         <TableHead>Status</TableHead>
       </TableRow>
     </TableHeader>
   );
-}
-
-type MechanismFilter = 'all' | 'agent_execution' | 'code_strategy' | 'revision';
-
-function tradeMechanismKey(trade: Trade): MechanismFilter {
-  if (trade.decisionSource === 'code_strategy') return 'code_strategy';
-  if (trade.revisionId || trade.candidateHash) return 'revision';
-  return 'agent_execution';
-}
-
-function getMechanismLabel(trade: Trade): string {
-  if (trade.decisionSource === 'code_strategy') return 'Strategy Code';
-  if (trade.revisionId || trade.candidateHash) return 'Revision';
-  if (trade.decisionSource === 'manual') return 'Manual';
-  if (trade.decisionSource === 'backtest') return 'Backtest';
-  return 'Agent';
-}
-
-function MechanismBadge({ trade }: { trade: Trade }) {
-  const key = tradeMechanismKey(trade);
-  const icon = key === 'code_strategy'
-    ? 'i-ph:code'
-    : key === 'revision'
-      ? 'i-ph:git-branch'
-      : 'i-ph:robot';
-  const titleParts = [
-    trade.decisionSource ? `source=${trade.decisionSource}` : null,
-    trade.strategyModuleId ? `strategy=${trade.strategyModuleId}` : null,
-    trade.revisionId ? `revision=${trade.revisionId}` : null,
-    trade.candidateHash ? `candidate=${trade.candidateHash}` : null,
-  ].filter(Boolean);
-
-  return (
-    <Badge variant="outline" className="text-xs gap-1" title={titleParts.join(' ') || undefined}>
-      <span className={`${icon} text-xs`} />
-      {getMechanismLabel(trade)}
-    </Badge>
-  );
-}
-
-function mechanismMatchesFilter(trade: Trade, filter: MechanismFilter): boolean {
-  return filter === 'all' || tradeMechanismKey(trade) === filter;
 }
 
 function truncateHash(hash: string): string {
@@ -125,20 +68,20 @@ function formatExecutionStatus(status: string): string {
   return status.replace(/_/g, ' ');
 }
 
-function renderTradePrice(trade: Trade): string {
-  if (trade.priceUsd != null && trade.priceUsd > 0) {
-    return `$${formatNumber(trade.priceUsd, { maximumFractionDigits: 2 })}`;
-  }
-  if (
-    trade.paperTrade &&
-    trade.targetProtocol === 'polymarket_clob' &&
-    trade.execution?.requestedPriceUsd != null &&
-    trade.execution.requestedPriceUsd > 0
-  ) {
-    return `$${formatNumber(trade.execution.requestedPriceUsd, { maximumFractionDigits: 4 })}`;
-  }
-  if (trade.paperTrade) return 'No USD leg';
-  return '—';
+function isHyperliquidTrade(trade: Trade): boolean {
+  return trade.targetProtocol === 'hyperliquid';
+}
+
+function hyperliquidMarketLabel(trade: Trade): string | null {
+  const asset = trade.hyperliquidMetadata?.asset?.trim();
+  return asset ? `${asset.toUpperCase()}-PERP` : null;
+}
+
+function hyperliquidSizeLabel(trade: Trade): string | null {
+  const asset = trade.hyperliquidMetadata?.asset?.trim();
+  const size = trade.hyperliquidMetadata?.assetSize?.trim();
+  if (!asset || !size) return null;
+  return `Size: ${size} ${asset.toUpperCase()}`;
 }
 
 function getStatusLabel(status: TradeStatus): string {
@@ -176,18 +119,31 @@ function TradeDataUnavailableCard({ error }: { error: unknown }) {
 }
 
 function getActionLabel(action: Trade['action']): string {
-  return action.toUpperCase();
+  return action.replace(/_/g, ' ').toUpperCase();
 }
 
 function getActionVariant(action: Trade['action']): 'success' | 'destructive' | 'accent' {
-  if (action === 'buy') return 'success';
-  if (action === 'sell') return 'destructive';
+  if (action === 'buy' || action === 'open_long') return 'success';
+  if (action === 'sell' || action === 'close_long' || action === 'close_short') return 'destructive';
   return 'accent';
 }
 
-function renderTxHash(trade: Trade) {
+function renderExecutionRef(trade: Trade) {
   if (!trade.txHash) {
     return <span className="text-xs font-data text-arena-elements-textTertiary">—</span>;
+  }
+
+  if (isHyperliquidTrade(trade)) {
+    const label = trade.txHash === 'hl:ok'
+      ? 'HL accepted'
+      : trade.txHash === 'hl:err'
+        ? 'HL rejected'
+        : trade.txHash;
+    return (
+      <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
+        {label}
+      </span>
+    );
   }
 
   if (trade.txHash.startsWith('0xpaper_')) {
@@ -222,6 +178,27 @@ function renderTxHash(trade: Trade) {
   );
 }
 
+function renderHyperliquidTradeCell(trade: Trade) {
+  const marketLabel = hyperliquidMarketLabel(trade);
+  const details = [
+    `Order: ${formatTradeAmount(trade.amountIn)} ${trade.tokenIn}`,
+    hyperliquidSizeLabel(trade),
+  ].filter((value): value is string => Boolean(value));
+
+  return (
+    <div className="space-y-1">
+      {marketLabel && (
+        <div className="font-display font-semibold text-sm text-arena-elements-textPrimary">
+          {marketLabel}
+        </div>
+      )}
+      <div className="text-xs font-data text-arena-elements-textSecondary">
+        {details.join(' · ')}
+      </div>
+    </div>
+  );
+}
+
 export function TradeHistoryTab({
   botId,
   botName = '',
@@ -241,8 +218,6 @@ export function TradeHistoryTab({
     refetchInterval: isLive ? 15_000 : false,
   });
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [mechanismFilter, setMechanismFilter] = useState<MechanismFilter>('all');
-  const filteredTrades = trades?.filter((trade) => mechanismMatchesFilter(trade, mechanismFilter)) ?? [];
 
   if (isLoading) {
     return (
@@ -250,7 +225,7 @@ export function TradeHistoryTab({
         <TradeTableHead />
         <TableBody>
           {Array.from({ length: 5 }).map((_, i) => (
-            <SkeletonTableRow key={i} cols={9} />
+            <SkeletonTableRow key={i} cols={6} />
           ))}
         </TableBody>
       </Table>
@@ -286,53 +261,21 @@ export function TradeHistoryTab({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        {([
-          ['all', 'All'],
-          ['agent_execution', 'Agent'],
-          ['code_strategy', 'Strategy code'],
-          ['revision', 'Revisions'],
-        ] as const).map(([value, label]) => {
-          const count = value === 'all'
-            ? trades.length
-            : trades.filter((trade) => mechanismMatchesFilter(trade, value)).length;
-          const active = mechanismFilter === value;
-          return (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setMechanismFilter(value)}
-              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-data transition-colors ${
-                active
-                  ? 'border-arena-elements-textPrimary/30 bg-arena-elements-background-depth-3 text-arena-elements-textPrimary'
-                  : 'border-arena-elements-borderColor bg-transparent text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
-              }`}
-            >
-              {label}
-              <span className="text-arena-elements-textTertiary">{count}</span>
-            </button>
-          );
-        })}
-      </div>
+      <Table>
+        <TradeTableHead />
+        <TableBody>
+          {trades.map((trade) => {
+            const responses = trade.validation?.responses ?? [];
+            const signedCount = countUsableValidatorSignatures(responses);
+            const validationDisplay = getTradeValidationDisplay(trade);
+            const pairLabel = isHyperliquidTrade(trade)
+              ? hyperliquidMarketLabel(trade)
+              : getTradePairLabel(trade);
+            const hasValidation = responses.length > 0 || trade.validatorScore != null;
+            const isExpanded = expandedId === trade.id;
 
-      {filteredTrades.length === 0 ? (
-        <div className="rounded-lg border border-arena-elements-borderColor py-10 text-center text-sm text-arena-elements-textSecondary">
-          No trades match this source filter.
-        </div>
-      ) : (
-        <Table>
-          <TradeTableHead />
-          <TableBody>
-            {filteredTrades.map((trade) => {
-          const responses = trade.validation?.responses ?? [];
-          const signedCount = countUsableValidatorSignatures(responses);
-          const validationDisplay = getTradeValidationDisplay(trade);
-          const pairLabel = getTradePairLabel(trade);
-          const hasValidation = responses.length > 0 || trade.validatorScore != null;
-          const isExpanded = expandedId === trade.id;
-
-          return (
-            <TableRow
+            return (
+              <TableRow
               key={trade.id}
               className={hasValidation ? 'cursor-pointer' : ''}
               onClick={() => hasValidation && setExpandedId(isExpanded ? null : trade.id)}
@@ -348,7 +291,7 @@ export function TradeHistoryTab({
                 },
               } : {})}
             >
-              <TableCell className="text-arena-elements-textTertiary text-xs font-data" colSpan={isExpanded ? 10 : undefined}>
+              <TableCell className="text-arena-elements-textTertiary text-xs font-data" colSpan={isExpanded ? 6 : undefined}>
                 {isExpanded ? (
                   /* Expanded view replaces the row */
                   <div className="py-2" onClick={(e) => e.stopPropagation()}>
@@ -363,12 +306,14 @@ export function TradeHistoryTab({
                       <Badge variant={getActionVariant(trade.action)} className="text-xs">
                         {getActionLabel(trade.action)}
                       </Badge>
-                      <MechanismBadge trade={trade} />
-                      <VenueBadge venue={trade.venue} />
-                      {trade.targetProtocol === 'polymarket_clob' ? (
+                      {isHyperliquidTrade(trade) && hyperliquidMarketLabel(trade) ? (
+                        <span className="text-sm font-display font-medium text-arena-elements-textPrimary">
+                          {hyperliquidMarketLabel(trade)}
+                        </span>
+                      ) : trade.targetProtocol === 'polymarket_clob' ? (
                         <span
                           className="text-sm font-display font-medium text-arena-elements-textPrimary"
-                          title={pairLabel}
+                          title={pairLabel ?? undefined}
                         >
                           {pairLabel}
                         </span>
@@ -387,26 +332,32 @@ export function TradeHistoryTab({
                       )}
                     </div>
 
-                    <div className="mb-3 px-1 text-sm text-arena-elements-textSecondary">
-                      <span className="font-data">
-                        {formatTradeAmount(trade.amountIn)}
-                      </span>
-                      {' '}
-                      <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
-                      <span className="mx-2 text-arena-elements-textTertiary">→</span>
-                      <span className="font-data">
-                        {formatTradeAmount(trade.amountOut)}
-                      </span>
-                      {' '}
-                      <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
-                    </div>
+                    {isHyperliquidTrade(trade) ? (
+                      <div className="mb-3 px-1">
+                        {renderHyperliquidTradeCell(trade)}
+                      </div>
+                    ) : (
+                      <div className="mb-3 px-1 text-sm text-arena-elements-textSecondary">
+                        <span className="font-data">
+                          {formatTradeAmount(trade.amountIn)}
+                        </span>
+                        {' '}
+                        <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
+                        <span className="mx-2 text-arena-elements-textTertiary">→</span>
+                        <span className="font-data">
+                          {formatTradeAmount(trade.amountOut)}
+                        </span>
+                        {' '}
+                        <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
+                      </div>
+                    )}
 
                     {trade.txHash && (
                       <div className="flex items-center gap-2 mb-3 px-1">
                         <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                          Tx Hash
+                          {isHyperliquidTrade(trade) ? 'Exchange Ref' : 'Tx Hash'}
                         </span>
-                        {renderTxHash(trade)}
+                        {renderExecutionRef(trade)}
                       </div>
                     )}
 
@@ -518,32 +469,27 @@ export function TradeHistoryTab({
                       {getActionLabel(trade.action)}
                     </Badge>
                   </TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    <MechanismBadge trade={trade} />
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">
-                    <VenueBadge venue={trade.venue} />
-                  </TableCell>
-                  <TableCell className="font-display font-medium text-sm" title={pairLabel}>
+                  <TableCell className="font-display font-medium text-sm" title={pairLabel ?? undefined}>
                     <div className="space-y-1">
-                      {trade.targetProtocol === 'polymarket_clob' ? (
+                      {isHyperliquidTrade(trade) ? (
+                        renderHyperliquidTradeCell(trade)
+                      ) : trade.targetProtocol === 'polymarket_clob' ? (
                         <div className="max-w-80 truncate">{pairLabel}</div>
                       ) : (
                         <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
                       )}
-                      <div className="text-xs font-data text-arena-elements-textSecondary">
-                        <span>{formatTradeAmount(trade.amountIn)}</span>
-                        {' '}
-                        <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
-                        <span className="mx-1.5 text-arena-elements-textTertiary">→</span>
-                        <span>{formatTradeAmount(trade.amountOut)}</span>
-                        {' '}
-                        <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
-                      </div>
+                      {!isHyperliquidTrade(trade) && (
+                        <div className="text-xs font-data text-arena-elements-textSecondary">
+                          <span>{formatTradeAmount(trade.amountIn)}</span>
+                          {' '}
+                          <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
+                          <span className="mx-1.5 text-arena-elements-textTertiary">→</span>
+                          <span>{formatTradeAmount(trade.amountOut)}</span>
+                          {' '}
+                          <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
+                        </div>
+                      )}
                     </div>
-                  </TableCell>
-                  <TableCell className="text-right font-data text-sm">
-                    {renderTradePrice(trade)}
                   </TableCell>
                   <TableCell className="text-right hidden sm:table-cell">
                     <div className="flex items-center justify-end gap-1.5">
@@ -575,15 +521,8 @@ export function TradeHistoryTab({
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-center hidden md:table-cell">
-                    {trade.validation?.simulation ? (
-                      <SimulationBadge simulation={trade.validation.simulation} />
-                    ) : (
-                      <span className="text-arena-elements-textTertiary font-data text-xs">-</span>
-                    )}
-                  </TableCell>
                   <TableCell>
-                    {renderTxHash(trade)}
+                    {renderExecutionRef(trade)}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">
@@ -603,12 +542,11 @@ export function TradeHistoryTab({
                   </TableCell>
                 </>
               )}
-            </TableRow>
-          );
-            })}
-          </TableBody>
-        </Table>
-      )}
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
     </div>
   );
 }

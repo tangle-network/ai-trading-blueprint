@@ -50,17 +50,18 @@ where
             buf.push(samples[rng.index(n)]);
         }
         if let Some(s) = stat(&buf)
-            && s.is_finite() && s.abs() <= SHARPE_CLIP_MAGNITUDE {
-                estimates.push(s);
-            }
+            && s.is_finite()
+            && s.abs() <= SHARPE_CLIP_MAGNITUDE
+        {
+            estimates.push(s);
+        }
     }
     if estimates.is_empty() {
         return (f64::NAN, f64::NAN);
     }
     estimates.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let lo_idx = ((alpha / 2.0) * estimates.len() as f64) as usize;
-    let hi_idx =
-        (((1.0 - alpha / 2.0) * estimates.len() as f64) as usize).min(estimates.len() - 1);
+    let hi_idx = (((1.0 - alpha / 2.0) * estimates.len() as f64) as usize).min(estimates.len() - 1);
     (estimates[lo_idx], estimates[hi_idx])
 }
 
@@ -74,8 +75,8 @@ pub fn sharpe(returns: &[f64]) -> Option<f64> {
         return None;
     }
     let mean: f64 = returns.iter().sum::<f64>() / returns.len() as f64;
-    let var: f64 = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>()
-        / (returns.len() - 1) as f64;
+    let var: f64 =
+        returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (returns.len() - 1) as f64;
     let stdev = var.sqrt();
     if !stdev.is_finite() || stdev == 0.0 {
         return None;
@@ -97,8 +98,7 @@ pub fn sortino(returns: &[f64]) -> Option<f64> {
     if downside.is_empty() {
         return None;
     }
-    let var: f64 =
-        downside.iter().map(|r| r.powi(2)).sum::<f64>() / downside.len() as f64;
+    let var: f64 = downside.iter().map(|r| r.powi(2)).sum::<f64>() / downside.len() as f64;
     let dd = var.sqrt();
     if !dd.is_finite() || dd == 0.0 {
         return None;

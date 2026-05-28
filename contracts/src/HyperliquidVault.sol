@@ -24,24 +24,28 @@ contract HyperliquidVault is IERC7575, Pausable, ReentrancyGuard {
     bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     uint8 private constant HYPERLIQUID_CORE_WRITER_VERSION = 1;
-    uint24 public constant HYPERLIQUID_ACTION_SPOT_SEND = 6;
-    uint24 public constant HYPERLIQUID_ACTION_USD_CLASS_TRANSFER = 7;
+    uint24 private constant HYPERLIQUID_ACTION_SPOT_SEND = 6;
+    uint24 private constant HYPERLIQUID_ACTION_USD_CLASS_TRANSFER = 7;
     uint24 private constant HYPERLIQUID_ACTION_ADD_API_WALLET = 9;
+    uint24 private constant HYPERLIQUID_ACTION_EVM_USDC_TO_CORE = 0x00ffffff;
+    bytes4 private constant HYPERLIQUID_CORE_DEPOSIT_FOR_SELECTOR = 0xc23c545a;
     address private constant HYPERLIQUID_CORE_WRITER = 0x3333333333333333333333333333333333333333;
     address private constant HYPERLIQUID_SPOT_BALANCE_PRECOMPILE = 0x0000000000000000000000000000000000000801;
     address private constant HYPERLIQUID_ACCOUNT_MARGIN_SUMMARY_PRECOMPILE = 0x000000000000000000000000000000000000080F;
+    address private constant HYPERLIQUID_CORE_DEPOSIT_WALLET_MAINNET = 0x6B9E773128f453f5c2C60935Ee2DE2CBc5390A24;
+    address private constant HYPERLIQUID_CORE_DEPOSIT_WALLET_TESTNET = 0x0B80659a4076E9E93C7DbE0f10675A16a3e5C206;
     uint32 private constant HYPERLIQUID_DEFAULT_PERP_DEX_INDEX = 0;
     uint64 private constant HYPERLIQUID_USDC_SPOT_TOKEN = 0;
     uint8 private constant HYPERLIQUID_CORE_USDC_WEI_DECIMALS = 8;
     uint8 private constant HYPEREVM_USDC_DECIMALS = 6;
     uint256 private constant HYPERLIQUID_VIRTUAL_OFFSET = 10 ** HYPEREVM_USDC_DECIMALS;
-    uint64 public constant WITHDRAWAL_EPOCH_SECONDS = 1 days;
+    uint64 private constant WITHDRAWAL_EPOCH_SECONDS = 1 days;
     uint64 private constant WITHDRAWAL_CUTOFF_SECONDS = 1 hours;
-    uint256 public constant ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT = 4;
-    bytes32 public constant HYPERLIQUID_FUND_MOVEMENT_TYPEHASH = keccak256(
+    uint256 private constant ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT = 4;
+    bytes32 private constant HYPERLIQUID_FUND_MOVEMENT_TYPEHASH = keccak256(
         "HyperliquidFundMovement(address vault,uint256 chainId,uint24 actionType,address destination,uint64 token,uint64 amount,bool direction,uint256 nonce,uint256 deadline,uint256 leverageCap,uint256 maxTradesPerHour,uint256 maxSlippageBps)"
     );
-    bytes32 public constant HYPERLIQUID_FUND_MOVEMENT_EXECUTION_TYPEHASH =
+    bytes32 private constant HYPERLIQUID_FUND_MOVEMENT_EXECUTION_TYPEHASH =
         keccak256("HyperliquidFundMovementExecution(address vault,uint256 chainId,uint24 actionType,bytes action)");
 
     IERC20 private _asset;
@@ -78,12 +82,6 @@ contract HyperliquidVault is IERC7575, Pausable, ReentrancyGuard {
     mapping(uint256 => uint64) public withdrawalRequestEligibleAt;
     mapping(uint256 nonce => bool used) public fundMovementNonceUsed;
 
-    event HyperliquidApiWalletApprovalSubmitted(address indexed agentWallet, string agentName, bytes action);
-    event HyperliquidUsdClassTransferSubmitted(uint64 ntl, bool toPerp, bytes action);
-    event HyperliquidSpotSendSubmitted(address indexed destination, uint64 token, uint64 weiAmount, bytes action);
-    event HyperliquidFundMovementAuthorized(
-        uint24 indexed actionType, uint256 indexed nonce, bytes32 intentHash, bytes32 executionHash
-    );
     event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
     event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
     event WithdrawalQueued(uint256 indexed requestId, address indexed owner, address indexed receiver, uint256 shares);
@@ -105,7 +103,6 @@ contract HyperliquidVault is IERC7575, Pausable, ReentrancyGuard {
     error WithdrawalRequestNotEligible(uint256 requestId, uint64 eligibleAt, uint64 currentTime);
     error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
     error AccessControlBadConfirmation();
-    error ValidatorApprovalRequired();
     error ValidatorApprovalRejected();
     error FundMovementNonceAlreadyUsed(uint256 nonce);
 
@@ -551,12 +548,6 @@ contract HyperliquidVault is IERC7575, Pausable, ReentrancyGuard {
             abi.encode(agentWallet, agentName)
         );
         IHyperliquidCoreWriterMinimal(HYPERLIQUID_CORE_WRITER).sendRawAction(action);
-
-        emit HyperliquidApiWalletApprovalSubmitted(agentWallet, agentName, action);
-    }
-
-    function returnUsdClassLiquidity(uint64, bool) external view onlyRole(OPERATOR_ROLE) {
-        revert ValidatorApprovalRequired();
     }
 
     function returnUsdClassLiquidity(uint64 ntl, bool toPerp, FundMovementAuthorization calldata authorization)
@@ -579,12 +570,6 @@ contract HyperliquidVault is IERC7575, Pausable, ReentrancyGuard {
             action
         );
         IHyperliquidCoreWriterMinimal(HYPERLIQUID_CORE_WRITER).sendRawAction(action);
-
-        emit HyperliquidUsdClassTransferSubmitted(ntl, toPerp, action);
-    }
-
-    function returnSpotLiquidity(address, uint64, uint64) external view onlyRole(DEFAULT_ADMIN_ROLE) {
-        revert ValidatorApprovalRequired();
     }
 
     function returnSpotLiquidity(
@@ -592,9 +577,49 @@ contract HyperliquidVault is IERC7575, Pausable, ReentrancyGuard {
         uint64 token,
         uint64 weiAmount,
         FundMovementAuthorization calldata authorization
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+    ) external nonReentrant {
         if (destination == address(0)) revert ZeroAddress();
         if (weiAmount == 0) revert ZeroAmount();
+
+        if (
+            token == HYPERLIQUID_USDC_SPOT_TOKEN
+                && (destination == HYPERLIQUID_CORE_DEPOSIT_WALLET_TESTNET
+                    || destination == HYPERLIQUID_CORE_DEPOSIT_WALLET_MAINNET)
+        ) {
+            _checkRole(OPERATOR_ROLE, msg.sender);
+            uint256 liquid = availableIdleAssets();
+            if (weiAmount > liquid) revert InsufficientLiquidity(weiAmount, liquid);
+            if (
+                (block.chainid == 998 && destination != HYPERLIQUID_CORE_DEPOSIT_WALLET_TESTNET)
+                    || (block.chainid == 999 && destination != HYPERLIQUID_CORE_DEPOSIT_WALLET_MAINNET)
+                    || (block.chainid != 998 && block.chainid != 999)
+            ) {
+                revert ZeroAddress();
+            }
+
+            bytes memory coreAction = abi.encodeWithSelector(
+                HYPERLIQUID_CORE_DEPOSIT_FOR_SELECTOR,
+                address(this),
+                uint256(weiAmount),
+                HYPERLIQUID_DEFAULT_PERP_DEX_INDEX
+            );
+            _validateFundMovementAuthorization(
+                HYPERLIQUID_ACTION_EVM_USDC_TO_CORE,
+                destination,
+                HYPERLIQUID_USDC_SPOT_TOKEN,
+                weiAmount,
+                true,
+                authorization,
+                coreAction
+            );
+
+            _asset.approve(destination, uint256(weiAmount));
+            (bool ok,) = destination.call(coreAction);
+            if (!ok) revert ZeroAddress();
+            return;
+        }
+
+        _checkRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
         bytes memory action = abi.encodePacked(
             HYPERLIQUID_CORE_WRITER_VERSION,
@@ -605,8 +630,6 @@ contract HyperliquidVault is IERC7575, Pausable, ReentrancyGuard {
             HYPERLIQUID_ACTION_SPOT_SEND, destination, token, weiAmount, false, authorization, action
         );
         IHyperliquidCoreWriterMinimal(HYPERLIQUID_CORE_WRITER).sendRawAction(action);
-
-        emit HyperliquidSpotSendSubmitted(destination, token, weiAmount, action);
     }
 
     function computeFundMovementHashes(
@@ -667,7 +690,6 @@ contract HyperliquidVault is IERC7575, Pausable, ReentrancyGuard {
         );
         if (!approved) revert ValidatorApprovalRejected();
         fundMovementNonceUsed[authorization.nonce] = true;
-        emit HyperliquidFundMovementAuthorized(actionType, authorization.nonce, intentHash, executionHash);
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
