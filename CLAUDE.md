@@ -100,3 +100,46 @@ cargo test -p trading-blueprint-bin -- operator_api
 - **AI scores are non-deterministic**: GLM-4.7 scores test trades 43-52/100 (often below 50 threshold). AI pipeline tests verify scoring + signing works without requiring approval.
 - **Score threshold is off-chain only**: `TradeValidator.sol` checks signature count (m-of-n), not score values. Low-scored trades with valid signatures would execute on-chain.
 - **alloy transport quirk**: After `.send()` returns a revert error, the HTTP transport may hang on subsequent sends. Adversarial tests use `.call()` for revert verification.
+
+## Hard-won facts & gotchas (READ FIRST — stop re-deriving these)
+
+Maintained so sessions don't re-spelunk. Append when you discover something costly; correct when wrong.
+
+### Eval measurement architecture
+- The multishot eval (`evals/src/sim/multishot-user-sim.ts`) drives a **6-turn CHAT conversation**, then collects `bot-artifacts.ts` via `OperatorClient`. It does **NOT** trigger the cron fast-tick.
+- The **deterministic fast tick** (`workflow_tick.rs` → `node /home/agent/tools/<family>-tick.js`) fires on a **cron workflow**, separately. So the eval's short window never runs the tick → `decisions.jsonl`/`metrics` are absent unless explicitly captured. **This is the binding measurement gap (#122).**
+- Per-family tick tools (Gen-4): `tick_tool_for_strategy()` in `prompts/mod.rs` maps `hyperliquid_perp/dex/mm/yield/multi` → `*-tick.js`. Single source of truth, shared by the Rust runner and the fast-tick prompt.
+
+### RLM trace analyst (agent-eval SDK) — do NOT hand-roll a regex analyst
+- Analyst lives in `evals/src/analysis/{otlp-capture,rlm-analyst}.ts`. 100% SDK primitives.
+- **OTLP-JSONL format `OtlpFileTraceStore` actually parses** (`readOtlpSpan`): **ONE FLAT SPAN PER LINE** — `{trace_id|traceId, span_id, parent_span_id, name, start_time, end_time (ISO date strings, NOT unixNano), status:{code:"OK"|"ERROR"}, attributes:{plain key→value object}}`. **NOT** `resourceSpans`/`scopeSpans`-wrapped, **NOT** the `{key,value:{stringValue}}` array form. Wrong shape → `total_traces: 0` silently.
+- Store method is `store.getOverview({})` (the actor tool wraps it as `getDatasetOverview`). Other methods: `queryTraces/countTraces/viewTrace/viewSpans/searchTrace/searchSpan`.
+- `analyzeTraces({question}, {source: store|otlpPath, ai: AxAIService, model, maxTurns, maxDepth, progressLogPath, onTurn})`. Domain framing goes in `question`, not `actorDescription`.
+- **AxAI** (`@ax-llm/ax`): `new AxAI({name:'openai', apiKey, apiURL: <baseUrl>, config:{model}})` — URL override is **`apiURL`** (top-level), NOT `options.baseURL`. `config.model` typed as enum → cast for custom Kimi/GLM ids.
+- `AnalystRegistry` path uses `createChatClient({transport:'direct-provider', baseUrl, apiKey, defaultModel})` instead.
+- Always validate the analyst by actually running it (`store.getOverview` must show `total_traces>0`) — static typecheck won't catch format/shape mismatches.
+
+### Model routing (single table — reuse, don't duplicate)
+- `evals/src/sim/llm-call.ts`: `MODEL_CONFIG` + exported `resolveModel(model)` / `ModelRouting`. `kimi-k2`→`MOONSHOT_API_KEY` (api.moonshot.ai/v1, kimi-k2.6); `glm-4.7`/`glm-5.1`→`ZAI_API_KEY` (api.z.ai/api/coding/paas/v4).
+
+### Operator ↔ sandbox plumbing
+- Operator execs into a bot sandbox via `ai_agent_sandbox_blueprint_lib::run_exec_request(&SandboxExecRequest{sidecar_url,command,cwd,env_json,timeout_ms}, &token)` → `SandboxExecResponse{exit_code,stdout,stderr}`. Get the sandbox with `sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id)`.
+- Tick side effects live in-sandbox: `/home/agent/logs/decisions.jsonl`, `/home/agent/metrics/latest.json`, strategies under `/home/agent/tools/strategies/`.
+- Activation bundles tools via `include_str!` + `write_file_to_sidecar` in `jobs/activate.rs`.
+
+### Devnet (local)
+- `./scripts/run-devnet.sh --no-ui` rebuilds release binaries (picks up `include_str!` tool changes) + brings up anvil (chain **31338**) + operator `:9200` + trading `:9100`. Needs ≥3 operators (operator3 added in `deploy-local.sh`).
+- `RegisterBlueprint.s.sol` local path uses the **current `Types` ABI**; set `TANGLE_BLUEPRINT_ABI=v010` only for old V010 anvil snapshots (the canonical snapshot is tnt-core 0.13.0).
+
+### Hetzner live box (testnet operator)
+- `178.104.232.124` (root SSH), Hetzner **cax11 = ARM64, 2 vCPU / 4GB** — tight; release source-build swap-thrashes ~70min.
+- Hardened: `ufw` (public allows only 22, 443, docker→9100/9200, loopback) + **Caddy TLS** at `https://178.104.232.124.sslip.io` → operator `:9200` (HSTS, 5MB body cap). `:9100`/`:9200` are NOT publicly reachable.
+- Box `blueprint-manager.service` **source-builds** because **v0 was never published on-chain** (the blueprint native source has no fetcher → falls back to the `testing` cargo build). Fix = publish v0 (#92) so it FETCHES the release binary, or run with `USE_RELEASE_BINARY=v0.1.x`.
+- Box repo (`/mnt/trading-data/opt-trading-blueprint/repo`) is on stale `codex/base-sepolia-live-runtime` (~111 behind main); its uncommitted work is preserved on branch `box-base-sepolia-patches`. `settings.env` is tracked-with-secrets there — handle carefully.
+- v0.1.4 release tag (Gen-4) built x86_64 + **aarch64** binaries; release CI = `.github/workflows/release.yml` on `v*` tags.
+
+### Process gotchas (these cost real tool calls)
+- **`pkill -f <pattern>` kills your own shell** when the shell's command string contains `<pattern>` → exit 144. Kill by explicit PID instead; `pgrep -f` also self-matches.
+- `evals/` and `trading-blueprint-lib/` are **ESM (`"type":"module"`)**; sandbox `/home/agent` is **CommonJS**. Test tool JS via a `.cjs` copy or in-sandbox, not local `require` of the ESM dir.
+- `ai-agent-hooks` pre-commit/`pre-push` do `mkdir` under `.git/` → **fail in git worktrees** (`.git` is a file). Use `git -c core.hooksPath=/dev/null` for worktree commits/pushes (after manually confirming no conflict markers / secrets).
+- gh CLI is pinned to `tangletools` via `GH_TOKEN` (can't `gh auth switch`). Convention is open PRs as drewstone329, but the token forces tangletools — note it, proceed.
