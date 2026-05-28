@@ -1,27 +1,27 @@
 {
   "network": "base-sepolia",
   "chainId": 84532,
-  "deployer": "0x03a763af11dc58b459a469a9895389f5880b45f4",
-  "admin": "0x03a763af11dc58b459a469a9895389f5880b45f4",
-  "treasury": "0x03a763af11dc58b459a469a9895389f5880b45f4",
-  "timelock": "0x03a763af11dc58b459a469a9895389f5880b45f4",
-  "multisig": "0x03a763af11dc58b459a469a9895389f5880b45f4",
-  "tangle": "0x0fb3874f4d416ede0791cf083d5258631fad0c98",
-  "staking": "0x5f4ded193d71524de9c98a7a61936f538e4386a2",
-  "restaking": "0x5f4ded193d71524de9c98a7a61936f538e4386a2",
-  "statusRegistry": "0xa13419450ef7e3eced85b5ce1bd1703dae9f0558",
-  "tntToken": "0xc7ddf9e630795cc8f127ca5d1c4360802eec0170",
-  "metrics": "0xa947f715dd99b7d98b98e610ce5b41b4101eea4c",
-  "rewardVaults": "0x9378bf4c7ef68968566c77920bbee742c7d9af98",
-  "inflationPool": "0xd14516e8bf382a019de420b56e56ecab36c2a14a",
-  "serviceFeeDistributor": "0x159515d43c89c3983593553fe326dfb2e2d520c6",
+  "deployer": "0x2420fff17c4213a4075cf5f7b6dc33429aaf22bb",
+  "admin": "0x2420fff17c4213a4075cf5f7b6dc33429aaf22bb",
+  "treasury": "0x2420fff17c4213a4075cf5f7b6dc33429aaf22bb",
+  "timelock": "0x2420fff17c4213a4075cf5f7b6dc33429aaf22bb",
+  "multisig": "0x2420fff17c4213a4075cf5f7b6dc33429aaf22bb",
+  "tangle": "0x8299d60f373f3a4a8c4878e335cb9d840e6e3730",
+  "staking": "0x91b1186f4f31d6e02e481c0af29c7244a3fe417d",
+  "restaking": "0x91b1186f4f31d6e02e481c0af29c7244a3fe417d",
+  "statusRegistry": "0x2a7ceb96a9b18721b5bbb0022b4d358b3c50bcb2",
+  "tntToken": "0x62b3407a22e50183b1055e54d70ee21f59bf865b",
+  "metrics": "0x48725b945a76540d7e5262855566cdb74366bb75",
+  "rewardVaults": "0xbaad23dac876467ea1b1f70f4d6e02e5891d2e04",
+  "inflationPool": "0xedf2a17c4a02f543178a76d0e22d2ef096e66970",
+  "serviceFeeDistributor": "0x36b0431187a05f23bc95a7047a66644bc934f621",
   "streamingPaymentManager": "0x0000000000000000000000000000000000000000",
-  "credits": "0x2438a1195e9efea8b7f53d277cb0021ea60ac9d5",
+  "credits": "0xb587a927ee90ba5587ca9d90fd1a813eb81fc24b",
   "epochLength": 604800,
   "stakeAssets": [
     {
       "symbol": "TNT",
-      "token": "0xc7ddf9e630795cc8f127ca5d1c4360802eec0170",
+      "token": "0x62b3407a22e50183b1055e54d70ee21f59bf865b",
       "adapter": "0x0000000000000000000000000000000000000000",
       "minOperatorStake": "1000000000000000000",
       "minDelegation": "100000000000000000",
@@ -38,33 +38,6 @@
       "rewardMultiplierBps": 11000
     },
     {
-      "symbol": "stETH",
-      "token": "0x0000000000000000000000000000000000000000",
-      "adapter": "0x0000000000000000000000000000000000000000",
-      "minOperatorStake": "0",
-      "minDelegation": "0",
-      "depositCap": "7500000000000000000000",
-      "rewardMultiplierBps": 12000
-    },
-    {
-      "symbol": "wstETH",
-      "token": "0x0000000000000000000000000000000000000000",
-      "adapter": "0x0000000000000000000000000000000000000000",
-      "minOperatorStake": "0",
-      "minDelegation": "0",
-      "depositCap": "7500000000000000000000",
-      "rewardMultiplierBps": 12500
-    },
-    {
-      "symbol": "EIGEN",
-      "token": "0x0000000000000000000000000000000000000000",
-      "adapter": "0x0000000000000000000000000000000000000000",
-      "minOperatorStake": "0",
-      "minDelegation": "0",
-      "depositCap": "500000000000000000000000",
-      "rewardMultiplierBps": 11500
-    },
-    {
       "symbol": "USDC",
       "token": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
       "adapter": "0x0000000000000000000000000000000000000000",
@@ -72,56 +45,11 @@
       "minDelegation": "0",
       "depositCap": "5000000000000",
       "rewardMultiplierBps": 9500
-    },
-    {
-      "symbol": "USDT",
-      "token": "0x0000000000000000000000000000000000000000",
-      "adapter": "0x0000000000000000000000000000000000000000",
-      "minOperatorStake": "0",
-      "minDelegation": "0",
-      "depositCap": "5000000000000",
-      "rewardMultiplierBps": 9500
-    },
-    {
-      "symbol": "DAI",
-      "token": "0x0000000000000000000000000000000000000000",
-      "adapter": "0x0000000000000000000000000000000000000000",
-      "minOperatorStake": "0",
-      "minDelegation": "0",
-      "depositCap": "5000000000000",
-      "rewardMultiplierBps": 9500
-    },
-    {
-      "symbol": "WBTC",
-      "token": "0x0000000000000000000000000000000000000000",
-      "adapter": "0x0000000000000000000000000000000000000000",
-      "minOperatorStake": "0",
-      "minDelegation": "0",
-      "depositCap": "100000000000",
-      "rewardMultiplierBps": 10500
-    },
-    {
-      "symbol": "tBTC",
-      "token": "0x0000000000000000000000000000000000000000",
-      "adapter": "0x0000000000000000000000000000000000000000",
-      "minOperatorStake": "0",
-      "minDelegation": "0",
-      "depositCap": "50000000000",
-      "rewardMultiplierBps": 11500
-    },
-    {
-      "symbol": "lBTC",
-      "token": "0x0000000000000000000000000000000000000000",
-      "adapter": "0x0000000000000000000000000000000000000000",
-      "minOperatorStake": "0",
-      "minDelegation": "0",
-      "depositCap": "25000000000",
-      "rewardMultiplierBps": 11500
     }
   ],
   "rewardVaultsConfig": [
     {
-      "asset": "0xc7ddf9e630795cc8f127ca5d1c4360802eec0170",
+      "asset": "0x62b3407a22e50183b1055e54d70ee21f59bf865b",
       "depositCap": "250000000000000000000000",
       "active": true
     },
@@ -151,12 +79,12 @@
     "deploy": true,
     "emitArtifacts": true,
     "useMockVerifier": false,
-    "artifactsPath": "deployments/base-sepolia/releases/20260422-001932/migration.json",
+    "artifactsPath": "deployments/base-sepolia/releases/20260522-234553/migration.json",
     "merklePath": "packages/migration-claim/merkle-tree.json",
     "evmClaimsPath": "packages/migration-claim/evm-claims.json",
     "treasuryCarveoutPath": "packages/migration-claim/treasury-carveout.json",
     "foundationCarveoutPath": "packages/migration-claim/foundation-carveout.json",
-    "notes": "TODO: add rollout notes",
+    "notes": "base-sepolia validation deployment",
     "migrationOwner": "0x03a763af11dc58b459a469a9895389f5880b45f4",
     "sp1VerifierGateway": "0x397a5f7f3dbd538f23de225b51f532c34448da9b",
     "programVKey": "0x000d74444f16d75f72527687a36c1bd4c49e6799816dac4989be3bc175e86fd7",
@@ -167,11 +95,12 @@
     "treasuryAmount": "41844468761091374585756819",
     "foundationRecipient": "0x03a763af11dc58b459a469a9895389f5880b45f4",
     "foundationAmount": "15040809826744825912214026",
-    "claimDeadline": "1808353318",
+    "claimDeadline": "1811029564",
     "unlockedBps": 0,
     "cliffDuration": 0,
     "vestingDuration": 0,
-    "tangleMigration": "0x86a45d73f6618ee8220a9e2f68b1c2bc5b52601d",
-    "zkVerifier": "0x95b12857a795ff435fd2204d80ecb66310c359d1"
-  }
+    "tangleMigration": "0x25e02490ff74668543f167aab838c835ed202db7",
+    "zkVerifier": "0x46cee2cb16fc4c6699e9473d2ae545d5470e74a2"
+  },
+  "blueprintAuditors": "0xf4428bbbfa9207b4b91ca5fe8c1d401fd8b1e8e8"
 }
