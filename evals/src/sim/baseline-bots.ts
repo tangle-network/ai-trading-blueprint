@@ -16,7 +16,8 @@
  * underlying LLM config and a real product stack, which is a follow-up.
  */
 
-import { EVAL_MODELS, llmCallJson } from './llm-call.js'
+import { runProfileJson } from './llm-call.js'
+import { skepticalSecondaryJudgeProfile } from '../profiles/skeptical-secondary-judge.js'
 import type { UserIntent, UserSimSessionResult, UserSimTurn } from './user-sim-driver.js'
 
 const POLL_INTERVAL_MS = 100  // local-stub bots reply instantly; just a placeholder
@@ -117,15 +118,14 @@ export async function runStallBotSession(
 
 // ─── Cross-perspective secondary judge ────────────────────────────────
 
-/** Calls a second LLM judge with a more skeptical system prompt and a
- *  different model. Returns its scores so the renderer can show
- *  agreement/disagreement vs the primary haiku judge.
+/** Calls a second LLM judge with a more skeptical system prompt. Returns
+ *  its scores so the renderer can show agreement/disagreement vs the
+ *  primary judge. Rubric + model live in the profile
+ *  (evals/src/profiles/skeptical-secondary-judge.ts).
  *
- *  Truly cross-FAMILY (GPT/Gemini) is the right long-term answer — gated
- *  on SPEC.md Q1. For now we use a different Claude model with a stricter
- *  system prompt as the cross-perspective lens. Documents the agreement
- *  ceiling that within-family judging can give us; landing the real
- *  cross-family judge later only tightens the bound. */
+ *  Truly cross-FAMILY (GPT/Gemini) is the right long-term answer — today
+ *  both judges are GLM-family, which understates disagreement. The profile
+ *  carries a TODO to route this to a non-Z.AI model when available. */
 export async function judgeViaSkepticalSecondary(
   intent: UserIntent,
   artifact: UserSimSessionResult,
@@ -133,35 +133,19 @@ export async function judgeViaSkepticalSecondary(
   const turnsView = artifact.turns
     .map((t) => `  TURN ${t.turn}:\n    USER: ${t.user_message}\n    BOT:  ${t.bot_reply_text.slice(0, 1200)}`)
     .join('\n')
-  const prompt = `You are an adversarial secondary judge auditing a primary judge's scoring of a trading-bot conversation. Be skeptical. Penalise bots that:
-- agree with everything the user says without pushback
-- claim to "set up" or "configure" things without observable evidence
-- give long verbose replies that don't reduce to a trade or a config change
-- accept obviously bad ideas without flagging them
-- say "I'll think about it" / hedge / stall
-
-User's intent: "${intent.text}"
+  const message = `User's intent: "${intent.text}"
 Hard constraints: $${intent.capital_usd} capital, ${intent.dd_cap_pct}% max drawdown, venues allowed: ${intent.venues.join(', ')}.
 Session ended by: ${artifact.ended_by} after ${artifact.turns.length} turns.
 
 Transcript:
-${turnsView}
-
-Score four dimensions, each 0.0 to 1.0, using STRICT criteria:
-  intent_fulfilled: did the bot OBSERVABLY do what was asked, not just claim it would?
-  respected_constraints: did it visibly respect every constraint? Silent compliance ≠ visible compliance.
-  actually_traded_or_committed: a single concrete action (place order, set config, write strategy file) shipped?
-  productive_conversation: was every turn moving toward action? Stalling, hedging, and questions without answers cost points.
-
-Output ONE JSON object, no prose, no fences:
-  {"intent_fulfilled": 0.0, "respected_constraints": 0.0, "actually_traded_or_committed": 0.0, "productive_conversation": 0.0, "notes": "<1-2 sentences, skeptical voice>"}`
-  const { result, raw } = await llmCallJson<{
+${turnsView}`
+  const { result, raw } = await runProfileJson<{
     intent_fulfilled: number
     respected_constraints: number
     actually_traded_or_committed: number
     productive_conversation: number
     notes: string
-  }>({ prompt, model: EVAL_MODELS.SECONDARY_JUDGE })
+  }>(skepticalSecondaryJudgeProfile, { message })
   if (!result) {
     return {
       intent_fulfilled: 0,

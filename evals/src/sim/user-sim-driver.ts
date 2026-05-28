@@ -19,7 +19,8 @@
  */
 
 import type { BotArtifacts } from './bot-artifacts.js'
-import { EVAL_MODELS, llmCall } from './llm-call.js'
+import { runProfile } from './llm-call.js'
+import { userSimTurnProfile } from '../profiles/user-sim-turn.js'
 import { OperatorClient } from './operator-client.js'
 import type { UserPersona } from './user-personas.js'
 
@@ -81,18 +82,12 @@ export interface UserSimSessionResult {
 
 // ─── User-sim turn generation ──────────────────────────────────────────
 
-const BASE_USER_SIM_INSTRUCTIONS = `Stay in character as a user — never describe the bot's internal state, never analyse the bot's strategy in technical terms unless your persona explicitly would, never apologise for being an AI.
-
-Rules:
-- Each turn is ONE chat message you would send. No prose around it. No quotes. No labels like "user:".
-- Push the bot toward your goal in the way YOUR PERSONA would.
-- When you have what you wanted (the bot is trading, has set up a strategy, has answered your question to your persona's satisfaction), emit the literal token [done] anywhere in your message and stop.
-- Cap each message at ~200 characters unless your persona genuinely needs more.`
-
-/** Build the full system prompt: persona-specific voice + base instructions. */
-function buildSystemPrompt(persona: UserPersona | null | undefined): string {
-  if (persona) return `${persona.system_prompt}\n\n${BASE_USER_SIM_INSTRUCTIONS}`
-  return `You are simulating a user chatting with an autonomous trading bot. Concise, direct, demanding.\n\n${BASE_USER_SIM_INSTRUCTIONS}`
+/** Persona voice for the user-message portion. The base user-sim rules
+ *  live in the profile's system prompt (evals/src/profiles/user-sim-turn.ts);
+ *  the persona voice is per-call so it rides in the message. */
+function personaVoice(persona: UserPersona | null | undefined): string {
+  if (persona) return persona.system_prompt
+  return 'You are a concise, direct, demanding user chatting with an autonomous trading bot.'
 }
 
 export async function nextUserTurn(
@@ -106,11 +101,10 @@ export async function nextUserTurn(
     // shows up on turn 2+, when there's something for it to react to.)
     return intent.text
   }
-  const systemPrompt = buildSystemPrompt(persona)
   const convo = priorTurns
     .map((t) => `USER: ${t.user_message}\nBOT: ${t.bot_reply_text.slice(0, 800)}`)
     .join('\n\n')
-  const prompt = `${systemPrompt}
+  const message = `Your persona's voice: ${personaVoice(persona)}
 
 Your persona's goal: "${intent.text}"
 Constraints you care about: $${intent.capital_usd} capital, ${intent.dd_cap_pct}% max drawdown, venues you allow: ${intent.venues.join(', ')}.
@@ -119,7 +113,7 @@ Conversation so far:
 ${convo}
 
 Your next message (just the message, nothing else):`
-  const res = await llmCall({ prompt, model: EVAL_MODELS.USER_SIM })
+  const res = await runProfile(userSimTurnProfile, { message })
   if (!res.ok) throw new Error(`user-sim turn generation failed: ${res.stderr.slice(0, 200)}`)
   return res.output.trim()
 }

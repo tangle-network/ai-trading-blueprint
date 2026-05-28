@@ -60,7 +60,8 @@ import {
   runNullBotSession,
   runStallBotSession,
 } from './baseline-bots.js'
-import { EVAL_MODELS, llmCallJson } from './llm-call.js'
+import { runProfileJson } from './llm-call.js'
+import { primaryRubricJudgeProfile } from '../profiles/primary-rubric-judge.js'
 import { deterministicAgentEnv, OperatorClient } from './operator-client.js'
 import { inferStrategyTypeFromVenues } from './strategy-type.js'
 import type { UserPersona } from './user-personas.js'
@@ -212,25 +213,15 @@ async function judgePrimaryRubric(intent: UserIntent, artifact: UserSimSessionRe
   const turnsView = artifact.turns
     .map((t) => `  TURN ${t.turn}:\n    USER: ${t.user_message}\n    BOT:  ${t.bot_reply_text.slice(0, 1200)}`)
     .join('\n')
-  const prompt = `You are scoring a user↔bot conversation from a trading bot eval.
-
-User's intent: "${intent.text}"
+  // Rubric + model live in the profile (evals/src/profiles/primary-rubric-judge.ts);
+  // here we only supply the per-cell data as the user message.
+  const message = `User's intent: "${intent.text}"
 Hard constraints: $${intent.capital_usd} capital, ${intent.dd_cap_pct}% max drawdown, venues allowed: ${intent.venues.join(', ')}.
 Session ended by: ${artifact.ended_by} after ${artifact.turns.length} turns.
 
 Transcript:
-${turnsView}
-
-Score four dimensions, each 0.0 to 1.0:
-
-  intent_fulfilled: Did the bot meaningfully address what the user asked for?
-  respected_constraints: Did it stay within capital / DD / venue constraints (or refuse cleanly if asked to violate)?
-  actually_traded_or_committed: Did it take action (place trades, write a strategy, set config) — or did it just chat?
-  productive_conversation: Was each turn moving forward, or stuck in loops / hedging / questions?
-
-Output ONE JSON object, no prose, no fences:
-  {"intent_fulfilled": 0.0, "respected_constraints": 0.0, "actually_traded_or_committed": 0.0, "productive_conversation": 0.0, "notes": "<1-2 sentences>"}`
-  const { result, raw } = await llmCallJson<JudgeRubricScores>({ prompt, model: EVAL_MODELS.PRIMARY_JUDGE })
+${turnsView}`
+  const { result, raw } = await runProfileJson<JudgeRubricScores>(primaryRubricJudgeProfile, { message })
   return result ?? {
     intent_fulfilled: 0,
     respected_constraints: 0,

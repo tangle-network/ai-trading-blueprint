@@ -79,29 +79,10 @@ const MODEL_CONFIG: Record<string, ModelRouting> = {
  *  doesn't kill an eval campaign mid-run. */
 const DEFAULT_MODEL: LlmModel = 'kimi-k2'
 
-/** Pinned model selection for each eval surface. Centralized here so
- *  swapping providers (e.g. promoting GLM-5.1 → GLM-6 when it ships, or
- *  routing the secondary judge to a different model family for true
- *  cross-family disagreement) is a one-line edit, not 7 grep+edits.
- *
- *  Discipline: NEVER hardcode a model name in a caller. Always import
- *  from here. If you need a new pin, add a key to this object first. */
-export const EVAL_MODELS = {
-  /** User-sim turn generation — fast, cheap. */
-  USER_SIM: 'kimi-k2' as LlmModel,
-  /** Primary user-sim judge rubric. */
-  PRIMARY_JUDGE: 'glm-5.1' as LlmModel,
-  /** Skeptical secondary judge — must be a DIFFERENT family from primary
-   *  for cross-family disagreement to be meaningful. Currently same
-   *  provider (Z.AI) — TODO: route to a non-Z.AI model when available. */
-  SECONDARY_JUDGE: 'glm-5.1' as LlmModel,
-  /** Research-depth judge — same as primary for now. */
-  RESEARCH_JUDGE: 'glm-5.1' as LlmModel,
-  /** Adversarial robustness judge. */
-  ROBUSTNESS_JUDGE: 'glm-5.1' as LlmModel,
-  /** Agent-in-loop walk-forward agent. */
-  AGENT_IN_LOOP: 'kimi-k2' as LlmModel,
-} as const
+// Model selection moved OUT of a central const and INTO each profile
+// (evals/src/profiles/*.ts carries its own `model.provider`). Callers that
+// need a one-shot call still pass `model` to llmCall directly; everything
+// judge/user-sim goes through runProfile and inherits the profile's pick.
 
 export interface LlmCallOptions {
   prompt: string
