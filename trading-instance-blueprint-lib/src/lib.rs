@@ -55,10 +55,10 @@ pub const JOB_STOP_TRADING: u8 = 3;
 pub const JOB_STATUS: u8 = 4;
 /// Cloud mode only — defined for cross-crate consistency.
 pub const JOB_DEPROVISION: u8 = 5;
-pub const JOB_PROMPT: u8 = 10;
-pub const JOB_TASK: u8 = 11;
-pub const JOB_EXEC: u8 = 12;
-pub const JOB_WORKFLOW_TICK: u8 = 30;
+pub const JOB_PROMPT: u8 = 7;
+pub const JOB_TASK: u8 = 8;
+pub const JOB_EXEC: u8 = 9;
+pub const JOB_WORKFLOW_TICK: u8 = 10;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Instance state — lightweight bot_id reference for singleton lookup

@@ -131,6 +131,19 @@ pub async fn activate_bot_with_secrets(
                         });
                     }
                 }
+                Err(e) if should_allow_missing_vault_for_paper_trade(&bot, &e) => {
+                    let addr = "0x0000000000000000000000000000000000000000".to_string();
+                    tracing::warn!(
+                        "Paper-trade bot {bot_id} has no onchain vault for service {}; using zero vault address",
+                        bot.service_id
+                    );
+                    bot.vault_address = addr.clone();
+                    if let Ok(store) = bots() {
+                        let _ = store.update(&bot_key(bot_id), |b| {
+                            b.vault_address = addr.clone();
+                        });
+                    }
+                }
                 Err(e) => {
                     return Err(format!(
                         "Failed to resolve vault from factory for {bot_id}: {e}. \
@@ -416,6 +429,13 @@ pub async fn activate_bot_with_secrets(
     })
 }
 
+fn should_allow_missing_vault_for_paper_trade(
+    bot: &crate::state::TradingBotRecord,
+    err: &str,
+) -> bool {
+    bot.paper_trade && err == "No vaults found for this service"
+}
+
 /// Wait for the sidecar's HTTP server to respond to health checks.
 /// Polls `/health` every second until a 200 response or `max_secs` elapsed.
 async fn wait_for_sidecar_health(sidecar_url: &str, max_secs: u64) {
@@ -443,7 +463,7 @@ async fn wait_for_sidecar_health(sidecar_url: &str, max_secs: u64) {
 async fn ensure_sidecar_runtime_dirs(sidecar_url: &str, token: &str) -> Result<(), String> {
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
-        command: "sh -lc 'mkdir -p /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup && chmod 0777 /home/agent/.sidecar'"
+        command: "sh -lc 'mkdir -p /home/agent/.sidecar /home/agent/.opencode /home/agent/.opencode-home/.config /home/agent/memory/conversations /home/agent/memory/decisions /home/agent/memory/research /home/agent/tools/backup && chmod 0777 /home/agent/.sidecar && test -f /home/agent/.opencode/profile-instructions.md || : > /home/agent/.opencode/profile-instructions.md'"
             .to_string(),
         cwd: String::new(),
         env_json: String::new(),
@@ -664,7 +684,7 @@ async fn write_file_to_sidecar(
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
         command: format!(
-            r#"node -e "require('fs').writeFileSync(process.argv[1], process.env.FILE_CONTENT)" "{path}""#,
+            r#"node -e "const fs=require('fs');const p=require('path');const target=process.argv[1];fs.mkdirSync(p.dirname(target),{{recursive:true}});fs.writeFileSync(target, process.env.FILE_CONTENT)" "{path}""#,
         ),
         cwd: String::new(),
         env_json: serde_json::json!({"FILE_CONTENT": content}).to_string(),
@@ -773,6 +793,51 @@ async fn resolve_vault_from_factory(
         .parse()
         .map_err(|e| format!("Invalid factory address '{factory_hex}': {e}"))?;
 
+    if bot.call_id > 0 {
+        let manager_hex = std::env::var("BLUEPRINT_MANAGER_ADDRESS")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                bot.strategy_config
+                    .get("blueprint_manager_address")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            });
+
+        if let Some(manager_hex) = manager_hex {
+            let manager_addr: Address = manager_hex
+                .parse()
+                .map_err(|e| format!("Invalid blueprint manager address '{manager_hex}': {e}"))?;
+
+            let rpc_url: reqwest::Url = bot
+                .rpc_url
+                .parse()
+                .map_err(|e| format!("Invalid RPC URL '{}': {e}", bot.rpc_url))?;
+            let provider = ProviderBuilder::new().connect_http(rpc_url);
+
+            let call = trading_runtime::contracts::ITradingBlueprintManager::botVaultsCall {
+                serviceId: bot.service_id,
+                callId: bot.call_id,
+            };
+            let calldata = call.abi_encode();
+            let result = provider
+                .call(
+                    alloy::rpc::types::TransactionRequest::default()
+                        .to(manager_addr)
+                        .input(calldata.into()),
+                )
+                .await
+                .map_err(|e| format!("botVaults call failed: {e}"))?;
+
+            let vault = <alloy::sol_types::sol_data::Address as alloy::sol_types::SolType>::abi_decode(&result)
+                .map_err(|e| format!("Failed to decode bot vault address: {e}"))?;
+
+            if vault != Address::ZERO {
+                return Ok(format!("{vault:#x}"));
+            }
+        }
+    }
+
     let rpc_url: reqwest::Url = bot
         .rpc_url
         .parse()
@@ -806,5 +871,68 @@ async fn resolve_vault_from_factory(
             "Ambiguous: {n} vaults found for service {}; cannot determine owner without explicit vault address",
             bot.service_id
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_allow_missing_vault_for_paper_trade;
+
+    fn sample_bot() -> crate::state::TradingBotRecord {
+        crate::state::TradingBotRecord {
+            id: "bot-1".to_string(),
+            sandbox_id: "sandbox-1".to_string(),
+            vault_address: "factory:0x1234567890123456789012345678901234567890".to_string(),
+            share_token: String::new(),
+            strategy_type: "dex".to_string(),
+            strategy_config: serde_json::json!({"paper_trade": true}),
+            risk_params: serde_json::json!({}),
+            chain_id: 84532,
+            rpc_url: "http://127.0.0.1:8545".to_string(),
+            trading_api_url: "http://127.0.0.1:9100".to_string(),
+            trading_api_token: "token".to_string(),
+            workflow_id: None,
+            trading_active: false,
+            created_at: 0,
+            operator_address: String::new(),
+            validator_service_ids: vec![],
+            max_lifetime_days: 30,
+            paper_trade: true,
+            wind_down_started_at: None,
+            submitter_address: String::new(),
+            trading_loop_cron: "0 */5 * * * *".to_string(),
+            call_id: 7,
+            service_id: 0,
+            harness_json: serde_json::Value::Null,
+            validation_trust: trading_runtime::ValidationTrust::default(),
+        }
+    }
+
+    #[test]
+    fn paper_trade_allows_missing_service_vault() {
+        let bot = sample_bot();
+        assert!(should_allow_missing_vault_for_paper_trade(
+            &bot,
+            "No vaults found for this service"
+        ));
+    }
+
+    #[test]
+    fn live_trade_still_fails_closed_when_vault_is_missing() {
+        let mut bot = sample_bot();
+        bot.paper_trade = false;
+        assert!(!should_allow_missing_vault_for_paper_trade(
+            &bot,
+            "No vaults found for this service"
+        ));
+    }
+
+    #[test]
+    fn paper_trade_does_not_mask_other_vault_errors() {
+        let bot = sample_bot();
+        assert!(!should_allow_missing_vault_for_paper_trade(
+            &bot,
+            "Ambiguous: 2 vaults found for service 0"
+        ));
     }
 }

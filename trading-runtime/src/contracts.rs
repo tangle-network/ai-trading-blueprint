@@ -79,6 +79,11 @@ sol! {
     }
 
     #[sol(rpc)]
+    interface ITradingBlueprintManager {
+        function botVaults(uint64 serviceId, uint64 callId) external view returns (address);
+    }
+
+    #[sol(rpc)]
     interface IPolicyEngine {
         function initializeVault(address vault, uint256 leverageCap, uint256 maxTrades, uint256 maxSlippage) external;
         function setWhitelist(address vault, address[] calldata tokens, bool allowed) external;
