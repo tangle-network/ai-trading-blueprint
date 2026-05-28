@@ -37,6 +37,7 @@ import type { BotReportData, MultishotShot } from '../report/types.js'
 import { runRobustnessEval } from '../robustness/robustness-driver.js'
 import { buildFleetView, writeFleetView } from '../fleet/fleet-aggregator.js'
 import { aggregateBotArtifacts } from '../sim/bot-artifacts.js'
+import { writeTraceAnalysis } from '../analysis/trace-analyst.js'
 import { OperatorClient } from '../sim/operator-client.js'
 import { runMultishotWithBaselines } from '../sim/multishot-user-sim.js'
 import { STANDARD_USER_INTENTS, getIntent } from '../sim/user-intents.js'
@@ -265,6 +266,15 @@ async function writeArtifacts(outDir: string, headerIntent: UserIntent, partial:
   if (partial.robustness) writeFileSync(resolve(outDir, 'robustness-raw.json'), JSON.stringify(partial.robustness, null, 2))
   const fleet = buildFleetView([reportData])
   writeFleetView(fleet, resolve(outDir, 'fleet-view.md'), resolve(outDir, 'fleet-view.json'))
+  // Structured success/failure trace analysis over every cached cell —
+  // clusters TRADED / SAFE_SKIP / FABRICATED / STALLED / ERRORED and surfaces
+  // per-intent patterns. Every run self-diagnoses (replaces ad-hoc jq).
+  try {
+    const trace = writeTraceAnalysis(outDir)
+    process.stderr.write(`  ✓ trace analysis: ${trace.real_cells} real cells — ${trace.findings.length} findings → trace-analysis.md\n`)
+  } catch (e) {
+    process.stderr.write(`  ! trace analysis failed: ${(e as Error).message.slice(0, 200)}\n`)
+  }
   const summary = {
     bot_id: headerIntent.id,
     s_tier_composite: reportData.s_tier_composite,

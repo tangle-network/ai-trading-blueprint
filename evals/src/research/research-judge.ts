@@ -13,11 +13,10 @@
  * — no spawnSync inline; no JSON.parse-without-try-catch hazards.
  */
 
-import { llmCallJson } from '../sim/llm-call.js'
+import { runProfileJson } from '../sim/llm-call.js'
+import { researchJudgeProfile } from '../profiles/research-judge.js'
 import type { ResearchShot } from './research-driver.js'
 import type { SourceClass, ThesisQuestion } from './thesis-questions.js'
-
-const JUDGE_MODEL = 'claude-sonnet-4-6'
 
 export interface ResearchJudgeScore {
   question_id: string
@@ -51,9 +50,10 @@ async function tryResolveCitation(url: string, timeoutMs = 5_000): Promise<boole
   }
 }
 
-function judgePromptFor(question: ThesisQuestion, responseText: string): string {
-  return `You are scoring a trading bot's research artifact for the question:
-"${question.question}"
+/** Per-shot user message; rubric + model live in the profile
+ *  (evals/src/profiles/research-judge.ts). */
+function judgeMessageFor(question: ThesisQuestion, responseText: string): string {
+  return `Thesis question: "${question.question}"
 
 Required source classes the bot SHOULD have hit: ${question.expected_source_classes.join(', ')}
 Required recency: <${question.required_recency_hours}h
@@ -62,18 +62,7 @@ Must engage with: ${question.must_engage_with}
 Bot's response:
 ---
 ${responseText.slice(0, 8000)}
----
-
-Score this artifact. Be skeptical — a generic answer with no specifics is a fail. Output ONE JSON object, no prose, no fences:
-
-{
-  "source_classes_covered": ["crypto_news", ...],
-  "mean_recency_hours": 24.0,
-  "recency_fallback_used": false,            // true if NO dates were referenced and you had to guess
-  "must_engage_engaged": true,
-  "narrative_coherence": 0.7,
-  "notes": "<1-2 sentence skeptical critique>"
-}`
+---`
 }
 
 function fallbackJudgement(question: ThesisQuestion, reason: string): JudgeLlmOutput {
@@ -96,10 +85,10 @@ export async function judgeResearchShot(
   opts: JudgeShotOptions = {},
 ): Promise<ResearchJudgeScore> {
   // ── LLM judge call (with safe JSON extraction) ─────────────────────
-  const { result: llm, raw } = llmCallJson<JudgeLlmOutput>({
-    prompt: judgePromptFor(shot.question, shot.bot_response_text),
-    model: JUDGE_MODEL,
-  })
+  const { result: llm, raw } = await runProfileJson<JudgeLlmOutput>(
+    researchJudgeProfile,
+    { message: judgeMessageFor(shot.question, shot.bot_response_text) },
+  )
   const j = llm ?? fallbackJudgement(
     shot.question,
     !raw.ok ? `judge_call_failed: ${raw.stderr.slice(0, 200)}` : `judge_output_unparseable: ${raw.output.slice(0, 200)}`,

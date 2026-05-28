@@ -21,7 +21,38 @@ import type {
   LabeledScenarioStore,
   Scenario,
 } from '@tangle-network/agent-eval/campaign'
-import { inMemoryCampaignStorage, runEval } from '@tangle-network/agent-eval/campaign'
+import { runEval } from '@tangle-network/agent-eval/campaign'
+import {
+  existsSync as fsExistsSync,
+  mkdirSync as fsMkdirSync,
+  readFileSync as fsReadFileSync,
+  writeFileSync as fsWriteFileSync,
+} from 'node:fs'
+
+/** Local disk-backed CampaignStorage. The bundled `fsCampaignStorage`
+ *  from @tangle-network/agent-eval uses a dynamic `require('fs')` that
+ *  fails under ESM ("Dynamic require of 'fs' is not supported"), so we
+ *  re-implement the four-method interface inline against `node:fs`. */
+function localFsCampaignStorage() {
+  return {
+    ensureDir(dir: string): void {
+      fsMkdirSync(dir, { recursive: true })
+    },
+    exists(path: string): boolean {
+      return fsExistsSync(path)
+    },
+    read(path: string): string | undefined {
+      try {
+        return fsReadFileSync(path, 'utf8')
+      } catch {
+        return undefined
+      }
+    },
+    write(path: string, content: string | Uint8Array): void {
+      fsWriteFileSync(path, content)
+    },
+  }
+}
 
 import { resolveRepo } from '../lib/repo.js'
 import {
@@ -29,7 +60,8 @@ import {
   runNullBotSession,
   runStallBotSession,
 } from './baseline-bots.js'
-import { llmCallJson } from './llm-call.js'
+import { runProfileJson } from './llm-call.js'
+import { primaryRubricJudgeProfile } from '../profiles/primary-rubric-judge.js'
 import { deterministicAgentEnv, OperatorClient } from './operator-client.js'
 import { inferStrategyTypeFromVenues } from './strategy-type.js'
 import type { UserPersona } from './user-personas.js'
@@ -42,7 +74,6 @@ import {
 
 export type BotKind = 'real' | 'null' | 'stall'
 
-const JUDGE_MODEL = 'claude-haiku-4-5'
 
 // ─── Scenario shape ────────────────────────────────────────────────────
 
@@ -121,7 +152,7 @@ async function dispatchInner(
     // Bind the persona to nextUserTurn so the stub bots (null/stall) get
     // persona-flavoured user turns the same way the real bot path does.
     const persona = scenario.persona ?? null
-    const turnGen = (intent: UserIntent, priorTurns: Parameters<typeof nextUserTurn>[1]) =>
+    const turnGen = async (intent: UserIntent, priorTurns: Parameters<typeof nextUserTurn>[1]) =>
       nextUserTurn(intent, priorTurns, persona)
     // Stub bots (null / stall) don't touch the product stack at all.
     if (botKind === 'null') {
@@ -146,7 +177,10 @@ async function dispatchInner(
     const botId = await client.provisionBot({
       prompt: scenario.intent.text,
       name: scenario.intent.text.slice(0, 50),
-      strategy_type: inferStrategyTypeFromVenues(scenario.intent.venues),
+      // Explicit intent override wins (MM on a DEX venue, multi-venue
+      // portfolio); otherwise infer from venues. This is the single
+      // provisioning SOT — same call the product's create path makes.
+      strategy_type: scenario.intent.strategy_type ?? inferStrategyTypeFromVenues(scenario.intent.venues),
     })
     // Bot create is instant in operator DB; vault resolution is async
     // (on-chain). configureSecrets returns 500 without a resolved vault.
@@ -178,29 +212,19 @@ interface JudgeRubricScores {
   notes: string
 }
 
-function judgeViaClaude(intent: UserIntent, artifact: UserSimSessionResult): JudgeRubricScores {
+async function judgePrimaryRubric(intent: UserIntent, artifact: UserSimSessionResult): Promise<JudgeRubricScores> {
   const turnsView = artifact.turns
     .map((t) => `  TURN ${t.turn}:\n    USER: ${t.user_message}\n    BOT:  ${t.bot_reply_text.slice(0, 1200)}`)
     .join('\n')
-  const prompt = `You are scoring a user↔bot conversation from a trading bot eval.
-
-User's intent: "${intent.text}"
+  // Rubric + model live in the profile (evals/src/profiles/primary-rubric-judge.ts);
+  // here we only supply the per-cell data as the user message.
+  const message = `User's intent: "${intent.text}"
 Hard constraints: $${intent.capital_usd} capital, ${intent.dd_cap_pct}% max drawdown, venues allowed: ${intent.venues.join(', ')}.
 Session ended by: ${artifact.ended_by} after ${artifact.turns.length} turns.
 
 Transcript:
-${turnsView}
-
-Score four dimensions, each 0.0 to 1.0:
-
-  intent_fulfilled: Did the bot meaningfully address what the user asked for?
-  respected_constraints: Did it stay within capital / DD / venue constraints (or refuse cleanly if asked to violate)?
-  actually_traded_or_committed: Did it take action (place trades, write a strategy, set config) — or did it just chat?
-  productive_conversation: Was each turn moving forward, or stuck in loops / hedging / questions?
-
-Output ONE JSON object, no prose, no fences:
-  {"intent_fulfilled": 0.0, "respected_constraints": 0.0, "actually_traded_or_committed": 0.0, "productive_conversation": 0.0, "notes": "<1-2 sentences>"}`
-  const { result, raw } = llmCallJson<JudgeRubricScores>({ prompt, model: JUDGE_MODEL })
+${turnsView}`
+  const { result, raw } = await runProfileJson<JudgeRubricScores>(primaryRubricJudgeProfile, { message })
   return result ?? {
     intent_fulfilled: 0,
     respected_constraints: 0,
@@ -210,15 +234,65 @@ Output ONE JSON object, no prose, no fences:
   }
 }
 
+/** State-based signals derived from the bot's OBSERVABLE work-product
+ *  (bot_artifacts), not from transcript prose. This is the Gen-2 core:
+ *  "did the world change the way the brief asked" beats "did the chat
+ *  sound good." A bot that wrote a strategy + placed a (paper) trade
+ *  scores high even with terse prose; a bot with eloquent prose and zero
+ *  state change cannot exceed the prose-only ceiling.
+ *
+ *  - committed: 1.0 if it actually traded (observable), 0.5 if it
+ *    committed a strategy (harness present / self-improvement fired) but
+ *    didn't trade yet, else falls back to a DISCOUNTED prose claim (0.3×)
+ *    because prose claims of action are cheap and gameable.
+ *  - selfImprovement: did the headline capability (self-improve cycle)
+ *    fire? Bonus for promotions. */
+function deriveStateScores(
+  artifact: UserSimSessionResult,
+  proseTradedClaim: number,
+): { committed: number; selfImprovement: number; evidence: string } {
+  const a = artifact.bot_artifacts
+  if (!a) {
+    // No artifact inspection — fall back to a heavily-discounted prose claim.
+    return {
+      committed: 0.3 * proseTradedClaim,
+      selfImprovement: 0,
+      evidence: 'no bot_artifacts (inspection failed); prose claim discounted 0.3×',
+    }
+  }
+  const trades = a.execution.trades_total
+  const hasStrategy = a.current_strategy.harness_version !== undefined && a.current_strategy.harness_version > 0
+  const cycles = a.self_improvement.cycles_fired
+  const promoted = a.self_improvement.revisions_promoted
+
+  let committed: number
+  let evidence: string
+  if (trades > 0) {
+    committed = 1.0
+    evidence = `${trades} trade(s) placed (${a.execution.trades_paper} paper / ${a.execution.trades_live} live)`
+  } else if (hasStrategy || cycles > 0) {
+    committed = 0.5
+    evidence = `strategy committed (v${a.current_strategy.harness_version ?? '?'}, ${cycles} self-improve cycle(s)) but no trade yet`
+  } else {
+    committed = 0.3 * proseTradedClaim
+    evidence = `no observable trade or strategy; prose claim discounted 0.3×`
+  }
+
+  const selfImprovement = cycles > 0 ? Math.min(1, 0.5 + 0.5 * (promoted > 0 ? 1 : 0)) : 0
+  return { committed, selfImprovement, evidence }
+}
+
 export function userSimJudge(opts: { dualJudge?: boolean } = {}): JudgeConfig<UserSimSessionResult, UserIntentScenario> {
   const useDual = opts.dualJudge ?? false
   return {
     name: 'user-sim-outcome',
     dimensions: [
-      { key: 'intent_fulfilled', description: 'Did the bot address the user intent?' },
-      { key: 'respected_constraints', description: 'Did it stay within capital/DD/venue caps?' },
-      { key: 'actually_traded_or_committed', description: 'Did it take real action?' },
-      { key: 'productive_conversation', description: 'Were turns moving forward?' },
+      { key: 'intent_fulfilled', description: 'Did the bot address the user intent? (prose)' },
+      { key: 'respected_constraints', description: 'Did it stay within capital/DD/venue caps? (prose)' },
+      { key: 'actually_traded_or_committed', description: 'Observable state: did it trade/commit a strategy? (artifact-derived)' },
+      { key: 'self_improvement', description: 'Did the self-improvement cycle fire? (artifact-derived)' },
+      { key: 'productive_conversation', description: 'Were turns moving forward? (prose)' },
+      { key: 'prose_traded_claim', description: 'What the prose judge CLAIMED re: action — for prose-vs-state gap analysis' },
       ...(useDual
         ? [
             { key: 'secondary_intent_fulfilled', description: 'Skeptical secondary judge — same intent question' },
@@ -228,21 +302,29 @@ export function userSimJudge(opts: { dualJudge?: boolean } = {}): JudgeConfig<Us
         : []),
     ],
     async score({ scenario, artifact }: { scenario: UserIntentScenario; artifact: UserSimSessionResult }) {
-      const r = judgeViaClaude(scenario.intent, artifact)
+      const r = await judgePrimaryRubric(scenario.intent, artifact)
+      // State-based override: actually_traded_or_committed comes from the
+      // bot's OBSERVABLE work-product, not the prose judge's guess.
+      const state = deriveStateScores(artifact, r.actually_traded_or_committed)
+      // Composite weights observable state as the dominant signal (0.40 +
+      // 0.15 self-improve = 55% from artifacts), prose as supporting.
       const composite =
-        0.3 * r.intent_fulfilled +
-        0.3 * r.respected_constraints +
-        0.3 * r.actually_traded_or_committed +
-        0.1 * r.productive_conversation
+        0.20 * r.intent_fulfilled +
+        0.15 * r.respected_constraints +
+        0.40 * state.committed +
+        0.15 * state.selfImprovement +
+        0.10 * r.productive_conversation
       const dimensions: Record<string, number> = {
         intent_fulfilled: r.intent_fulfilled,
         respected_constraints: r.respected_constraints,
-        actually_traded_or_committed: r.actually_traded_or_committed,
+        actually_traded_or_committed: state.committed,
+        self_improvement: state.selfImprovement,
         productive_conversation: r.productive_conversation,
+        prose_traded_claim: r.actually_traded_or_committed,
       }
-      let notes = r.notes
+      let notes = `${r.notes} | STATE: ${state.evidence}`
       if (useDual) {
-        const s = judgeViaSkepticalSecondary(scenario.intent, artifact)
+        const s = await judgeViaSkepticalSecondary(scenario.intent, artifact)
         dimensions.secondary_intent_fulfilled = s.intent_fulfilled
         dimensions.secondary_actually_traded_or_committed = s.actually_traded_or_committed
         const disagreement =
@@ -251,7 +333,7 @@ export function userSimJudge(opts: { dualJudge?: boolean } = {}): JudgeConfig<Us
           Math.abs(r.actually_traded_or_committed - s.actually_traded_or_committed) +
           Math.abs(r.productive_conversation - s.productive_conversation)
         dimensions.judge_disagreement = disagreement
-        notes = `primary: ${r.notes} | secondary: ${s.notes} | disagreement L1=${disagreement.toFixed(2)}`
+        notes = `primary: ${notes} | secondary: ${s.notes} | disagreement L1=${disagreement.toFixed(2)}`
       }
       return { composite, dimensions, notes }
     },
@@ -304,9 +386,13 @@ export async function runMultishotUserSim(
       token: opts.token,
       ...(opts.privateKey ? { privateKey: opts.privateKey } : {}),
       maxTurnsPerShot: opts.maxTurnsPerShot ?? 8,
-      // 480s default = conversation cron is 5min cycle + margin. Earlier 240s
-      // killed 9/12 real-arm cells before the bot's reply landed.
-      perTurnTimeoutMs: opts.perTurnTimeoutMs ?? 480_000,
+      // 900s default = 3× the bot's 5-min conversation cron. smoke v5 traces
+      // showed turn-1 work spans multiple ticks (bot reads protocol, configures
+      // integration, writes strategy) and 480s caught 0/12 turn-1 replies. The
+      // bot is async-cron-driven; the per-turn budget must cover ≥3 ticks for
+      // multi-step work to land. (The real fix is tick-driving — task #108 —
+      // but a 3-cron budget makes the current sync-poll model honest.)
+      perTurnTimeoutMs: opts.perTurnTimeoutMs ?? 900_000,
     },
     botKind,
   )
@@ -316,7 +402,12 @@ export async function runMultishotUserSim(
     judges: [userSimJudge({ dualJudge: opts.dualJudge ?? true })],
     runDir: opts.runDir ?? resolveRepo(`.evolve/eval-runs/multishot-user-sim-${botKind}-${Date.now()}`),
     reps: opts.reps ?? 5,
-    storage: inMemoryCampaignStorage(),
+    // Disk-backed storage gives the campaign substrate cell-level
+    // resumability — each cell's artifact + judge scores land in
+    // <runDir>/cells/<cellId>/ as soon as the cell finishes. A SIGKILL
+    // mid-campaign loses ONE cell, not all of them; the next run with the
+    // same runDir resumes from where the last left off.
+    storage: localFsCampaignStorage(),
     ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
     ...(opts.labeledStore ? { labeledStore: opts.labeledStore } : {}),
     captureSource: 'eval-run',
@@ -346,10 +437,15 @@ export interface BaselineComparisonResult {
 export async function runMultishotWithBaselines(
   opts: RunMultishotUserSimOptions,
 ): Promise<BaselineComparisonResult> {
+  // Each arm gets its own runDir so the fs-backed campaign storage doesn't
+  // collide on cells/<cellId>/ across arms. Resumability works per-arm:
+  // re-running with the same outer runDir picks up where each arm left off.
+  const armRunDir = (arm: BotKind): string | undefined =>
+    opts.runDir ? `${opts.runDir}/${arm}` : undefined
   const [real, nullBot, stallBot] = await Promise.all([
-    runMultishotUserSim({ ...opts, botKind: 'real' }),
-    runMultishotUserSim({ ...opts, botKind: 'null' }),
-    runMultishotUserSim({ ...opts, botKind: 'stall' }),
+    runMultishotUserSim({ ...opts, botKind: 'real', ...(armRunDir('real') ? { runDir: armRunDir('real')! } : {}) }),
+    runMultishotUserSim({ ...opts, botKind: 'null', ...(armRunDir('null') ? { runDir: armRunDir('null')! } : {}) }),
+    runMultishotUserSim({ ...opts, botKind: 'stall', ...(armRunDir('stall') ? { runDir: armRunDir('stall')! } : {}) }),
   ])
   const per_scenario_deltas: BaselineComparisonResult['per_scenario_deltas'] = {}
   for (const id of Object.keys(real.aggregates.byScenario)) {

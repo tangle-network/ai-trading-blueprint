@@ -19,11 +19,11 @@
  */
 
 import type { BotArtifacts } from './bot-artifacts.js'
-import { llmCall } from './llm-call.js'
+import { runProfile } from './llm-call.js'
+import { userSimTurnProfile } from '../profiles/user-sim-turn.js'
 import { OperatorClient } from './operator-client.js'
+import type { StrategyType } from './strategy-type.js'
 import type { UserPersona } from './user-personas.js'
-
-const USER_SIM_MODEL = 'claude-haiku-4-5'
 
 export interface UserIntent {
   /** Stable id used as the scenario id + cell id. */
@@ -35,6 +35,12 @@ export interface UserIntent {
   dd_cap_pct: number
   /** Allow-listed venues; the judge flags trades outside this list. */
   venues: string[]
+  /** Explicit strategy_type → pack override. REQUIRED when venue-inference
+   *  picks the wrong pack — e.g. market-making on a DEX venue (aerodrome,
+   *  uniswap) infers 'dex' (swap-routing) but needs 'mm' (the market-maker
+   *  pack); a multi-venue portfolio intent needs 'multi'. When omitted,
+   *  the dispatch falls back to inferStrategyTypeFromVenues(venues). */
+  strategy_type?: StrategyType
 }
 
 export interface UserSimSessionOptions {
@@ -83,36 +89,29 @@ export interface UserSimSessionResult {
 
 // ─── User-sim turn generation ──────────────────────────────────────────
 
-const BASE_USER_SIM_INSTRUCTIONS = `Stay in character as a user — never describe the bot's internal state, never analyse the bot's strategy in technical terms unless your persona explicitly would, never apologise for being an AI.
-
-Rules:
-- Each turn is ONE chat message you would send. No prose around it. No quotes. No labels like "user:".
-- Push the bot toward your goal in the way YOUR PERSONA would.
-- When you have what you wanted (the bot is trading, has set up a strategy, has answered your question to your persona's satisfaction), emit the literal token [done] anywhere in your message and stop.
-- Cap each message at ~200 characters unless your persona genuinely needs more.`
-
-/** Build the full system prompt: persona-specific voice + base instructions. */
-function buildSystemPrompt(persona: UserPersona | null | undefined): string {
-  if (persona) return `${persona.system_prompt}\n\n${BASE_USER_SIM_INSTRUCTIONS}`
-  return `You are simulating a user chatting with an autonomous trading bot. Concise, direct, demanding.\n\n${BASE_USER_SIM_INSTRUCTIONS}`
+/** Persona voice for the user-message portion. The base user-sim rules
+ *  live in the profile's system prompt (evals/src/profiles/user-sim-turn.ts);
+ *  the persona voice is per-call so it rides in the message. */
+function personaVoice(persona: UserPersona | null | undefined): string {
+  if (persona) return persona.system_prompt
+  return 'You are a concise, direct, demanding user chatting with an autonomous trading bot.'
 }
 
-export function nextUserTurn(
+export async function nextUserTurn(
   intent: UserIntent,
   priorTurns: UserSimTurn[],
   persona?: UserPersona | null,
-): string {
+): Promise<string> {
   if (priorTurns.length === 0) {
     // Opening turn IS the intent text, verbatim — closest possible
     // simulation of a real user typing their first message. (The persona
     // shows up on turn 2+, when there's something for it to react to.)
     return intent.text
   }
-  const systemPrompt = buildSystemPrompt(persona)
   const convo = priorTurns
     .map((t) => `USER: ${t.user_message}\nBOT: ${t.bot_reply_text.slice(0, 800)}`)
     .join('\n\n')
-  const prompt = `${systemPrompt}
+  const message = `Your persona's voice: ${personaVoice(persona)}
 
 Your persona's goal: "${intent.text}"
 Constraints you care about: $${intent.capital_usd} capital, ${intent.dd_cap_pct}% max drawdown, venues you allow: ${intent.venues.join(', ')}.
@@ -121,7 +120,7 @@ Conversation so far:
 ${convo}
 
 Your next message (just the message, nothing else):`
-  const res = llmCall({ prompt, model: USER_SIM_MODEL })
+  const res = await runProfile(userSimTurnProfile, { message })
   if (!res.ok) throw new Error(`user-sim turn generation failed: ${res.stderr.slice(0, 200)}`)
   return res.output.trim()
 }
@@ -138,7 +137,7 @@ export async function runUserSimSession(opts: UserSimSessionOptions): Promise<Us
   let ended: UserSimSessionResult['ended_by'] = 'max_turns'
 
   for (let i = 0; i < opts.maxTurns; i++) {
-    const userMessage = nextUserTurn(opts.intent, turns, opts.persona ?? null)
+    const userMessage = await nextUserTurn(opts.intent, turns, opts.persona ?? null)
     const signalledDone = userMessage.toLowerCase().includes('[done]')
 
     const turnStart = Date.now()

@@ -43,6 +43,7 @@ export const STANDARD_USER_INTENTS: UserIntent[] = [
     capital_usd: 25_000,
     dd_cap_pct: 8,
     venues: ['hyperliquid'],
+    strategy_type: 'mm', // market-making pack, not directional perp
   },
 
   // ── Drift perp (Solana) ──────────────────────────────────────────────
@@ -63,15 +64,6 @@ export const STANDARD_USER_INTENTS: UserIntent[] = [
     venues: ['polymarket_clob'],
   },
 
-  // ── Aerodrome AMM (Base) ─────────────────────────────────────────────
-  {
-    id: 'aerodrome-eth-usdc-lp',
-    text: 'Run an LP position on Aerodrome ETH/USDC pool on Base. $20k. Concentrated around current price. Rebalance only if price drifts >5% off the range.',
-    capital_usd: 20_000,
-    dd_cap_pct: 4,
-    venues: ['aerodrome'],
-  },
-
   // ── Aave lending (Base) ──────────────────────────────────────────────
   {
     id: 'aave-stables-yield',
@@ -79,6 +71,51 @@ export const STANDARD_USER_INTENTS: UserIntent[] = [
     capital_usd: 20_000,
     dd_cap_pct: 1,
     venues: ['aave_v3'],
+  },
+  {
+    id: 'aave-conservative-laddered',
+    text: 'Conservative Aave strategy on Base: $50k stables. Supply USDC + USDbC, keep a 20% cash buffer, never let utilization-driven APY chase push us above 60% allocation in any single asset. Rebalance weekly. Capital preservation first.',
+    capital_usd: 50_000,
+    dd_cap_pct: 1,
+    venues: ['aave_v3'],
+    strategy_type: 'yield',
+  },
+
+  // ── Aerodrome market-making (Base) ───────────────────────────────────
+  {
+    id: 'aerodrome-eth-usdc-lp',
+    text: 'Run an LP position on Aerodrome ETH/USDC pool on Base. $20k. Concentrated around current price. Rebalance only if price drifts >5% off the range.',
+    capital_usd: 20_000,
+    dd_cap_pct: 4,
+    venues: ['aerodrome'],
+  },
+  {
+    id: 'aerodrome-eth-usdc-mm',
+    text: 'Market-make ETH/USDC on Aerodrome (Base). $30k. Quote both sides around mid, keep inventory balanced, widen spreads when volatility spikes, pull quotes if the pool depth thins. I want fills and captured spread, not a passive LP.',
+    capital_usd: 30_000,
+    dd_cap_pct: 5,
+    venues: ['aerodrome'],
+    strategy_type: 'mm',
+  },
+
+  // ── Uniswap market-making (Base) ─────────────────────────────────────
+  {
+    id: 'uniswap-eth-usdc-mm',
+    text: 'Market-make ETH/USDC on Uniswap v3 (Base). $30k. Tight two-sided quotes in a concentrated band, re-center on drift, hedge inventory skew >15%. Capture spread; avoid toxic flow.',
+    capital_usd: 30_000,
+    dd_cap_pct: 5,
+    venues: ['uniswap_v3'],
+    strategy_type: 'mm',
+  },
+
+  // ── Multi-venue portfolio management ─────────────────────────────────
+  {
+    id: 'portfolio-multi-base',
+    text: 'Manage a $100k multi-strategy book on Base: split across Aave stables yield, an Aerodrome ETH/USDC LP, and a small momentum perp sleeve. Target balanced risk, rebalance when any sleeve drifts >10% off target weight, keep total drawdown under 6%.',
+    capital_usd: 100_000,
+    dd_cap_pct: 6,
+    venues: ['aave_v3', 'aerodrome', 'hyperliquid'],
+    strategy_type: 'multi',
   },
 ]
 

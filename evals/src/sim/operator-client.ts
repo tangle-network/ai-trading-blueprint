@@ -22,15 +22,21 @@
 
 import { spawnSync } from 'node:child_process'
 
-// 90s default — most operator-api calls return in <1s, but session creation
+// 180s default — most operator-api calls return in <1s, but session creation
 // triggers sandbox-agent container spin-up which can take 30-60s on a cold
-// devnet. A 15s ceiling here surfaced as AbortError ("This operation was
-// aborted") on the first cell of every smoke run; 90s gives the slowest path
-// (createSession) headroom while still failing fast on truly hung requests.
-const DEFAULT_TIMEOUT_MS = 90_000
+// devnet, and message-send + transcript-poll can stretch when the bot is
+// mid-reply on a long turn. Earlier ceilings (15s, then 90s) both surfaced as
+// AbortError ("This operation was aborted") on real-arm cells; 180s clears
+// every observed slow path while still failing fast on genuinely hung
+// requests (anything past 3min IS a hang, not a slow reply).
+const DEFAULT_TIMEOUT_MS = 180_000
 const DEFAULT_POLL_INTERVAL_MS = 5_000
 
-export type StrategyType = 'yield' | 'prediction' | 'perp' | 'dex'
+// StrategyType SOT lives in strategy-type.ts (the venue→pack inference module).
+// Imported + re-exported here so existing importers of `OperatorClient`'s
+// StrategyType keep working, but there is now ONE definition, not two that drift.
+import type { StrategyType } from './strategy-type.js'
+export type { StrategyType }
 
 export interface OperatorClientConfig {
   operatorUrl: string
@@ -250,33 +256,45 @@ export class OperatorClient {
     return botId
   }
 
-  /** Block until the bot's on-chain vault is resolved (vault_address
-   *  goes from 0x0000... to a real address). Required before
-   *  `configureSecrets` — without resolution the operator returns 500
-   *  "No vault found for service N call M. Refusing to trade with
-   *  unresolved vault address."
+  /** Block until the bot is READY to chat. Two readiness paths:
    *
-   *  Blueprint factory is async: the bot exists in the operator DB
-   *  immediately but the on-chain vault creation takes 30-60s on the
-   *  local devnet. Polls every 5s up to `timeoutMs` (default 4 min). */
+   *   - LIVE mode: the on-chain vault must resolve (vault_address goes
+   *     0x0000… → real address). configureSecrets returns 500 without it
+   *     ("Refusing to trade with unresolved vault address").
+   *   - PAPER mode: paper bots NEVER get an on-chain vault (vault_address
+   *     stays 0x0 by design) — readiness is the sandbox being provisioned
+   *     (sandbox_id present). Gating on a non-zero vault here hangs forever
+   *     on paper bots; that was the Gen-2 paper-mode regression.
+   *
+   *  Returns the resolved vault address, or '' for a ready paper bot.
+   *  Blueprint factory is async (30-60s on devnet); polls every 5s. */
   async waitForVaultResolved(botId: string, timeoutMs = 240_000): Promise<string> {
     const deadline = Date.now() + timeoutMs
     let lastSeen = ''
+    let lastSandbox = ''
     while (Date.now() < deadline) {
       try {
-        const res = await this.get<{ bots?: Array<{ id?: string; vault_address?: string }> }>(
-          `/api/bots?limit=200`,
-        )
+        const res = await this.get<{
+          bots?: Array<{ id?: string; vault_address?: string; paper_trade?: boolean; sandbox_id?: string }>
+        }>(`/api/bots?limit=200`)
         const bot = res.bots?.find((b) => b.id === botId)
         const va = bot?.vault_address ?? ''
         lastSeen = va
+        lastSandbox = bot?.sandbox_id ?? ''
+        // Live readiness: real vault resolved.
         if (va && !/^0x0+$/i.test(va)) return va
+        // Paper readiness: paper bot with a provisioned sandbox is ready;
+        // it will never get a non-zero vault, so don't wait for one.
+        if (bot?.paper_trade === true && lastSandbox) return ''
       } catch {
         // transient; retry
       }
       await sleep(5_000)
     }
-    throw new Error(`waitForVaultResolved timeout for ${botId} after ${timeoutMs}ms (last vault_address=${lastSeen || '<missing>'})`)
+    throw new Error(
+      `waitForVaultResolved timeout for ${botId} after ${timeoutMs}ms ` +
+        `(last vault_address=${lastSeen || '<missing>'}, sandbox=${lastSandbox || '<none>'})`,
+    )
   }
 
   /** Provision a bot's sandbox-agent LLM credentials. Without this the

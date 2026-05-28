@@ -7,6 +7,7 @@ use crate::JsonResponse;
 use crate::state::{bot_key, bots};
 use crate::wind_down::should_initiate_wind_down;
 
+use crate::prompts::tick_tool_for_strategy;
 use ai_agent_sandbox_blueprint_lib::workflows::{workflow_key, workflows};
 use ai_agent_sandbox_blueprint_lib::{SandboxExecRequest, run_exec_request};
 use blueprint_sdk::tangle::extract::TangleResult;
@@ -174,21 +175,24 @@ fn workflow_is_due(
         && entry.next_run_at.is_some_and(|next_run| next_run <= now)
 }
 
-fn hyperliquid_fast_bot_for_workflow<'a>(
+fn fast_tick_bot_and_tool_for_workflow<'a>(
     entry: &ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry,
     all_bots: &'a [crate::state::TradingBotRecord],
-) -> Option<&'a crate::state::TradingBotRecord> {
+) -> Option<(&'a crate::state::TradingBotRecord, &'static str)> {
     if !entry.name.starts_with("fast-tick-") {
         return None;
     }
-    all_bots.iter().find(|bot| {
-        bot.strategy_type == "hyperliquid_perp"
-            && (bot.workflow_id == Some(entry.id)
-                || workflow_name_belongs_to_bot(&entry.name, &bot.id))
+    all_bots.iter().find_map(|bot| {
+        let belongs =
+            bot.workflow_id == Some(entry.id) || workflow_name_belongs_to_bot(&entry.name, &bot.id);
+        if !belongs {
+            return None;
+        }
+        tick_tool_for_strategy(&bot.strategy_type).map(|tool| (bot, tool))
     })
 }
 
-fn hyperliquid_tick_task_result(
+fn fast_tick_task_result(
     bot: &crate::state::TradingBotRecord,
     started_at: u64,
     completed_at: u64,
@@ -204,16 +208,16 @@ fn hyperliquid_tick_task_result(
     let error = validation_error.or_else(|| {
         (exit_code != 0).then(|| {
             if trimmed_stderr.is_empty() {
-                format!("hyperliquid tick tool exited with {exit_code}")
+                format!("fast tick tool exited with {exit_code}")
             } else {
-                format!("hyperliquid tick tool exited with {exit_code}: {trimmed_stderr}")
+                format!("fast tick tool exited with {exit_code}: {trimmed_stderr}")
             }
         })
     });
 
     let mut task = json!({
         "success": success,
-        "sessionId": format!("direct-hyperliquid-fast-{}-{started_at}", bot.id),
+        "sessionId": format!("direct-fast-{}-{started_at}", bot.id),
         "traceId": Value::Null,
         "durationMs": duration_ms,
         "inputTokens": 0,
@@ -226,8 +230,9 @@ fn hyperliquid_tick_task_result(
     task
 }
 
-async fn run_direct_hyperliquid_fast_tick(
+async fn run_direct_fast_tick(
     bot: &crate::state::TradingBotRecord,
+    tool: &str,
     timeout_ms: u64,
 ) -> Value {
     let started_at = chrono::Utc::now().timestamp().max(0) as u64;
@@ -235,7 +240,7 @@ async fn run_direct_hyperliquid_fast_tick(
         Ok(sandbox) => sandbox,
         Err(err) => {
             let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
-            return hyperliquid_tick_task_result(
+            return fast_tick_task_result(
                 bot,
                 started_at,
                 completed_at,
@@ -251,7 +256,7 @@ async fn run_direct_hyperliquid_fast_tick(
         sync_canonical_harness_to_sidecar(bot, &sandbox.sidecar_url, &sandbox.token).await
     {
         let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
-        return hyperliquid_tick_task_result(
+        return fast_tick_task_result(
             bot,
             started_at,
             completed_at,
@@ -264,7 +269,7 @@ async fn run_direct_hyperliquid_fast_tick(
 
     let exec = SandboxExecRequest {
         sidecar_url: sandbox.sidecar_url.clone(),
-        command: "node /home/agent/tools/hyperliquid-tick.js".to_string(),
+        command: format!("node /home/agent/tools/{tool}"),
         cwd: String::new(),
         env_json: "{}".to_string(),
         timeout_ms,
@@ -273,7 +278,7 @@ async fn run_direct_hyperliquid_fast_tick(
         Ok(response) => response,
         Err(err) => {
             let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
-            return hyperliquid_tick_task_result(
+            return fast_tick_task_result(
                 bot,
                 started_at,
                 completed_at,
@@ -305,20 +310,18 @@ async fn run_direct_hyperliquid_fast_tick(
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
                 if valid_schema && has_decision && reported_logs && reported_metrics {
-                    verify_hyperliquid_tick_side_effects(bot, &parsed)
-                        .await
-                        .err()
+                    verify_tick_side_effects(bot, &parsed).await.err()
                 } else {
-                    Some("Hyperliquid direct tick JSON failed schema/side-effect flags".to_string())
+                    Some("Direct fast tick JSON failed schema/side-effect flags".to_string())
                 }
             }
-            Err(_) => Some("Hyperliquid direct tick result was not deterministic JSON".to_string()),
+            Err(_) => Some("Direct fast tick result was not deterministic JSON".to_string()),
         }
     } else {
         None
     };
 
-    hyperliquid_tick_task_result(
+    fast_tick_task_result(
         bot,
         started_at,
         completed_at,
@@ -359,7 +362,7 @@ async fn sync_canonical_harness_to_sidecar(
     .await
 }
 
-async fn run_due_hyperliquid_fast_ticks(
+async fn run_due_fast_ticks(
     all_bots: &[crate::state::TradingBotRecord],
 ) -> Result<Vec<Value>, String> {
     let now = chrono::Utc::now().timestamp().max(0) as u64;
@@ -369,13 +372,13 @@ async fn run_due_hyperliquid_fast_ticks(
         .into_iter()
         .filter(|entry| workflow_is_due(entry, now))
         .filter_map(|entry| {
-            let bot = hyperliquid_fast_bot_for_workflow(&entry, all_bots)?;
-            Some((entry, bot.clone()))
+            let (bot, tool) = fast_tick_bot_and_tool_for_workflow(&entry, all_bots)?;
+            Some((entry, bot.clone(), tool))
         })
         .collect();
 
     let mut executed = Vec::new();
-    for (entry, bot) in due {
+    for (entry, bot, tool) in due {
         let workflow_id = entry.id;
         let key = workflow_key(workflow_id);
         let next_run_at = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
@@ -395,9 +398,11 @@ async fn run_due_hyperliquid_fast_ticks(
         tracing::info!(
             workflow_id,
             bot_id = %bot.id,
-            "Running Hyperliquid fast tick directly"
+            strategy = %bot.strategy_type,
+            tool,
+            "Running deterministic fast tick directly"
         );
-        let task = run_direct_hyperliquid_fast_tick(&bot, timeout_ms).await;
+        let task = run_direct_fast_tick(&bot, tool, timeout_ms).await;
         let executed_at = chrono::Utc::now().timestamp().max(0) as u64;
         workflows()?
             .update(&key, |workflow| {
@@ -419,7 +424,11 @@ async fn run_due_hyperliquid_fast_ticks(
     Ok(executed)
 }
 
-async fn verify_hyperliquid_tick_side_effects(
+/// Runtime anti-fabrication check, family-agnostic: confirms the tick actually
+/// wrote a fresh `decisions.jsonl` line (timestamp >= run start, action/reason
+/// matching the printed decision) and refreshed `metrics/latest.json`. A tick
+/// that narrates an action without producing these side effects fails here.
+async fn verify_tick_side_effects(
     bot: &crate::state::TradingBotRecord,
     result_json: &Value,
 ) -> Result<(), String> {
@@ -512,10 +521,7 @@ NODE"#;
     ))
 }
 
-async fn validate_hyperliquid_fast_runs(
-    response: &mut Value,
-    all_bots: &[crate::state::TradingBotRecord],
-) {
+async fn validate_fast_runs(response: &mut Value, all_bots: &[crate::state::TradingBotRecord]) {
     let Some(executed) = response.get_mut("executed").and_then(Value::as_array_mut) else {
         return;
     };
@@ -532,7 +538,7 @@ async fn validate_hyperliquid_fast_runs(
         let Some(bot) = bot_for_executed_workflow(all_bots, workflow_id, workflow_name) else {
             continue;
         };
-        if bot.strategy_type != "hyperliquid_perp" {
+        if tick_tool_for_strategy(&bot.strategy_type).is_none() {
             continue;
         }
 
@@ -546,7 +552,7 @@ async fn validate_hyperliquid_fast_runs(
             Err(_) => {
                 set_task_failure(
                     entry,
-                    "Hyperliquid fast tick result was not deterministic JSON".to_string(),
+                    "Fast tick result was not deterministic JSON".to_string(),
                 );
                 continue;
             }
@@ -570,16 +576,13 @@ async fn validate_hyperliquid_fast_runs(
         if !valid_schema || !has_decision || !reported_logs || !reported_metrics {
             set_task_failure(
                 entry,
-                "Hyperliquid fast tick JSON failed schema/side-effect flags".to_string(),
+                "Fast tick JSON failed schema/side-effect flags".to_string(),
             );
             continue;
         }
 
-        if let Err(err) = verify_hyperliquid_tick_side_effects(bot, &parsed).await {
-            set_task_failure(
-                entry,
-                format!("Hyperliquid fast tick verification failed: {err}"),
-            );
+        if let Err(err) = verify_tick_side_effects(bot, &parsed).await {
+            set_task_failure(entry, format!("Fast tick verification failed: {err}"));
         }
     }
 }
@@ -655,11 +658,12 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
         tracing::info!("Wind-down initiated for bot {}", bot.id);
     }
 
-    // 2. Run deterministic Hyperliquid fast ticks before the generic LLM runner.
-    let direct_executed = match run_due_hyperliquid_fast_ticks(&all_bots).await {
+    // 2. Run deterministic fast ticks (any family with a tick tool) before the
+    //    generic LLM runner.
+    let direct_executed = match run_due_fast_ticks(&all_bots).await {
         Ok(executed) => executed,
         Err(err) => {
-            tracing::error!("direct Hyperliquid fast tick failed (non-fatal): {err}");
+            tracing::error!("direct fast tick failed (non-fatal): {err}");
             Vec::new()
         }
     };
@@ -679,7 +683,7 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
             response["count"] = json!(executed.len());
         }
     }
-    validate_hyperliquid_fast_runs(&mut response, &all_bots).await;
+    validate_fast_runs(&mut response, &all_bots).await;
     tracing::info!("workflow_tick() returned: {}", response);
     persist_executed_run_history(&response);
 

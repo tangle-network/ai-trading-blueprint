@@ -88,6 +88,37 @@ pub(crate) fn get_hl_client(
     get_hl_client_for_config(config)
 }
 
+/// Public, well-known anvil dev key #1. Holds no funds; never used to SIGN a
+/// submitted order. Used ONLY to construct the read client when no real
+/// signing key is configured — Hyperliquid info queries (get_mids,
+/// get_account) are public and don't sign, so paper bots can read prices +
+/// account state without a real key. Paper order execution simulates fills
+/// (see execute.rs / portfolio.rs `paper_trade: true`) and never reaches the
+/// signing path, so a dummy key cannot place a real order.
+const HL_READ_DUMMY_KEY: &str =
+    "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+
+/// Read-only HL client for public info queries. Falls back to the dummy key
+/// when no signing key is configured — this is what lets PAPER bots read
+/// prices/account/NAV without provisioning a real Hyperliquid signing key
+/// (paper trading is pure simulation; it should never need a key — that was
+/// the Gen-3 blocker where the bot safe-skipped every trade). Strict signing
+/// paths still go through `get_hl_client`.
+pub(crate) fn get_hl_read_client(
+    state: &MultiBotTradingState,
+) -> Result<&'static HyperliquidClient, (StatusCode, String)> {
+    let network = hyperliquid_network_from_env();
+    let private_key = hyperliquid_api_wallet_signing_config(state)
+        .map(|config| config.private_key)
+        .ok()
+        .filter(|k| !k.is_empty())
+        .unwrap_or_else(|| HL_READ_DUMMY_KEY.to_string());
+    get_hl_client_for_config(HyperliquidClientConfig {
+        private_key,
+        network,
+    })
+}
+
 fn get_hl_client_for_config(
     config: HyperliquidClientConfig,
 ) -> Result<&'static HyperliquidClient, (StatusCode, String)> {
@@ -816,11 +847,48 @@ async fn set_leverage(
     }))
 }
 
+/// Starting capital for a paper bot, read from strategy_config
+/// (initial_capital_usd / initial_capital / cash_balance). Defaults to
+/// 10_000 so a paper bot provisioned without explicit capital still has a
+/// realistic book to trade — otherwise it reads the real (empty) HL account
+/// of its dummy address, sees ~$0, and responsibly safe-skips every trade
+/// (the Gen-3 "no usable margin" blocker).
+fn paper_account_capital_usd(config: &serde_json::Value) -> String {
+    config
+        .get("initial_capital_usd")
+        .or_else(|| config.get("initial_capital"))
+        .or_else(|| config.get("cash_balance"))
+        .and_then(|v| match v {
+            serde_json::Value::String(s) => Some(s.trim().to_string()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+        .filter(|s| !s.is_empty() && s != "0")
+        .unwrap_or_else(|| "10000".to_string())
+}
+
 async fn get_account(
     State(state): State<Arc<MultiBotTradingState>>,
     Extension(bot): Extension<BotContext>,
 ) -> Result<Json<AccountInfo>, (StatusCode, String)> {
-    let client = get_hl_client(&state)?;
+    // Paper bots: synthesize a seeded account from strategy_config capital.
+    // The real HL account of a paper bot's (dummy) address is empty, so
+    // querying it returns ~$0 and the bot safe-skips. Paper is simulation —
+    // the account reflects the configured book, not an on-chain balance.
+    if bot.paper_trade {
+        let capital = paper_account_capital_usd(&bot.strategy_config);
+        return Ok(Json(AccountInfo {
+            account_value: capital.clone(),
+            total_margin_used: "0".to_string(),
+            total_ntl_pos: "0".to_string(),
+            total_raw_usd: capital.clone(),
+            withdrawable: capital,
+            positions: Vec::new(),
+            open_orders: Vec::new(),
+        }))
+    }
+    // Live: read-only public query via the dummy-key-tolerant read client.
+    let client = get_hl_read_client(&state)?;
     let account_address = require_optional_hyperliquid_account_address(&bot)?;
     let account = client
         .get_account_for(account_address.as_deref())
@@ -832,7 +900,9 @@ async fn get_account(
 async fn get_prices(
     State(state): State<Arc<MultiBotTradingState>>,
 ) -> Result<Json<std::collections::HashMap<String, String>>, (StatusCode, String)> {
-    let client = get_hl_client(&state)?;
+    // allMids is fully public — never needs a signing key. Read client with
+    // dummy-key fallback so prices work even on a key-less paper devnet.
+    let client = get_hl_read_client(&state)?;
     let mids = client.get_mids().await.map_err(hyperliquid_bad_gateway)?;
     Ok(Json(mids))
 }
