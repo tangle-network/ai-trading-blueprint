@@ -74,9 +74,11 @@ pub struct HyperliquidExtraAgent {
     pub valid_until: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
-struct HyperliquidUserRoleResponse {
-    role: String,
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct HyperliquidUserRoleResponse {
+    pub(crate) role: String,
+    #[serde(default)]
+    pub(crate) data: Option<serde_json::Value>,
 }
 
 pub(crate) fn get_hl_client(
@@ -509,6 +511,14 @@ pub(crate) async fn require_hyperliquid_execution_ready(
 }
 
 pub(crate) async fn hyperliquid_user_role(user: &str) -> Result<String, (StatusCode, String)> {
+    hyperliquid_user_role_details(user)
+        .await
+        .map(|body| body.role)
+}
+
+pub(crate) async fn hyperliquid_user_role_details(
+    user: &str,
+) -> Result<HyperliquidUserRoleResponse, (StatusCode, String)> {
     let response = reqwest::Client::new()
         .post(hyperliquid_info_url())
         .json(&serde_json::json!({
@@ -534,13 +544,37 @@ pub(crate) async fn hyperliquid_user_role(user: &str) -> Result<String, (StatusC
     response
         .json::<HyperliquidUserRoleResponse>()
         .await
-        .map(|body| body.role)
         .map_err(|e| {
             (
                 StatusCode::BAD_GATEWAY,
                 format!("Hyperliquid userRole decode failed: {e}"),
             )
         })
+}
+
+pub(crate) fn exchange_vault_address_for_user_role(
+    account: &str,
+    role: &str,
+) -> Result<Option<String>, (StatusCode, String)> {
+    match role.trim().to_ascii_lowercase().as_str() {
+        "user" => Ok(None),
+        "vault" | "subaccount" | "sub_account" => Ok(Some(account.to_string())),
+        "missing" => Err((
+            StatusCode::FORBIDDEN,
+            format!("Hyperliquid account {account} is missing on HyperCore"),
+        )),
+        other => Err((
+            StatusCode::BAD_GATEWAY,
+            format!("Unsupported Hyperliquid account role '{other}' for order submission"),
+        )),
+    }
+}
+
+pub(crate) async fn hyperliquid_exchange_vault_address(
+    account: &str,
+) -> Result<Option<String>, (StatusCode, String)> {
+    let role = hyperliquid_user_role(account).await?;
+    exchange_vault_address_for_user_role(account, &role)
 }
 
 pub(crate) async fn hyperliquid_extra_agents(
@@ -1041,6 +1075,40 @@ mod tests {
         );
 
         assert_eq!(hyperliquid_account_address(&bot), None);
+    }
+
+    #[test]
+    fn exchange_vault_address_is_omitted_for_normal_hypercore_user() {
+        assert_eq!(
+            exchange_vault_address_for_user_role(
+                "0xd5817ec2e2f09b577b143114d9bb991900a068c1",
+                "user"
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn exchange_vault_address_is_used_for_vault_or_subaccount_roles() {
+        assert_eq!(
+            exchange_vault_address_for_user_role(
+                "0xd5817ec2e2f09b577b143114d9bb991900a068c1",
+                "vault"
+            )
+            .unwrap()
+            .as_deref(),
+            Some("0xd5817ec2e2f09b577b143114d9bb991900a068c1")
+        );
+        assert_eq!(
+            exchange_vault_address_for_user_role(
+                "0xd5817ec2e2f09b577b143114d9bb991900a068c1",
+                "subAccount"
+            )
+            .unwrap()
+            .as_deref(),
+            Some("0xd5817ec2e2f09b577b143114d9bb991900a068c1")
+        );
     }
 
     #[tokio::test]

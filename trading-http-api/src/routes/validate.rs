@@ -7,6 +7,7 @@ use alloy::sol_types::{SolCall, SolValue};
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::{Json, Router, extract::State, routing::post};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use trading_runtime::aave_v3_registry::market_for_chain;
@@ -369,7 +370,7 @@ fn build_direct_execution_hash(
             ))))
         }
         "hyperliquid" => {
-            let order = hyperliquid_order_from_intent(intent);
+            let order = hyperliquid_order_from_intent(intent)?;
             let account = hyperliquid_account_from_intent(intent)?;
             Ok(Some(format_b256(hash_hyperliquid_order(
                 &order,
@@ -459,7 +460,38 @@ fn format_action(action: &Action) -> String {
     .to_string()
 }
 
-fn hyperliquid_order_from_intent(intent: &TradeIntent) -> PlaceOrderRequest {
+fn hyperliquid_order_size(
+    metadata: &serde_json::Value,
+    fallback: &Decimal,
+) -> Result<String, (StatusCode, String)> {
+    let raw = ["asset_size", "sz", "size", "base_size"]
+        .into_iter()
+        .find_map(|key| {
+            metadata.get(key).and_then(|value| match value {
+                serde_json::Value::String(s) => Some(s.trim().to_string()),
+                serde_json::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            })
+        })
+        .unwrap_or_else(|| fallback.to_string());
+    let size = raw.parse::<Decimal>().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid Hyperliquid asset_size '{raw}': {e}"),
+        )
+    })?;
+    if size <= Decimal::ZERO {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Hyperliquid asset_size must be greater than zero".to_string(),
+        ));
+    }
+    Ok(size.normalize().to_string())
+}
+
+fn hyperliquid_order_from_intent(
+    intent: &TradeIntent,
+) -> Result<PlaceOrderRequest, (StatusCode, String)> {
     let is_buy = matches!(
         intent.action,
         Action::OpenLong | Action::Buy | Action::CloseShort
@@ -512,14 +544,14 @@ fn hyperliquid_order_from_intent(intent: &TradeIntent) -> PlaceOrderRequest {
         AssetId::Symbol(intent.token_out.clone())
     };
 
-    PlaceOrderRequest {
+    Ok(PlaceOrderRequest {
         asset,
         is_buy,
-        size: intent.amount_in.to_string(),
+        size: hyperliquid_order_size(&intent.metadata, &intent.amount_in)?,
         order_type,
         reduce_only,
         cloid: None,
-    }
+    })
 }
 
 pub fn router() -> Router<Arc<TradingApiState>> {

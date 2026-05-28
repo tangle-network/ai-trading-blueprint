@@ -2,6 +2,7 @@ use alloy::primitives::{Address, B256, Bytes, U256};
 use axum::Json;
 use axum::extract::State;
 use axum::routing::post;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -908,6 +909,29 @@ fn format_action(action: &Action) -> String {
     .to_string()
 }
 
+fn hyperliquid_order_size(
+    metadata: &serde_json::Value,
+    fallback: &Decimal,
+) -> Result<String, String> {
+    let raw = ["asset_size", "sz", "size", "base_size"]
+        .into_iter()
+        .find_map(|key| {
+            metadata.get(key).and_then(|value| match value {
+                serde_json::Value::String(s) => Some(s.trim().to_string()),
+                serde_json::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            })
+        })
+        .unwrap_or_else(|| fallback.to_string());
+    let size = raw
+        .parse::<Decimal>()
+        .map_err(|e| format!("invalid Hyperliquid asset_size '{raw}': {e}"))?;
+    if size <= Decimal::ZERO {
+        return Err("Hyperliquid asset_size must be greater than zero".to_string());
+    }
+    Ok(size.normalize().to_string())
+}
+
 fn hyperliquid_order_from_intent(
     intent: &trading_runtime::TradeIntent,
 ) -> Result<PlaceOrderRequest, String> {
@@ -960,7 +984,7 @@ fn hyperliquid_order_from_intent(
     Ok(PlaceOrderRequest {
         asset,
         is_buy,
-        size: intent.amount_in.to_string(),
+        size: hyperliquid_order_size(&intent.metadata, &intent.amount_in)?,
         order_type,
         reduce_only,
         cloid: None,
@@ -1726,6 +1750,115 @@ mod tests {
             ACTION_KIND_CLOB_ORDER,
         )
         .expect("signature must verify with CLOB action kind");
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_signer_uses_hyperliquid_asset_size_hash() {
+        use trading_runtime::execution_hash::{
+            ACTION_KIND_HYPERLIQUID_ORDER, format_b256, hash_hyperliquid_order,
+        };
+        use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
+        use trading_runtime::intent::TradeIntentBuilder;
+        use trading_runtime::{Action, signature_verify};
+
+        let contract_addr: Address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+            .parse()
+            .unwrap();
+        let server = ValidatorServer::new(9090)
+            .with_signer(
+                "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                31337,
+                contract_addr,
+            )
+            .unwrap();
+        let app = server.router();
+
+        let deadline = 9999999999u64;
+        let account = "0xd5817ec2e2f09b577b143114d9bb991900a068c1";
+        let vault_address = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+        let mut intent = TradeIntentBuilder::new()
+            .strategy_id("hl-test")
+            .action(Action::OpenLong)
+            .token_in("USDC")
+            .token_out("USDC")
+            .amount_in(rust_decimal::Decimal::new(11, 0))
+            .min_amount_out(rust_decimal::Decimal::ZERO)
+            .target_protocol("hyperliquid")
+            .chain_id(999)
+            .metadata(serde_json::json!({
+                "asset": "ETH",
+                "asset_size": "0.0052",
+                "notional_usdc": "11",
+                "hyperliquid_account_address": account
+            }))
+            .build()
+            .unwrap();
+        intent.deadline =
+            chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0).unwrap();
+
+        let intent_hash = trading_runtime::intent::hash_intent(&intent);
+        let intent_hash_b256 = parse_b256(&intent_hash).unwrap();
+        let execution_hash = format_b256(hash_hyperliquid_order(
+            &PlaceOrderRequest {
+                asset: AssetId::Symbol("ETH".to_string()),
+                is_buy: true,
+                size: "0.0052".to_string(),
+                order_type: HlOrderType::Market,
+                reduce_only: false,
+                cloid: None,
+            },
+            account,
+            intent_hash_b256,
+            U256::from(deadline),
+            intent.chain_id,
+        ));
+
+        let req_body = serde_json::json!({
+            "intent": intent,
+            "intent_hash": intent_hash,
+            "execution_hash": execution_hash,
+            "vault_address": vault_address,
+            "deadline": deadline,
+            "action_kind": ACTION_KIND_HYPERLIQUID_ORDER,
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_string(&req_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let resp: ValidateResponse = serde_json::from_slice(&body_bytes).unwrap();
+        assert_ne!(resp.signature, format!("0x{}", "00".repeat(65)));
+
+        let response = trading_runtime::ValidatorResponse {
+            validator: resp.validator,
+            score: resp.score,
+            signature: resp.signature,
+            reasoning: resp.reasoning,
+            chain_id: resp.chain_id,
+            verifying_contract: resp.verifying_contract,
+            validated_at: Some(resp.validated_at),
+        };
+        signature_verify::verify_validator_signature(
+            &response,
+            req_body["intent_hash"].as_str().unwrap(),
+            req_body["execution_hash"].as_str().unwrap(),
+            vault_address,
+            deadline,
+            ACTION_KIND_HYPERLIQUID_ORDER,
+        )
+        .expect("signature must verify with Hyperliquid action kind");
     }
 
     #[tokio::test]

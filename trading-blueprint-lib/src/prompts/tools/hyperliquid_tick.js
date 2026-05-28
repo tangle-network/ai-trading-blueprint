@@ -70,6 +70,20 @@ function priceOf(prices, symbol) {
   return asNumber(value, null);
 }
 
+const HYPERLIQUID_SIZE_DECIMALS = {
+  BTC: 5,
+  ETH: 4,
+  SOL: 2,
+};
+
+function formatAssetSize(asset, rawSize) {
+  const decimals = HYPERLIQUID_SIZE_DECIMALS[String(asset || '').toUpperCase()] ?? 4;
+  const factor = 10 ** decimals;
+  const floored = Math.floor(asNumber(rawSize, 0) * factor) / factor;
+  if (!Number.isFinite(floored) || floored <= 0) return null;
+  return floored.toFixed(decimals).replace(/\.?0+$/, '');
+}
+
 function normalizePositions(account) {
   const data = body(account);
   const positions = data.positions || data.assetPositions || [];
@@ -204,11 +218,13 @@ async function detectSetup(api, prices, account, totalNav, usablePerpMargin) {
     const pnl = positionPnl(position);
     const pnlPct = notional > 0 ? pnl / notional : 0;
     if (size !== 0 && (pnlPct >= 0.01 || pnlPct <= -0.005)) {
+      const assetSize = formatAssetSize(asset, Math.abs(size));
       return {
         clear: true,
         action: size > 0 ? 'close_long' : 'close_short',
         asset,
         amount_in: String(notional || Math.abs(size)),
+        asset_size: assetSize || String(Math.abs(size)),
         required_margin_usdc: 0,
         rationale: pnlPct >= 0.01 ? 'take-profit-trigger' : 'stop-loss-trigger',
         signals: { pnl_pct: pnlPct },
@@ -235,22 +251,28 @@ async function detectSetup(api, prices, account, totalNav, usablePerpMargin) {
     const shortEma = ema(closes, 12);
     const longEma = ema(closes, 26);
     if (currentRsi !== null && currentRsi <= 30) {
+      const assetSize = formatAssetSize(asset, targetNotional / currentPrice);
+      if (!assetSize) continue;
       return {
         clear: true,
         action: 'open_long',
         asset,
         amount_in: String(targetNotional),
+        asset_size: assetSize,
         required_margin_usdc: targetNotional,
         rationale: 'rsi-oversold',
         signals: { rsi_14: currentRsi, price: currentPrice },
       };
     }
     if (shortEma !== null && longEma !== null && shortEma > longEma && currentRsi !== null && currentRsi < 70) {
+      const assetSize = formatAssetSize(asset, targetNotional / currentPrice);
+      if (!assetSize) continue;
       return {
         clear: true,
         action: 'open_long',
         asset,
         amount_in: String(targetNotional),
+        asset_size: assetSize,
         required_margin_usdc: targetNotional,
         rationale: 'ema-trend-confirmed',
         signals: { rsi_14: currentRsi, ema_12: shortEma, ema_26: longEma, price: currentPrice },
@@ -394,6 +416,8 @@ async function main() {
           amount_in: setup.amount_in,
           metadata: {
             asset: setup.asset,
+            asset_size: setup.asset_size,
+            notional_usdc: setup.amount_in,
             hyperliquid_account_address:
               config.strategy_config?.hyperliquid_account_address
               || config.hyperliquid_account_address,
