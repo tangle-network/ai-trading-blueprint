@@ -28,7 +28,7 @@ use tokio::time::{Duration, sleep};
 use crate::routes::hyperliquid::{
     HYPERLIQUID_EXTRA_AGENT_TIMEOUT_MESSAGE, get_hl_client,
     hyperliquid_api_wallet_address_from_private_key, hyperliquid_extra_agents,
-    hyperliquid_extra_agents_contains, hyperliquid_user_role,
+    hyperliquid_extra_agents_contains, hyperliquid_user_role, hyperliquid_user_role_details,
     normalize_hyperliquid_api_wallet_name, require_hyperliquid_account_address,
     require_hyperliquid_api_wallet_signing_config_for_approval,
     wait_for_hyperliquid_api_wallet_extra_agent,
@@ -433,6 +433,19 @@ async fn post_api_wallet_approval(
         ));
     }
 
+    let agent_name = normalize_hyperliquid_api_wallet_name(
+        bot.strategy_config
+            .get("hyperliquid_api_wallet_name")
+            .and_then(serde_json::Value::as_str),
+        &bot.bot_id,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid Hyperliquid API wallet name: {e}"),
+        )
+    })?;
+
     let user_role = hyperliquid_user_role(&account).await?;
     if user_role.eq_ignore_ascii_case("missing") {
         return Err((
@@ -449,6 +462,7 @@ async fn post_api_wallet_approval(
             "already_verified",
             account,
             api_wallet,
+            agent_name,
             user_role,
             None,
             existing_agents,
@@ -456,22 +470,12 @@ async fn post_api_wallet_approval(
         )));
     }
 
+    ensure_api_wallet_is_not_registered_to_another_user(&account, &api_wallet).await?;
+
     let chain_client = matching_chain_client(&state, &bot)?;
-    let agent_name = normalize_hyperliquid_api_wallet_name(
-        bot.strategy_config
-            .get("hyperliquid_api_wallet_name")
-            .and_then(serde_json::Value::as_str),
-        &bot.bot_id,
-    )
-    .map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("Invalid Hyperliquid API wallet name: {e}"),
-        )
-    })?;
     let calldata = IHyperliquidVaultFunding::approveHyperliquidApiWalletCall {
         agentWallet: parse_address(&api_wallet, "API wallet address")?,
-        agentName: agent_name,
+        agentName: agent_name.clone(),
     }
     .abi_encode();
     let tx_hash = send_funding_tx(&chain_client, vault, calldata).await?;
@@ -480,6 +484,7 @@ async fn post_api_wallet_approval(
             "verified_corewriter_approval",
             account,
             api_wallet,
+            agent_name,
             user_role,
             Some(tx_hash),
             verified_agents,
@@ -492,6 +497,7 @@ async fn post_api_wallet_approval(
                 "submitted_corewriter_approval",
                 account,
                 api_wallet,
+                agent_name,
                 user_role,
                 Some(tx_hash),
                 Vec::new(),
@@ -502,10 +508,46 @@ async fn post_api_wallet_approval(
     }
 }
 
+async fn ensure_api_wallet_is_not_registered_to_another_user(
+    account: &str,
+    api_wallet: &str,
+) -> Result<(), (StatusCode, String)> {
+    let role = hyperliquid_user_role_details(api_wallet).await?;
+    if role.role.eq_ignore_ascii_case("missing") {
+        return Ok(());
+    }
+
+    if role.role.eq_ignore_ascii_case("agent") {
+        let registered_user = role
+            .data
+            .as_ref()
+            .and_then(|data| data.get("user"))
+            .and_then(serde_json::Value::as_str);
+        if registered_user.is_some_and(|user| user.eq_ignore_ascii_case(account)) {
+            return Ok(());
+        }
+        return Err((
+            StatusCode::CONFLICT,
+            format!(
+                "Hyperliquid API wallet {api_wallet} is already registered as an agent for another account; generate a fresh API wallet key before submitting CoreWriter approval"
+            ),
+        ));
+    }
+
+    Err((
+        StatusCode::CONFLICT,
+        format!(
+            "Hyperliquid API wallet {api_wallet} is already an existing HyperCore {}; generate a fresh trading-only API wallet key",
+            role.role
+        ),
+    ))
+}
+
 fn api_wallet_approval_response(
     status: &str,
     vault_account: String,
     api_wallet_address: String,
+    api_wallet_name: String,
     hyperliquid_user_role: String,
     tx_hash: Option<String>,
     extra_agents: Vec<crate::routes::hyperliquid::HyperliquidExtraAgent>,
@@ -520,6 +562,7 @@ fn api_wallet_approval_response(
         "hyperliquid_api_wallet_approval": "corewriter_after_funding",
         "hyperliquid_api_wallet_approval_status": approval_status,
         "hyperliquid_api_wallet_address": api_wallet_address,
+        "hyperliquid_api_wallet_name": api_wallet_name,
     });
     if verified_corewriter_approval && let Some(map) = patch.as_object_mut() {
         map.insert(

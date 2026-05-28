@@ -10,6 +10,7 @@ use crate::state::{TradingBotRecord, bot_key, bots};
 use crate::{TradingProvisionOutput, TradingProvisionRequest};
 use sandbox_runtime::CreateSandboxParams;
 use sandbox_runtime::SandboxRecord;
+use trading_http_api::routes::hyperliquid::normalize_hyperliquid_api_wallet_name;
 use trading_runtime::supported_assets::{
     ValuationAdapterKind, default_protocol_for_strategy, supported_assets_for_config,
 };
@@ -287,7 +288,8 @@ fn apply_strategy_defaults(
     strategy_config: &mut Map<String, Value>,
     request: &TradingProvisionRequest,
     paper_trade: bool,
-) {
+    bot_id: &str,
+) -> Result<(), String> {
     strategy_config
         .entry("strategy_type".to_string())
         .or_insert_with(|| Value::String(request.strategy_type.clone()));
@@ -341,7 +343,7 @@ fn apply_strategy_defaults(
         }
     }
 
-    apply_hyperliquid_perp_defaults(strategy_config, request, paper_trade);
+    apply_hyperliquid_perp_defaults(strategy_config, request, paper_trade, bot_id)
 }
 
 fn is_hyperliquid_perp_strategy(strategy_type: &str) -> bool {
@@ -359,9 +361,10 @@ fn apply_hyperliquid_perp_defaults(
     strategy_config: &mut Map<String, Value>,
     request: &TradingProvisionRequest,
     paper_trade: bool,
-) {
+    bot_id: &str,
+) -> Result<(), String> {
     if !is_hyperliquid_perp_strategy(&request.strategy_type) {
-        return;
+        return Ok(());
     }
 
     strategy_config
@@ -383,7 +386,20 @@ fn apply_hyperliquid_perp_defaults(
             .or_insert_with(|| {
                 Value::String(HYPERLIQUID_API_WALLET_APPROVAL_AFTER_FUNDING.to_string())
             });
+        let api_wallet_name = normalize_hyperliquid_api_wallet_name(
+            strategy_config
+                .get("hyperliquid_api_wallet_name")
+                .and_then(Value::as_str),
+            bot_id,
+        )
+        .map_err(|e| format!("Invalid Hyperliquid API wallet name: {e}"))?;
+        strategy_config.insert(
+            "hyperliquid_api_wallet_name".to_string(),
+            Value::String(api_wallet_name),
+        );
     }
+
+    Ok(())
 }
 
 fn apply_hyperliquid_account_metadata(
@@ -843,7 +859,8 @@ pub async fn provision_core(
     let strategy_config_obj = parsed_strategy_config.get_or_insert_with(Default::default);
     let vault_binding = parse_vault_binding(strategy_config_obj, &request)
         .inspect_err(|e| mark_provision_failed(call_id, e))?;
-    apply_strategy_defaults(strategy_config_obj, &request, paper_trade);
+    apply_strategy_defaults(strategy_config_obj, &request, paper_trade, &bot_id)
+        .inspect_err(|e| mark_provision_failed(call_id, e))?;
     let harness = harness_for_strategy_config(strategy_config_obj)
         .inspect_err(|e| mark_provision_failed(call_id, e))?;
 
@@ -1402,7 +1419,8 @@ mod tests {
         let mut config = Map::new();
         let request = provision_request("hyperliquid_perp", 998);
 
-        apply_strategy_defaults(&mut config, &request, false);
+        apply_strategy_defaults(&mut config, &request, false, "trading-test-bot")
+            .expect("strategy defaults");
 
         assert_eq!(
             config.get("available_protocols"),
@@ -1426,6 +1444,12 @@ mod tests {
                 .and_then(Value::as_str),
             Some(HYPERLIQUID_API_WALLET_APPROVAL_AFTER_FUNDING)
         );
+        let api_wallet_name = config
+            .get("hyperliquid_api_wallet_name")
+            .and_then(Value::as_str)
+            .expect("API wallet name");
+        assert!(api_wallet_name.starts_with("hl-"));
+        assert_eq!(api_wallet_name.len(), 16);
     }
 
     #[test]
@@ -1560,7 +1584,8 @@ mod tests {
         let mut config = Map::new();
         let request = provision_request("hyperliquid_perp", 998);
 
-        apply_strategy_defaults(&mut config, &request, false);
+        apply_strategy_defaults(&mut config, &request, false, "trading-test-bot")
+            .expect("strategy defaults");
 
         assert_eq!(
             config
@@ -1574,6 +1599,22 @@ mod tests {
                 .and_then(Value::as_str),
             None
         );
+    }
+
+    #[test]
+    fn hyperliquid_api_wallet_name_rejects_invalid_configured_name() {
+        let mut config = Map::new();
+        config.insert(
+            "hyperliquid_api_wallet_name".to_string(),
+            Value::String("abcdefghijklmnopq".to_string()),
+        );
+        let request = provision_request("hyperliquid_perp", 998);
+
+        let err = apply_strategy_defaults(&mut config, &request, false, "trading-test-bot")
+            .expect_err("overlong API wallet name should fail");
+
+        assert!(err.contains("Invalid Hyperliquid API wallet name"));
+        assert!(err.contains("16 characters or fewer"));
     }
 
     #[test]

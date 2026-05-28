@@ -29,7 +29,7 @@ use trading_runtime::hyperliquid::HyperliquidClient;
 static HL_CLIENTS: LazyLock<Mutex<HashMap<HyperliquidClientKey, &'static HyperliquidClient>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-const HYPERLIQUID_API_WALLET_NAME_MAX_LEN: usize = 32;
+const HYPERLIQUID_API_WALLET_NAME_MAX_LEN: usize = 16;
 const HYPERLIQUID_INFO_URL_MAINNET: &str = "https://api.hyperliquid.xyz/info";
 const HYPERLIQUID_INFO_URL_TESTNET: &str = "https://api.hyperliquid-testnet.xyz/info";
 const DEFAULT_HYPERLIQUID_EXTRA_AGENT_POLL_ATTEMPTS: usize = 60;
@@ -875,29 +875,10 @@ fn validate_hyperliquid_api_wallet_name(candidate: &str) -> Result<String, Strin
 }
 
 fn hyperliquid_api_wallet_fallback_name(bot_id: &str) -> String {
-    let mut safe = bot_id
-        .trim()
-        .bytes()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
-                char::from(byte)
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    if safe.is_empty() {
-        safe = "bot".to_string();
-    }
-    if safe.len() <= HYPERLIQUID_API_WALLET_NAME_MAX_LEN {
-        return safe;
-    }
-
     let mut hasher = Sha256::new();
     hasher.update(bot_id.as_bytes());
     let digest = format!("{:x}", hasher.finalize());
-    let prefix_len = HYPERLIQUID_API_WALLET_NAME_MAX_LEN - 9;
-    format!("{}-{}", &safe[..prefix_len], &digest[..8])
+    format!("hl-{}", &digest[..HYPERLIQUID_API_WALLET_NAME_MAX_LEN - 3])
 }
 
 pub(crate) fn redact_hyperliquid_error(error: &str) -> String {
@@ -1188,29 +1169,25 @@ mod tests {
             normalize_hyperliquid_api_wallet_name(Some("  hl_bot-01  "), "fallback").unwrap(),
             "hl_bot-01"
         );
-        assert_eq!(
-            normalize_hyperliquid_api_wallet_name(None, "bot-default").unwrap(),
-            "bot-default"
-        );
-        assert_eq!(
-            normalize_hyperliquid_api_wallet_name(
-                None,
-                "trading-027084ef-4e69-4c9b-a018-e35f9645086f"
-            )
-            .unwrap()
-            .len(),
-            HYPERLIQUID_API_WALLET_NAME_MAX_LEN
-        );
+        let fallback = normalize_hyperliquid_api_wallet_name(
+            None,
+            "trading-ac1d9cf1-61e0-4df8-a486-024aa2db1694",
+        )
+        .unwrap();
+        assert!(fallback.starts_with("hl-"));
+        assert_eq!(fallback.len(), HYPERLIQUID_API_WALLET_NAME_MAX_LEN);
+        assert_ne!(fallback, "trading-ac1d9cf1-61e0-4-4787d52c");
     }
 
     #[test]
     fn api_wallet_name_validation_rejects_unsafe_or_overlong_names() {
+        assert_eq!(
+            normalize_hyperliquid_api_wallet_name(Some("abcdefghijklmnop"), "ok").unwrap(),
+            "abcdefghijklmnop"
+        );
         assert!(normalize_hyperliquid_api_wallet_name(Some("bad name"), "fallback").is_err());
         assert!(normalize_hyperliquid_api_wallet_name(Some("bad/name"), "fallback").is_err());
-        assert!(
-            normalize_hyperliquid_api_wallet_name(Some("abcdefghijklmnopqrstuvwxyz1234567"), "ok")
-                .is_err()
-        );
+        assert!(normalize_hyperliquid_api_wallet_name(Some("abcdefghijklmnopq"), "ok").is_err());
     }
 
     #[tokio::test]
