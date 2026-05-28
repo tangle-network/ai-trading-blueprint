@@ -27,8 +27,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
 
-use crate::backtest::types::Candle;
 use crate::backtest::Interval;
+use crate::backtest::types::Candle;
 use crate::error::TradingError;
 
 const GECKO_BASE: &str = "https://api.geckoterminal.com/api/v2";
@@ -42,8 +42,16 @@ pub const CANONICAL_POOLS: &[(&str, &str, &str)] = &[
     ("eth", "ETH", "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"), // Uni V3 ETH/USDC 0.05%
     ("eth", "WBTC", "0x9a772018fbd77fcd2d25657e5c547baff3fd7d16"), // Uni V3 WBTC/USDC 0.3%
     ("base", "ETH", "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59"), // Aerodrome WETH/USDC
-    ("arbitrum_one", "ETH", "0xc6962004f452be9203591991d15f6b388e09e8d0"), // Uni V3 WETH/USDC
-    ("solana", "SOL", "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"), // Raydium SOL/USDC
+    (
+        "arbitrum_one",
+        "ETH",
+        "0xc6962004f452be9203591991d15f6b388e09e8d0",
+    ), // Uni V3 WETH/USDC
+    (
+        "solana",
+        "SOL",
+        "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1",
+    ), // Raydium SOL/USDC
 ];
 
 /// Resolve a `network:symbol` shorthand to a `(network, pool_address)` pair.
@@ -186,21 +194,22 @@ pub async fn fetch(
     interval: Interval,
     limit: u32,
 ) -> Result<Vec<Candle>, TradingError> {
-    let (network, pool_or_symbol) = network_and_pool
-        .split_once(':')
-        .ok_or_else(|| TradingError::MarketDataUnavailable(format!(
+    let (network, pool_or_symbol) = network_and_pool.split_once(':').ok_or_else(|| {
+        TradingError::MarketDataUnavailable(format!(
             "geckoterminal token must be 'network:POOL_OR_SYMBOL', got '{network_and_pool}'"
-        )))?;
-    let pool = if pool_or_symbol.starts_with("0x") || pool_or_symbol.len() > 30 {
-        // raw pool address (EVM hex or base58 Solana)
-        pool_or_symbol.to_string()
-    } else {
-        resolve_canonical(network, pool_or_symbol)
+        ))
+    })?;
+    let pool =
+        if pool_or_symbol.starts_with("0x") || pool_or_symbol.len() > 30 {
+            // raw pool address (EVM hex or base58 Solana)
+            pool_or_symbol.to_string()
+        } else {
+            resolve_canonical(network, pool_or_symbol)
             .ok_or_else(|| TradingError::MarketDataUnavailable(format!(
                 "no canonical pool for {network}:{pool_or_symbol} — pass a pool address instead"
             )))?
             .to_string()
-    };
+        };
     fetch_pool(network, &pool, interval, limit).await
 }
 

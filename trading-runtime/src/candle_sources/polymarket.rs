@@ -18,8 +18,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
 
-use crate::backtest::types::Candle;
 use crate::backtest::Interval;
+use crate::backtest::types::Candle;
 use crate::error::TradingError;
 
 const POLYMARKET_CLOB: &str = "https://clob.polymarket.com";
@@ -155,8 +155,8 @@ mod tests {
         }
         // Token ids change as markets close; this test just exercises the
         // endpoint and shape — empty result is acceptable.
-        let token_id = std::env::var("POLYMARKET_TEST_TOKEN_ID")
-            .unwrap_or_else(|_| "1".to_string());
+        let token_id =
+            std::env::var("POLYMARKET_TEST_TOKEN_ID").unwrap_or_else(|_| "1".to_string());
         let _ = fetch(&token_id, Interval::Hour1, 24).await;
     }
 }

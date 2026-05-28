@@ -20,8 +20,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
 
-use crate::backtest::types::Candle;
 use crate::backtest::Interval;
+use crate::backtest::types::Candle;
 use crate::error::TradingError;
 
 const DRIFT_BASE: &str = "https://data.api.drift.trade";
@@ -159,8 +159,9 @@ fn dec_from(value: f64, field: &'static str) -> Result<Decimal, TradingError> {
             "drift {field}={value} is not finite"
         )));
     }
-    Decimal::from_f64(value)
-        .ok_or_else(|| TradingError::MarketDataUnavailable(format!("drift {field}={value} → Decimal")))
+    Decimal::from_f64(value).ok_or_else(|| {
+        TradingError::MarketDataUnavailable(format!("drift {field}={value} → Decimal"))
+    })
 }
 
 fn now_secs() -> i64 {

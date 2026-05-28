@@ -21,8 +21,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-use crate::backtest::types::Candle;
 use crate::backtest::Interval;
+use crate::backtest::types::Candle;
 use crate::error::TradingError;
 
 const HYPERLIQUID_INFO: &str = "https://api.hyperliquid.xyz/info";
@@ -197,9 +197,8 @@ pub async fn fetch(
 }
 
 fn parse_dec(s: &str, field: &'static str) -> Result<Decimal, TradingError> {
-    Decimal::from_str(s).map_err(|e| {
-        TradingError::MarketDataUnavailable(format!("hyperliquid {field}={s}: {e}"))
-    })
+    Decimal::from_str(s)
+        .map_err(|e| TradingError::MarketDataUnavailable(format!("hyperliquid {field}={s}: {e}")))
 }
 
 fn now_ms() -> i64 {
