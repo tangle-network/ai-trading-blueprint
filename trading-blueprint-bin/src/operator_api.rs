@@ -2783,7 +2783,7 @@ async fn promote_revision_for_bot(
             None,
         ));
     }
-    let live_enabled = bot_allows_live_revision_promotion(&bot);
+    let live_enabled = bot_allows_live_revision_promotion(bot);
     let revision = revision_from_candidate(run, live_enabled).ok_or_else(|| {
         error_json(
             StatusCode::CONFLICT,
@@ -2794,7 +2794,7 @@ async fn promote_revision_for_bot(
             None,
         )
     })?;
-    persist_canary_revision(&bot, revision.clone()).map_err(api_error_response)?;
+    persist_canary_revision(bot, revision.clone()).map_err(api_error_response)?;
     let status = if live_enabled {
         "live_promoted"
     } else {
