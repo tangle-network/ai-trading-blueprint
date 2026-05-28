@@ -261,16 +261,15 @@ async fn fetch_historical_inner(
     let mut total_stored = 0;
 
     for token in &req.tokens {
-        let candles = trading_runtime::candle_sources::fetch_from_source(
-            source, token, interval, limit,
-        )
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Fetch failed for {token} from {}: {e}", source.name()),
-            )
-        })?;
+        let candles =
+            trading_runtime::candle_sources::fetch_from_source(source, token, interval, limit)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        format!("Fetch failed for {token} from {}: {e}", source.name()),
+                    )
+                })?;
 
         let stored: Vec<StoredCandle> = candles
             .iter()

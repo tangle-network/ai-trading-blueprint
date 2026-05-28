@@ -216,11 +216,20 @@ mod tests {
         let closes: Vec<f64> = (0..200).map(|i| 100.0 + i as f64 * 0.5).collect();
         let candles = synth_candles(&closes);
         let regimes = classify_series(&candles, Thresholds::default());
-        let trending = regimes.iter().filter(|r| matches!(r, Regime::Trending)).count();
+        let trending = regimes
+            .iter()
+            .filter(|r| matches!(r, Regime::Trending))
+            .count();
         // Most non-warmup bars should be Trending; require ≥50% just to
         // be robust to where the breakout/chop fringe lands.
-        let classifiable = regimes.iter().filter(|r| !matches!(r, Regime::Unknown)).count();
-        assert!(trending * 2 >= classifiable, "trending={trending}, classifiable={classifiable}");
+        let classifiable = regimes
+            .iter()
+            .filter(|r| !matches!(r, Regime::Unknown))
+            .count();
+        assert!(
+            trending * 2 >= classifiable,
+            "trending={trending}, classifiable={classifiable}"
+        );
     }
 
     #[test]
@@ -234,14 +243,28 @@ mod tests {
             .collect();
         let candles = synth_candles_with_spread(&closes, 0.0005);
         let regimes = classify_series(&candles, Thresholds::default());
-        let squeeze = regimes.iter().filter(|r| matches!(r, Regime::Squeeze)).count();
-        let classifiable = regimes.iter().filter(|r| !matches!(r, Regime::Unknown)).count();
-        assert!(squeeze * 2 >= classifiable, "squeeze={squeeze}, classifiable={classifiable}");
+        let squeeze = regimes
+            .iter()
+            .filter(|r| matches!(r, Regime::Squeeze))
+            .count();
+        let classifiable = regimes
+            .iter()
+            .filter(|r| !matches!(r, Regime::Unknown))
+            .count();
+        assert!(
+            squeeze * 2 >= classifiable,
+            "squeeze={squeeze}, classifiable={classifiable}"
+        );
     }
 
     #[test]
     fn distribution_excludes_unknown() {
-        let regimes = vec![Regime::Trending, Regime::Trending, Regime::Chop, Regime::Unknown];
+        let regimes = vec![
+            Regime::Trending,
+            Regime::Trending,
+            Regime::Chop,
+            Regime::Unknown,
+        ];
         let d = distribution(&regimes);
         assert_eq!(d.get("trending"), Some(&2));
         assert_eq!(d.get("chop"), Some(&1));

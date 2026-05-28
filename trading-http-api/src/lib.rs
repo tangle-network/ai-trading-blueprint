@@ -544,6 +544,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::cex::multi_bot_router())
         .merge(routes::evolution::multi_bot_router())
         .merge(routes::hyperliquid::multi_bot_router())
+        .merge(routes::hyperliquid_funding::multi_bot_router())
         .merge(routes::hyperliquid_mode::multi_bot_router())
         .merge(routes::hyperliquid_nav::multi_bot_router())
         .merge(routes::hyperliquid_settlement::multi_bot_router())

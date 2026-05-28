@@ -30,6 +30,9 @@ import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 import { getTradeValidationDisplay } from '~/lib/tradeValidation';
 
 const JOB_EXTEND = 6;
+const DEFAULT_POSITION_SIZE_PCT = '10';
+const MIN_POSITION_SIZE_PCT = 1;
+const MAX_POSITION_SIZE_PCT = 100;
 const usdFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -60,6 +63,32 @@ function readRiskNumber(config: Record<string, unknown> | undefined, key: string
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   if (typeof value === 'string' && value.trim()) return value.trim();
   return fallback;
+}
+
+function readPositionSizePct(config: Record<string, unknown>): string {
+  const sizing = config.position_sizing;
+  if (!sizing || typeof sizing !== 'object' || Array.isArray(sizing)) {
+    return DEFAULT_POSITION_SIZE_PCT;
+  }
+  const fraction = (sizing as Record<string, unknown>).fraction;
+  const numericFraction =
+    typeof fraction === 'number'
+      ? fraction
+      : typeof fraction === 'string'
+        ? Number(fraction)
+        : Number.NaN;
+  return Number.isFinite(numericFraction)
+    ? String(Number((numericFraction * 100).toFixed(4)))
+    : DEFAULT_POSITION_SIZE_PCT;
+}
+
+function validatePositionSizePct(value: string): string | null {
+  const pct = Number(value);
+  if (!Number.isFinite(pct)) return 'Position size must be a number';
+  if (pct < MIN_POSITION_SIZE_PCT || pct > MAX_POSITION_SIZE_PCT) {
+    return `Position size must be between ${MIN_POSITION_SIZE_PCT}% and ${MAX_POSITION_SIZE_PCT}%`;
+  }
+  return null;
 }
 
 function formatOptionalConfigValue(value: string, emptyLabel = 'Not set'): string {
@@ -561,9 +590,12 @@ function StrategyCard({
   const savedCustomInstructions = readConfigString(strategyConfig, 'custom_instructions');
   const savedMinAaveHealthFactor = readRiskNumber(riskParams, 'min_aave_health_factor', '1.5');
   const showAaveHealthFactor = detail.strategy_type === 'yield';
+  const showPositionSizing = detail.strategy_type === 'hyperliquid_perp';
+  const savedPositionSizePct = readPositionSizePct(strategyConfig);
 
   const [paperTrade, setPaperTrade] = useState(detail.paper_trade);
   const [minAaveHealthFactor, setMinAaveHealthFactor] = useState(savedMinAaveHealthFactor);
+  const [positionSizePct, setPositionSizePct] = useState(savedPositionSizePct);
   const [expertKnowledgeOverride, setExpertKnowledgeOverride] = useState(savedExpertKnowledge);
   const [customInstructions, setCustomInstructions] = useState(savedCustomInstructions);
   const [draftExpertKnowledge, setDraftExpertKnowledge] = useState(savedExpertKnowledge);
@@ -573,21 +605,24 @@ function StrategyCard({
   useEffect(() => {
     setPaperTrade(detail.paper_trade);
     setMinAaveHealthFactor(savedMinAaveHealthFactor);
+    setPositionSizePct(savedPositionSizePct);
     setExpertKnowledgeOverride(savedExpertKnowledge);
     setCustomInstructions(savedCustomInstructions);
     setDraftExpertKnowledge(savedExpertKnowledge);
     setDraftCustomInstructions(savedCustomInstructions);
     setIsInstructionsModalOpen(false);
-  }, [detail.id, detail.paper_trade, savedCustomInstructions, savedExpertKnowledge, savedMinAaveHealthFactor]);
+  }, [detail.id, detail.paper_trade, savedCustomInstructions, savedExpertKnowledge, savedMinAaveHealthFactor, savedPositionSizePct]);
 
   const hasUnsavedChanges = paperTrade !== detail.paper_trade
     || minAaveHealthFactor !== savedMinAaveHealthFactor
+    || positionSizePct !== savedPositionSizePct
     || expertKnowledgeOverride !== savedExpertKnowledge
     || customInstructions !== savedCustomInstructions;
 
   const parsedMinAaveHealthFactor = Number(minAaveHealthFactor);
   const minAaveHealthFactorInvalid = showAaveHealthFactor
     && (!Number.isFinite(parsedMinAaveHealthFactor) || parsedMinAaveHealthFactor < 1.01);
+  const positionSizeError = showPositionSizing ? validatePositionSizePct(positionSizePct) : null;
 
   const handlePaperTradeChange = (nextValue: boolean) => {
     if (!nextValue) {
@@ -622,12 +657,27 @@ function StrategyCard({
       toast.error('Aave health factor must be at least 1.01');
       return;
     }
+    if (positionSizeError) {
+      toast.error(positionSizeError);
+      return;
+    }
     const nextStrategyConfig: Record<string, unknown> = { ...strategyConfig };
     const nextRiskParams: Record<string, unknown> = { ...riskParams };
 
     nextStrategyConfig.paper_trade = paperTrade;
     if (showAaveHealthFactor) {
       nextRiskParams.min_aave_health_factor = parsedMinAaveHealthFactor;
+    }
+    if (showPositionSizing) {
+      const pct = Number(positionSizePct);
+      if (pct === Number(DEFAULT_POSITION_SIZE_PCT)) {
+        delete nextStrategyConfig.position_sizing;
+      } else {
+        nextStrategyConfig.position_sizing = {
+          method: 'fixed_fraction',
+          fraction: pct / 100,
+        };
+      }
     }
 
     const trimmedExpertKnowledge = expertKnowledgeOverride.trim();
@@ -719,6 +769,34 @@ function StrategyCard({
             </p>
           )}
 
+          {showPositionSizing && (
+            <div className="flex items-center justify-between gap-4">
+              <FieldTooltip
+                label="Max Position Size"
+                description="Caps each new Hyperliquid perp entry as a percentage of the bot's total vault value."
+              />
+              <div className="flex items-center gap-2">
+                <input
+                  aria-label="Max position size"
+                  type="number"
+                  min={MIN_POSITION_SIZE_PCT}
+                  max={MAX_POSITION_SIZE_PCT}
+                  step="0.5"
+                  value={positionSizePct}
+                  onChange={(e) => setPositionSizePct(e.target.value)}
+                  className="h-9 w-24 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 text-right font-data text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+                />
+                <span className="text-xs font-data text-arena-elements-textTertiary">%</span>
+              </div>
+            </div>
+          )}
+
+          {positionSizeError && (
+            <p className="text-xs text-crimson-500">
+              {positionSizeError}.
+            </p>
+          )}
+
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1 space-y-3">
               <FieldTooltip
@@ -757,7 +835,7 @@ function StrategyCard({
             <p className="text-xs text-arena-elements-textTertiary">
               {hasUnsavedChanges ? 'You have unsaved configuration changes.' : 'No unsaved changes.'}
             </p>
-            <Button size="sm" disabled={!hasUnsavedChanges || updateConfig.isPending || minAaveHealthFactorInvalid} onClick={handleSave}>
+            <Button size="sm" disabled={!hasUnsavedChanges || updateConfig.isPending || minAaveHealthFactorInvalid || Boolean(positionSizeError)} onClick={handleSave}>
               {updateConfig.isPending ? 'Saving...' : 'Save'}
             </Button>
           </div>

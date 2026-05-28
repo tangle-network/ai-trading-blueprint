@@ -304,15 +304,30 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         .run()
         .await;
 
-    if let Err(e) = result {
-        tracing::error!("Runner failed: {e:?}");
-        tracing::info!("Runner exited but operator API server continues running");
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    match result {
+        Ok(()) => {
+            if keep_http_apis_alive_after_runner_exit() {
+                tracing::info!("Runner exited; keeping instance APIs alive");
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Runner failed: {e:?}");
+            tracing::info!("Runner exited but operator API server continues running");
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
         }
     }
 
     Ok(())
+}
+
+fn keep_http_apis_alive_after_runner_exit() -> bool {
+    std::env::var("KEEP_HTTP_APIS_ALIVE_AFTER_RUNNER_EXIT")
+        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
 
 fn setup_log() {

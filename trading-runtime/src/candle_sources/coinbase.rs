@@ -15,8 +15,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
 
-use crate::backtest::types::Candle;
 use crate::backtest::Interval;
+use crate::backtest::types::Candle;
 use crate::error::TradingError;
 
 const COINBASE_BASE: &str = "https://api.exchange.coinbase.com";
@@ -36,10 +36,12 @@ fn coinbase_granularity(i: Interval) -> Result<u32, TradingError> {
         Interval::Min5 => 300,
         Interval::Min15 => 900,
         Interval::Hour1 => 3_600,
-        Interval::Hour4 => return Err(TradingError::MarketDataUnavailable(
-            "coinbase does not support 4h candles natively (granularities: 1m,5m,15m,1h,6h,1d)"
-                .into(),
-        )),
+        Interval::Hour4 => {
+            return Err(TradingError::MarketDataUnavailable(
+                "coinbase does not support 4h candles natively (granularities: 1m,5m,15m,1h,6h,1d)"
+                    .into(),
+            ));
+        }
         Interval::Day1 => 86_400,
     })
 }

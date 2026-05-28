@@ -168,7 +168,7 @@ async fn recover_chat_target(target: &SidecarChatTarget) -> Option<SidecarChatTa
             sidecar_url: current.sidecar_url.clone(),
             sidecar_token: current.token.clone(),
         };
-        wait_for_sidecar_health(&refreshed.sidecar_url, 5).await;
+        wait_for_sidecar_health(&refreshed.sidecar_url, &refreshed.sidecar_token, 5).await;
         return Some(refreshed);
     }
 
@@ -186,21 +186,27 @@ async fn recover_chat_target(target: &SidecarChatTarget) -> Option<SidecarChatTa
         sidecar_url: refreshed.sidecar_url.clone(),
         sidecar_token: refreshed.token.clone(),
     };
-    wait_for_sidecar_health(&next.sidecar_url, 10).await;
+    wait_for_sidecar_health(&next.sidecar_url, &next.sidecar_token, 10).await;
     Some(next)
 }
 
-async fn wait_for_sidecar_health(sidecar_url: &str, attempts: usize) {
+async fn wait_for_sidecar_health(sidecar_url: &str, sidecar_token: &str, attempts: usize) {
     if attempts == 0 {
         return;
     }
 
     let client = reqwest::Client::new();
-    let url = format!("{}/health", sidecar_url.trim_end_matches('/'));
+    let Ok(url) = sandbox_runtime::http::build_url(sidecar_url, "/health") else {
+        return;
+    };
+    let Ok(headers) = sandbox_runtime::http::auth_headers(sidecar_token) else {
+        return;
+    };
 
     for attempt in 0..attempts {
         let is_healthy = client
-            .get(&url)
+            .get(url.clone())
+            .headers(headers.clone())
             .timeout(Duration::from_secs(2))
             .send()
             .await

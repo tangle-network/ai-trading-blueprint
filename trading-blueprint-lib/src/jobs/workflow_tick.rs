@@ -1,13 +1,14 @@
 //! Trading-aware workflow tick that intercepts the cron tick to detect
 //! TTL wind-down conditions and swap the agent prompt accordingly.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::JsonResponse;
 use crate::state::{bot_key, bots};
 use crate::wind_down::should_initiate_wind_down;
 
 use ai_agent_sandbox_blueprint_lib::workflows::{workflow_key, workflows};
+use ai_agent_sandbox_blueprint_lib::{SandboxExecRequest, run_exec_request};
 use blueprint_sdk::tangle::extract::TangleResult;
 
 fn workflow_group_ids(workflow_id: u64) -> [u64; 3] {
@@ -85,20 +86,499 @@ fn backfill_active_bot_run_history(all_bots: &[crate::state::TradingBotRecord]) 
     }
 }
 
+fn workflow_result_text(task: &Value, field: &str) -> Option<String> {
+    task.get(field)
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+        .map(ToString::to_string)
+}
+
 fn persist_executed_run_history(response: &Value) {
     let Some(executed) = response.get("executed").and_then(Value::as_array) else {
         return;
     };
 
-    for workflow_id in executed
-        .iter()
-        .filter_map(|entry| entry.get("workflowId").and_then(Value::as_u64))
-    {
-        if let Err(err) = crate::workflow_compat::backfill_latest_execution_run(workflow_id) {
+    for entry in executed {
+        let Some(workflow_id) = entry.get("workflowId").and_then(Value::as_u64) else {
+            continue;
+        };
+        let executed_at = entry
+            .get("executedAt")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| chrono::Utc::now().timestamp().max(0) as u64);
+        let task = entry.get("task").unwrap_or(&Value::Null);
+        let success = task.get("success").and_then(Value::as_bool).unwrap_or(true);
+        let status = if success {
+            crate::workflow_compat::WorkflowRunStatus::Completed
+        } else {
+            crate::workflow_compat::WorkflowRunStatus::Failed
+        };
+        let record = crate::workflow_compat::WorkflowRunRecord {
+            run_id: format!("latest-{workflow_id}-{executed_at}"),
+            workflow_id,
+            status,
+            started_at: executed_at,
+            completed_at: Some(executed_at),
+            session_id: workflow_result_text(task, "sessionId"),
+            trace_id: workflow_result_text(task, "traceId"),
+            duration_ms: task.get("durationMs").and_then(Value::as_u64).unwrap_or(0),
+            input_tokens: task.get("inputTokens").and_then(Value::as_u64).unwrap_or(0) as u32,
+            output_tokens: task
+                .get("outputTokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as u32,
+            result: workflow_result_text(task, "result"),
+            error: workflow_result_text(task, "error"),
+        };
+
+        if let Err(err) = crate::workflow_compat::persist_workflow_run_record(record) {
             tracing::warn!(
                 workflow_id,
                 error = %err,
-                "Failed to persist workflow run history after tick"
+                "Failed to persist workflow run history from workflow response"
+            );
+        }
+    }
+}
+
+fn bot_for_executed_workflow<'a>(
+    all_bots: &'a [crate::state::TradingBotRecord],
+    workflow_id: u64,
+    workflow_name: &str,
+) -> Option<&'a crate::state::TradingBotRecord> {
+    all_bots.iter().find(|bot| {
+        bot.workflow_id == Some(workflow_id) || workflow_name_belongs_to_bot(workflow_name, &bot.id)
+    })
+}
+
+fn set_task_failure(entry: &mut Value, reason: String) {
+    if let Some(task) = entry.get_mut("task").and_then(Value::as_object_mut) {
+        task.insert("success".to_string(), Value::Bool(false));
+        task.insert("error".to_string(), Value::String(reason));
+    }
+}
+
+fn workflow_timeout_ms(workflow_json: &str, default_timeout_ms: u64) -> u64 {
+    serde_json::from_str::<Value>(workflow_json)
+        .ok()
+        .and_then(|workflow| workflow.get("timeout_ms").and_then(Value::as_u64))
+        .unwrap_or(default_timeout_ms)
+}
+
+fn workflow_is_due(
+    entry: &ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry,
+    now: u64,
+) -> bool {
+    entry.active
+        && entry.trigger_type == "cron"
+        && entry.next_run_at.is_some_and(|next_run| next_run <= now)
+}
+
+fn hyperliquid_fast_bot_for_workflow<'a>(
+    entry: &ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry,
+    all_bots: &'a [crate::state::TradingBotRecord],
+) -> Option<&'a crate::state::TradingBotRecord> {
+    if !entry.name.starts_with("fast-tick-") {
+        return None;
+    }
+    all_bots.iter().find(|bot| {
+        bot.strategy_type == "hyperliquid_perp"
+            && (bot.workflow_id == Some(entry.id)
+                || workflow_name_belongs_to_bot(&entry.name, &bot.id))
+    })
+}
+
+fn hyperliquid_tick_task_result(
+    bot: &crate::state::TradingBotRecord,
+    started_at: u64,
+    completed_at: u64,
+    stdout: String,
+    stderr: String,
+    exit_code: u32,
+    validation_error: Option<String>,
+) -> Value {
+    let duration_ms = completed_at.saturating_sub(started_at).saturating_mul(1000);
+    let trimmed_stdout = stdout.trim().to_string();
+    let trimmed_stderr = stderr.trim().to_string();
+    let success = exit_code == 0 && validation_error.is_none();
+    let error = validation_error.or_else(|| {
+        (exit_code != 0).then(|| {
+            if trimmed_stderr.is_empty() {
+                format!("hyperliquid tick tool exited with {exit_code}")
+            } else {
+                format!("hyperliquid tick tool exited with {exit_code}: {trimmed_stderr}")
+            }
+        })
+    });
+
+    let mut task = json!({
+        "success": success,
+        "sessionId": format!("direct-hyperliquid-fast-{}-{started_at}", bot.id),
+        "traceId": Value::Null,
+        "durationMs": duration_ms,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "result": trimmed_stdout,
+    });
+    if let Some(error) = error {
+        task["error"] = Value::String(error);
+    }
+    task
+}
+
+async fn run_direct_hyperliquid_fast_tick(
+    bot: &crate::state::TradingBotRecord,
+    timeout_ms: u64,
+) -> Value {
+    let started_at = chrono::Utc::now().timestamp().max(0) as u64;
+    let sandbox = match sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id) {
+        Ok(sandbox) => sandbox,
+        Err(err) => {
+            let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
+            return hyperliquid_tick_task_result(
+                bot,
+                started_at,
+                completed_at,
+                String::new(),
+                String::new(),
+                1,
+                Some(format!("sandbox lookup failed: {err}")),
+            );
+        }
+    };
+
+    if let Err(err) =
+        sync_canonical_harness_to_sidecar(bot, &sandbox.sidecar_url, &sandbox.token).await
+    {
+        let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
+        return hyperliquid_tick_task_result(
+            bot,
+            started_at,
+            completed_at,
+            String::new(),
+            String::new(),
+            1,
+            Some(format!("canonical harness sync failed: {err}")),
+        );
+    }
+
+    let exec = SandboxExecRequest {
+        sidecar_url: sandbox.sidecar_url.clone(),
+        command: "node /home/agent/tools/hyperliquid-tick.js".to_string(),
+        cwd: String::new(),
+        env_json: "{}".to_string(),
+        timeout_ms,
+    };
+    let response = match run_exec_request(&exec, &sandbox.token).await {
+        Ok(response) => response,
+        Err(err) => {
+            let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
+            return hyperliquid_tick_task_result(
+                bot,
+                started_at,
+                completed_at,
+                String::new(),
+                String::new(),
+                1,
+                Some(format!("sidecar exec failed: {err}")),
+            );
+        }
+    };
+    let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
+
+    let validation_error = if response.exit_code == 0 {
+        match serde_json::from_str::<Value>(response.stdout.trim()) {
+            Ok(parsed) => {
+                let valid_schema =
+                    parsed.get("result_schema_version").and_then(Value::as_u64) == Some(1);
+                let has_decision = parsed
+                    .get("decision")
+                    .and_then(|decision| decision.get("action"))
+                    .and_then(Value::as_str)
+                    .is_some();
+                let reported_logs = parsed
+                    .get("logs_written")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let reported_metrics = parsed
+                    .get("metrics_written")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if valid_schema && has_decision && reported_logs && reported_metrics {
+                    verify_hyperliquid_tick_side_effects(bot, &parsed)
+                        .await
+                        .err()
+                } else {
+                    Some("Hyperliquid direct tick JSON failed schema/side-effect flags".to_string())
+                }
+            }
+            Err(_) => Some("Hyperliquid direct tick result was not deterministic JSON".to_string()),
+        }
+    } else {
+        None
+    };
+
+    hyperliquid_tick_task_result(
+        bot,
+        started_at,
+        completed_at,
+        response.stdout,
+        response.stderr,
+        response.exit_code,
+        validation_error,
+    )
+}
+
+async fn sync_canonical_harness_to_sidecar(
+    bot: &crate::state::TradingBotRecord,
+    sidecar_url: &str,
+    token: &str,
+) -> Result<(), String> {
+    let harness = if bot.harness_json.is_null() {
+        serde_json::to_value(trading_runtime::backtest::HarnessConfig::default())
+            .map_err(|err| format!("failed to build default harness: {err}"))?
+    } else {
+        bot.harness_json.clone()
+    };
+    let harness_json = serde_json::to_string_pretty(&harness)
+        .map_err(|err| format!("failed to serialize canonical harness: {err}"))?;
+
+    crate::jobs::activate::write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/config/canonical-harness.json",
+        &harness_json,
+    )
+    .await?;
+    crate::jobs::activate::write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/config/harness.json",
+        &harness_json,
+    )
+    .await
+}
+
+async fn run_due_hyperliquid_fast_ticks(
+    all_bots: &[crate::state::TradingBotRecord],
+) -> Result<Vec<Value>, String> {
+    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    let store = workflows()?;
+    let all_workflows = store.values().map_err(|e| e.to_string())?;
+    let due: Vec<_> = all_workflows
+        .into_iter()
+        .filter(|entry| workflow_is_due(entry, now))
+        .filter_map(|entry| {
+            let bot = hyperliquid_fast_bot_for_workflow(&entry, all_bots)?;
+            Some((entry, bot.clone()))
+        })
+        .collect();
+
+    let mut executed = Vec::new();
+    for (entry, bot) in due {
+        let workflow_id = entry.id;
+        let key = workflow_key(workflow_id);
+        let next_run_at = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
+            &entry.trigger_type,
+            &entry.trigger_config,
+            Some(now),
+        )
+        .ok()
+        .flatten();
+        workflows()?
+            .update(&key, |workflow| {
+                workflow.next_run_at = next_run_at;
+            })
+            .map_err(|e| e.to_string())?;
+
+        let timeout_ms = workflow_timeout_ms(&entry.workflow_json, 180_000);
+        tracing::info!(
+            workflow_id,
+            bot_id = %bot.id,
+            "Running Hyperliquid fast tick directly"
+        );
+        let task = run_direct_hyperliquid_fast_tick(&bot, timeout_ms).await;
+        let executed_at = chrono::Utc::now().timestamp().max(0) as u64;
+        workflows()?
+            .update(&key, |workflow| {
+                workflow.last_run_at = Some(executed_at);
+                workflow.next_run_at = next_run_at;
+            })
+            .map_err(|e| e.to_string())?;
+
+        executed.push(json!({
+            "workflowId": workflow_id,
+            "name": entry.name,
+            "executedAt": executed_at,
+            "lastRunAt": executed_at,
+            "nextRunAt": next_run_at,
+            "task": task,
+        }));
+    }
+
+    Ok(executed)
+}
+
+async fn verify_hyperliquid_tick_side_effects(
+    bot: &crate::state::TradingBotRecord,
+    result_json: &Value,
+) -> Result<(), String> {
+    let started_at = result_json
+        .get("run_started_at")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing run_started_at".to_string())?;
+    let expected_action = result_json
+        .get("decision")
+        .and_then(|decision| decision.get("action"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let expected_reason = result_json
+        .get("decision")
+        .and_then(|decision| decision.get("reason"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id)
+        .map_err(|err| err.to_string())?;
+    let command = r#"node - <<'NODE'
+const fs = require('fs');
+const started = Date.parse(process.env.EXPECTED_STARTED_AT || '');
+const expectedAction = process.env.EXPECTED_ACTION || '';
+const expectedReason = process.env.EXPECTED_REASON || '';
+
+function readLastJsonl(path) {
+  try {
+    const lines = fs.readFileSync(path, 'utf8').trim().split('\n').filter(Boolean);
+    if (lines.length === 0) return null;
+    return JSON.parse(lines[lines.length - 1]);
+  } catch {
+    return null;
+  }
+}
+
+function readJson(path) {
+  try {
+    return JSON.parse(fs.readFileSync(path, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+const decision = readLastJsonl('/home/agent/logs/decisions.jsonl');
+const metrics = readJson('/home/agent/metrics/latest.json');
+const decisionTs = decision && Date.parse(decision.timestamp || '');
+const metricsTs = metrics && Date.parse(metrics.timestamp || '');
+const decisionOk = Number.isFinite(started)
+  && Number.isFinite(decisionTs)
+  && decisionTs >= started
+  && (!expectedAction || decision.action === expectedAction)
+  && (!expectedReason || decision.reason === expectedReason);
+const metricsOk = Number.isFinite(started)
+  && Number.isFinite(metricsTs)
+  && metricsTs >= started;
+
+console.log(JSON.stringify({
+  decision_ok: decisionOk,
+  metrics_ok: metricsOk,
+  decision_timestamp: decision && decision.timestamp,
+  metrics_timestamp: metrics && metrics.timestamp,
+  decision_action: decision && decision.action,
+  decision_reason: decision && decision.reason,
+}));
+
+process.exit(decisionOk && metricsOk ? 0 : 2);
+NODE"#;
+    let env_json = json!({
+        "EXPECTED_STARTED_AT": started_at,
+        "EXPECTED_ACTION": expected_action,
+        "EXPECTED_REASON": expected_reason,
+    })
+    .to_string();
+    let exec = SandboxExecRequest {
+        sidecar_url: sandbox.sidecar_url.clone(),
+        command: command.to_string(),
+        cwd: String::new(),
+        env_json,
+        timeout_ms: 10_000,
+    };
+    let response = run_exec_request(&exec, &sandbox.token).await?;
+    if response.exit_code == 0 {
+        return Ok(());
+    }
+    Err(format!(
+        "side effects missing or stale: stdout={} stderr={}",
+        response.stdout.trim(),
+        response.stderr.trim()
+    ))
+}
+
+async fn validate_hyperliquid_fast_runs(
+    response: &mut Value,
+    all_bots: &[crate::state::TradingBotRecord],
+) {
+    let Some(executed) = response.get_mut("executed").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    for entry in executed {
+        let workflow_id = entry.get("workflowId").and_then(Value::as_u64).unwrap_or(0);
+        let workflow_name = entry
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !workflow_name.starts_with("fast-tick-") {
+            continue;
+        }
+        let Some(bot) = bot_for_executed_workflow(all_bots, workflow_id, workflow_name) else {
+            continue;
+        };
+        if bot.strategy_type != "hyperliquid_perp" {
+            continue;
+        }
+
+        let result_text = entry
+            .get("task")
+            .and_then(|task| task.get("result"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let parsed: Value = match serde_json::from_str(result_text) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                set_task_failure(
+                    entry,
+                    "Hyperliquid fast tick result was not deterministic JSON".to_string(),
+                );
+                continue;
+            }
+        };
+
+        let valid_schema = parsed.get("result_schema_version").and_then(Value::as_u64) == Some(1);
+        let has_decision = parsed
+            .get("decision")
+            .and_then(|decision| decision.get("action"))
+            .and_then(Value::as_str)
+            .is_some();
+        let reported_logs = parsed
+            .get("logs_written")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let reported_metrics = parsed
+            .get("metrics_written")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+
+        if !valid_schema || !has_decision || !reported_logs || !reported_metrics {
+            set_task_failure(
+                entry,
+                "Hyperliquid fast tick JSON failed schema/side-effect flags".to_string(),
+            );
+            continue;
+        }
+
+        if let Err(err) = verify_hyperliquid_tick_side_effects(bot, &parsed).await {
+            set_task_failure(
+                entry,
+                format!("Hyperliquid fast tick verification failed: {err}"),
             );
         }
     }
@@ -175,21 +655,35 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
         tracing::info!("Wind-down initiated for bot {}", bot.id);
     }
 
-    // 2. Run the normal workflow tick
-    tracing::info!("Running inner workflow_tick()...");
-    let response = match ai_agent_sandbox_blueprint_lib::workflows::workflow_tick().await {
-        Ok(v) => {
-            tracing::info!("workflow_tick() returned: {}", v);
-            v
+    // 2. Run deterministic Hyperliquid fast ticks before the generic LLM runner.
+    let direct_executed = match run_due_hyperliquid_fast_ticks(&all_bots).await {
+        Ok(executed) => executed,
+        Err(err) => {
+            tracing::error!("direct Hyperliquid fast tick failed (non-fatal): {err}");
+            Vec::new()
         }
+    };
+
+    // 3. Run the normal workflow tick for everything else.
+    tracing::info!("Running inner workflow_tick()...");
+    let mut response = match ai_agent_sandbox_blueprint_lib::workflows::workflow_tick().await {
+        Ok(v) => v,
         Err(e) => {
             tracing::error!("workflow_tick() failed (non-fatal): {e}");
             serde_json::json!({"error": e, "count": 0, "executed": []})
         }
     };
+    if !direct_executed.is_empty() {
+        if let Some(executed) = response.get_mut("executed").and_then(Value::as_array_mut) {
+            executed.extend(direct_executed);
+            response["count"] = json!(executed.len());
+        }
+    }
+    validate_hyperliquid_fast_runs(&mut response, &all_bots).await;
+    tracing::info!("workflow_tick() returned: {}", response);
     persist_executed_run_history(&response);
 
-    // 3. Run fee settlement for winding-down bots
+    // 4. Run fee settlement for winding-down bots
     let winding_down: Vec<_> = bots()?
         .values()
         .map_err(|e| e.to_string())?

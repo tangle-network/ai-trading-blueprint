@@ -147,4 +147,45 @@ describe('mapApiPortfolioState', () => {
     expect(portfolio.positions[0]?.asset.name).toBe('USD Coin');
     expect(portfolio.positions[0]?.symbol).toBe('USDC');
   });
+
+  it('preserves Hyperliquid perp metadata for perp-specific displays', () => {
+    const portfolio = mapApiPortfolioState({
+      total_value_usd: '8.187387',
+      cash_balance: '0',
+      has_unpriced_positions: false,
+      has_value_only_positions: true,
+      source: 'hyperliquid_nav',
+      observed_at: '2026-05-27T10:07:12.000Z',
+      stale: false,
+      positions: [
+        {
+          token: 'ETH',
+          amount: '0.026',
+          value_usd: '2.57049',
+          margin_used_usd: '2.57049',
+          notional_usd: '51.4098',
+          entry_price: '2084.22',
+          current_price: null,
+          unrealized_pnl_usd: '-2.77992',
+          leverage: '20',
+          liquidation_price: '1696.3270408163',
+          protocol: 'hyperliquid',
+          position_type: 'long_perp',
+          valuation_status: 'value_only',
+        },
+      ],
+    }, 'bot-1');
+
+    expect(portfolio.positions[0]?.protocol).toBe('hyperliquid');
+    expect(portfolio.source).toBe('hyperliquid_nav');
+    expect(portfolio.observedAt).toBe('2026-05-27T10:07:12.000Z');
+    expect(portfolio.stale).toBe(false);
+    expect(portfolio.positions[0]?.positionType).toBe('long_perp');
+    expect(portfolio.positions[0]?.asset.primaryLabel).toBe('Wrapped Ether');
+    expect(portfolio.positions[0]?.marginUsedUsd).toBe(2.57049);
+    expect(portfolio.positions[0]?.notionalUsd).toBe(51.4098);
+    expect(portfolio.positions[0]?.unrealizedPnlUsd).toBe(-2.77992);
+    expect(portfolio.positions[0]?.leverage).toBe(20);
+    expect(portfolio.positions[0]?.liquidationPrice).toBe(1696.3270408163);
+  });
 });

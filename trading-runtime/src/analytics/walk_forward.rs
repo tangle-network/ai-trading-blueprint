@@ -109,7 +109,10 @@ where
                 .filter(|(_, t)| !t.is_empty())
                 .collect()
         }
-        Scheme::Rolling { window_frac, step_frac } => {
+        Scheme::Rolling {
+            window_frac,
+            step_frac,
+        } => {
             let win = ((n as f64) * window_frac.clamp(0.05, 0.95)) as usize;
             let step = ((n as f64) * step_frac.clamp(0.01, 0.5)) as usize;
             if win < 5 || step == 0 {
@@ -139,9 +142,17 @@ where
         });
     }
     let is_vals: Vec<f64> = report.folds.iter().filter_map(|f| f.in_sample).collect();
-    let oos_vals: Vec<f64> = report.folds.iter().filter_map(|f| f.out_of_sample).collect();
+    let oos_vals: Vec<f64> = report
+        .folds
+        .iter()
+        .filter_map(|f| f.out_of_sample)
+        .collect();
     let mean = |v: &[f64]| -> Option<f64> {
-        if v.is_empty() { None } else { Some(v.iter().sum::<f64>() / v.len() as f64) }
+        if v.is_empty() {
+            None
+        } else {
+            Some(v.iter().sum::<f64>() / v.len() as f64)
+        }
     };
     report.mean_in_sample = mean(&is_vals);
     report.mean_out_of_sample = mean(&oos_vals);
@@ -149,7 +160,10 @@ where
         (Some(is), Some(oos)) => Some(is - oos),
         _ => None,
     };
-    report.overfit_flag = report.folds.iter().any(|f| f.gap().map(|g| g > 1.0).unwrap_or(false));
+    report.overfit_flag = report
+        .folds
+        .iter()
+        .any(|f| f.gap().map(|g| g > 1.0).unwrap_or(false));
     report
 }
 
@@ -192,13 +206,24 @@ mod tests {
         let series: Vec<f64> = (0..200).map(|i| (i as f64 % 5.0) / 100.0).collect();
         let r = evaluate(
             &series,
-            Scheme::Rolling { window_frac: 0.3, step_frac: 0.1 },
+            Scheme::Rolling {
+                window_frac: 0.3,
+                step_frac: 0.1,
+            },
             sharpe,
         );
         assert!(r.folds.len() >= 2);
         // Each train window should be the same width.
-        let widths: std::collections::HashSet<usize> = r.folds.iter().map(|f| f.train.end - f.train.start).collect();
-        assert_eq!(widths.len(), 1, "rolling train windows must be uniform width: {widths:?}");
+        let widths: std::collections::HashSet<usize> = r
+            .folds
+            .iter()
+            .map(|f| f.train.end - f.train.start)
+            .collect();
+        assert_eq!(
+            widths.len(),
+            1,
+            "rolling train windows must be uniform width: {widths:?}"
+        );
     }
 
     #[test]

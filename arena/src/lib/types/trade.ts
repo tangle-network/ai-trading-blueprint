@@ -1,6 +1,13 @@
 import type { ResolvedAssetDisplay } from '~/lib/tradeTokenMetadata';
 
-export type TradeAction = 'buy' | 'sell' | 'swap';
+export type TradeAction =
+  | 'buy'
+  | 'sell'
+  | 'swap'
+  | 'open_long'
+  | 'open_short'
+  | 'close_long'
+  | 'close_short';
 export type TradeStatus = 'executed' | 'pending' | 'rejected' | 'paper' | 'failed';
 export type TradeExecutionStatus = 'paper' | 'submitted' | 'confirmed' | 'filled' | 'partial' | 'no_fill';
 
@@ -49,6 +56,13 @@ export interface PredictionTradeMetadata {
   marketSlug?: string;
 }
 
+export interface HyperliquidTradeMetadata {
+  asset?: string;
+  assetSize?: string;
+  orderType?: string;
+  reduceOnly?: boolean;
+}
+
 export type TradeDecisionSource =
   | 'agent_execution'
   | 'code_strategy'
@@ -74,6 +88,7 @@ export interface Trade {
   amountIn: number;
   amountOut: number;
   priceUsd: number | null;
+  notionalUsd?: number | null;
   timestamp: number;
   status: TradeStatus;
   txHash?: string;
@@ -98,6 +113,8 @@ export interface Trade {
   execution?: TradeExecutionDetails;
   /** Persisted Polymarket metadata for human-readable trade history labels. */
   predictionMetadata?: PredictionTradeMetadata;
+  /** Persisted Hyperliquid metadata for perp-specific trade history labels. */
+  hyperliquidMetadata?: HyperliquidTradeMetadata;
   /** Mechanism that produced the trade: agent execution, generated code strategy, manual, etc. */
   decisionSource?: TradeDecisionSource;
   /** Generated strategy module id or other strategy-level mechanism id. */
@@ -122,6 +139,7 @@ export function protocolToVenue(protocol?: string, paperTrade?: boolean): TradeV
     case 'polymarket': return 'prediction';
     case 'uniswap_v3': return 'dex';
     case 'gmx_v2':
+    case 'hyperliquid':
     case 'vertex': return 'perp';
     case 'aave_v3':
     case 'morpho_vault': return 'yield';

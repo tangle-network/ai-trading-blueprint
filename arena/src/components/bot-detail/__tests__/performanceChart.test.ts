@@ -37,9 +37,9 @@ describe('buildPerformanceChartPoints', () => {
     const points = buildPerformanceChartPoints(undefined, [1000, 1005, 1010]);
 
     expect(points).toEqual([
-      { label: 'Snapshot 1', tooltipLabel: 'Snapshot 1', value: 1000 },
-      { label: 'Snapshot 2', tooltipLabel: 'Snapshot 2', value: 1005 },
-      { label: 'Snapshot 3', tooltipLabel: 'Snapshot 3', value: 1010 },
+      { label: 'Snapshot 1', tooltipLabel: 'Snapshot 1', value: 1000, kind: 'snapshot' },
+      { label: 'Snapshot 2', tooltipLabel: 'Snapshot 2', value: 1005, kind: 'snapshot' },
+      { label: 'Snapshot 3', tooltipLabel: 'Snapshot 3', value: 1010, kind: 'snapshot' },
     ]);
   });
 
@@ -85,5 +85,45 @@ describe('buildPerformanceChartPoints', () => {
     expect(points[0]?.value).toBe(10000);
     expect(points[1]?.value).toBe(9994.04);
     expect(points[2]?.value).toBe(9992.13);
+  });
+
+  it('appends a clearly labeled live NAV point after saved snapshots', () => {
+    const points = buildPerformanceChartPoints(
+      [
+        { account_value_usd: 10.93, timestamp: '2026-05-27T10:05:11.000Z' },
+      ],
+      [],
+      null,
+      { value: 8.2, timestamp: '2026-05-27T10:07:12.000Z', label: 'Live' },
+    );
+
+    expect(points).toHaveLength(2);
+    expect(points[0]?.kind).toBe('snapshot');
+    expect(points[1]).toMatchObject({
+      label: 'Live',
+      tooltipLabel: expect.stringContaining('Live NAV'),
+      value: 8.2,
+      kind: 'live_nav',
+    });
+  });
+
+  it('can show a live NAV point even when no saved snapshots are usable', () => {
+    const points = buildPerformanceChartPoints(
+      [
+        { account_value_usd: 0, timestamp: '2026-05-27T10:05:11.000Z' },
+      ],
+      [],
+      null,
+      { value: 8.2, timestamp: '2026-05-27T10:07:12.000Z', label: 'Live' },
+    );
+
+    expect(points).toEqual([
+      {
+        label: 'Live',
+        tooltipLabel: expect.stringContaining('Live NAV'),
+        value: 8.2,
+        kind: 'live_nav',
+      },
+    ]);
   });
 });

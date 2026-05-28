@@ -10,6 +10,7 @@ ASSET_TOKEN="${ASSET_TOKEN:-0x2B3370eE501B4a559b57D449569354196457D8Ab}"
 DEPLOY_TX_GAS_LIMIT="${HYPEREVM_DEPLOY_TX_GAS_LIMIT:-3000000}"
 WRITE_DEPLOYMENT_JSON="${WRITE_DEPLOYMENT_JSON:-true}"
 DEPLOYMENT_JSON_DIR="${DEPLOYMENT_JSON_DIR:-$ROOT_DIR/deployments}"
+AUTHORIZED_CALLERS="${AUTHORIZED_CALLERS:-}"
 
 cd "$ROOT_DIR"
 
@@ -42,6 +43,9 @@ echo "  rpc:         $RPC_URL"
 echo "  deployer:    $deployer"
 echo "  asset token: $ASSET_TOKEN"
 echo "  tx gas cap:  $DEPLOY_TX_GAS_LIMIT"
+if [[ -n "$AUTHORIZED_CALLERS" ]]; then
+  echo "  authorized:  $AUTHORIZED_CALLERS"
+fi
 
 forge build -q
 
@@ -164,6 +168,22 @@ send_call "validator.transferOwnership" "$trade_validator" "transferOwnership(ad
 send_call "factory.acceptDependency" "$vault_factory" "acceptDependencyOwnership()"
 send_call "factory.setVaultDeployers" "$vault_factory" "setVaultDeployers(address,address)" "$vault_deployer" "$vault_share_deployer"
 
+authorized_callers_json='[]'
+if [[ -n "$AUTHORIZED_CALLERS" ]]; then
+  IFS=',' read -r -a authorized_callers <<< "$AUTHORIZED_CALLERS"
+  for caller in "${authorized_callers[@]}"; do
+    caller="$(printf '%s' "$caller" | xargs)"
+    [[ -n "$caller" ]] || continue
+    send_call "factory.authorizeCaller" "$vault_factory" "setAuthorizedCaller(address,bool)" "$caller" true
+    is_authorized="$(cast call --rpc-url "$RPC_URL" "$vault_factory" "authorizedCallers(address)(bool)" "$caller")"
+    if [[ "$is_authorized" != "true" ]]; then
+      echo "ERROR: factory authorizedCallers($caller) was not set" >&2
+      exit 1
+    fi
+    authorized_callers_json="$(jq -c --arg caller "$caller" '. + [$caller]' <<<"$authorized_callers_json")"
+  done
+fi
+
 wired_vault_deployer="$(cast call --rpc-url "$RPC_URL" "$vault_factory" "deployer()(address)")"
 wired_share_deployer="$(cast call --rpc-url "$RPC_URL" "$vault_factory" "shareDeployer()(address)")"
 validator_owner="$(cast call --rpc-url "$RPC_URL" "$trade_validator" "owner()(address)")"
@@ -198,6 +218,7 @@ if [[ "$WRITE_DEPLOYMENT_JSON" == "true" ]]; then
     --arg vaultDeployer "$vault_deployer" \
     --arg vaultShareDeployer "$vault_share_deployer" \
     --arg tradeValidator "$trade_validator" \
+    --argjson authorizedCallers "$authorized_callers_json" \
     '{
       chainId: $chainId,
       deployer: $deployer,
@@ -206,7 +227,8 @@ if [[ "$WRITE_DEPLOYMENT_JSON" == "true" ]]; then
       vaultImplementation: $vaultImplementation,
       vaultDeployer: $vaultDeployer,
       vaultShareDeployer: $vaultShareDeployer,
-      tradeValidator: $tradeValidator
+      tradeValidator: $tradeValidator,
+      authorizedCallers: $authorizedCallers
     }' > "$tmp_path"
 
   mv "$tmp_path" "$json_path"

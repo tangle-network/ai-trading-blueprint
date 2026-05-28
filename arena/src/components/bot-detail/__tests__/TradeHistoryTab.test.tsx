@@ -107,10 +107,11 @@ describe('TradeHistoryTab', () => {
     expect(screen.getByText('executed')).toBeInTheDocument();
     expect(screen.getByText('1,000')).toBeInTheDocument();
     expect(screen.getAllByText('USDC').length).toBeGreaterThan(0);
-    expect(screen.getByText('$2,000')).toBeInTheDocument();
+    expect(screen.queryByText('Price')).not.toBeInTheDocument();
+    expect(screen.queryByText('$2,000')).not.toBeInTheDocument();
   });
 
-  it('shows simulation badge when simulation data present', () => {
+  it('does not show simulation in the compact table', () => {
     setTrades([
       makeTrade({
         validation: {
@@ -129,14 +130,13 @@ describe('TradeHistoryTab', () => {
       }),
     ]);
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
-    // SimulationBadge renders the risk score
-    expect(screen.getByText('25')).toBeInTheDocument();
+    expect(screen.queryByText('Sim')).not.toBeInTheDocument();
+    expect(screen.queryByText('25')).not.toBeInTheDocument();
   });
 
   it('shows dash when no simulation data', () => {
     setTrades([makeTrade()]);
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
-    // Both the validation column and sim column show '-' when empty
     const dashes = screen.getAllByText('-');
     expect(dashes.length).toBeGreaterThanOrEqual(1);
   });
@@ -261,7 +261,7 @@ describe('TradeHistoryTab', () => {
     expect(screen.getByText('SELL')).toBeInTheDocument();
   });
 
-  it('shows the input-side amount and derived paper-trade price in the compact row', () => {
+  it('shows the input-side amount in the compact row', () => {
     setTrades([
       makeTrade({
         action: 'buy',
@@ -280,7 +280,7 @@ describe('TradeHistoryTab', () => {
 
     expect(screen.getByText('1.25')).toBeInTheDocument();
     expect(screen.getAllByText('WETH').length).toBeGreaterThan(0);
-    expect(screen.getByText('$2,560')).toBeInTheDocument();
+    expect(screen.queryByText('$2,560')).not.toBeInTheDocument();
     expect(screen.queryByText('3,200 USDC')).not.toBeInTheDocument();
   });
 
@@ -307,7 +307,7 @@ describe('TradeHistoryTab', () => {
     expect(screen.queryByText('USDC/48328953829')).not.toBeInTheDocument();
   });
 
-  it('uses requested execution price for paper prediction trades when valuation is unavailable', () => {
+  it('does not show requested execution price in the compact prediction row', () => {
     setTrades([
       makeTrade({
         tokenIn: 'USDC',
@@ -330,7 +330,7 @@ describe('TradeHistoryTab', () => {
 
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
 
-    expect(screen.getByText('$0.585')).toBeInTheDocument();
+    expect(screen.queryByText('$0.585')).not.toBeInTheDocument();
     expect(screen.queryByText('No USD leg')).not.toBeInTheDocument();
   });
 
@@ -365,10 +365,10 @@ describe('TradeHistoryTab', () => {
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
 
     expect(screen.getByText('sim failed')).toBeInTheDocument();
-    expect(screen.getByText('$3,125')).toBeInTheDocument();
+    expect(screen.queryByText('$3,125')).not.toBeInTheDocument();
   });
 
-  it('marks paper-trade price as unavailable when there is no USD leg', () => {
+  it('does not show paper-trade price fallback in the compact row', () => {
     setTrades([
       makeTrade({
         tokenIn: 'WETH',
@@ -384,7 +384,7 @@ describe('TradeHistoryTab', () => {
 
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
 
-    expect(screen.getByText('No USD leg')).toBeInTheDocument();
+    expect(screen.queryByText('No USD leg')).not.toBeInTheDocument();
   });
 
   it('shows swap flow and tx hash directly in the compact table', () => {
@@ -406,8 +406,7 @@ describe('TradeHistoryTab', () => {
     expect(screen.getByText('0x1234...cdef')).toBeInTheDocument();
   });
 
-  it('labels and filters code-driven strategy trades', async () => {
-    const user = userEvent.setup();
+  it('does not show source filters or venue labels in the compact table', () => {
     setTrades([
       makeTrade({
         id: 'agent-trade',
@@ -424,12 +423,84 @@ describe('TradeHistoryTab', () => {
 
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
 
-    expect(screen.getAllByText('Agent').length).toBeGreaterThan(0);
-    expect(screen.getByText('Strategy Code')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /Strategy code 1/i }));
-
+    expect(screen.getByText('USDC/WETH')).toBeInTheDocument();
     expect(screen.getByText('DAI/WETH')).toBeInTheDocument();
-    expect(screen.queryByText('USDC/WETH')).not.toBeInTheDocument();
+    expect(screen.queryByText('Source')).not.toBeInTheDocument();
+    expect(screen.queryByText('Venue')).not.toBeInTheDocument();
+    expect(screen.queryByText('Agent')).not.toBeInTheDocument();
+    expect(screen.queryByText('Strategy Code')).not.toBeInTheDocument();
+  });
+
+  it('renders Hyperliquid perp rows as perp orders instead of swaps', () => {
+    setTrades([
+      makeTrade({
+        action: 'open_long',
+        tokenIn: 'USDC',
+        tokenOut: 'USDC',
+        amountIn: 10.934753,
+        amountOut: 0,
+        priceUsd: 0.999687,
+        notionalUsd: 10.931330422311,
+        targetProtocol: 'hyperliquid',
+        venue: 'perp',
+        txHash: 'hl:ok',
+        validation: {
+          approved: true,
+          aggregateScore: 80,
+          intentHash: '0xhl',
+          responses: [],
+        },
+        hyperliquidMetadata: {
+          asset: 'ETH',
+          assetSize: '0.0052',
+          orderType: 'market',
+          reduceOnly: false,
+        },
+      }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('OPEN LONG')).toBeInTheDocument();
+    expect(screen.getByText('ETH-PERP')).toBeInTheDocument();
+    expect(screen.getByText('HL accepted')).toBeInTheDocument();
+    expect(screen.getByText(/Order: 10.9348 USDC/)).toBeInTheDocument();
+    expect(screen.getByText(/Size: 0.0052 ETH/)).toBeInTheDocument();
+    expect(screen.queryByText('USDC/USDC')).not.toBeInTheDocument();
+    expect(screen.queryByText(/→/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Collateral:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Notional:/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Tx Hash')).not.toBeInTheDocument();
+    expect(screen.queryByText('Venue')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sim')).not.toBeInTheDocument();
+    expect(screen.queryByText('Price')).not.toBeInTheDocument();
+    expect(screen.queryByText('Perp order')).not.toBeInTheDocument();
+    expect(screen.queryByText('N/A')).not.toBeInTheDocument();
+  });
+
+  it('uses an honest fallback label for historical Hyperliquid rows without asset metadata', () => {
+    setTrades([
+      makeTrade({
+        action: 'open_long',
+        tokenIn: 'USDC',
+        tokenOut: 'USDC',
+        amountIn: 11,
+        amountOut: 0,
+        targetProtocol: 'hyperliquid',
+        venue: 'perp',
+        txHash: 'hl:err',
+      }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('OPEN LONG')).toBeInTheDocument();
+    expect(screen.getByText('HL rejected')).toBeInTheDocument();
+    expect(screen.getByText(/Order: 11 USDC/)).toBeInTheDocument();
+    expect(screen.queryByText('Hyperliquid perp')).not.toBeInTheDocument();
+    expect(screen.queryByText('Perp order')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Collateral:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Notional:/)).not.toBeInTheDocument();
+    expect(screen.queryByText('USDC/USDC')).not.toBeInTheDocument();
   });
 });

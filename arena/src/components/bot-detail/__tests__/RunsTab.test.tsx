@@ -20,6 +20,10 @@ const useBotSessionStreamMock = vi.hoisted(() =>
   })),
 );
 
+const chatTranscriptMock = vi.hoisted(() =>
+  vi.fn(() => <div data-testid="chat-transcript" />),
+);
+
 vi.mock("~/lib/hooks/useOperatorAuth", () => ({
   useOperatorAuth: () => authState,
 }));
@@ -29,11 +33,11 @@ vi.mock("~/lib/hooks/useBotSessionStream", () => ({
 }));
 
 vi.mock("~/components/bot-detail/chat/ChatTranscript", () => ({
-  ChatTranscript: () => <div data-testid="chat-transcript" />,
+  ChatTranscript: chatTranscriptMock,
 }));
 
 vi.mock("../chat/ChatTranscript", () => ({
-  ChatTranscript: () => <div data-testid="chat-transcript" />,
+  ChatTranscript: chatTranscriptMock,
 }));
 
 vi.mock(
@@ -93,6 +97,7 @@ describe("RunsTab", () => {
     authState.error = null;
     authState.authenticate.mockReset();
     useBotSessionStreamMock.mockClear();
+    chatTranscriptMock.mockClear();
 
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: false,
@@ -191,6 +196,104 @@ describe("RunsTab", () => {
     });
     expect(await screen.findByText("Research Run")).toBeInTheDocument();
     expect(screen.getByText("latest result")).toBeInTheDocument();
+  });
+
+  it("replays saved trading run JSON through the chat transcript when no full transcript was captured", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    const result = JSON.stringify({
+      result_schema_version: 1,
+      run_started_at: "2026-05-27T06:00:01.100Z",
+      run_completed_at: "2026-05-27T06:02:28.046Z",
+      checked_state: {
+        nav_status: "fresh",
+        mode: "normal",
+        total_nav_usdc: 11,
+        hyperliquid_equity_usdc: 11,
+        perp_margin_usdc: 11,
+        positions_count: 0,
+        open_orders_count: 0,
+      },
+      decision: {
+        action: "skip",
+        reason: "api-wallet-approval-not-verified",
+        setup: {
+          action: "open_long",
+          asset: "ETH",
+          amount_in: "11",
+          rationale: "rsi-oversold",
+        },
+        approval: {
+          status: "submitted_corewriter_approval",
+          api_wallet_address: "0x030999fbbcb39976413805a09c6b5a93f010ed80",
+          tx_hash: "0xbeeb",
+          verified_corewriter_approval: false,
+          extra_agents: [],
+        },
+      },
+      funding_action: { attempted: false },
+      api_wallet_approval_action: {
+        attempted: true,
+        status: 200,
+        response: {
+          status: "submitted_corewriter_approval",
+          verified_corewriter_approval: false,
+          tx_hash: "0xbeeb",
+        },
+      },
+      trade_action: { attempted: false },
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-json",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_849_924,
+              completed_at: 1_775_850_048,
+              session_id: "direct-hyperliquid-fast-bot-1",
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 128_000,
+              input_tokens: 0,
+              output_tokens: 0,
+              result,
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          sessionId: "direct-hyperliquid-fast-bot-1",
+        }),
+      );
+    });
+    expect(screen.queryByText("Trading run details")).not.toBeInTheDocument();
+    expect(screen.queryByText("Decision")).not.toBeInTheDocument();
+    expect(screen.queryByText("api-wallet-approval-not-verified")).not.toBeInTheDocument();
+    expect(screen.queryByText(/result_schema_version/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Transcript unavailable")).not.toBeInTheDocument();
   });
 
   it("uses stored ses run ids so the operator can recover archived transcripts", async () => {

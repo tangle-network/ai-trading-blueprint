@@ -199,13 +199,18 @@ pub const SCHEDULES: &[ProtocolFeeSchedule] = &[
 /// `"hyperliquid"` or `"hyperliquid_perp"` interchangeably.
 pub fn schedule_for(protocol: &str) -> Option<&'static ProtocolFeeSchedule> {
     let key = protocol.trim().to_ascii_lowercase();
-    if let Some(s) = SCHEDULES.iter().find(|s| s.protocol.eq_ignore_ascii_case(&key)) {
+    if let Some(s) = SCHEDULES
+        .iter()
+        .find(|s| s.protocol.eq_ignore_ascii_case(&key))
+    {
         return Some(s);
     }
     // Suffix fallback: try the bare protocol id after stripping a common suffix.
     for suffix in ["_perp", "_spot"] {
         if let Some(bare) = key.strip_suffix(suffix)
-            && let Some(s) = SCHEDULES.iter().find(|s| s.protocol.eq_ignore_ascii_case(bare))
+            && let Some(s) = SCHEDULES
+                .iter()
+                .find(|s| s.protocol.eq_ignore_ascii_case(bare))
         {
             return Some(s);
         }
@@ -246,12 +251,25 @@ impl std::fmt::Display for FeeRejection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FeeRejection::UnknownProtocol(p) => {
-                write!(f, "no fee schedule for protocol '{p}' — refusing to trade without a known fee floor")
+                write!(
+                    f,
+                    "no fee schedule for protocol '{p}' — refusing to trade without a known fee floor"
+                )
             }
-            FeeRejection::BelowMinNotional { notional_usd, min_usd } => {
-                write!(f, "trade notional ${notional_usd} is below the minimum ${min_usd} worth submitting at this venue's fees")
+            FeeRejection::BelowMinNotional {
+                notional_usd,
+                min_usd,
+            } => {
+                write!(
+                    f,
+                    "trade notional ${notional_usd} is below the minimum ${min_usd} worth submitting at this venue's fees"
+                )
             }
-            FeeRejection::FeesEatProfit { fees_usd, expected_pnl_usd, min_pnl_after_fees_usd } => {
+            FeeRejection::FeesEatProfit {
+                fees_usd,
+                expected_pnl_usd,
+                min_pnl_after_fees_usd,
+            } => {
                 write!(
                     f,
                     "expected fees ${fees_usd} exceed expected PnL ${expected_pnl_usd} minus min-margin ${min_pnl_after_fees_usd}; refusing trade",

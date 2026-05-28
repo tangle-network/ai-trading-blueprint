@@ -50,6 +50,7 @@ pub struct ExecutionApproval {
 pub struct ValidationExecutionOptions {
     pub execution_context: Option<ExecutionContext>,
     pub require_simulation: bool,
+    pub intent_hash_override: Option<String>,
     pub execution_hash_override: Option<String>,
     pub action_kind: u64,
 }
@@ -198,7 +199,9 @@ impl ValidatorClient {
         }
         intent.deadline = chrono::DateTime::<chrono::Utc>::from_timestamp(deadline as i64, 0)
             .ok_or_else(|| TradingError::ValidatorError(format!("Invalid deadline: {deadline}")))?;
-        let intent_hash = hash_intent(&intent);
+        let intent_hash = options
+            .intent_hash_override
+            .unwrap_or_else(|| hash_intent(&intent));
         let execution_hash = options
             .execution_context
             .as_ref()

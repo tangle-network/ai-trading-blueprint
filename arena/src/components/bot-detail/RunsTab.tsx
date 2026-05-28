@@ -278,15 +278,20 @@ function deriveTranscriptSessionId(botId: string, run: BotRun): string | null {
 }
 
 function resolveTranscriptSessionId(botId: string, run: BotRun | null): string {
-  if (!run?.transcriptAvailable) {
+  if (!run) {
     return "";
   }
 
-  if (run.sessionId) {
+  const canReplaySavedRun = Boolean(run.sessionId && (run.result || run.error));
+  if (run.sessionId && (run.transcriptAvailable || canReplaySavedRun)) {
     return run.sessionId;
   }
 
-  return deriveTranscriptSessionId(botId, run) ?? "";
+  if (run.transcriptAvailable) {
+    return deriveTranscriptSessionId(botId, run) ?? "";
+  }
+
+  return "";
 }
 
 function RunsStatus({ status }: { status: "idle" | "running" | "error" }) {
@@ -505,13 +510,202 @@ function RunMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+type RunResultSection = {
+  title: string;
+  items: Array<{ label: string; value: string }>;
+};
+
+function parseRunResultJson(result: string | null): Record<string, unknown> | null {
+  if (!result) return null;
+
+  try {
+    return asRecord(JSON.parse(result));
+  } catch {
+    return null;
+  }
+}
+
+function formatResultValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return value.length > 0 ? value : null;
+  if (typeof value === "number") return Number.isFinite(value) ? `${value}` : null;
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) return `${value.length}`;
+  return null;
+}
+
+function pushResultItem(
+  items: RunResultSection["items"],
+  label: string,
+  value: unknown,
+) {
+  const formatted = formatResultValue(value);
+  if (formatted) {
+    items.push({ label, value: formatted });
+  }
+}
+
+function approvalItems(value: unknown): RunResultSection["items"] {
+  const items: RunResultSection["items"] = [];
+  const approval = asRecord(value);
+  if (!approval) {
+    pushResultItem(items, "Approval", value);
+    return items;
+  }
+
+  pushResultItem(items, "Status", approval.status);
+  pushResultItem(items, "Verified", approval.verified_corewriter_approval);
+  pushResultItem(items, "API wallet", approval.api_wallet_address);
+  pushResultItem(items, "Vault account", approval.vault_account);
+  pushResultItem(items, "Tx hash", approval.tx_hash);
+  pushResultItem(items, "Extra agents", approval.extra_agents);
+  return items;
+}
+
+function buildRunResultSections(result: Record<string, unknown>): RunResultSection[] {
+  const sections: RunResultSection[] = [];
+  const checkedState = asRecord(result.checked_state);
+  const decision = asRecord(result.decision);
+  const setup = asRecord(decision?.setup);
+  const fundingAction = asRecord(result.funding_action);
+  const approvalAction = asRecord(result.api_wallet_approval_action);
+  const approvalResponse = asRecord(approvalAction?.response);
+  const tradeAction = asRecord(result.trade_action);
+
+  const timing: RunResultSection["items"] = [];
+  pushResultItem(timing, "Started", result.run_started_at);
+  pushResultItem(timing, "Completed", result.run_completed_at);
+  if (timing.length) sections.push({ title: "Timing", items: timing });
+
+  if (checkedState) {
+    const items: RunResultSection["items"] = [];
+    pushResultItem(items, "NAV status", checkedState.nav_status);
+    pushResultItem(items, "Mode", checkedState.mode);
+    pushResultItem(items, "Total NAV USDC", checkedState.total_nav_usdc);
+    pushResultItem(
+      items,
+      "Hyperliquid equity USDC",
+      checkedState.hyperliquid_equity_usdc,
+    );
+    pushResultItem(items, "Perp margin USDC", checkedState.perp_margin_usdc);
+    pushResultItem(items, "Positions", checkedState.positions_count);
+    pushResultItem(items, "Open orders", checkedState.open_orders_count);
+    if (items.length) sections.push({ title: "Checked State", items });
+  }
+
+  if (decision) {
+    const items: RunResultSection["items"] = [];
+    pushResultItem(items, "Action", decision.action);
+    pushResultItem(items, "Reason", decision.reason);
+    pushResultItem(items, "Setup action", setup?.action);
+    pushResultItem(items, "Asset", setup?.asset);
+    pushResultItem(items, "Amount in", setup?.amount_in);
+    pushResultItem(items, "Rationale", setup?.rationale);
+    if (items.length) sections.push({ title: "Decision", items });
+
+    const approval = approvalItems(decision.approval);
+    if (approval.length) sections.push({ title: "Approval", items: approval });
+  }
+
+  if (fundingAction) {
+    const items: RunResultSection["items"] = [];
+    pushResultItem(items, "Attempted", fundingAction.attempted);
+    pushResultItem(items, "Status", fundingAction.status);
+    pushResultItem(items, "Requested USDC", fundingAction.requested_usdc);
+    if (items.length) sections.push({ title: "Funding", items });
+  }
+
+  if (approvalAction) {
+    const items: RunResultSection["items"] = [];
+    pushResultItem(items, "Attempted", approvalAction.attempted);
+    pushResultItem(items, "Status", approvalAction.status);
+    pushResultItem(items, "Response", approvalResponse?.status);
+    pushResultItem(items, "Verified", approvalResponse?.verified_corewriter_approval);
+    pushResultItem(items, "Tx hash", approvalResponse?.tx_hash);
+    if (items.length) {
+      sections.push({ title: "API Wallet Approval Action", items });
+    }
+  }
+
+  if (tradeAction) {
+    const items: RunResultSection["items"] = [];
+    pushResultItem(items, "Attempted", tradeAction.attempted);
+    pushResultItem(items, "Validation status", tradeAction.validation_status);
+    pushResultItem(items, "Execution status", tradeAction.execution_status);
+    if (items.length) sections.push({ title: "Trade", items });
+  }
+
+  return sections;
+}
+
+function RunResultSummary({ result }: { result: string }) {
+  const parsed = useMemo(() => parseRunResultJson(result), [result]);
+  const sections = useMemo(
+    () => (parsed ? buildRunResultSections(parsed) : []),
+    [parsed],
+  );
+
+  if (!parsed || sections.length === 0) {
+    return (
+      <pre className="mt-2 whitespace-pre-wrap break-words text-sm text-arena-elements-textPrimary">
+        {result}
+      </pre>
+    );
+  }
+
+  return (
+    <div className="mt-3 grid gap-3 lg:grid-cols-2">
+      {sections.map((section) => (
+        <section
+          key={section.title}
+          className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3"
+        >
+          <h4 className="text-xs font-display font-semibold text-arena-elements-textPrimary">
+            {section.title}
+          </h4>
+          <dl className="mt-2 space-y-1.5">
+            {section.items.map((item) => (
+              <div key={`${section.title}-${item.label}`} className="grid gap-1 sm:grid-cols-[150px_minmax(0,1fr)]">
+                <dt className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                  {item.label}
+                </dt>
+                <dd className="break-words text-sm font-data text-arena-elements-textPrimary">
+                  {item.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function getNoTranscriptRunTitle(run: BotRun): string {
+  if (run.error) {
+    return run.status === "interrupted"
+      ? "Run interrupted"
+      : "Run failed before details were captured";
+  }
+
+  if (run.result) {
+    switch (run.workflowKind) {
+      case "trading":
+        return "Trading run details";
+      case "research":
+        return "Research run details";
+      case "conversation":
+        return "Conversation run details";
+      default:
+        return "Run details";
+    }
+  }
+
+  return "Run details unavailable";
+}
+
 function RunDetailPanel({ run }: { run: BotRun }) {
-  const failureTitle =
-    run.status === "failed" && !run.transcriptAvailable
-      ? "Run failed before a transcript was available"
-      : run.status === "interrupted"
-        ? "Run was interrupted before it fully completed"
-        : "Transcript unavailable";
+  const title = getNoTranscriptRunTitle(run);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -523,7 +717,7 @@ function RunDetailPanel({ run }: { run: BotRun }) {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-base font-display font-semibold text-arena-elements-textPrimary">
-                {failureTitle}
+                {title}
               </h3>
               <span
                 className={`rounded-full border px-2 py-0.5 text-[11px] font-data ${getStatusBadgeClass(run.status)}`}
@@ -545,9 +739,13 @@ function RunDetailPanel({ run }: { run: BotRun }) {
             <div className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
               {run.error ? "Error" : "Result"}
             </div>
-            <pre className="mt-2 whitespace-pre-wrap break-words text-sm text-arena-elements-textPrimary">
-              {run.error ?? run.result}
-            </pre>
+            {run.error ? (
+              <pre className="mt-2 whitespace-pre-wrap break-words text-sm text-arena-elements-textPrimary">
+                {run.error}
+              </pre>
+            ) : run.result ? (
+              <RunResultSummary result={run.result} />
+            ) : null}
           </div>
         )}
 
@@ -577,7 +775,7 @@ function RunDetailPanel({ run }: { run: BotRun }) {
           <RunMetric label="Trace ID" value={run.traceId ?? "n/a"} />
           <RunMetric label="Run ID" value={run.runId} />
           <RunMetric
-            label="Transcript"
+            label="Full transcript"
             value={run.transcriptAvailable ? "Available" : "Not captured"}
           />
         </div>
@@ -865,9 +1063,7 @@ export function RunsTab({
           </div>
 
           <div className="min-h-0 flex-1 bg-arena-elements-background-depth-1/15">
-            {activeRun?.transcriptAvailable &&
-            transcriptSessionId &&
-            !streamErrorMessage ? (
+            {transcriptSessionId && !streamErrorMessage ? (
               <ChatTranscript
                 messages={stream.messages}
                 partMap={stream.partMap}

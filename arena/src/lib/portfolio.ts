@@ -14,12 +14,21 @@ export interface RawPortfolioPosition {
   weight?: number | string | null;
   valuation_status?: 'priced' | 'value_only' | 'unpriced';
   protocol?: string;
+  position_type?: string;
+  margin_used_usd?: number | string | null;
+  notional_usd?: number | string | null;
+  unrealized_pnl_usd?: number | string | null;
+  leverage?: number | string | null;
+  liquidation_price?: number | string | null;
 }
 
 export interface RawPortfolioState {
   positions: RawPortfolioPosition[];
   total_value_usd?: number | string | null;
   cash_balance?: number | string | null;
+  source?: string | null;
+  observed_at?: string | null;
+  stale?: boolean;
   warnings?: string[];
   has_unpriced_positions?: boolean;
   has_value_only_positions?: boolean;
@@ -70,6 +79,11 @@ function mapApiPosition(
     ? pnlBase
     : null;
   const weight = isValueVisible ? toFiniteNumber(pos.weight) : null;
+  const marginUsedUsd = toFiniteNumber(pos.margin_used_usd) ?? valueUsd;
+  const notionalUsd = toFiniteNumber(pos.notional_usd);
+  const unrealizedPnlUsd = toFiniteNumber(pos.unrealized_pnl_usd ?? pos.unrealized_pnl);
+  const leverage = toFiniteNumber(pos.leverage);
+  const liquidationPrice = toFiniteNumber(pos.liquidation_price);
 
   const warnings: string[] = [];
   if (toFiniteNumber(pos.amount) == null) {
@@ -99,6 +113,13 @@ function mapApiPosition(
     currentPrice,
     pnlPercent,
     weight,
+    protocol: pos.protocol,
+    positionType: pos.position_type,
+    marginUsedUsd,
+    notionalUsd,
+    unrealizedPnlUsd,
+    leverage,
+    liquidationPrice,
     displayValueUsd: valueUsd,
     displayPnlPercent: pnlPercent,
     displayWeight: weight,
@@ -132,6 +153,9 @@ export function mapApiPortfolioState(
     cashBalance,
     displayTotalValueUsd: totalValueUsd,
     displayCashBalance: cashBalance,
+    source: p.source ?? null,
+    observedAt: p.observed_at ?? null,
+    stale: p.stale,
     warnings,
     hasUnpricedPositions,
     hasValueOnlyPositions,

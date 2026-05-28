@@ -467,7 +467,7 @@ pub async fn activate_bot_with_secrets(
     } else if let Some(ref p) = pack {
         // Wait for sidecar HTTP server to be ready (container just recreated).
         // Without this, setup commands get ConnectionReset.
-        wait_for_sidecar_health(&record.sidecar_url, 20).await;
+        wait_for_sidecar_health(&record.sidecar_url, &record.token, 20).await?;
         ensure_sidecar_runtime_dirs(&record.sidecar_url, &record.token).await?;
 
         for cmd in &p.setup_commands {
@@ -505,6 +505,7 @@ pub async fn activate_bot_with_secrets(
             &bot.trading_api_token,
             &bot.operator_address,
             &bot.strategy_config,
+            &bot.harness_json,
         )
         .await
         {
@@ -736,28 +737,37 @@ fn fast_workflow_budget(pack: Option<&crate::prompts::packs::StrategyPack>) -> (
     }
 }
 
-/// Wait for the sidecar's HTTP server to respond to health checks.
+/// Wait for the sidecar's HTTP server to respond to authenticated health checks.
 /// Polls `/health` every second until a 200 response or `max_secs` elapsed.
-async fn wait_for_sidecar_health(sidecar_url: &str, max_secs: u64) {
-    let url = match sandbox_runtime::http::build_url(sidecar_url, "/health") {
-        Ok(u) => u,
-        Err(_) => return,
-    };
-    let client = match sandbox_runtime::util::http_client() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
+async fn wait_for_sidecar_health(
+    sidecar_url: &str,
+    sidecar_token: &str,
+    max_secs: u64,
+) -> Result<(), String> {
+    let url = sandbox_runtime::http::build_url(sidecar_url, "/health")
+        .map_err(|e| format!("Invalid sidecar health URL: {e}"))?;
+    let headers = sandbox_runtime::http::auth_headers(sidecar_token)
+        .map_err(|e| format!("Failed to build sidecar health auth headers: {e}"))?;
+    let client = sandbox_runtime::util::http_client()
+        .map_err(|e| format!("Failed to create sidecar health client: {e}"))?;
     for _ in 0..max_secs {
-        match client.get(url.clone()).send().await {
+        match client
+            .get(url.clone())
+            .headers(headers.clone())
+            .send()
+            .await
+        {
             Ok(r) if r.status().is_success() => {
                 tracing::debug!("Sidecar health check passed");
-                return;
+                return Ok(());
             }
             _ => {}
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
-    tracing::warn!("Sidecar health check timed out after {max_secs}s — proceeding anyway");
+    Err(format!(
+        "Sidecar health check timed out after {max_secs}s for {sidecar_url}"
+    ))
 }
 
 pub(crate) async fn ensure_sidecar_runtime_dirs(
@@ -871,6 +881,7 @@ pub(crate) async fn write_prebuilt_tools(
     api_token: &str,
     operator_address: &str,
     strategy_config: &serde_json::Value,
+    harness_json: &serde_json::Value,
 ) -> Result<(), String> {
     // Write workspace package.json with OpenCode plus Tangle self-improvement packages.
     write_file_to_sidecar(
@@ -909,13 +920,25 @@ pub(crate) async fn write_prebuilt_tools(
     .await?;
 
     // Write default harness config for meta-harness evolution
-    let default_harness = trading_runtime::backtest::HarnessConfig::default();
+    let effective_harness = if harness_json.is_null() {
+        serde_json::to_value(trading_runtime::backtest::HarnessConfig::default())
+            .unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        harness_json.clone()
+    };
     let harness_json =
-        serde_json::to_string_pretty(&default_harness).unwrap_or_else(|_| "{}".to_string());
+        serde_json::to_string_pretty(&effective_harness).unwrap_or_else(|_| "{}".to_string());
     write_file_to_sidecar(
         sidecar_url,
         token,
         "/home/agent/config/harness.json",
+        &harness_json,
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/config/canonical-harness.json",
         &harness_json,
     )
     .await?;
@@ -1003,6 +1026,13 @@ pub(crate) async fn write_prebuilt_tools(
         token,
         "/home/agent/tools/write-metrics.js",
         include_str!("../prompts/tools/write_metrics.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/hyperliquid-tick.js",
+        include_str!("../prompts/tools/hyperliquid_tick.js"),
     )
     .await?;
     write_file_to_sidecar(
@@ -1177,11 +1207,9 @@ pub(crate) async fn write_file_to_sidecar(
 ) -> Result<(), String> {
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
-        command: format!(
-            r#"node -e "const fs=require('fs'); const path=require('path'); fs.mkdirSync(path.dirname(process.argv[1]), {{ recursive: true }}); fs.writeFileSync(process.argv[1], process.env.FILE_CONTENT)" "{path}""#,
-        ),
+        command: r#"node -e "const fs=require('fs'); const path=require('path'); const filePath=process.env.FILE_PATH; fs.mkdirSync(path.dirname(filePath), { recursive: true }); fs.writeFileSync(filePath, process.env.FILE_CONTENT)""#.to_string(),
         cwd: String::new(),
-        env_json: serde_json::json!({"FILE_CONTENT": content}).to_string(),
+        env_json: serde_json::json!({"FILE_CONTENT": content, "FILE_PATH": path}).to_string(),
         timeout_ms: 30_000,
     };
     ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, token)
@@ -1245,6 +1273,16 @@ mod tests {
     fn hyperliquid_pack_fast_workflow_uses_pack_budget() {
         let pack = crate::prompts::packs::get_pack("hyperliquid_perp").unwrap();
         assert_eq!(fast_workflow_budget(Some(&pack)), (15, 180_000));
+    }
+
+    #[test]
+    fn hyperliquid_tick_tool_is_bundled_and_structured() {
+        let tool = include_str!("../prompts/tools/hyperliquid_tick.js");
+        assert!(tool.contains("result_schema_version"));
+        assert!(tool.contains("logs_written"));
+        assert!(tool.contains("metrics_written"));
+        assert!(tool.contains("fundHyperliquidMargin"));
+        assert!(tool.contains("no-clear-hyperliquid-setup"));
     }
 
     #[test]

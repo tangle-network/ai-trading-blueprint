@@ -334,11 +334,32 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
         .run()
         .await;
 
-    if let Err(e) = result {
-        tracing::error!("Runner failed: {e:?}");
+    match result {
+        Ok(()) => {
+            if keep_http_server_alive_after_runner_exit() {
+                tracing::info!("Runner exited; keeping validator HTTP server alive");
+                tokio::signal::ctrl_c().await.map_err(|e| {
+                    blueprint_sdk::Error::Other(format!("Validator shutdown wait failed: {e}"))
+                })?;
+            }
+        }
+        Err(e) => {
+            tracing::error!("Runner failed: {e:?}");
+            if keep_http_server_alive_after_runner_exit() {
+                tracing::info!("Runner failed but validator HTTP server continues running");
+                tokio::signal::ctrl_c().await.map_err(|e| {
+                    blueprint_sdk::Error::Other(format!("Validator shutdown wait failed: {e}"))
+                })?;
+            }
+        }
     }
 
     Ok(())
+}
+
+fn keep_http_server_alive_after_runner_exit() -> bool {
+    std::env::var("KEEP_HTTP_APIS_ALIVE_AFTER_RUNNER_EXIT")
+        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
 
 #[cfg(feature = "qos")]

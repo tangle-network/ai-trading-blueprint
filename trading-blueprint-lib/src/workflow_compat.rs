@@ -150,6 +150,13 @@ pub fn persist_latest_execution_run(
     Ok(record)
 }
 
+pub fn persist_workflow_run_record(record: WorkflowRunRecord) -> Result<WorkflowRunRecord, String> {
+    workflow_runs_store()?
+        .insert(record.run_id.clone(), record.clone())
+        .map_err(|e| e.to_string())?;
+    Ok(record)
+}
+
 pub fn backfill_latest_execution_run(
     workflow_id: u64,
 ) -> Result<Option<WorkflowRunRecord>, String> {

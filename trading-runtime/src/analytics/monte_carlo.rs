@@ -56,7 +56,10 @@ fn percentile_of(sorted: &[f64], value: f64) -> f64 {
 
 fn summarize(realised: f64, mut shuffled: Vec<f64>) -> Stability {
     if shuffled.is_empty() {
-        return Stability { realised, ..Stability::default() };
+        return Stability {
+            realised,
+            ..Stability::default()
+        };
     }
     shuffled.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let n = shuffled.len();
@@ -110,9 +113,11 @@ where
             buf.swap(i, j);
         }
         if let Some(s) = stat(&buf)
-            && s.is_finite() && s.abs() <= 20.0 {
-                samples.push(s);
-            }
+            && s.is_finite()
+            && s.abs() <= 20.0
+        {
+            samples.push(s);
+        }
     }
     summarize(realised, samples)
 }
@@ -128,12 +133,7 @@ where
 /// the distribution of the SAME statistic on randomised returns. If the
 /// realised statistic doesn't beat that distribution, the strategy is
 /// indistinguishable from chance on this series.
-pub fn return_stream_shuffle<F>(
-    returns: &[f64],
-    n_shuffles: usize,
-    seed: u64,
-    stat: F,
-) -> Stability
+pub fn return_stream_shuffle<F>(returns: &[f64], n_shuffles: usize, seed: u64, stat: F) -> Stability
 where
     F: Fn(&[f64]) -> Option<f64>,
 {
@@ -172,13 +172,19 @@ mod tests {
         // and the realised sits inside it.
         let pnls: Vec<f64> = (0..50).map(|i| ((i as f64 % 5.0) - 2.0) / 100.0).collect();
         let s = trade_order_shuffle(&pnls, 500, 42, sharpe);
-        assert!(s.shuffled_std.abs() < 1e-10, "expected collapsed dist, std={}", s.shuffled_std);
+        assert!(
+            s.shuffled_std.abs() < 1e-10,
+            "expected collapsed dist, std={}",
+            s.shuffled_std
+        );
         assert!((s.realised - s.p50).abs() < 1e-10);
     }
 
     #[test]
     fn deterministic_with_seed() {
-        let pnls = [0.01, -0.02, 0.03, -0.01, 0.02, 0.04, -0.03, 0.01, 0.02, -0.01];
+        let pnls = [
+            0.01, -0.02, 0.03, -0.01, 0.02, 0.04, -0.03, 0.01, 0.02, -0.01,
+        ];
         // We pick a NON-permutation-invariant stat to actually exercise
         // the shuffle: cumulative max (a path-dependent quantity).
         fn max_running(returns: &[f64]) -> Option<f64> {

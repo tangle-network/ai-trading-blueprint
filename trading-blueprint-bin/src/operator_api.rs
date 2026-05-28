@@ -490,6 +490,8 @@ struct TradeEntryResponse {
     entry_price_usd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     notional_usd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hyperliquid_metadata: Option<trading_http_api::trade_store::HyperliquidTradeMetadata>,
     #[serde(default)]
     valuation_status: trading_http_api::trade_store::TradeValuationStatus,
 }
@@ -500,10 +502,24 @@ struct PortfolioPosition {
     symbol: String,
     amount: f64,
     value_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    margin_used_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notional_usd: Option<f64>,
     entry_price: Option<f64>,
     current_price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unrealized_pnl_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    leverage: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    liquidation_price: Option<f64>,
     pnl_percent: Option<f64>,
     weight: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    position_type: Option<String>,
     #[serde(default)]
     valuation_status: trading_runtime::types::ValuationStatus,
 }
@@ -512,6 +528,12 @@ struct PortfolioPosition {
 struct PortfolioStateResponse {
     total_value_usd: Option<f64>,
     cash_balance: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stale: Option<bool>,
     #[serde(default)]
     warnings: Vec<String>,
     #[serde(default)]
@@ -1237,10 +1259,17 @@ fn latest_execution_runs_for_workflows(workflow_ids: &[u64]) -> Vec<WorkflowRunR
 }
 
 fn map_bot_run(bot: &TradingBotRecord, run: WorkflowRunRecord) -> BotRunResponse {
-    let transcript_available = run
+    let has_session = run
         .session_id
         .as_deref()
         .is_some_and(|session_id| !session_id.is_empty());
+    let has_stored_transcript =
+        trading_blueprint_lib::workflow_compat::get_workflow_run_transcript(&run.run_id)
+            .ok()
+            .flatten()
+            .is_some();
+    let transcript_available =
+        has_stored_transcript || (run.status == WorkflowRunStatus::Running && has_session);
 
     BotRunResponse {
         run_id: run.run_id,
@@ -1466,16 +1495,18 @@ async fn run_transcript_fallback_response(
 
 fn synthesize_run_transcript_messages(run: &WorkflowRunRecord) -> serde_json::Value {
     let timestamp = run.completed_at.unwrap_or(run.started_at);
-    let text = if let Some(result) = run.result.as_deref() {
-        format!(
-            "Stored transcript was unavailable, so this view is replaying the saved run summary.\n\n{result}"
-        )
+    let parts = if let Some(result) = run.result.as_deref() {
+        synthesize_run_result_transcript_parts(result)
     } else if let Some(error) = run.error.as_deref() {
-        format!(
-            "Stored transcript was unavailable, so this view is replaying the saved run outcome.\n\n{error}"
-        )
+        vec![serde_json::json!({
+            "type": "text",
+            "text": format!("The saved run ended with an error.\n\n{error}"),
+        })]
     } else {
-        "Stored transcript was unavailable for this run.".to_string()
+        vec![serde_json::json!({
+            "type": "text",
+            "text": "Saved run details were unavailable for this run.",
+        })]
     };
 
     serde_json::json!([
@@ -1484,15 +1515,178 @@ fn synthesize_run_transcript_messages(run: &WorkflowRunRecord) -> serde_json::Va
                 "id": format!("run-summary-{}", run.run_id),
                 "role": "assistant",
                 "timestamp": timestamp,
+                "success": run.status != WorkflowRunStatus::Failed,
             },
-            "parts": [
-                {
-                    "type": "text",
-                    "text": text,
-                }
-            ]
+            "parts": parts
         }
     ])
+}
+
+fn summarize_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(value) if !value.is_empty() => Some(value.clone()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        serde_json::Value::Array(values) => Some(values.len().to_string()),
+        _ => None,
+    }
+}
+
+fn transcript_string(value: Option<&serde_json::Value>, fallback: &str) -> String {
+    value
+        .and_then(summarize_value)
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn push_reasoning_part(parts: &mut Vec<serde_json::Value>, text: impl Into<String>) {
+    parts.push(serde_json::json!({
+        "type": "reasoning",
+        "text": text.into(),
+    }));
+}
+
+fn push_tool_part(
+    parts: &mut Vec<serde_json::Value>,
+    id: &str,
+    tool: &str,
+    input: serde_json::Value,
+    output: serde_json::Value,
+) {
+    parts.push(serde_json::json!({
+        "type": "tool",
+        "id": id,
+        "tool": tool,
+        "state": {
+            "status": "completed",
+            "input": input,
+            "output": output,
+        }
+    }));
+}
+
+fn synthesize_run_result_transcript_parts(result: &str) -> Vec<serde_json::Value> {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(result) else {
+        return vec![serde_json::json!({
+            "type": "text",
+            "text": format!("Saved run summary.\n\n{result}"),
+        })];
+    };
+
+    let mut parts = Vec::new();
+
+    if let Some(state) = parsed.get("checked_state") {
+        let nav_status = transcript_string(state.get("nav_status"), "unknown");
+        let total_nav = transcript_string(state.get("total_nav_usdc"), "unknown");
+        let margin = transcript_string(state.get("perp_margin_usdc"), "unknown");
+        let positions = transcript_string(state.get("positions_count"), "unknown");
+        push_reasoning_part(
+            &mut parts,
+            format!(
+                "I checked the trading account before deciding. NAV was {nav_status}, total value was {total_nav} USDC, available perp margin was {margin} USDC, and there were {positions} open positions.",
+            ),
+        );
+        push_tool_part(
+            &mut parts,
+            "tool-checked-state",
+            "hyperliquid_nav",
+            serde_json::json!({ "scope": "vault_and_hyperliquid_state" }),
+            state.clone(),
+        );
+    }
+
+    if let Some(decision) = parsed.get("decision") {
+        let action = transcript_string(decision.get("action"), "unknown");
+        let reason = transcript_string(decision.get("reason"), "no reason recorded");
+        let mut reasoning = format!("I decided to {action} because {reason}.");
+
+        if let Some(setup) = decision.get("setup") {
+            let setup_action = transcript_string(setup.get("action"), "prepare a trade");
+            let asset = transcript_string(setup.get("asset"), "the selected asset");
+            let amount = transcript_string(setup.get("amount_in"), "the configured amount");
+            let rationale = transcript_string(setup.get("rationale"), "the configured signal");
+            reasoning.push_str(&format!(
+                " The candidate setup was to {setup_action} {asset} with {amount} USDC because {rationale}.",
+            ));
+        }
+
+        push_reasoning_part(&mut parts, reasoning);
+
+        if let Some(approval) = decision.get("approval") {
+            push_tool_part(
+                &mut parts,
+                "tool-api-wallet-approval-check",
+                "hyperliquid_api_wallet_approval",
+                serde_json::json!({ "check": "corewriter_approval" }),
+                approval.clone(),
+            );
+        }
+    }
+
+    if let Some(funding) = parsed.get("funding_action") {
+        let attempted = transcript_string(funding.get("attempted"), "unknown");
+        push_reasoning_part(
+            &mut parts,
+            format!("Funding step recorded attempted = {attempted}."),
+        );
+        push_tool_part(
+            &mut parts,
+            "tool-funding-action",
+            "hyperliquid_funding",
+            serde_json::json!({ "action": "ensure_margin" }),
+            funding.clone(),
+        );
+    }
+
+    if let Some(approval_action) = parsed.get("api_wallet_approval_action") {
+        let attempted = transcript_string(approval_action.get("attempted"), "unknown");
+        push_reasoning_part(
+            &mut parts,
+            format!("API wallet approval step recorded attempted = {attempted}."),
+        );
+        push_tool_part(
+            &mut parts,
+            "tool-api-wallet-approval-action",
+            "hyperliquid_api_wallet_approval",
+            serde_json::json!({ "action": "approve_api_wallet" }),
+            approval_action.clone(),
+        );
+    }
+
+    if let Some(trade) = parsed.get("trade_action") {
+        let attempted = transcript_string(trade.get("attempted"), "unknown");
+        push_reasoning_part(
+            &mut parts,
+            format!("Trade execution step recorded attempted = {attempted}."),
+        );
+        push_tool_part(
+            &mut parts,
+            "tool-trade-action",
+            "hyperliquid_trade",
+            serde_json::json!({ "action": "execute_validated_trade" }),
+            trade.clone(),
+        );
+    }
+
+    let final_text = if let Some(decision) = parsed.get("decision") {
+        let action = transcript_string(decision.get("action"), "finish");
+        let reason = transcript_string(decision.get("reason"), "no final reason recorded");
+        format!("Final outcome: {action}. Reason: {reason}.")
+    } else {
+        "Final outcome was saved for this run.".to_string()
+    };
+    parts.push(serde_json::json!({
+        "type": "text",
+        "text": final_text,
+    }));
+
+    if parts.is_empty() {
+        vec![serde_json::json!({
+            "type": "text",
+            "text": "Saved run details were unavailable for this run.",
+        })]
+    } else {
+        parts
+    }
 }
 
 async fn list_bot_runs(
@@ -2589,7 +2783,7 @@ async fn promote_revision_for_bot(
             None,
         ));
     }
-    let live_enabled = bot_allows_live_revision_promotion(&bot);
+    let live_enabled = bot_allows_live_revision_promotion(bot);
     let revision = revision_from_candidate(run, live_enabled).ok_or_else(|| {
         error_json(
             StatusCode::CONFLICT,
@@ -2600,7 +2794,7 @@ async fn promote_revision_for_bot(
             None,
         )
     })?;
-    persist_canary_revision(&bot, revision.clone()).map_err(api_error_response)?;
+    persist_canary_revision(bot, revision.clone()).map_err(api_error_response)?;
     let status = if live_enabled {
         "live_promoted"
     } else {
@@ -3343,12 +3537,46 @@ struct TradingApiPortfolioPosition {
         default,
         deserialize_with = "deserialize_option_f64_from_string_or_number"
     )]
+    margin_used_usd: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
+    notional_usd: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
     entry_price: Option<f64>,
     #[serde(
         default,
         deserialize_with = "deserialize_option_f64_from_string_or_number"
     )]
     current_price: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
+    unrealized_pnl: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
+    unrealized_pnl_usd: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
+    leverage: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
+    liquidation_price: Option<f64>,
+    #[serde(default)]
+    protocol: Option<String>,
+    #[serde(default)]
+    position_type: Option<String>,
     #[serde(default)]
     valuation_status: trading_runtime::types::ValuationStatus,
 }
@@ -3367,6 +3595,12 @@ struct TradingApiPortfolioResponse {
         deserialize_with = "deserialize_option_f64_from_string_or_number"
     )]
     cash_balance: Option<f64>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    observed_at: Option<String>,
+    #[serde(default)]
+    stale: Option<bool>,
     #[serde(default)]
     warnings: Vec<String>,
     #[serde(default)]
@@ -3479,6 +3713,9 @@ fn synthesize_trade_entry_from_record(
     if let Some(notional_usd) = notional_usd {
         entry["amount_usd"] = serde_json::json!(notional_usd);
         entry["notional_usd"] = serde_json::json!(notional_usd);
+    }
+    if let Some(metadata) = &rec.hyperliquid_metadata {
+        entry["hyperliquid_metadata"] = serde_json::to_value(metadata).unwrap_or_default();
     }
 
     entry
@@ -3799,6 +4036,9 @@ fn synthesize_dex_fallback_portfolio(bot: &TradingBotRecord) -> Option<Portfolio
         return Some(PortfolioStateResponse {
             total_value_usd: Some(0.0),
             cash_balance: configured_cash_token(bot).map(|_| 0.0),
+            source: None,
+            observed_at: None,
+            stale: None,
             warnings: Vec::new(),
             has_unpriced_positions: false,
             has_value_only_positions: false,
@@ -3856,10 +4096,17 @@ fn synthesize_dex_fallback_portfolio(bot: &TradingBotRecord) -> Option<Portfolio
             symbol: position.token.clone(),
             amount: decimal_to_f64(position.amount).unwrap_or(0.0),
             value_usd: value_usd_f64,
+            margin_used_usd: None,
+            notional_usd: None,
             entry_price: entry_price_f64,
             current_price: current_price_f64,
+            unrealized_pnl_usd: None,
+            leverage: None,
+            liquidation_price: None,
             pnl_percent,
             weight: None,
+            protocol: None,
+            position_type: None,
             valuation_status,
         });
     }
@@ -3899,6 +4146,9 @@ fn synthesize_dex_fallback_portfolio(bot: &TradingBotRecord) -> Option<Portfolio
     Some(PortfolioStateResponse {
         total_value_usd,
         cash_balance: cash_balance.or_else(|| cash_token.as_ref().map(|_| 0.0)),
+        source: None,
+        observed_at: None,
+        stale: None,
         warnings,
         has_unpriced_positions,
         has_value_only_positions,
@@ -4058,11 +4308,16 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
 
             PortfolioPosition {
                 token: position.token.clone(),
-                symbol: position.token,
+                symbol: position.token.clone(),
                 amount: position.amount,
                 value_usd,
+                margin_used_usd: position.margin_used_usd,
+                notional_usd: position.notional_usd,
                 entry_price: position.entry_price,
                 current_price: position.current_price,
+                unrealized_pnl_usd: position.unrealized_pnl_usd.or(position.unrealized_pnl),
+                leverage: position.leverage,
+                liquidation_price: position.liquidation_price,
                 pnl_percent,
                 weight: match (value_usd, total_value) {
                     (Some(value_usd), Some(total_value)) if total_value > 0.0 => {
@@ -4070,6 +4325,8 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
                     }
                     _ => None,
                 },
+                protocol: position.protocol,
+                position_type: position.position_type,
                 valuation_status,
             }
         })
@@ -4078,6 +4335,9 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
     Ok(PortfolioStateResponse {
         total_value_usd: total_value,
         cash_balance: portfolio.cash_balance,
+        source: portfolio.source,
+        observed_at: portfolio.observed_at,
+        stale: portfolio.stale,
         warnings: portfolio.warnings,
         has_unpriced_positions,
         has_value_only_positions,
@@ -4150,10 +4410,17 @@ fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
                 symbol: question.chars().take(30).collect(),
                 amount,
                 value_usd,
+                margin_used_usd: None,
+                notional_usd: None,
                 entry_price,
                 current_price,
+                unrealized_pnl_usd: None,
+                leverage: None,
+                liquidation_price: None,
                 pnl_percent: pnl_pct,
                 weight: None,
+                protocol: None,
+                position_type: None,
                 valuation_status,
             }
         })
@@ -4176,6 +4443,9 @@ fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
     PortfolioStateResponse {
         total_value_usd,
         cash_balance: None,
+        source: None,
+        observed_at: None,
+        stale: None,
         warnings: {
             let mut warnings = Vec::new();
             if has_unpriced_positions {
@@ -4298,6 +4568,7 @@ fn fallback_trade_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
             amount_out: None,
             entry_price_usd: Some(entry_price.to_string()),
             notional_usd: Some(amount.to_string()),
+            hyperliquid_metadata: None,
             valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         });
     }
@@ -4338,6 +4609,7 @@ fn fallback_trade_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
                 amount_out: rec.amount_out,
                 entry_price_usd: rec.entry_price_usd,
                 notional_usd: rec.notional_usd,
+                hyperliquid_metadata: rec.hyperliquid_metadata,
                 valuation_status: rec.valuation_status,
             });
         }
@@ -5944,6 +6216,7 @@ mod tests {
             slippage_bps: None,
             execution_reason: None,
             prediction_metadata: None,
+            hyperliquid_metadata: None,
             valuation_status: trading_http_api::trade_store::TradeValuationStatus::Unpriced,
             validation: trading_http_api::trade_store::StoredValidation {
                 approved: true,
@@ -6570,5 +6843,57 @@ mod tests {
         );
         assert_eq!(portfolio.positions[0].value_usd, Some(2220.1));
         assert_eq!(portfolio.positions[0].current_price, Some(2220.1));
+    }
+
+    #[test]
+    fn map_trading_api_portfolio_preserves_hyperliquid_perp_fields() {
+        let payload = serde_json::json!({
+            "positions": [
+                {
+                    "token": "ETH",
+                    "amount": "0.026",
+                    "value_usd": "2.57049",
+                    "margin_used_usd": "2.57049",
+                    "notional_usd": "51.4098",
+                    "entry_price": "2084.22",
+                    "current_price": null,
+                    "unrealized_pnl_usd": "-2.77992",
+                    "leverage": 20,
+                    "liquidation_price": "1696.3270408163",
+                    "protocol": "hyperliquid",
+                    "position_type": "long_perp",
+                    "valuation_status": "value_only"
+                }
+            ],
+            "total_value_usd": "8.187387",
+            "cash_balance": "0",
+            "source": "hyperliquid_nav",
+            "observed_at": "2026-05-27T10:07:12.000Z",
+            "stale": false,
+            "warnings": [],
+            "has_unpriced_positions": false,
+            "has_value_only_positions": true
+        });
+
+        let portfolio = map_trading_api_portfolio(payload).expect("portfolio should parse");
+        let position = &portfolio.positions[0];
+
+        assert_eq!(portfolio.total_value_usd, Some(8.187387));
+        assert_eq!(portfolio.source.as_deref(), Some("hyperliquid_nav"));
+        assert_eq!(
+            portfolio.observed_at.as_deref(),
+            Some("2026-05-27T10:07:12.000Z")
+        );
+        assert_eq!(portfolio.stale, Some(false));
+        assert_eq!(position.token, "ETH");
+        assert_eq!(position.protocol.as_deref(), Some("hyperliquid"));
+        assert_eq!(position.position_type.as_deref(), Some("long_perp"));
+        assert_eq!(position.value_usd, Some(2.57049));
+        assert_eq!(position.margin_used_usd, Some(2.57049));
+        assert_eq!(position.notional_usd, Some(51.4098));
+        assert_eq!(position.unrealized_pnl_usd, Some(-2.77992));
+        assert_eq!(position.leverage, Some(20.0));
+        assert_eq!(position.liquidation_price, Some(1696.3270408163));
+        assert_eq!(position.weight, Some((2.57049 / 8.187387) * 100.0));
     }
 }

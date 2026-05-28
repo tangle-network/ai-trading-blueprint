@@ -8,6 +8,8 @@ import type { StrategyPackDef } from '~/lib/blueprints';
 import { cronToHuman } from '~/routes/provision/types';
 import type { ValidationTrust } from '~/lib/types/bot';
 
+const DEFAULT_POSITION_SIZE_PCT = '10';
+
 interface ExecutionTargetOption {
   id: string;
   label: string;
@@ -37,6 +39,8 @@ interface AdvancedSettingsDialogProps {
   setCustomConversationCron: (v: string) => void;
   customResearchCron: string;
   setCustomResearchCron: (v: string) => void;
+  positionSizePct: string;
+  setPositionSizePct: (v: string) => void;
   conversationEnabled: boolean;
   setConversationEnabled: (v: boolean) => void;
   researchEnabled: boolean;
@@ -77,6 +81,8 @@ export function AdvancedSettingsDialog({
   setCustomConversationCron,
   customResearchCron,
   setCustomResearchCron,
+  positionSizePct,
+  setPositionSizePct,
   conversationEnabled,
   setConversationEnabled,
   researchEnabled,
@@ -107,6 +113,7 @@ export function AdvancedSettingsDialog({
     selectedPack.conversationCron ?? '0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *';
   const defaultResearchCron =
     selectedPack.researchCron ?? '0 2 0,2,4,6,8,10,12,14,16,18,20,22 * * *';
+  const showPositionSizing = selectedPack.id === 'hyperliquid_perp';
   const canResetSettings = !!(
     customCron ||
     customConversationCron ||
@@ -115,6 +122,7 @@ export function AdvancedSettingsDialog({
     !researchEnabled ||
     validatorMode === 'custom' ||
     validationTrust !== 'per_trade' ||
+    (showPositionSizing && positionSizePct !== DEFAULT_POSITION_SIZE_PCT) ||
     canResetRuntime
   );
 
@@ -358,6 +366,29 @@ export function AdvancedSettingsDialog({
                     : 'Live mode may execute trades on-chain using the bot vault.'}
                 </p>
               </div>
+              {showPositionSizing && (
+                <div>
+                  <label htmlFor="position-size-pct" className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
+                    Max Position Size
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <Input
+                      id="position-size-pct"
+                      type="number"
+                      min="1"
+                      max="100"
+                      step="0.5"
+                      value={positionSizePct}
+                      onChange={(e) => setPositionSizePct(e.target.value)}
+                      className="w-32 font-data"
+                    />
+                    <span className="text-sm font-data text-arena-elements-textSecondary">% per new trade</span>
+                  </div>
+                  <p className="text-xs text-arena-elements-textTertiary mt-1.5">
+                    Default: 10%. Allowed range: 1% to 100%.
+                  </p>
+                </div>
+              )}
               <div>
                 <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2 block">
                   Infrastructure
@@ -669,6 +700,7 @@ export function AdvancedSettingsDialog({
                     setValidatorMode('default');
                     setCustomValidatorIds('');
                     setValidationTrust('per_trade');
+                    setPositionSizePct(DEFAULT_POSITION_SIZE_PCT);
                     if (!isTeeBlueprint) setRuntimeBackend('docker');
                   }}
                   className="text-xs"

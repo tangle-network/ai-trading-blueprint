@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AdvancedSettingsDialog } from '../AdvancedSettingsDialog';
 import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
@@ -37,6 +37,8 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     setCustomConversationCron: vi.fn(),
     customResearchCron: '',
     setCustomResearchCron: vi.fn(),
+    positionSizePct: '10',
+    setPositionSizePct: vi.fn(),
     conversationEnabled: true,
     setConversationEnabled: vi.fn(),
     researchEnabled: true,
@@ -147,6 +149,26 @@ describe('AdvancedSettingsDialog', () => {
     render(<AdvancedSettingsDialog {...defaultProps({ provisionPaperTrade: true })} />);
     expect(screen.getByRole('button', { name: 'Paper' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('Paper mode validates and simulates trades without on-chain execution.')).toBeInTheDocument();
+  });
+
+  it('lets Hyperliquid owners edit max position size', async () => {
+    const setPositionSizePct = vi.fn();
+    render(
+      <AdvancedSettingsDialog
+        {...defaultProps({
+          selectedPack: {
+            ...defaultProps().selectedPack,
+            id: 'hyperliquid_perp',
+            name: 'Hyperliquid Perps',
+          },
+          setPositionSizePct,
+        })}
+      />,
+    );
+
+    const input = screen.getByLabelText('Max Position Size');
+    fireEvent.change(input, { target: { value: '15' } });
+    expect(setPositionSizePct).toHaveBeenCalledWith('15');
   });
 
   it('shows enabled firecracker option when supported', () => {
