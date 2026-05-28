@@ -176,7 +176,7 @@ export async function inspectBotArtifacts(client: OperatorClient, botId: string)
   const [strategy, portfolio, trades, evolutionStatus, lineage, arena, bandit] = await Promise.all([
     safeGet<StrategyStateResponse>(client, '/strategy/state'),
     safePost<PortfolioStateResponse>(client, '/portfolio/state', {}),
-    safeGet<TradeListResponse>(client, '/trades?limit=200'),
+    safeGet<TradeListResponse | TradeListResponse['trades']>(client, '/trades?limit=200'),
     safeGet<EvolutionStatus>(client, '/evolution/status'),
     safeGet<SandboxLineageResponse>(client, '/evolution/sandbox/lineage'),
     safeGet<RevisionArenaResponse>(client, '/evolution/revision-arena'),
@@ -188,8 +188,12 @@ export async function inspectBotArtifacts(client: OperatorClient, botId: string)
   const rejected = arena?.revisions_rejected ?? arena?.rejected ?? Math.max(0, lineageEntries.length - promoted)
   const cyclesFired = evolutionStatus?.cycles_fired ?? evolutionStatus?.total_runs ?? lineageEntries.length
 
-  const tradeRecords = trades?.trades ?? []
-  const tradesTotal = trades?.total ?? tradeRecords.length
+  // /trades returns a BARE array on the trading-blueprint operator-api
+  // (older sandbox-runtime builds wrapped it in {trades, total}). Accept both
+  // — same shape-tolerance lesson as getTranscript. Without this, a bare-array
+  // response leaves trades_total=0 and state-based judging never sees a trade.
+  const tradeRecords = Array.isArray(trades) ? trades : (trades?.trades ?? [])
+  const tradesTotal = Array.isArray(trades) ? trades.length : (trades?.total ?? tradeRecords.length)
   const paperTrades = tradeRecords.filter((t) => t.paper_trade === true).length
   const liveTrades = tradesTotal - paperTrades
   const slippageBpsValues = tradeRecords
