@@ -1207,9 +1207,7 @@ pub(crate) async fn write_file_to_sidecar(
 ) -> Result<(), String> {
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: sidecar_url.to_string(),
-        command: format!(
-            r#"node -e "const fs=require('fs'); const path=require('path'); const filePath=process.env.FILE_PATH; fs.mkdirSync(path.dirname(filePath), {{ recursive: true }}); fs.writeFileSync(filePath, process.env.FILE_CONTENT)""#,
-        ),
+        command: r#"node -e "const fs=require('fs'); const path=require('path'); const filePath=process.env.FILE_PATH; fs.mkdirSync(path.dirname(filePath), { recursive: true }); fs.writeFileSync(filePath, process.env.FILE_CONTENT)""#.to_string(),
         cwd: String::new(),
         env_json: serde_json::json!({"FILE_CONTENT": content, "FILE_PATH": path}).to_string(),
         timeout_ms: 30_000,
