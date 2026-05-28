@@ -143,3 +143,8 @@ Maintained so sessions don't re-spelunk. Append when you discover something cost
 - `evals/` and `trading-blueprint-lib/` are **ESM (`"type":"module"`)**; sandbox `/home/agent` is **CommonJS**. Test tool JS via a `.cjs` copy or in-sandbox, not local `require` of the ESM dir.
 - `ai-agent-hooks` pre-commit/`pre-push` do `mkdir` under `.git/` → **fail in git worktrees** (`.git` is a file). Use `git -c core.hooksPath=/dev/null` for worktree commits/pushes (after manually confirming no conflict markers / secrets).
 - gh CLI is pinned to `tangletools` via `GH_TOKEN` (can't `gh auth switch`). Convention is open PRs as drewstone329, but the token forces tangletools — note it, proceed.
+
+### #122 status (PROVEN on devnet 2026-05-28)
+- `GET /api/bots/{bot_id}/tick-artifacts` (operator) → `{decisions_jsonl, metrics_latest, strategies}` from the sandbox; `read_bot_tick_artifacts` in `trading-blueprint-lib/jobs/tick_artifacts.rs`. Eval fetches it into `UserSimSessionResult.tick_side_effects` (best-effort; null→analyst UNVERIFIABLE).
+- e2e proof: a real `aerodrome-eth-usdc-mm` cell captured a genuine tick decision — `action:"quotes_pulled", reason:"Pool depth $632 insufficient for $30k MM - thin pool rule triggered"` + a written strategy file. So the eval's chat session DID trigger a tick (1 decision captured) — `#122b` (forcing a tick in-session) was NOT needed in this case; the bot ticks on its own during the session.
+- Remaining for the analyst to read it as a venue family, the eval-side classification is now possible: `side_effects_captured=true` + `tick.fired=true`.
