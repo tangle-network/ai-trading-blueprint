@@ -3348,12 +3348,8 @@ async fn test_hyperliquid_api_wallet_approval_rejects_agent_key_registered_elsew
     ]);
 
     let vault = DEFAULT_TEST_VAULT_ADDRESS;
-    mock_hyperliquid_user_role_for_user(
-        &info_mock,
-        vault,
-        serde_json::json!({ "role": "user" }),
-    )
-    .await;
+    mock_hyperliquid_user_role_for_user(&info_mock, vault, serde_json::json!({ "role": "user" }))
+        .await;
     mock_hyperliquid_extra_agents(&info_mock, serde_json::json!([])).await;
     mock_hyperliquid_user_role_for_user(
         &info_mock,
@@ -5029,6 +5025,7 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: None,
+        hyperliquid_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -5149,6 +5146,7 @@ async fn test_multi_bot_portfolio_state_keeps_polymarket_buy_as_conditional_posi
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: None,
+        hyperliquid_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -5230,6 +5228,12 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: None,
+        hyperliquid_metadata: Some(trading_http_api::trade_store::HyperliquidTradeMetadata {
+            asset: Some("ETH".to_string()),
+            asset_size: Some("0.05".to_string()),
+            order_type: Some("market".to_string()),
+            reduce_only: Some(false),
+        }),
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -5335,6 +5339,76 @@ async fn test_multi_bot_portfolio_state_uses_hyperliquid_nav_for_live_perp_bot()
 }
 
 #[tokio::test]
+async fn test_multi_bot_portfolio_state_includes_hyperliquid_perp_fields() {
+    let bot_id = format!("bot-hyperliquid-perp-fields-{}", uuid::Uuid::new_v4());
+    let mut bot = live_bot_with_trust(&bot_id, trading_runtime::ValidationTrust::PerTrade);
+    bot.chain_id = 998;
+    bot.strategy_config = serde_json::json!({
+        "strategy_type": "hyperliquid_perp",
+        "hyperliquid_execution_model": "hyperevm_vault_agent"
+    });
+
+    let mut snapshot = hyperliquid_nav_snapshot(&bot, chrono::Utc::now());
+    snapshot.idle_usdc = "0".to_string();
+    snapshot.hyperliquid_equity = "8.187387".to_string();
+    snapshot.total_nav = "8.187387".to_string();
+    snapshot.withdrawable_usdc = "3.046407".to_string();
+    snapshot.total_margin_used = "2.57049".to_string();
+    snapshot.total_notional_position = "51.4098".to_string();
+    snapshot.unrealized_pnl = "-2.77992".to_string();
+    snapshot.margin_usage_bps = Some(3140);
+    snapshot.position_count = 1;
+    snapshot.positions = vec![trading_http_api::hyperliquid_nav::HyperliquidPositionNav {
+        asset: "ETH".to_string(),
+        size: "0.026".to_string(),
+        entry_price: "2084.22".to_string(),
+        unrealized_pnl: "-2.77992".to_string(),
+        margin_used: "2.57049".to_string(),
+        leverage: 20,
+        liquidation_price: Some("1696.3270408163".to_string()),
+    }];
+
+    let nav_reconciler = Arc::new(FakeHyperliquidNavReconciler {
+        result: Ok(snapshot),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let state = multi_bot_state_for_bot_with_nav_reconciler(
+        "bot-token-hyperliquid-perp-fields",
+        bot,
+        nav_reconciler.clone(),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", "Bearer bot-token-hyperliquid-perp-fields")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let positions = json["positions"].as_array().unwrap();
+
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0]["token"], "ETH");
+    assert_eq!(positions[0]["protocol"], "hyperliquid");
+    assert_eq!(positions[0]["position_type"], "long_perp");
+    assert_eq!(positions[0]["value_usd"], "2.57049");
+    assert_eq!(positions[0]["margin_used_usd"], "2.57049");
+    assert_eq!(positions[0]["notional_usd"], "51.40980");
+    assert_eq!(positions[0]["unrealized_pnl_usd"], "-2.77992");
+    assert_eq!(positions[0]["leverage"], 20);
+    assert_eq!(positions[0]["liquidation_price"], "1696.3270408163");
+}
+
+#[tokio::test]
 async fn test_multi_bot_portfolio_state_seeds_initial_paper_capital() {
     let state = multi_bot_state_with_strategy_config(
         "http://localhost:1234",
@@ -5435,6 +5509,7 @@ async fn test_multi_bot_portfolio_state_derives_cash_balance_from_synthetic_posi
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: None,
+        hyperliquid_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,

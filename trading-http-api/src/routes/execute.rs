@@ -4,8 +4,8 @@ use crate::live_portfolio::{
 };
 use crate::routes::metrics::capture_metrics_snapshot_for_bot_with_state;
 use crate::trade_store::{
-    self, PredictionTradeMetadata, StoredSimulation, StoredValidation, StoredValidatorResponse,
-    TradeExecutionStatus, TradeRecord,
+    self, HyperliquidTradeMetadata, PredictionTradeMetadata, StoredSimulation, StoredValidation,
+    StoredValidatorResponse, TradeExecutionStatus, TradeRecord,
 };
 use crate::{MultiBotTradingState, TradingApiState, sandbox_store};
 use alloy::primitives::{Address, B256, Bytes, U256};
@@ -1347,7 +1347,9 @@ fn current_hyperliquid_exposure_usd(
 }
 
 fn hyperliquid_exchange_error(resp_json: &serde_json::Value) -> Option<String> {
-    let status = resp_json.get("status").and_then(serde_json::Value::as_str)?;
+    let status = resp_json
+        .get("status")
+        .and_then(serde_json::Value::as_str)?;
     if status.eq_ignore_ascii_case("err") {
         return Some(
             resp_json
@@ -2038,6 +2040,7 @@ async fn execute_paper_trade(
             "Paper trade recorded without live execution reconciliation".to_string(),
         ),
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: None,
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
@@ -2132,6 +2135,7 @@ async fn execute_paper_clob_trade(
         slippage_bps: clob_slippage_bps(params.price, fill.average_price),
         execution_reason: Some(fill.fill_reason()),
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: None,
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
@@ -2401,6 +2405,7 @@ async fn execute_real_envelope_trade_inner(
         slippage_bps: None,
         execution_reason: Some("Confirmed via envelope-mode execution".into()),
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: None,
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
@@ -2568,6 +2573,7 @@ async fn execute_real_trade_inner(
             .output_gained
             .map(|_| "Confirmed from TradingVault execution event".to_string()),
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: None,
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
@@ -2668,6 +2674,7 @@ async fn execute_clob_trade(
             "Order submitted to Polymarket CLOB; fill details pending reconciliation".to_string(),
         ),
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: None,
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
@@ -2791,7 +2798,7 @@ async fn execute_hyperliquid_trade(
     ) || metadata_reduce_only;
 
     // Determine order type from intent metadata
-    let order_type = if let Some(trigger_px) = req
+    let (order_type, order_type_label) = if let Some(trigger_px) = req
         .intent
         .metadata
         .get("trigger_price")
@@ -2810,15 +2817,21 @@ async fn execute_hyperliquid_trade(
             .and_then(|v| v.as_str())
             .unwrap_or("sl");
         if tpsl == "tp" {
-            HlOrderType::TakeProfit {
-                trigger_price: trigger_px.to_string(),
-                is_market,
-            }
+            (
+                HlOrderType::TakeProfit {
+                    trigger_price: trigger_px.to_string(),
+                    is_market,
+                },
+                "take_profit",
+            )
         } else {
-            HlOrderType::StopLoss {
-                trigger_price: trigger_px.to_string(),
-                is_market,
-            }
+            (
+                HlOrderType::StopLoss {
+                    trigger_price: trigger_px.to_string(),
+                    is_market,
+                },
+                "stop_loss",
+            )
         }
     } else if let Some(price) = req
         .intent
@@ -2826,32 +2839,38 @@ async fn execute_hyperliquid_trade(
         .get("limit_price")
         .and_then(|v| v.as_str())
     {
-        HlOrderType::Limit {
-            price: price.to_string(),
-        }
+        (
+            HlOrderType::Limit {
+                price: price.to_string(),
+            },
+            "limit",
+        )
     } else {
-        HlOrderType::Market
+        (HlOrderType::Market, "market")
     };
 
     // Resolve asset — prefer metadata.asset, fall back to token_out symbol
-    let asset = if let Some(asset_str) = req.intent.metadata.get("asset").and_then(|v| v.as_str()) {
-        AssetId::Symbol(asset_str.to_string())
-    } else {
-        AssetId::Symbol(req.intent.token_out.clone())
-    };
+    let asset_symbol =
+        if let Some(asset_str) = req.intent.metadata.get("asset").and_then(|v| v.as_str()) {
+            asset_str.to_string()
+        } else {
+            req.intent.token_out.clone()
+        };
+    let asset = AssetId::Symbol(asset_symbol.clone());
+    let asset_size = hyperliquid_order_size(
+        &req.intent.metadata,
+        &req.intent.amount_in.parse::<Decimal>().map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid amount_in '{}': {e}", req.intent.amount_in),
+            )
+        })?,
+    )?;
 
     let hl_req = PlaceOrderRequest {
         asset,
         is_buy,
-        size: hyperliquid_order_size(
-            &req.intent.metadata,
-            &req.intent.amount_in.parse::<Decimal>().map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("Invalid amount_in '{}': {e}", req.intent.amount_in),
-                )
-            })?,
-        )?,
+        size: asset_size.clone(),
         order_type,
         reduce_only,
         cloid: None,
@@ -2905,6 +2924,12 @@ async fn execute_hyperliquid_trade(
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: extract_prediction_metadata(&req.intent),
+        hyperliquid_metadata: Some(HyperliquidTradeMetadata {
+            asset: Some(asset_symbol),
+            asset_size: Some(asset_size.to_string()),
+            order_type: Some(order_type_label.to_string()),
+            reduce_only: Some(reduce_only),
+        }),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
         signal_price: None,
