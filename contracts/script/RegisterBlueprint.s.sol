@@ -670,10 +670,19 @@ contract RegisterBlueprint is Script {
     }
 
     function _createBlueprint(ITangle tangle, Types.BlueprintDefinition memory def) internal returns (uint64) {
-        if (_isLocalChain()) {
+        // The canonical local anvil snapshot ships the current tnt-core (0.13.0)
+        // Tangle, which routes createBlueprint(Types.BlueprintDefinition). Forcing
+        // the legacy V010 ABI here reverts with UnknownSelector against that
+        // snapshot. Older V010 snapshots opt in explicitly with
+        // TANGLE_BLUEPRINT_ABI=v010 rather than gating on chain id.
+        if (_useV010Abi()) {
             return ITangleV010(address(tangle)).createBlueprint(_toV010Definition(def));
         }
         return tangle.createBlueprint(def);
+    }
+
+    function _useV010Abi() internal view returns (bool) {
+        return keccak256(bytes(vm.envOr("TANGLE_BLUEPRINT_ABI", string("")))) == keccak256(bytes("v010"));
     }
 
     function _toV010Definition(Types.BlueprintDefinition memory def)
