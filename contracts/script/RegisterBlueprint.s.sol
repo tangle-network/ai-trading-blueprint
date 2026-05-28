@@ -3,7 +3,6 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import {Types} from "tnt-core/libraries/Types.sol";
-import {Types as TypesV010} from "tnt-core-0.10.1/src/libraries/Types.sol";
 import "../src/blueprints/TradingBlueprint.sol";
 import "../src/blueprints/ValidatorBlueprint.sol";
 import "../src/VaultFactory.sol";
@@ -18,6 +17,145 @@ import "../src/ChainlinkUsdValuator.sol";
 import "../src/WrappedAssetValuator.sol";
 import "../src/interfaces/IAssetValuator.sol";
 import "../test/helpers/Setup.sol";
+
+/// @notice Minimal tnt-core v0.10 blueprint type surface for local snapshot compatibility.
+library TypesV010 {
+    enum MembershipModel {
+        Fixed,
+        Dynamic
+    }
+
+    enum PricingModel {
+        PayOnce,
+        Subscription,
+        EventDriven
+    }
+
+    struct BlueprintConfig {
+        MembershipModel membership;
+        PricingModel pricing;
+        uint32 minOperators;
+        uint32 maxOperators;
+        uint256 subscriptionRate;
+        uint64 subscriptionInterval;
+        uint256 eventRate;
+    }
+
+    struct BlueprintMetadata {
+        string name;
+        string description;
+        string author;
+        string category;
+        string codeRepository;
+        string logo;
+        string website;
+        string license;
+        string profilingData;
+    }
+
+    struct JobDefinition {
+        string name;
+        string description;
+        string metadataUri;
+        bytes paramsSchema;
+        bytes resultSchema;
+    }
+
+    enum BlueprintSourceKind {
+        Container,
+        Wasm,
+        Native
+    }
+
+    enum BlueprintFetcherKind {
+        None,
+        Ipfs,
+        Http,
+        Github
+    }
+
+    enum WasmRuntime {
+        Unknown,
+        Wasmtime,
+        Wasmer
+    }
+
+    struct ImageRegistrySource {
+        string registry;
+        string image;
+        string tag;
+    }
+
+    struct WasmSource {
+        WasmRuntime runtime;
+        BlueprintFetcherKind fetcher;
+        string artifactUri;
+        string entrypoint;
+    }
+
+    struct NativeSource {
+        BlueprintFetcherKind fetcher;
+        string artifactUri;
+        string entrypoint;
+    }
+
+    struct TestingSource {
+        string cargoPackage;
+        string cargoBin;
+        string basePath;
+    }
+
+    enum BlueprintArchitecture {
+        Wasm32,
+        Wasm64,
+        Wasi32,
+        Wasi64,
+        Amd32,
+        Amd64,
+        Arm32,
+        Arm64,
+        RiscV32,
+        RiscV64
+    }
+
+    enum BlueprintOperatingSystem {
+        Unknown,
+        Linux,
+        Windows,
+        MacOS,
+        BSD
+    }
+
+    struct BlueprintBinary {
+        BlueprintArchitecture arch;
+        BlueprintOperatingSystem os;
+        string name;
+        bytes32 sha256;
+    }
+
+    struct BlueprintSource {
+        BlueprintSourceKind kind;
+        ImageRegistrySource container;
+        WasmSource wasm;
+        NativeSource native;
+        TestingSource testing;
+        BlueprintBinary[] binaries;
+    }
+
+    struct BlueprintDefinition {
+        string metadataUri;
+        address manager;
+        uint32 masterManagerRevision;
+        bool hasConfig;
+        BlueprintConfig config;
+        BlueprintMetadata metadata;
+        JobDefinition[] jobs;
+        bytes registrationSchema;
+        bytes requestSchema;
+        BlueprintSource[] sources;
+        MembershipModel[] supportedMemberships;
+    }
+}
 
 /// @notice Minimal interface for Tangle contract blueprint registration
 interface ITangle {

@@ -184,6 +184,27 @@ pub struct ApiWalletApprovalResponse {
     pub strategy_config_patch: serde_json::Value,
 }
 
+struct ApiWalletApprovalResponseParts {
+    status: &'static str,
+    vault_account: String,
+    api_wallet_address: String,
+    api_wallet_name: String,
+    hyperliquid_user_role: String,
+    tx_hash: Option<String>,
+    extra_agents: Vec<crate::routes::hyperliquid::HyperliquidExtraAgent>,
+    verified_corewriter_approval: bool,
+}
+
+struct FundMovementValidationRequest {
+    amount: Decimal,
+    metadata: serde_json::Value,
+    nonce: U256,
+    deadline: u64,
+    policy: HyperliquidFundMovementPolicy,
+    intent_hash: String,
+    execution_hash: String,
+}
+
 pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
     Router::new()
         .route("/hyperliquid/funding/status", get(get_funding_status))
@@ -459,14 +480,16 @@ async fn post_api_wallet_approval(
     let existing_agents = hyperliquid_extra_agents(&account).await?;
     if hyperliquid_extra_agents_contains(&existing_agents, &api_wallet) {
         return Ok(Json(api_wallet_approval_response(
-            "already_verified",
-            account,
-            api_wallet,
-            agent_name,
-            user_role,
-            None,
-            existing_agents,
-            true,
+            ApiWalletApprovalResponseParts {
+                status: "already_verified",
+                vault_account: account,
+                api_wallet_address: api_wallet,
+                api_wallet_name: agent_name,
+                hyperliquid_user_role: user_role,
+                tx_hash: None,
+                extra_agents: existing_agents,
+                verified_corewriter_approval: true,
+            },
         )));
     }
 
@@ -481,27 +504,31 @@ async fn post_api_wallet_approval(
     let tx_hash = send_funding_tx(&chain_client, vault, calldata).await?;
     match wait_for_hyperliquid_api_wallet_extra_agent(&account, &api_wallet).await {
         Ok(verified_agents) => Ok(Json(api_wallet_approval_response(
-            "verified_corewriter_approval",
-            account,
-            api_wallet,
-            agent_name,
-            user_role,
-            Some(tx_hash),
-            verified_agents,
-            true,
+            ApiWalletApprovalResponseParts {
+                status: "verified_corewriter_approval",
+                vault_account: account,
+                api_wallet_address: api_wallet,
+                api_wallet_name: agent_name,
+                hyperliquid_user_role: user_role,
+                tx_hash: Some(tx_hash),
+                extra_agents: verified_agents,
+                verified_corewriter_approval: true,
+            },
         ))),
         Err((StatusCode::BAD_GATEWAY, message))
             if message == HYPERLIQUID_EXTRA_AGENT_TIMEOUT_MESSAGE =>
         {
             Ok(Json(api_wallet_approval_response(
-                "submitted_corewriter_approval",
-                account,
-                api_wallet,
-                agent_name,
-                user_role,
-                Some(tx_hash),
-                Vec::new(),
-                false,
+                ApiWalletApprovalResponseParts {
+                    status: "submitted_corewriter_approval",
+                    vault_account: account,
+                    api_wallet_address: api_wallet,
+                    api_wallet_name: agent_name,
+                    hyperliquid_user_role: user_role,
+                    tx_hash: Some(tx_hash),
+                    extra_agents: Vec::new(),
+                    verified_corewriter_approval: false,
+                },
             )))
         }
         Err(error) => Err(error),
@@ -544,33 +571,28 @@ async fn ensure_api_wallet_is_not_registered_to_another_user(
 }
 
 fn api_wallet_approval_response(
-    status: &str,
-    vault_account: String,
-    api_wallet_address: String,
-    api_wallet_name: String,
-    hyperliquid_user_role: String,
-    tx_hash: Option<String>,
-    extra_agents: Vec<crate::routes::hyperliquid::HyperliquidExtraAgent>,
-    verified_corewriter_approval: bool,
+    parts: ApiWalletApprovalResponseParts,
 ) -> ApiWalletApprovalResponse {
-    let approval_status = if verified_corewriter_approval {
+    let approval_status = if parts.verified_corewriter_approval {
         "verified_corewriter_approval"
     } else {
-        status
+        parts.status
     };
     let mut patch = serde_json::json!({
         "hyperliquid_api_wallet_approval": "corewriter_after_funding",
         "hyperliquid_api_wallet_approval_status": approval_status,
-        "hyperliquid_api_wallet_address": api_wallet_address,
-        "hyperliquid_api_wallet_name": api_wallet_name,
+        "hyperliquid_api_wallet_address": parts.api_wallet_address,
+        "hyperliquid_api_wallet_name": parts.api_wallet_name,
     });
-    if verified_corewriter_approval && let Some(map) = patch.as_object_mut() {
+    if parts.verified_corewriter_approval
+        && let Some(map) = patch.as_object_mut()
+    {
         map.insert(
             "hyperliquid_api_wallet_verified_at".to_string(),
             serde_json::Value::String(Utc::now().to_rfc3339()),
         );
     }
-    if let Some(tx_hash) = tx_hash.as_ref()
+    if let Some(tx_hash) = parts.tx_hash.as_ref()
         && let Some(map) = patch.as_object_mut()
     {
         map.insert(
@@ -580,13 +602,13 @@ fn api_wallet_approval_response(
     }
 
     ApiWalletApprovalResponse {
-        status: status.to_string(),
-        vault_account,
-        api_wallet_address,
-        hyperliquid_user_role,
-        tx_hash,
-        verified_corewriter_approval,
-        extra_agents,
+        status: parts.status.to_string(),
+        vault_account: parts.vault_account,
+        api_wallet_address: parts.api_wallet_address,
+        hyperliquid_user_role: parts.hyperliquid_user_role,
+        tx_hash: parts.tx_hash,
+        verified_corewriter_approval: parts.verified_corewriter_approval,
+        extra_agents: parts.extra_agents,
         strategy_config_patch: patch,
     }
 }
@@ -647,17 +669,19 @@ async fn submit_usd_class_transfer(
     let validation = validate_fund_movement(
         state,
         bot,
-        amount,
-        serde_json::json!({
-            "funding_action": "usd_class_transfer",
-            "amount_ntl": ntl.to_string(),
-            "to_perp": to_perp,
-        }),
-        nonce,
-        deadline,
-        policy,
-        format!("0x{}", hex::encode(intent_hash.as_slice())),
-        format!("0x{}", hex::encode(execution_hash.as_slice())),
+        FundMovementValidationRequest {
+            amount,
+            metadata: serde_json::json!({
+                "funding_action": "usd_class_transfer",
+                "amount_ntl": ntl.to_string(),
+                "to_perp": to_perp,
+            }),
+            nonce,
+            deadline,
+            policy,
+            intent_hash: format!("0x{}", hex::encode(intent_hash.as_slice())),
+            execution_hash: format!("0x{}", hex::encode(execution_hash.as_slice())),
+        },
     )
     .await?;
     if !validation.approved {
@@ -738,17 +762,19 @@ async fn submit_evm_usdc_to_core(
     let validation = validate_fund_movement(
         state,
         bot,
-        amount,
-        serde_json::json!({
-            "funding_action": "evm_usdc_to_core",
-            "amount_evm_wei": amount_wei.to_string(),
-            "core_deposit_wallet": core_deposit_wallet.to_string(),
-        }),
-        nonce,
-        deadline,
-        policy,
-        format!("0x{}", hex::encode(intent_hash.as_slice())),
-        format!("0x{}", hex::encode(execution_hash.as_slice())),
+        FundMovementValidationRequest {
+            amount,
+            metadata: serde_json::json!({
+                "funding_action": "evm_usdc_to_core",
+                "amount_evm_wei": amount_wei.to_string(),
+                "core_deposit_wallet": core_deposit_wallet.to_string(),
+            }),
+            nonce,
+            deadline,
+            policy,
+            intent_hash: format!("0x{}", hex::encode(intent_hash.as_slice())),
+            execution_hash: format!("0x{}", hex::encode(execution_hash.as_slice())),
+        },
     )
     .await?;
     if !validation.approved {
@@ -1098,13 +1124,7 @@ fn classify_funding_status(
 async fn validate_fund_movement(
     state: &MultiBotTradingState,
     bot: &BotContext,
-    amount: Decimal,
-    mut metadata: serde_json::Value,
-    nonce: U256,
-    deadline: u64,
-    policy: HyperliquidFundMovementPolicy,
-    intent_hash: String,
-    execution_hash: String,
+    mut request: FundMovementValidationRequest,
 ) -> Result<trading_runtime::types::ValidationResult, (StatusCode, String)> {
     if bot.validator_endpoints.is_empty() {
         return Err((
@@ -1112,35 +1132,38 @@ async fn validate_fund_movement(
             "Hyperliquid fund movement requires validator endpoints".to_string(),
         ));
     }
-    let metadata_obj = metadata.as_object_mut().ok_or_else(|| {
+    let metadata_obj = request.metadata.as_object_mut().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             "Hyperliquid fund movement metadata must be an object".to_string(),
         )
     })?;
-    metadata_obj.insert("nonce".to_string(), serde_json::json!(nonce.to_string()));
+    metadata_obj.insert(
+        "nonce".to_string(),
+        serde_json::json!(request.nonce.to_string()),
+    );
     metadata_obj.insert(
         "leverage_cap".to_string(),
-        serde_json::json!(policy.leverage_cap.to_string()),
+        serde_json::json!(request.policy.leverage_cap.to_string()),
     );
     metadata_obj.insert(
         "max_trades_per_hour".to_string(),
-        serde_json::json!(policy.max_trades_per_hour.to_string()),
+        serde_json::json!(request.policy.max_trades_per_hour.to_string()),
     );
     metadata_obj.insert(
         "max_slippage_bps".to_string(),
-        serde_json::json!(policy.max_slippage_bps.to_string()),
+        serde_json::json!(request.policy.max_slippage_bps.to_string()),
     );
     let intent = TradeIntentBuilder::new()
         .strategy_id(format!("hyperliquid-funding-{}", bot.bot_id))
         .action(Action::CollateralRelease)
         .token_in("USDC")
         .token_out("USDC")
-        .amount_in(amount)
+        .amount_in(request.amount)
         .min_amount_out(Decimal::ZERO)
         .target_protocol(FUNDING_PROTOCOL)
         .chain_id(bot.chain_id)
-        .metadata(metadata)
+        .metadata(request.metadata)
         .build()
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let min_validators = crate::routes::validate::required_validator_signatures(
@@ -1155,10 +1178,10 @@ async fn validate_fund_movement(
         .validate_with_context(
             &intent,
             &bot.vault_address,
-            deadline,
+            request.deadline,
             ValidationExecutionOptions {
-                intent_hash_override: Some(intent_hash),
-                execution_hash_override: Some(execution_hash),
+                intent_hash_override: Some(request.intent_hash),
+                execution_hash_override: Some(request.execution_hash),
                 action_kind: ACTION_KIND_HYPERLIQUID_FUND_MOVEMENT,
                 ..ValidationExecutionOptions::default()
             },
