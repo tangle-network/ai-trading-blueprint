@@ -79,6 +79,8 @@ async function main() {
   let portfolioValueUsd = parseNumber(extra.portfolio_value_usd);
   let positionsCount = parseNumber(extra.positions_count);
   let tradeCount = parseNumber(extra.trade_count);
+  let unrealizedPnl = parseNumber(extra.unrealized_pnl);
+  let realizedPnl = parseNumber(extra.realized_pnl);
 
   if (config && config.api_url && config.token) {
     try {
@@ -91,6 +93,14 @@ async function main() {
         }
         if (positionsCount == null) {
           positionsCount = Array.isArray(body.positions) ? body.positions.length : 0;
+        }
+        const fetchedUnrealizedPnl = parseNumber(body.unrealized_pnl);
+        if (unrealizedPnl == null && fetchedUnrealizedPnl != null) {
+          unrealizedPnl = fetchedUnrealizedPnl;
+        }
+        const fetchedRealizedPnl = parseNumber(body.realized_pnl);
+        if (realizedPnl == null && fetchedRealizedPnl != null) {
+          realizedPnl = fetchedRealizedPnl;
         }
       }
     } catch {}
@@ -152,6 +162,8 @@ async function main() {
     ...(portfolioValueUsd != null ? { portfolio_value_usd: portfolioValueUsd } : {}),
     ...(positionsCount != null ? { positions_count: positionsCount } : {}),
     ...(tradeCount != null ? { trade_count: tradeCount } : {}),
+    ...(unrealizedPnl != null ? { unrealized_pnl: unrealizedPnl } : {}),
+    ...(realizedPnl != null ? { realized_pnl: realizedPnl } : {}),
   };
 
   fs.writeFileSync(METRICS_FILE, JSON.stringify(metrics, null, 2));
@@ -160,8 +172,8 @@ async function main() {
     try {
       await postJson(config.api_url, config.token, '/metrics/snapshot', {
         account_value_usd: String(portfolioValueUsd),
-        unrealized_pnl: String(parseNumber(extra.unrealized_pnl) ?? 0),
-        realized_pnl: String(parseNumber(extra.realized_pnl) ?? 0),
+        unrealized_pnl: String(unrealizedPnl ?? 0),
+        realized_pnl: String(realizedPnl ?? 0),
         high_water_mark: String(parseNumber(extra.high_water_mark) ?? portfolioValueUsd),
         drawdown_pct: String(parseNumber(extra.drawdown_pct) ?? 0),
         positions_count: positionsCount ?? 0,

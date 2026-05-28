@@ -2364,6 +2364,7 @@ async fn test_fallback_portfolio_recovers_swap_trade_store_positions() {
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: None,
+        hyperliquid_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Unpriced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -2502,6 +2503,7 @@ async fn test_get_bot_metrics_history_falls_back_when_remote_payload_is_empty() 
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: None,
+        hyperliquid_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
@@ -2600,6 +2602,7 @@ async fn test_get_bot_metrics_history_fallback_respects_limit_query() {
         slippage_bps: None,
         execution_reason: None,
         prediction_metadata: None,
+        hyperliquid_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,

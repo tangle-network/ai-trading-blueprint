@@ -489,6 +489,8 @@ struct TradeEntryResponse {
     entry_price_usd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     notional_usd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hyperliquid_metadata: Option<trading_http_api::trade_store::HyperliquidTradeMetadata>,
     #[serde(default)]
     valuation_status: trading_http_api::trade_store::TradeValuationStatus,
 }
@@ -499,10 +501,24 @@ struct PortfolioPosition {
     symbol: String,
     amount: f64,
     value_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    margin_used_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notional_usd: Option<f64>,
     entry_price: Option<f64>,
     current_price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unrealized_pnl_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    leverage: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    liquidation_price: Option<f64>,
     pnl_percent: Option<f64>,
     weight: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    position_type: Option<String>,
     #[serde(default)]
     valuation_status: trading_runtime::types::ValuationStatus,
 }
@@ -511,6 +527,12 @@ struct PortfolioPosition {
 struct PortfolioStateResponse {
     total_value_usd: Option<f64>,
     cash_balance: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stale: Option<bool>,
     #[serde(default)]
     warnings: Vec<String>,
     #[serde(default)]
@@ -2857,12 +2879,46 @@ struct TradingApiPortfolioPosition {
         default,
         deserialize_with = "deserialize_option_f64_from_string_or_number"
     )]
+    margin_used_usd: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
+    notional_usd: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
     entry_price: Option<f64>,
     #[serde(
         default,
         deserialize_with = "deserialize_option_f64_from_string_or_number"
     )]
     current_price: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
+    unrealized_pnl: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
+    unrealized_pnl_usd: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
+    leverage: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_option_f64_from_string_or_number"
+    )]
+    liquidation_price: Option<f64>,
+    #[serde(default)]
+    protocol: Option<String>,
+    #[serde(default)]
+    position_type: Option<String>,
     #[serde(default)]
     valuation_status: trading_runtime::types::ValuationStatus,
 }
@@ -2881,6 +2937,12 @@ struct TradingApiPortfolioResponse {
         deserialize_with = "deserialize_option_f64_from_string_or_number"
     )]
     cash_balance: Option<f64>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    observed_at: Option<String>,
+    #[serde(default)]
+    stale: Option<bool>,
     #[serde(default)]
     warnings: Vec<String>,
     #[serde(default)]
@@ -2993,6 +3055,9 @@ fn synthesize_trade_entry_from_record(
     if let Some(notional_usd) = notional_usd {
         entry["amount_usd"] = serde_json::json!(notional_usd);
         entry["notional_usd"] = serde_json::json!(notional_usd);
+    }
+    if let Some(metadata) = &rec.hyperliquid_metadata {
+        entry["hyperliquid_metadata"] = serde_json::to_value(metadata).unwrap_or_default();
     }
 
     entry
@@ -3313,6 +3378,9 @@ fn synthesize_dex_fallback_portfolio(bot: &TradingBotRecord) -> Option<Portfolio
         return Some(PortfolioStateResponse {
             total_value_usd: Some(0.0),
             cash_balance: configured_cash_token(bot).map(|_| 0.0),
+            source: None,
+            observed_at: None,
+            stale: None,
             warnings: Vec::new(),
             has_unpriced_positions: false,
             has_value_only_positions: false,
@@ -3370,10 +3438,17 @@ fn synthesize_dex_fallback_portfolio(bot: &TradingBotRecord) -> Option<Portfolio
             symbol: position.token.clone(),
             amount: decimal_to_f64(position.amount).unwrap_or(0.0),
             value_usd: value_usd_f64,
+            margin_used_usd: None,
+            notional_usd: None,
             entry_price: entry_price_f64,
             current_price: current_price_f64,
+            unrealized_pnl_usd: None,
+            leverage: None,
+            liquidation_price: None,
             pnl_percent,
             weight: None,
+            protocol: None,
+            position_type: None,
             valuation_status,
         });
     }
@@ -3413,6 +3488,9 @@ fn synthesize_dex_fallback_portfolio(bot: &TradingBotRecord) -> Option<Portfolio
     Some(PortfolioStateResponse {
         total_value_usd,
         cash_balance: cash_balance.or_else(|| cash_token.as_ref().map(|_| 0.0)),
+        source: None,
+        observed_at: None,
+        stale: None,
         warnings,
         has_unpriced_positions,
         has_value_only_positions,
@@ -3572,11 +3650,16 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
 
             PortfolioPosition {
                 token: position.token.clone(),
-                symbol: position.token,
+                symbol: position.token.clone(),
                 amount: position.amount,
                 value_usd,
+                margin_used_usd: position.margin_used_usd,
+                notional_usd: position.notional_usd,
                 entry_price: position.entry_price,
                 current_price: position.current_price,
+                unrealized_pnl_usd: position.unrealized_pnl_usd.or(position.unrealized_pnl),
+                leverage: position.leverage,
+                liquidation_price: position.liquidation_price,
                 pnl_percent,
                 weight: match (value_usd, total_value) {
                     (Some(value_usd), Some(total_value)) if total_value > 0.0 => {
@@ -3584,6 +3667,8 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
                     }
                     _ => None,
                 },
+                protocol: position.protocol,
+                position_type: position.position_type,
                 valuation_status,
             }
         })
@@ -3592,6 +3677,9 @@ fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStat
     Ok(PortfolioStateResponse {
         total_value_usd: total_value,
         cash_balance: portfolio.cash_balance,
+        source: portfolio.source,
+        observed_at: portfolio.observed_at,
+        stale: portfolio.stale,
         warnings: portfolio.warnings,
         has_unpriced_positions,
         has_value_only_positions,
@@ -3664,10 +3752,17 @@ fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
                 symbol: question.chars().take(30).collect(),
                 amount,
                 value_usd,
+                margin_used_usd: None,
+                notional_usd: None,
                 entry_price,
                 current_price,
+                unrealized_pnl_usd: None,
+                leverage: None,
+                liquidation_price: None,
                 pnl_percent: pnl_pct,
                 weight: None,
+                protocol: None,
+                position_type: None,
                 valuation_status,
             }
         })
@@ -3690,6 +3785,9 @@ fn fallback_portfolio_state(bot: &TradingBotRecord) -> PortfolioStateResponse {
     PortfolioStateResponse {
         total_value_usd,
         cash_balance: None,
+        source: None,
+        observed_at: None,
+        stale: None,
         warnings: {
             let mut warnings = Vec::new();
             if has_unpriced_positions {
@@ -3812,6 +3910,7 @@ fn fallback_trade_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
             amount_out: None,
             entry_price_usd: Some(entry_price.to_string()),
             notional_usd: Some(amount.to_string()),
+            hyperliquid_metadata: None,
             valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         });
     }
@@ -3852,6 +3951,7 @@ fn fallback_trade_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
                 amount_out: rec.amount_out,
                 entry_price_usd: rec.entry_price_usd,
                 notional_usd: rec.notional_usd,
+                hyperliquid_metadata: rec.hyperliquid_metadata,
                 valuation_status: rec.valuation_status,
             });
         }
@@ -5458,6 +5558,7 @@ mod tests {
             slippage_bps: None,
             execution_reason: None,
             prediction_metadata: None,
+            hyperliquid_metadata: None,
             valuation_status: trading_http_api::trade_store::TradeValuationStatus::Unpriced,
             validation: trading_http_api::trade_store::StoredValidation {
                 approved: true,
@@ -6084,5 +6185,57 @@ mod tests {
         );
         assert_eq!(portfolio.positions[0].value_usd, Some(2220.1));
         assert_eq!(portfolio.positions[0].current_price, Some(2220.1));
+    }
+
+    #[test]
+    fn map_trading_api_portfolio_preserves_hyperliquid_perp_fields() {
+        let payload = serde_json::json!({
+            "positions": [
+                {
+                    "token": "ETH",
+                    "amount": "0.026",
+                    "value_usd": "2.57049",
+                    "margin_used_usd": "2.57049",
+                    "notional_usd": "51.4098",
+                    "entry_price": "2084.22",
+                    "current_price": null,
+                    "unrealized_pnl_usd": "-2.77992",
+                    "leverage": 20,
+                    "liquidation_price": "1696.3270408163",
+                    "protocol": "hyperliquid",
+                    "position_type": "long_perp",
+                    "valuation_status": "value_only"
+                }
+            ],
+            "total_value_usd": "8.187387",
+            "cash_balance": "0",
+            "source": "hyperliquid_nav",
+            "observed_at": "2026-05-27T10:07:12.000Z",
+            "stale": false,
+            "warnings": [],
+            "has_unpriced_positions": false,
+            "has_value_only_positions": true
+        });
+
+        let portfolio = map_trading_api_portfolio(payload).expect("portfolio should parse");
+        let position = &portfolio.positions[0];
+
+        assert_eq!(portfolio.total_value_usd, Some(8.187387));
+        assert_eq!(portfolio.source.as_deref(), Some("hyperliquid_nav"));
+        assert_eq!(
+            portfolio.observed_at.as_deref(),
+            Some("2026-05-27T10:07:12.000Z")
+        );
+        assert_eq!(portfolio.stale, Some(false));
+        assert_eq!(position.token, "ETH");
+        assert_eq!(position.protocol.as_deref(), Some("hyperliquid"));
+        assert_eq!(position.position_type.as_deref(), Some("long_perp"));
+        assert_eq!(position.value_usd, Some(2.57049));
+        assert_eq!(position.margin_used_usd, Some(2.57049));
+        assert_eq!(position.notional_usd, Some(51.4098));
+        assert_eq!(position.unrealized_pnl_usd, Some(-2.77992));
+        assert_eq!(position.leverage, Some(20.0));
+        assert_eq!(position.liquidation_price, Some(1696.3270408163));
+        assert_eq!(position.weight, Some((2.57049 / 8.187387) * 100.0));
     }
 }
