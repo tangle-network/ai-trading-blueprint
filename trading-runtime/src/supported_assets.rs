@@ -63,7 +63,13 @@ pub fn supported_assets_for(
     let registry_chain_id = registry_chain_id(chain_id);
 
     match (normalized_strategy.as_str(), normalized_protocol.as_str()) {
-        ("dex", "uniswap_v3" | "aerodrome") => dex_assets(registry_chain_id, &normalized_protocol),
+        // dex (directional), mm (market-making) and multi (portfolio) are all
+        // DEX-family strategies that trade the same WETH/USDC spot universe on
+        // Uniswap/Aerodrome. Gate them together so an MM/multi bot's swaps
+        // aren't rejected as "not in the configured asset universe".
+        ("dex" | "mm" | "multi", "uniswap_v3" | "aerodrome") => {
+            dex_assets(registry_chain_id, &normalized_protocol)
+        }
         ("yield", "aave_v3") => aave_assets(registry_chain_id, &normalized_protocol),
         ("hyperliquid_perp", "hyperliquid") => {
             hyperliquid_perp_assets(registry_chain_id, &normalized_protocol)
@@ -472,6 +478,27 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
     const HYPEREVM_TESTNET_USDC: &str = "0x2B3370eE501B4a559b57D449569354196457D8Ab";
     const CONFIGURED_HYPEREVM_MAINNET_USDC: &str = "0x1111111111111111111111111111111111110999";
+
+    #[test]
+    fn mm_and_multi_share_the_dex_asset_universe() {
+        // Regression: an MM/multi DEX bot's spot tokens (WETH/USDC) must be in
+        // the asset universe, else /validate rejects every rebalance swap as
+        // "not in the configured asset universe" and the bot never trades.
+        let usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+        let weth = "0x4200000000000000000000000000000000000006";
+        for strat in ["mm", "multi", "dex"] {
+            assert!(
+                is_supported_trade_asset(strat, 84532, "aerodrome", usdc, TradeAssetRole::Input)
+                    .is_some(),
+                "{strat}: USDC must be a supported input on aerodrome/base-sepolia"
+            );
+            assert!(
+                is_supported_trade_asset(strat, 84532, "aerodrome", weth, TradeAssetRole::Output)
+                    .is_some(),
+                "{strat}: WETH must be a supported output on aerodrome/base-sepolia"
+            );
+        }
+    }
 
     #[test]
     fn dex_ethereum_fork_returns_weth_and_usdc() {

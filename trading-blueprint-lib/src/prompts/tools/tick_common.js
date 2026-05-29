@@ -169,10 +169,16 @@ function positionsOf(portfolio) {
   return Array.isArray(data.positions) ? data.positions : [];
 }
 
+// A spot inventory holding the strategy can trade. The bot manages spot
+// inventory regardless of how the portfolio source labels it: live vault reads
+// report protocol "vault"; the paper portfolio synthesizer labels seeded cash
+// "paper" and swapped tokens by their DEX venue ("aerodrome"/"uniswap"). All of
+// these are the same thing to the strategy — a positive spot balance — so we
+// gate on position_type, not the bookkeeping protocol. (Non-spot exposure —
+// perps, conditional tokens — carries a different position_type and is excluded.)
 function isVaultSpot(position) {
-  const protocol = String(position.protocol || '').trim().toLowerCase();
   const positionType = String(position.position_type || '').trim().toLowerCase();
-  return protocol === 'vault' && positionType === 'spot' && asNumber(position.amount, 0) > 0;
+  return positionType === 'spot' && asNumber(position.amount, 0) > 0;
 }
 
 // Human-unit spot balance held in the vault for a token address (0 if none).
