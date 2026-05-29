@@ -12,16 +12,26 @@ use serde_json::Value;
 
 use crate::state::TradingBotRecord;
 
-// One exec reads all three artifacts and prints a single JSON object. Strategy
-// sources are head-capped so a large workspace can't blow the exec response.
-// metrics_latest is parsed when valid JSON, else passed through as the raw
-// string (never throws). Missing files become null / {}.
+// Sentinel markers framing the JSON payload in stdout. The sidecar's terminal
+// endpoint ECHOES the typed command into stdout ahead of the program's real
+// output, so stdout is `<echoed script>\n<actual output>` — parsing the whole
+// thing as JSON fails on the echoed source. We extract only the bytes between
+// these markers. Crucially the markers are CONCATENATED at runtime in the
+// script (`'TANGLE' + '_TICK_JSON>'`), so the echoed *source* never contains
+// the joined literal — only the program's actual output does. Keep these in
+// sync with the `'…' + '…'` split in READ_TICK_ARTIFACTS_JS below.
+const TICK_JSON_BEGIN: &str = "TANGLE_TICK_JSON>";
+const TICK_JSON_END: &str = "<TANGLE_TICK_END";
+
+// One exec reads all three artifacts and prints a single JSON object framed by
+// the sentinels above. Strategy sources are head-capped so a large workspace
+// can't blow the exec response. metrics_latest is parsed when valid JSON, else
+// passed through as the raw string (never throws). Missing files become null/{}.
 //
 // Fed to node via a quoted heredoc on stdin (`node - <<'NODE'`) — the same form
-// the live tick verifier uses (jobs/workflow_tick.rs). The sidecar's terminal
-// endpoint runs `command` raw (no shell wrapping), so a bare `node -e '…'` with
-// inner quotes is mangled to an empty program (exit 0, empty stdout → a 502
-// "EOF while parsing"). The heredoc carries the script on stdin, immune to that.
+// the live tick verifier uses (jobs/workflow_tick.rs). A bare `node -e '…'` with
+// inner quotes is unreliable through the sidecar PTY; the heredoc carries the
+// script on stdin.
 const READ_TICK_ARTIFACTS_JS: &str = r#"node - <<'NODE'
 const fs = require('fs');
 const r = p => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
@@ -35,11 +45,14 @@ try {
 let m = r('/home/agent/metrics/latest.json');
 let mp = null;
 try { mp = m ? JSON.parse(m) : null; } catch { mp = m; }
-process.stdout.write(JSON.stringify({
+const payload = JSON.stringify({
   decisions_jsonl: r('/home/agent/logs/decisions.jsonl'),
   metrics_latest: mp,
   strategies: strat,
-}));
+});
+const B = 'TANGLE' + '_TICK_JSON>';
+const E = '<TANGLE' + '_TICK_END';
+process.stdout.write('\n' + B + payload + E + '\n');
 NODE"#;
 
 /// Read `{ decisions_jsonl, metrics_latest, strategies }` from the bot's
@@ -65,12 +78,24 @@ pub async fn read_bot_tick_artifacts(bot: &TradingBotRecord) -> Result<Value, St
             resp.stderr.trim()
         ));
     }
-    let stdout = resp.stdout.trim();
-    serde_json::from_str(stdout).map_err(|e| {
-        format!(
-            "tick-artifacts JSON parse failed: {e} (stdout={:?}, stderr={:?})",
-            stdout.chars().take(200).collect::<String>(),
+    // Extract the JSON framed by the sentinels (stdout also carries the PTY's
+    // echo of the typed command — see the marker comment above).
+    let json = resp
+        .stdout
+        .split_once(TICK_JSON_BEGIN)
+        .and_then(|(_, rest)| rest.split_once(TICK_JSON_END))
+        .map(|(payload, _)| payload);
+    let Some(payload) = json else {
+        return Err(format!(
+            "tick-artifacts markers not found (stdout={:?}, stderr={:?})",
+            resp.stdout.chars().take(300).collect::<String>(),
             resp.stderr.trim().chars().take(200).collect::<String>(),
+        ));
+    };
+    serde_json::from_str(payload).map_err(|e| {
+        format!(
+            "tick-artifacts JSON parse failed: {e} (payload={:?})",
+            payload.chars().take(300).collect::<String>(),
         )
     })
 }
