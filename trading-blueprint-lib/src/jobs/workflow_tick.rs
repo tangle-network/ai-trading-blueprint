@@ -595,6 +595,7 @@ async fn validate_fast_runs(response: &mut Value, all_bots: &[crate::state::Trad
 /// 2. Swaps the workflow prompt to the wind-down liquidation prompt
 ///
 /// After the tick completes, runs fee settlement for winding-down bots.
+#[tracing::instrument(name = "workflow_tick", skip_all)]
 pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, String> {
     tracing::info!("=== WORKFLOW TICK HANDLER ENTERED ===");
 

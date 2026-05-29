@@ -41,6 +41,8 @@ toml = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# HTTP request spans for OTLP trace export (one span per operator API request).
+tower-http = { version = "0.6", features = ["trace"] }
 # Per-session rate-limit on /api/dex/assets/preflight.
 governor = { version = "0.6", default-features = false, features = ["std", "jitter", "quanta"] }
 dashmap = "6"

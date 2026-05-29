@@ -58,6 +58,7 @@ NODE"#;
 /// Read `{ decisions_jsonl, metrics_latest, strategies }` from the bot's
 /// sandbox. Returns an error string on missing sandbox / exec failure / unparsable
 /// output — callers fail closed (no fabricated "captured" flag).
+#[tracing::instrument(name = "read_tick_artifacts", skip_all, fields(bot_id = %bot.id))]
 pub async fn read_bot_tick_artifacts(bot: &TradingBotRecord) -> Result<Value, String> {
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id)
         .map_err(|e| format!("sandbox lookup failed: {e}"))?;

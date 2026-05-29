@@ -364,6 +364,7 @@ pub(crate) fn resolve_sidecar_rpc_url(rpc_url: &str) -> String {
 ///
 /// When `mock_sandbox` is `Some`, skips Docker sidecar recreation and uses the
 /// provided record instead.  Pass `None` in production.
+#[tracing::instrument(name = "activate_bot", skip_all, fields(bot_id = %bot_id))]
 pub async fn activate_bot_with_secrets(
     bot_id: &str,
     user_env: serde_json::Map<String, serde_json::Value>,

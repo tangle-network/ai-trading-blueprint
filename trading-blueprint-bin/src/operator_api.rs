@@ -729,6 +729,9 @@ pub fn build_operator_router() -> Router {
         .route("/api/debug/workflows", get(debug_workflows))
         .route("/api/debug/run-now/{bot_id}", post(debug_run_now))
         .layer(sandbox_runtime::operator_api::build_cors_layer())
+        // One tracing span per HTTP request (method/path/status/latency) →
+        // exported via OTLP to Tangle Intelligence when telemetry is enabled.
+        .layer(tower_http::trace::TraceLayer::new_for_http())
 }
 
 async fn get_operator_meta() -> Json<OperatorMetaResponse> {
