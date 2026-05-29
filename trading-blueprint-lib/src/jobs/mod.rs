@@ -9,6 +9,7 @@ mod start;
 mod status;
 mod stop;
 mod task;
+pub mod tick_artifacts;
 mod webhook_event;
 mod workflow_tick;
 

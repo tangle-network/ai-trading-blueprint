@@ -85,6 +85,20 @@ export interface UserSimSessionResult {
   /** Work-product artifacts inspected from operator-api state at session
    *  end — self-improvement lineage, trades, PnL. null = not inspected. */
   bot_artifacts: BotArtifacts | null
+  /** Deterministic-tick side effects read out of the bot's sandbox
+   *  (decisions.jsonl, metrics, strategy files) via the operator
+   *  `/api/bots/{id}/tick-artifacts` endpoint. null = not captured (sandbox
+   *  unreachable / endpoint absent) — the RLM analyst treats absence as
+   *  UNVERIFIABLE, never as proof the tick didn't run. */
+  tick_side_effects: TickSideEffects | null
+}
+
+/** Raw tick side effects pulled from the sandbox. Shape mirrors the operator
+ *  endpoint's JSON exactly so otlp-capture can emit it verbatim. */
+export interface TickSideEffects {
+  decisions_jsonl?: string | null
+  metrics_latest?: unknown
+  strategies?: Record<string, string>
 }
 
 // ─── User-sim turn generation ──────────────────────────────────────────
@@ -174,6 +188,16 @@ export async function runUserSimSession(opts: UserSimSessionOptions): Promise<Us
   } catch {
     // swallow — artifact inspection is observational, not load-bearing
   }
+  // Pull the deterministic-tick side effects out of the sandbox so the RLM
+  // analyst can adjudicate real execution vs prose. Best-effort: a missing
+  // endpoint / unreachable sandbox leaves this null (analyst → UNVERIFIABLE),
+  // never a fabricated "captured" flag.
+  let tickSideEffects: TickSideEffects | null = null
+  try {
+    tickSideEffects = await client.get<TickSideEffects>(`/api/bots/${opts.botId}/tick-artifacts`)
+  } catch {
+    // swallow — capture is observational; absence is honestly reported
+  }
   return {
     intent: opts.intent,
     bot_id: opts.botId,
@@ -183,5 +207,6 @@ export async function runUserSimSession(opts: UserSimSessionOptions): Promise<Us
     ended_by: ended,
     total_wall_ms: Date.now() - startedAt,
     bot_artifacts: artifacts,
+    tick_side_effects: tickSideEffects,
   }
 }

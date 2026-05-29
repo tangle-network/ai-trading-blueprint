@@ -650,6 +650,10 @@ pub fn build_operator_router() -> Router {
         )
         .route("/api/bots/{bot_id}/trades", get(get_bot_trades))
         .route(
+            "/api/bots/{bot_id}/tick-artifacts",
+            get(get_bot_tick_artifacts),
+        )
+        .route(
             "/api/bots/{bot_id}/baseline-backtest",
             get(get_bot_baseline_backtest),
         )
@@ -1136,11 +1140,20 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
 }
 
 async fn list_bots(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Query(query): Query<BotListQuery>,
 ) -> ApiResult<BotListResponse> {
     let limit = query.limit.unwrap_or(50).min(200);
     let offset = query.offset.unwrap_or(0);
+
+    // Caller-scoping: a consumer session lists only the bots it submitted (plus
+    // legacy un-attributed bots). The operator key running this binary is the
+    // fleet admin and sees everything. `None` viewer == admin scope.
+    let viewer: Option<&str> = if is_operator_admin(&caller) {
+        None
+    } else {
+        Some(caller.as_str())
+    };
 
     // Exact match by on-chain call_id + service_id (most reliable lookup)
     if let (Some(call_id), Some(service_id)) = (query.call_id, query.service_id) {
@@ -1169,6 +1182,7 @@ async fn list_bots(
         let bots: Vec<BotSummary> = matches
             .live
             .into_iter()
+            .filter(|b| state::bot_visible_to(&b.submitter_address, viewer))
             .take(1)
             .map(BotSummary::from_record)
             .collect();
@@ -1182,11 +1196,11 @@ async fn list_bots(
     }
 
     let result = if let Some(ref operator) = query.operator {
-        state::bots_by_operator(operator, limit, offset)
+        state::bots_by_operator(operator, viewer, limit, offset)
     } else if let Some(ref strategy) = query.strategy {
-        state::bots_by_strategy(strategy, limit, offset)
+        state::bots_by_strategy(strategy, viewer, limit, offset)
     } else {
-        state::list_bots(limit, offset)
+        state::list_bots(viewer, limit, offset)
     };
 
     let paginated = result.map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -1217,6 +1231,21 @@ async fn get_bot(
 ) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
     let record = resolve_bot(&bot_id)?;
     Ok(Json(BotDetailResponse::from_record(record)))
+}
+
+/// Read the bot's deterministic-tick side effects (decisions.jsonl, metrics,
+/// strategy files) out of its sandbox. The eval consumes this so the RLM trace
+/// analyst can adjudicate real execution vs fabricated prose claims. Bad gateway
+/// when the sandbox is unreachable — never fabricates a "captured" payload.
+async fn get_bot_tick_artifacts(
+    SessionAuth(_caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    let artifacts = trading_blueprint_lib::jobs::tick_artifacts::read_bot_tick_artifacts(&bot)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(artifacts))
 }
 
 fn workflow_ids_for_bot(bot: &TradingBotRecord) -> Vec<u64> {
@@ -1926,6 +1955,16 @@ async fn wipe_secrets(
 // ── Bot control handlers ─────────────────────────────────────────────────
 
 /// Verify caller is the bot's submitter. Returns the bot on success.
+/// Whether `caller` is the operator key that runs this binary (fleet admin).
+/// Compared case-insensitively against `OPERATOR_ADDRESS`; an unset/empty
+/// `OPERATOR_ADDRESS` means no caller is admin, so listings stay caller-scoped.
+fn is_operator_admin(caller: &str) -> bool {
+    std::env::var("OPERATOR_ADDRESS")
+        .ok()
+        .filter(|op| !op.is_empty())
+        .is_some_and(|op| op.eq_ignore_ascii_case(caller))
+}
+
 fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusCode, String)> {
     if !bot.submitter_address.is_empty()
         && caller.to_lowercase() != bot.submitter_address.to_lowercase()
@@ -4889,7 +4928,7 @@ async fn get_leaderboard(
     let offset = q.offset.unwrap_or(0);
     let sort_by = q.sort_by.as_deref().unwrap_or("total_return_pct");
 
-    let paginated = state::list_bots(500, 0).map_err(|e| {
+    let paginated = state::list_bots(None, 500, 0).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to list bots: {e}"),
