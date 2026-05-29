@@ -77,7 +77,10 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     // Derive SESSION_AUTH_SECRET now — before any worker thread is spawned.
     trading_blueprint_lib::session_auth::ensure_from_env();
 
-    setup_log();
+    // Install tracing: stdout fmt always; OTLP/HTTP-JSON export to the Tangle
+    // Intelligence platform when TANGLE_API_KEY / OTEL_EXPORTER_OTLP_ENDPOINT is
+    // set. Held for the process lifetime so spans flush on shutdown.
+    let _telemetry = trading_blueprint_lib::telemetry::init("trading-operator");
 
     if let Err(msg) = sandbox_runtime::session_auth::validate_required_config() {
         return Err(blueprint_sdk::Error::Other(msg));
@@ -776,16 +779,6 @@ fn load_job_pricing(
     Ok(config)
 }
 
-fn setup_log() {
-    use tracing_subscriber::prelude::*;
-    use tracing_subscriber::{EnvFilter, fmt};
-    if tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .try_init()
-        .is_err()
-    {}
-}
 
 #[cfg(test)]
 mod tests {

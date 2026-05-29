@@ -27,6 +27,18 @@ tokio = { version = "1", default-features = false, features = ["sync", "rt", "ne
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 tower = "0.5"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# OTLP/HTTP-JSON trace export → Tangle Intelligence (intelligence.tangle.tools).
+# Versions pinned to match blueprint-qos (opentelemetry 0.31 / tracing-opentelemetry
+# 0.32) so the bridge layer and exporter share one opentelemetry core. JSON wire +
+# blocking reqwest client: the batch processor's worker thread drives exports
+# directly, no tokio-reactor-in-worker-thread footgun. TLS for the https
+# Intelligence endpoint comes from the workspace `reqwest` rustls-tls feature
+# above (Cargo unifies both onto one reqwest 0.12 instance).
+opentelemetry = "0.31"
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "http-json", "reqwest-blocking-client"] }
+tracing-opentelemetry = "0.32"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
