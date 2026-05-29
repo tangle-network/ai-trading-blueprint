@@ -1069,6 +1069,28 @@ impl TradeValuationSnapshot {
         }
     }
 
+    /// Return a copy of this valuation with paper fill costs (real per-protocol
+    /// fee + size-based price impact) deducted from the received token_out, so
+    /// the position credited to the portfolio reflects what the bot actually
+    /// received — less token_out because it paid fees + slippage. Unpriced or
+    /// zero-size valuations are returned unchanged (no fabricated costs).
+    fn with_paper_fill_costs(&self, protocol: &str, strategy_config: &serde_json::Value) -> Self {
+        match (self.amount_out, self.notional_usd) {
+            (Some(gross_out), Some(notional_usd))
+                if gross_out > Decimal::ZERO && notional_usd > Decimal::ZERO =>
+            {
+                let (net_out, _, _, _) =
+                    paper_fill_costs(protocol, gross_out, notional_usd, strategy_config);
+                Self {
+                    amount_out: Some(net_out),
+                    position_size: net_out,
+                    ..self.clone()
+                }
+            }
+            _ => self.clone(),
+        }
+    }
+
     fn position_valuation_status(&self) -> ValuationStatus {
         match self.valuation_status {
             trade_store::TradeValuationStatus::Priced => ValuationStatus::Priced,
@@ -1994,15 +2016,131 @@ async fn update_portfolio_after_trade(
     }
 }
 
+/// Default reference pool depth (USD) used to scale price impact when the
+/// strategy config does not override it. Testnet pool reserves (~$600) are
+/// unrepresentative of the venues a strategy actually targets, so impact is
+/// modelled against a representative liquid-pair depth rather than the live
+/// reserves. Override per bot via `strategy_config.paper_reference_liquidity_usd`.
+const DEFAULT_PAPER_REFERENCE_LIQUIDITY_USD: f64 = 10_000_000.0;
+
+/// Upper bound on modelled price impact, in basis points. Caps the size-based
+/// impact term so an oversized paper order can't synthesize a nonsensical fill
+/// (e.g. a $100M order against a $2M reference would otherwise imply 100% impact).
+const PAPER_IMPACT_CAP_BPS: u32 = 500;
+
+/// Fallback swap fee (bps) when the protocol has no entry in the canonical
+/// `protocol_fees` schedule. Matches the uniswap_v3 0.30% default pool — the
+/// most common DEX tier — so an unknown venue is never modelled as free.
+const PAPER_UNKNOWN_FEE_BPS: u32 = 30;
+
+/// Compute the realistic cost of a paper DEX/vault swap from REAL data: the
+/// authoritative per-protocol taker fee (`trading_runtime::protocol_fees`) plus
+/// a principled AMM price-impact term scaled by trade size against a reference
+/// liquidity depth.
+///
+/// Returns `(net_out, total_cost_bps, fee_bps, impact_bps)` where `net_out` is
+/// the amount of `token_out` the bot actually receives after fee + impact.
+///
+/// Price-impact model: `impact_bps = min(CAP, notional_usd / reference_liquidity_usd * 10_000)`.
+/// This is a linear constant-product approximation around the current price —
+/// the larger the order relative to pool depth, the worse the fill. The
+/// reference depth is a real, configurable parameter (not a flat magic bps):
+/// on testnet the live reserves are too small to be meaningful, so impact is
+/// modelled against a representative mainnet-scale depth the strategy targets.
+///
+/// Fees come exclusively from the canonical schedule; there is no invented flat
+/// swap cost. An unknown protocol falls back to the 0.30% DEX default.
+fn paper_fill_costs(
+    protocol: &str,
+    gross_out: Decimal,
+    notional_usd: Decimal,
+    strategy_config: &serde_json::Value,
+) -> (Decimal, u32, u32, u32) {
+    let fee_bps = trading_runtime::protocol_fees::schedule_for(protocol)
+        .map(|schedule| schedule.taker_bps)
+        .unwrap_or(PAPER_UNKNOWN_FEE_BPS);
+
+    let reference_liquidity_usd = strategy_config
+        .get("paper_reference_liquidity_usd")
+        .and_then(|value| match value {
+            serde_json::Value::Number(number) => number.as_f64(),
+            serde_json::Value::String(raw) => raw.parse().ok(),
+            _ => None,
+        })
+        .filter(|depth| *depth > 0.0)
+        .unwrap_or(DEFAULT_PAPER_REFERENCE_LIQUIDITY_USD);
+
+    let notional_f64 = notional_usd.to_string().parse::<f64>().unwrap_or(0.0);
+    let impact_bps = if notional_f64 > 0.0 {
+        ((notional_f64 / reference_liquidity_usd) * 10_000.0).round() as u32
+    } else {
+        0
+    }
+    .min(PAPER_IMPACT_CAP_BPS);
+
+    let total_cost_bps = fee_bps + impact_bps;
+    // net_out = gross_out * (1 - total_cost_bps / 10_000)
+    let cost_fraction = Decimal::new(total_cost_bps as i64, 4);
+    let net_out = gross_out * (Decimal::ONE - cost_fraction);
+
+    (net_out, total_cost_bps, fee_bps, impact_bps)
+}
+
 /// Execute a paper trade: log it without on-chain execution.
+///
+/// For priced DEX/vault swaps this applies a realistic fill model (real
+/// per-protocol fee + size-based price impact) so the recorded `amount_out`,
+/// `filled_price_usd`, and `slippage_bps` reflect a cost-bearing fill rather
+/// than a frictionless mid-price one. Hyperliquid paper trades route through
+/// here too (HL execution is gated to live only) but already carry their own
+/// 5/2 bps schedule; the CLOB paper path is handled separately upstream and
+/// never reaches this function.
 async fn execute_paper_trade(
     bot_id: &str,
     req: &ExecuteRequest,
     stored_validation: StoredValidation,
     valuation: &TradeValuationSnapshot,
+    strategy_config: &serde_json::Value,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
     let mock_tx_hash = format!("0xpaper_{}", uuid::Uuid::new_v4());
     let trade_id = uuid::Uuid::new_v4().to_string();
+
+    // Apply a realistic fill model only when the trade is priced (we have both
+    // the mid amount-out and the notional). For unpriced swaps we cannot model
+    // a fee/impact without fabricating a notional, so we keep the mid amount
+    // and leave fill price / slippage unset — matching prior behavior.
+    let (net_out, fill_slippage_bps, effective_fill_price): (
+        Option<Decimal>,
+        Option<u32>,
+        Option<Decimal>,
+    ) = match (valuation.amount_out, valuation.notional_usd) {
+        (Some(gross_out), Some(notional_usd))
+            if gross_out > Decimal::ZERO && notional_usd > Decimal::ZERO =>
+        {
+            let (net_out, total_cost_bps, fee_bps, impact_bps) = paper_fill_costs(
+                &req.intent.target_protocol,
+                gross_out,
+                notional_usd,
+                strategy_config,
+            );
+            // Effective price paid per unit token_out — strictly worse than mid
+            // because the bot received less token_out for the same notional in.
+            let fill_price =
+                (net_out > Decimal::ZERO).then(|| notional_usd / net_out);
+            tracing::info!(
+                bot_id = %bot_id,
+                protocol = %req.intent.target_protocol,
+                gross_out = %gross_out,
+                net_out = %net_out,
+                fee_bps,
+                impact_bps,
+                total_cost_bps,
+                "paper fill costs applied"
+            );
+            (Some(net_out), Some(total_cost_bps), fill_price)
+        }
+        _ => (valuation.amount_out, None, None),
+    };
 
     tracing::info!(
         bot_id = %bot_id,
@@ -2029,13 +2167,13 @@ async fn execute_paper_trade(
         paper_trade: true,
         execution_status: Some(TradeExecutionStatus::Paper),
         clob_order_id: None,
-        amount_out: valuation.amount_out.map(|value| value.to_string()),
+        amount_out: net_out.map(|value| value.to_string()),
         entry_price_usd: valuation.entry_price_usd.map(|value| value.to_string()),
         notional_usd: valuation.notional_usd.map(|value| value.to_string()),
         requested_price_usd: metadata_decimal_string(&req.intent.metadata, "price"),
-        filled_price_usd: None,
-        filled_amount: None,
-        slippage_bps: None,
+        filled_price_usd: effective_fill_price.map(|value| value.to_string()),
+        filled_amount: net_out.map(|value| value.to_string()),
+        slippage_bps: fill_slippage_bps.map(|bps| bps.to_string()),
         execution_reason: Some(
             "Paper trade recorded without live execution reconciliation".to_string(),
         ),
@@ -3145,9 +3283,14 @@ async fn execute(
             &normalized_request,
             stored_validation,
             &valuation,
+            &state.strategy_config,
         )
         .await?;
-        update_portfolio_after_trade(&state.portfolio, &normalized_request, &valuation).await;
+        let paper_valuation = valuation.with_paper_fill_costs(
+            &normalized_request.intent.target_protocol,
+            &state.strategy_config,
+        );
+        update_portfolio_after_trade(&state.portfolio, &normalized_request, &paper_valuation).await;
         return Ok(result);
     }
 
@@ -3471,9 +3614,14 @@ async fn execute_multi_bot(
     }
 
     if bot.paper_trade {
-        let response =
-            execute_paper_trade(&bot.bot_id, &normalized_req, stored_validation, &valuation)
-                .await?;
+        let response = execute_paper_trade(
+            &bot.bot_id,
+            &normalized_req,
+            stored_validation,
+            &valuation,
+            &bot.strategy_config,
+        )
+        .await?;
         if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
             &bot,
             Some(&state),
@@ -3678,6 +3826,117 @@ mod tests {
             amount_format: None,
             metadata: serde_json::Value::Null,
         }
+    }
+
+    #[test]
+    fn paper_fill_costs_aerodrome_default_liquidity() {
+        // $5000 notional, default $10M reference depth (representative liquid
+        // ETH/USDC). fee = aerodrome taker 5 bps; impact = 5000/10_000_000 *
+        // 10_000 = 5 bps. total = 10 bps; net_out = 2.0 * (1 - 0.0010) = 1.998.
+        let gross_out = Decimal::new(2, 0); // 2.0 WETH
+        let notional = Decimal::new(5000, 0);
+        let cfg = serde_json::Value::Null;
+        let (net_out, total_cost_bps, fee_bps, impact_bps) =
+            paper_fill_costs("aerodrome", gross_out, notional, &cfg);
+
+        assert_eq!(fee_bps, 5, "aerodrome taker fee from protocol_fees");
+        assert_eq!(impact_bps, 5, "5 bps impact for $5k on $10M reference depth");
+        assert_eq!(total_cost_bps, 10, "fee + impact");
+        assert_eq!(net_out, Decimal::new(1998, 3), "1.998 WETH after costs");
+        assert!(net_out < gross_out, "net must be strictly below mid");
+    }
+
+    #[test]
+    fn paper_fill_costs_unknown_protocol_uses_30bps_fallback() {
+        // Unknown venue → 0.30% DEX default fee, never modelled as free.
+        let gross_out = Decimal::new(2, 0);
+        let notional = Decimal::new(5000, 0);
+        let cfg = serde_json::Value::Null;
+        let (net_out, total_cost_bps, fee_bps, impact_bps) =
+            paper_fill_costs("not_a_real_dex", gross_out, notional, &cfg);
+
+        assert_eq!(fee_bps, 30, "fallback fee");
+        assert_eq!(impact_bps, 5, "5 bps impact for $5k on $10M reference depth");
+        assert_eq!(total_cost_bps, 35);
+        // 2.0 * (1 - 0.0035) = 1.9930
+        assert_eq!(net_out, Decimal::new(1993, 3));
+    }
+
+    #[test]
+    fn paper_fill_costs_caps_impact_for_oversized_order() {
+        // $200M order against the $10M reference → impact 200_000 bps, capped at 500.
+        let gross_out = Decimal::new(1000, 0);
+        let notional = Decimal::new(200_000_000, 0);
+        let cfg = serde_json::Value::Null;
+        let (net_out, total_cost_bps, fee_bps, impact_bps) =
+            paper_fill_costs("aerodrome", gross_out, notional, &cfg);
+
+        assert_eq!(fee_bps, 5);
+        assert_eq!(impact_bps, PAPER_IMPACT_CAP_BPS, "impact capped at 500 bps");
+        assert_eq!(total_cost_bps, 505);
+        // 1000 * (1 - 0.0505) = 949.5
+        assert_eq!(net_out, Decimal::new(9495, 1));
+    }
+
+    #[test]
+    fn paper_fill_costs_honors_configured_reference_liquidity() {
+        // Override reference depth to $500k → $5k order = 100 bps impact.
+        let gross_out = Decimal::new(2, 0);
+        let notional = Decimal::new(5000, 0);
+        let cfg = serde_json::json!({ "paper_reference_liquidity_usd": 500_000.0 });
+        let (_net_out, total_cost_bps, fee_bps, impact_bps) =
+            paper_fill_costs("aerodrome", gross_out, notional, &cfg);
+
+        assert_eq!(fee_bps, 5);
+        assert_eq!(impact_bps, 100, "5000/500_000 * 10_000 = 100 bps");
+        assert_eq!(total_cost_bps, 105);
+    }
+
+    #[test]
+    fn paper_fill_costs_zero_notional_has_no_impact() {
+        // Guard: zero notional must not synthesize impact, only the fee applies.
+        let gross_out = Decimal::new(2, 0);
+        let cfg = serde_json::Value::Null;
+        let (net_out, total_cost_bps, fee_bps, impact_bps) =
+            paper_fill_costs("aerodrome", gross_out, Decimal::ZERO, &cfg);
+
+        assert_eq!(fee_bps, 5);
+        assert_eq!(impact_bps, 0);
+        assert_eq!(total_cost_bps, 5);
+        // 2.0 * (1 - 0.0005) = 1.9990
+        assert_eq!(net_out, Decimal::new(19990, 4));
+    }
+
+    #[test]
+    fn with_paper_fill_costs_unpriced_valuation_unchanged() {
+        // Unpriced (no notional) → no fabricated costs; snapshot passes through.
+        let snap = TradeValuationSnapshot::unpriced(Decimal::new(2, 0), Some(Decimal::new(2, 0)));
+        let cfg = serde_json::Value::Null;
+        let out = snap.with_paper_fill_costs("aerodrome", &cfg);
+        assert_eq!(out.amount_out, snap.amount_out);
+        assert_eq!(out.position_size, snap.position_size);
+        assert_eq!(out.notional_usd, None);
+    }
+
+    #[test]
+    fn with_paper_fill_costs_priced_credits_net_position() {
+        // Priced swap: portfolio position is credited with the NET token_out,
+        // i.e. the bot holds less WETH because it paid fee + impact.
+        // position_size 2.0, entry 2500 → notional 5000; aerodrome → 10 bps
+        // (5 fee + 5 impact on $10M ref) → 1.998 WETH net.
+        let snap = TradeValuationSnapshot::priced(
+            Decimal::new(2, 0),
+            Some(Decimal::new(2, 0)),
+            Decimal::new(2500, 0),
+        );
+        assert_eq!(snap.notional_usd, Some(Decimal::new(5000, 0)));
+        let cfg = serde_json::Value::Null;
+        let out = snap.with_paper_fill_costs("aerodrome", &cfg);
+        assert_eq!(out.amount_out, Some(Decimal::new(1998, 3)));
+        assert_eq!(out.position_size, Decimal::new(1998, 3));
+        // entry price and notional are inputs, left intact.
+        assert_eq!(out.entry_price_usd, Some(Decimal::new(2500, 0)));
+        assert_eq!(out.notional_usd, Some(Decimal::new(5000, 0)));
     }
 
     #[test]
