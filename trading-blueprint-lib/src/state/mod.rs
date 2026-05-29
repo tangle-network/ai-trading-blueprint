@@ -335,18 +335,41 @@ pub struct PaginatedBots {
     pub total: usize,
 }
 
-/// List all bots with pagination.
-pub fn list_bots(limit: usize, offset: usize) -> Result<PaginatedBots, String> {
-    let mut all = bots()?.values().map_err(|e| e.to_string())?;
+/// Whether `viewer` may see a bot with the given `submitter_address`.
+///
+/// `viewer == None` is the operator-admin scope (the binary's own operator key)
+/// and sees the full fleet. `viewer == Some(addr)` is a consumer session and
+/// sees only bots it submitted, plus legacy un-attributed bots (empty submitter)
+/// — matching the open semantics of `verify_submitter` on the per-bot routes.
+pub fn bot_visible_to(submitter: &str, viewer: Option<&str>) -> bool {
+    match viewer {
+        None => true,
+        Some(addr) => submitter.is_empty() || submitter.eq_ignore_ascii_case(addr),
+    }
+}
+
+/// List bots with pagination, scoped to `viewer` (see [`bot_visible_to`]).
+pub fn list_bots(
+    viewer: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> Result<PaginatedBots, String> {
+    let mut all: Vec<TradingBotRecord> = bots()?
+        .values()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|b| bot_visible_to(&b.submitter_address, viewer))
+        .collect();
     all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     let total = all.len();
     let page = all.into_iter().skip(offset).take(limit).collect();
     Ok(PaginatedBots { bots: page, total })
 }
 
-/// List bots owned by a specific operator address.
+/// List bots owned by a specific operator address, scoped to `viewer`.
 pub fn bots_by_operator(
     operator: &str,
+    viewer: Option<&str>,
     limit: usize,
     offset: usize,
 ) -> Result<PaginatedBots, String> {
@@ -355,7 +378,10 @@ pub fn bots_by_operator(
         .values()
         .map_err(|e| e.to_string())?
         .into_iter()
-        .filter(|b| b.operator_address.to_lowercase() == op)
+        .filter(|b| {
+            b.operator_address.to_lowercase() == op
+                && bot_visible_to(&b.submitter_address, viewer)
+        })
         .collect();
     all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     let total = all.len();
@@ -363,9 +389,10 @@ pub fn bots_by_operator(
     Ok(PaginatedBots { bots: page, total })
 }
 
-/// List bots using a specific strategy type.
+/// List bots using a specific strategy type, scoped to `viewer`.
 pub fn bots_by_strategy(
     strategy: &str,
+    viewer: Option<&str>,
     limit: usize,
     offset: usize,
 ) -> Result<PaginatedBots, String> {
@@ -374,7 +401,9 @@ pub fn bots_by_strategy(
         .values()
         .map_err(|e| e.to_string())?
         .into_iter()
-        .filter(|b| b.strategy_type == strat)
+        .filter(|b| {
+            b.strategy_type == strat && bot_visible_to(&b.submitter_address, viewer)
+        })
         .collect();
     all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     let total = all.len();
@@ -650,8 +679,8 @@ mod tests {
             .insert(bot_key("b3"), make_bot("b3", "0xOp1", "defi_yield", 3000))
             .unwrap();
 
-        // list_bots: all 3, sorted descending by created_at
-        let result = list_bots(10, 0).unwrap();
+        // list_bots: all 3, sorted descending by created_at (admin scope)
+        let result = list_bots(None, 10, 0).unwrap();
         assert_eq!(result.total, 3);
         assert_eq!(result.bots.len(), 3);
         assert_eq!(result.bots[0].id, "b3");
@@ -659,18 +688,18 @@ mod tests {
         assert_eq!(result.bots[2].id, "b1");
 
         // pagination
-        let page = list_bots(1, 1).unwrap();
+        let page = list_bots(None, 1, 1).unwrap();
         assert_eq!(page.total, 3);
         assert_eq!(page.bots.len(), 1);
         assert_eq!(page.bots[0].id, "b2");
 
         // bots_by_operator
-        let by_op = bots_by_operator("0xOp1", 10, 0).unwrap();
+        let by_op = bots_by_operator("0xOp1", None, 10, 0).unwrap();
         assert_eq!(by_op.total, 2);
         assert!(by_op.bots.iter().all(|b| b.operator_address == "0xOp1"));
 
         // bots_by_strategy
-        let by_strat = bots_by_strategy("defi_yield", 10, 0).unwrap();
+        let by_strat = bots_by_strategy("defi_yield", None, 10, 0).unwrap();
         assert_eq!(by_strat.total, 2);
         assert!(
             by_strat
@@ -686,5 +715,44 @@ mod tests {
 
         let not_found = get_bot("nonexistent").unwrap();
         assert!(not_found.is_none());
+
+        // ── Caller-scoping (bot_visible_to / viewer param) ──────────────
+        // b1/b2/b3 above have empty submitter_address (legacy → visible to
+        // everyone). Add two attributed bots and prove a consumer session
+        // sees only its own + legacy, while admin (None) sees the fleet.
+        let mut alice = make_bot("alice1", "0xOp1", "dex_trading", 4000);
+        alice.submitter_address = "0xAliCe".to_string();
+        let mut bob = make_bot("bob1", "0xOp1", "dex_trading", 5000);
+        bob.submitter_address = "0xBob".to_string();
+        store.insert(bot_key("alice1"), alice).unwrap();
+        store.insert(bot_key("bob1"), bob).unwrap();
+
+        // Admin sees all 5; Alice sees 3 legacy + her own = 4, never bob1.
+        assert_eq!(list_bots(None, 50, 0).unwrap().total, 5);
+        let alice_view = list_bots(Some("0xalice"), 50, 0).unwrap();
+        assert_eq!(alice_view.total, 4);
+        let ids: Vec<&str> = alice_view.bots.iter().map(|b| b.id.as_str()).collect();
+        assert!(ids.contains(&"alice1") && !ids.contains(&"bob1"));
+
+        // A wallet that submitted nothing sees only the 3 legacy bots.
+        assert_eq!(list_bots(Some("0xdead"), 50, 0).unwrap().total, 3);
+
+        // Scoping composes with the operator/strategy facets.
+        assert_eq!(
+            bots_by_operator("0xOp1", Some("0xbob"), 50, 0).unwrap().total,
+            3 // legacy b1/b3 are 0xOp1 + bob1
+        );
+        assert_eq!(
+            bots_by_strategy("dex_trading", Some("0xalice"), 50, 0)
+                .unwrap()
+                .total,
+            2 // legacy b2 (dex_trading) + alice1
+        );
+
+        // The predicate itself.
+        assert!(bot_visible_to("", Some("0xanyone"))); // legacy → open
+        assert!(bot_visible_to("0xABC", None)); // admin → all
+        assert!(bot_visible_to("0xabc", Some("0xABC"))); // case-insensitive self
+        assert!(!bot_visible_to("0xabc", Some("0xdef"))); // not yours
     }
 }
