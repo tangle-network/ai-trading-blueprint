@@ -1079,7 +1079,7 @@ impl TradeValuationSnapshot {
             (Some(gross_out), Some(notional_usd))
                 if gross_out > Decimal::ZERO && notional_usd > Decimal::ZERO =>
             {
-                let (net_out, _, _, _) =
+                let (net_out, _, _, _, _) =
                     paper_fill_costs(protocol, gross_out, notional_usd, strategy_config);
                 Self {
                     amount_out: Some(net_out),
@@ -2033,13 +2033,20 @@ const PAPER_IMPACT_CAP_BPS: u32 = 500;
 /// most common DEX tier — so an unknown venue is never modelled as free.
 const PAPER_UNKNOWN_FEE_BPS: u32 = 30;
 
+/// Default fixed gas/tx cost (USD) charged per paper swap. Real chains aren't
+/// free — modelling zero gas inflates PnL. ~$0.05 is a representative Base-mainnet
+/// DEX swap (L2 execution + L1 data fee); set higher for L1 Ethereum (~$5–20) via
+/// `strategy_config.paper_gas_cost_usd`. Deducted from token_out received.
+const DEFAULT_PAPER_GAS_COST_USD: f64 = 0.05;
+
 /// Compute the realistic cost of a paper DEX/vault swap from REAL data: the
-/// authoritative per-protocol taker fee (`trading_runtime::protocol_fees`) plus
-/// a principled AMM price-impact term scaled by trade size against a reference
-/// liquidity depth.
+/// authoritative per-protocol taker fee (`trading_runtime::protocol_fees`), a
+/// principled AMM price-impact term scaled by trade size against a reference
+/// liquidity depth, and a per-swap gas/tx cost.
 ///
-/// Returns `(net_out, total_cost_bps, fee_bps, impact_bps)` where `net_out` is
-/// the amount of `token_out` the bot actually receives after fee + impact.
+/// Returns `(net_out, total_cost_bps, fee_bps, impact_bps, gas_cost_usd)` where
+/// `net_out` is the `token_out` the bot actually receives after fee + impact +
+/// gas (gas converted to `token_out` at the mid price and subtracted).
 ///
 /// Price-impact model: `impact_bps = min(CAP, notional_usd / reference_liquidity_usd * 10_000)`.
 /// This is a linear constant-product approximation around the current price —
@@ -2049,24 +2056,28 @@ const PAPER_UNKNOWN_FEE_BPS: u32 = 30;
 /// modelled against a representative mainnet-scale depth the strategy targets.
 ///
 /// Fees come exclusively from the canonical schedule; there is no invented flat
-/// swap cost. An unknown protocol falls back to the 0.30% DEX default.
+/// swap cost. An unknown protocol falls back to the 0.30% DEX default. Gas is a
+/// real, configurable per-swap tx cost so paper PnL is never inflated by free
+/// execution.
 fn paper_fill_costs(
     protocol: &str,
     gross_out: Decimal,
     notional_usd: Decimal,
     strategy_config: &serde_json::Value,
-) -> (Decimal, u32, u32, u32) {
+) -> (Decimal, u32, u32, u32, Decimal) {
     let fee_bps = trading_runtime::protocol_fees::schedule_for(protocol)
         .map(|schedule| schedule.taker_bps)
         .unwrap_or(PAPER_UNKNOWN_FEE_BPS);
 
-    let reference_liquidity_usd = strategy_config
-        .get("paper_reference_liquidity_usd")
-        .and_then(|value| match value {
+    let cfg_f64 = |key: &str| -> Option<f64> {
+        strategy_config.get(key).and_then(|value| match value {
             serde_json::Value::Number(number) => number.as_f64(),
             serde_json::Value::String(raw) => raw.parse().ok(),
             _ => None,
         })
+    };
+
+    let reference_liquidity_usd = cfg_f64("paper_reference_liquidity_usd")
         .filter(|depth| *depth > 0.0)
         .unwrap_or(DEFAULT_PAPER_REFERENCE_LIQUIDITY_USD);
 
@@ -2081,9 +2092,23 @@ fn paper_fill_costs(
     let total_cost_bps = fee_bps + impact_bps;
     // net_out = gross_out * (1 - total_cost_bps / 10_000)
     let cost_fraction = Decimal::new(total_cost_bps as i64, 4);
-    let net_out = gross_out * (Decimal::ONE - cost_fraction);
+    let mut net_out = gross_out * (Decimal::ONE - cost_fraction);
 
-    (net_out, total_cost_bps, fee_bps, impact_bps)
+    // Gas/tx cost: a fixed per-swap USD cost (chains aren't free). Convert to
+    // token_out at the mid price (notional_usd / gross_out → USD per token_out)
+    // and subtract from what the bot receives, so PnL is net of gas.
+    let gas_cost_usd = cfg_f64("paper_gas_cost_usd")
+        .filter(|g| *g >= 0.0)
+        .unwrap_or(DEFAULT_PAPER_GAS_COST_USD);
+    let gas_cost_usd = format!("{gas_cost_usd:.6}")
+        .parse::<Decimal>()
+        .unwrap_or(Decimal::ZERO);
+    if gas_cost_usd > Decimal::ZERO && notional_usd > Decimal::ZERO && gross_out > Decimal::ZERO {
+        let gas_in_out = gas_cost_usd * gross_out / notional_usd;
+        net_out = (net_out - gas_in_out).max(Decimal::ZERO);
+    }
+
+    (net_out, total_cost_bps, fee_bps, impact_bps, gas_cost_usd)
 }
 
 /// Execute a paper trade: log it without on-chain execution.
@@ -2109,15 +2134,16 @@ async fn execute_paper_trade(
     // the mid amount-out and the notional). For unpriced swaps we cannot model
     // a fee/impact without fabricating a notional, so we keep the mid amount
     // and leave fill price / slippage unset — matching prior behavior.
-    let (net_out, fill_slippage_bps, effective_fill_price): (
+    let (net_out, fill_slippage_bps, effective_fill_price, gas_cost_usd): (
         Option<Decimal>,
         Option<u32>,
+        Option<Decimal>,
         Option<Decimal>,
     ) = match (valuation.amount_out, valuation.notional_usd) {
         (Some(gross_out), Some(notional_usd))
             if gross_out > Decimal::ZERO && notional_usd > Decimal::ZERO =>
         {
-            let (net_out, total_cost_bps, fee_bps, impact_bps) = paper_fill_costs(
+            let (net_out, total_cost_bps, fee_bps, impact_bps, gas_cost_usd) = paper_fill_costs(
                 &req.intent.target_protocol,
                 gross_out,
                 notional_usd,
@@ -2135,11 +2161,12 @@ async fn execute_paper_trade(
                 fee_bps,
                 impact_bps,
                 total_cost_bps,
+                gas_cost_usd = %gas_cost_usd,
                 "paper fill costs applied"
             );
-            (Some(net_out), Some(total_cost_bps), fill_price)
+            (Some(net_out), Some(total_cost_bps), fill_price, Some(gas_cost_usd))
         }
-        _ => (valuation.amount_out, None, None),
+        _ => (valuation.amount_out, None, None, None),
     };
 
     tracing::info!(
@@ -2163,7 +2190,9 @@ async fn execute_paper_trade(
         target_protocol: req.intent.target_protocol.clone(),
         tx_hash: mock_tx_hash.clone(),
         block_number: Some(0),
-        gas_used: Some("0".to_string()),
+        // Modeled per-swap gas/tx cost (USD), already deducted from net_out so
+        // PnL is net of gas. Recorded for transparency / cost accounting.
+        gas_used: Some(gas_cost_usd.unwrap_or(Decimal::ZERO).to_string()),
         paper_trade: true,
         execution_status: Some(TradeExecutionStatus::Paper),
         clob_order_id: None,
@@ -3835,13 +3864,14 @@ mod tests {
         // 10_000 = 5 bps. total = 10 bps; net_out = 2.0 * (1 - 0.0010) = 1.998.
         let gross_out = Decimal::new(2, 0); // 2.0 WETH
         let notional = Decimal::new(5000, 0);
-        let cfg = serde_json::Value::Null;
-        let (net_out, total_cost_bps, fee_bps, impact_bps) =
+        let cfg = serde_json::json!({ "paper_gas_cost_usd": 0.0 }); // isolate fee+impact
+        let (net_out, total_cost_bps, fee_bps, impact_bps, gas_cost_usd) =
             paper_fill_costs("aerodrome", gross_out, notional, &cfg);
 
         assert_eq!(fee_bps, 5, "aerodrome taker fee from protocol_fees");
         assert_eq!(impact_bps, 5, "5 bps impact for $5k on $10M reference depth");
         assert_eq!(total_cost_bps, 10, "fee + impact");
+        assert_eq!(gas_cost_usd, Decimal::ZERO, "gas disabled in this case");
         assert_eq!(net_out, Decimal::new(1998, 3), "1.998 WETH after costs");
         assert!(net_out < gross_out, "net must be strictly below mid");
     }
@@ -3851,8 +3881,8 @@ mod tests {
         // Unknown venue → 0.30% DEX default fee, never modelled as free.
         let gross_out = Decimal::new(2, 0);
         let notional = Decimal::new(5000, 0);
-        let cfg = serde_json::Value::Null;
-        let (net_out, total_cost_bps, fee_bps, impact_bps) =
+        let cfg = serde_json::json!({ "paper_gas_cost_usd": 0.0 });
+        let (net_out, total_cost_bps, fee_bps, impact_bps, _gas) =
             paper_fill_costs("not_a_real_dex", gross_out, notional, &cfg);
 
         assert_eq!(fee_bps, 30, "fallback fee");
@@ -3867,8 +3897,8 @@ mod tests {
         // $200M order against the $10M reference → impact 200_000 bps, capped at 500.
         let gross_out = Decimal::new(1000, 0);
         let notional = Decimal::new(200_000_000, 0);
-        let cfg = serde_json::Value::Null;
-        let (net_out, total_cost_bps, fee_bps, impact_bps) =
+        let cfg = serde_json::json!({ "paper_gas_cost_usd": 0.0 });
+        let (net_out, total_cost_bps, fee_bps, impact_bps, _gas) =
             paper_fill_costs("aerodrome", gross_out, notional, &cfg);
 
         assert_eq!(fee_bps, 5);
@@ -3883,8 +3913,8 @@ mod tests {
         // Override reference depth to $500k → $5k order = 100 bps impact.
         let gross_out = Decimal::new(2, 0);
         let notional = Decimal::new(5000, 0);
-        let cfg = serde_json::json!({ "paper_reference_liquidity_usd": 500_000.0 });
-        let (_net_out, total_cost_bps, fee_bps, impact_bps) =
+        let cfg = serde_json::json!({ "paper_reference_liquidity_usd": 500_000.0, "paper_gas_cost_usd": 0.0 });
+        let (_net_out, total_cost_bps, fee_bps, impact_bps, _gas) =
             paper_fill_costs("aerodrome", gross_out, notional, &cfg);
 
         assert_eq!(fee_bps, 5);
@@ -3896,8 +3926,8 @@ mod tests {
     fn paper_fill_costs_zero_notional_has_no_impact() {
         // Guard: zero notional must not synthesize impact, only the fee applies.
         let gross_out = Decimal::new(2, 0);
-        let cfg = serde_json::Value::Null;
-        let (net_out, total_cost_bps, fee_bps, impact_bps) =
+        let cfg = serde_json::json!({ "paper_gas_cost_usd": 0.0 });
+        let (net_out, total_cost_bps, fee_bps, impact_bps, _gas) =
             paper_fill_costs("aerodrome", gross_out, Decimal::ZERO, &cfg);
 
         assert_eq!(fee_bps, 5);
@@ -3930,13 +3960,43 @@ mod tests {
             Decimal::new(2500, 0),
         );
         assert_eq!(snap.notional_usd, Some(Decimal::new(5000, 0)));
-        let cfg = serde_json::Value::Null;
+        let cfg = serde_json::json!({ "paper_gas_cost_usd": 0.0 }); // isolate fee+impact
         let out = snap.with_paper_fill_costs("aerodrome", &cfg);
         assert_eq!(out.amount_out, Some(Decimal::new(1998, 3)));
         assert_eq!(out.position_size, Decimal::new(1998, 3));
         // entry price and notional are inputs, left intact.
         assert_eq!(out.entry_price_usd, Some(Decimal::new(2500, 0)));
         assert_eq!(out.notional_usd, Some(Decimal::new(5000, 0)));
+    }
+
+    #[test]
+    fn paper_fill_costs_charges_gas_by_default() {
+        // Real chains aren't free: with no override, a per-swap gas cost applies
+        // and is deducted from token_out so PnL isn't inflated.
+        let gross_out = Decimal::new(2, 0);
+        let notional = Decimal::new(5000, 0);
+        let cfg = serde_json::Value::Null; // default gas
+        let (net_out, _total, _fee, _impact, gas_cost_usd) =
+            paper_fill_costs("aerodrome", gross_out, notional, &cfg);
+        // Default $0.05/swap.
+        assert_eq!(gas_cost_usd, "0.050000".parse::<Decimal>().unwrap());
+        // fee+impact alone (gas=0) → 1.998; gas pushes net strictly lower.
+        assert!(net_out < Decimal::new(1998, 3), "gas must reduce net below the fee+impact-only fill");
+        // gas in WETH = 0.05 * 2.0 / 5000 = 0.00002 → net = 1.998 - 0.00002 = 1.99798
+        assert_eq!(net_out, "1.99798".parse::<Decimal>().unwrap());
+    }
+
+    #[test]
+    fn paper_fill_costs_honors_configured_gas() {
+        // L1-scale gas via config knob: $20/swap on a $5k/2.0-WETH trade.
+        let gross_out = Decimal::new(2, 0);
+        let notional = Decimal::new(5000, 0);
+        let cfg = serde_json::json!({ "paper_gas_cost_usd": 20.0, "paper_reference_liquidity_usd": 10_000_000.0 });
+        let (net_out, _total, _fee, _impact, gas_cost_usd) =
+            paper_fill_costs("aerodrome", gross_out, notional, &cfg);
+        assert_eq!(gas_cost_usd, Decimal::new(20, 0));
+        // fee+impact net = 1.998; gas WETH = 20 * 2.0 / 5000 = 0.008 → 1.99
+        assert_eq!(net_out, Decimal::new(199, 2));
     }
 
     #[test]
