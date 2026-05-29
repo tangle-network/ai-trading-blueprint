@@ -138,6 +138,15 @@ Maintained so sessions don't re-spelunk. Append when you discover something cost
 - Box repo (`/mnt/trading-data/opt-trading-blueprint/repo`) is on stale `codex/base-sepolia-live-runtime` (~111 behind main); its uncommitted work is preserved on branch `box-base-sepolia-patches`. `settings.env` is tracked-with-secrets there — handle carefully.
 - v0.1.4 release tag (Gen-4) built x86_64 + **aarch64** binaries; release CI = `.github/workflows/release.yml` on `v*` tags.
 
+### Paper-trading unblock (v0.1.10/v0.1.11, 2026-05-29) — why bots skipped, now fixed
+Paper MM bots skipped every tick (`inventory-below-minimum`, then `submission-rejected`). THREE stacked plumbing bugs (not the strategy):
+1. **Inventory invisible** — `tick_common.js isVaultSpot` required `protocol==='vault'`, but the paper portfolio synth labels seeded cash `'paper'` and swapped tokens by DEX venue. Fixed → gate on `position_type==='spot'`.
+2. **Asset universe excluded mm/multi** — `trading_runtime::supported_assets::supported_assets_for` matched only `("dex", aerodrome|uniswap_v3)`; `mm`/`multi` fell to `_ => Vec::new()` → `/validate` rejected swaps. Fixed → `("dex"|"mm"|"multi", …)`.
+3. Validate→execute chain confirmed: paper bypass approves, `execute_paper_trade` records a `TradeRecord`.
+- Paper portfolio seed IS real: `build_multi_bot_portfolio_response`→`synthesize_trade_positions`→`seed_initial_paper_cash` credits `initial_capital_usd` as a `cash_token` spot position. Verify via `POST localhost:9100/portfolio/state` from the HOST with the bot's `TRADING_API_TOKEN` (bot resolved by bearer token; sandbox is bridge-net so `localhost:9100` is unreachable *inside* the container — query from host).
+- **Honest fills (v0.1.11):** `execute_paper_trade` applies real per-protocol fee (`trading_runtime::protocol_fees::schedule_for().taker_bps`) + size-based impact (`notional/paper_reference_liquidity_usd`, $10M default, configurable). Records net `amount_out` + `slippage_bps` + `filled_price_usd`. Before this, fills were frictionless (fantasy P&L). MM rebalances on `±rebalance_band_pct` weight drift (default 0.1) then holds — infrequent by design.
+- Strategy params are explicit + runtime-updatable: each tick reads `harness.{mm,portfolio,…}`; set via `PATCH /api/bots/{id}/config` (→`update_harness`) or the agent's `evolve-strategy.js promote()`. Agentic closed-loop param tuning (learn per-harness-version perf → propose → paper-gate → promote) is the next build; substrate in `routes/evolution.rs` + `learning_store.rs`.
+
 ### Process gotchas (these cost real tool calls)
 - **`pkill -f <pattern>` kills your own shell** when the shell's command string contains `<pattern>` → exit 144. Kill by explicit PID instead; `pgrep -f` also self-matches.
 - `evals/` and `trading-blueprint-lib/` are **ESM (`"type":"module"`)**; sandbox `/home/agent` is **CommonJS**. Test tool JS via a `.cjs` copy or in-sandbox, not local `require` of the ESM dir.
