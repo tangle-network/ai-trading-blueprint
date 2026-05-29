@@ -16,7 +16,31 @@ use crate::state::TradingBotRecord;
 // sources are head-capped so a large workspace can't blow the exec response.
 // metrics_latest is parsed when valid JSON, else passed through as the raw
 // string (never throws). Missing files become null / {}.
-const READ_TICK_ARTIFACTS_JS: &str = r#"node -e 'const fs=require("fs");const r=p=>{try{return fs.readFileSync(p,"utf8")}catch{return null}};let strat={};try{const d="/home/agent/tools/strategies";for(const f of fs.readdirSync(d)){if(f.endsWith(".js")){try{strat[f]=fs.readFileSync(d+"/"+f,"utf8").slice(0,8000)}catch{}}}}catch{}let m=r("/home/agent/metrics/latest.json");let mp=null;try{mp=m?JSON.parse(m):null}catch{mp=m}process.stdout.write(JSON.stringify({decisions_jsonl:r("/home/agent/logs/decisions.jsonl"),metrics_latest:mp,strategies:strat}))'"#;
+//
+// Fed to node via a quoted heredoc on stdin (`node - <<'NODE'`) — the same form
+// the live tick verifier uses (jobs/workflow_tick.rs). The sidecar's terminal
+// endpoint runs `command` raw (no shell wrapping), so a bare `node -e '…'` with
+// inner quotes is mangled to an empty program (exit 0, empty stdout → a 502
+// "EOF while parsing"). The heredoc carries the script on stdin, immune to that.
+const READ_TICK_ARTIFACTS_JS: &str = r#"node - <<'NODE'
+const fs = require('fs');
+const r = p => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
+let strat = {};
+try {
+  const d = '/home/agent/tools/strategies';
+  for (const f of fs.readdirSync(d)) {
+    if (f.endsWith('.js')) { try { strat[f] = fs.readFileSync(d + '/' + f, 'utf8').slice(0, 8000); } catch {} }
+  }
+} catch {}
+let m = r('/home/agent/metrics/latest.json');
+let mp = null;
+try { mp = m ? JSON.parse(m) : null; } catch { mp = m; }
+process.stdout.write(JSON.stringify({
+  decisions_jsonl: r('/home/agent/logs/decisions.jsonl'),
+  metrics_latest: mp,
+  strategies: strat,
+}));
+NODE"#;
 
 /// Read `{ decisions_jsonl, metrics_latest, strategies }` from the bot's
 /// sandbox. Returns an error string on missing sandbox / exec failure / unparsable
@@ -41,6 +65,12 @@ pub async fn read_bot_tick_artifacts(bot: &TradingBotRecord) -> Result<Value, St
             resp.stderr.trim()
         ));
     }
-    serde_json::from_str(resp.stdout.trim())
-        .map_err(|e| format!("tick-artifacts JSON parse failed: {e}"))
+    let stdout = resp.stdout.trim();
+    serde_json::from_str(stdout).map_err(|e| {
+        format!(
+            "tick-artifacts JSON parse failed: {e} (stdout={:?}, stderr={:?})",
+            stdout.chars().take(200).collect::<String>(),
+            resp.stderr.trim().chars().take(200).collect::<String>(),
+        )
+    })
 }
