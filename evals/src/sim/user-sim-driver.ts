@@ -25,6 +25,12 @@ import { OperatorClient } from './operator-client.js'
 import type { StrategyType } from './strategy-type.js'
 import type { UserPersona } from './user-personas.js'
 
+/** After a session ends, poll the bot's tick-artifacts up to this long for the
+ *  first deterministic tick to land (a fresh bot ticks on a cron, not instantly),
+ *  so the captured cell carries real decisions instead of an empty payload. */
+const TICK_CAPTURE_WAIT_MS = 90_000
+const TICK_CAPTURE_POLL_MS = 5_000
+
 export interface UserIntent {
   /** Stable id used as the scenario id + cell id. */
   id: string
@@ -192,11 +198,25 @@ export async function runUserSimSession(opts: UserSimSessionOptions): Promise<Us
   // analyst can adjudicate real execution vs prose. Best-effort: a missing
   // endpoint / unreachable sandbox leaves this null (analyst → UNVERIFIABLE),
   // never a fabricated "captured" flag.
+  //
+  // A freshly-provisioned bot ticks on a cron, so right after a short chat its
+  // decisions.jsonl may not exist yet (endpoint returns an empty-but-valid
+  // payload). Poll briefly until the first tick lands so the cell carries real
+  // decisions — bounded, and we keep whatever we last got (empty is honest, not
+  // an error).
   let tickSideEffects: TickSideEffects | null = null
-  try {
-    tickSideEffects = await client.get<TickSideEffects>(`/api/bots/${opts.botId}/tick-artifacts`)
-  } catch {
-    // swallow — capture is observational; absence is honestly reported
+  const tickDeadline = Date.now() + TICK_CAPTURE_WAIT_MS
+  for (;;) {
+    try {
+      const got = await client.get<TickSideEffects>(`/api/bots/${opts.botId}/tick-artifacts`)
+      tickSideEffects = got
+      const hasDecisions = typeof got?.decisions_jsonl === 'string' && got.decisions_jsonl.trim().length > 0
+      if (hasDecisions || Date.now() >= tickDeadline) break
+    } catch {
+      // swallow — capture is observational; absence is honestly reported
+      if (Date.now() >= tickDeadline) break
+    }
+    await new Promise<void>((r) => setTimeout(r, TICK_CAPTURE_POLL_MS))
   }
   return {
     intent: opts.intent,
