@@ -21,6 +21,115 @@ pub enum SupportedAssetParseError {
     UnknownValuationAdapter(String),
 }
 
+/// Why an asset was refused by the declared-universe gate. Each variant maps
+/// to a stable wire code (see [`UnsupportedAssetReason::code`]) so an operator,
+/// the validator, and the decision log all read the same machine-parsable
+/// reason instead of a free-text "not supported" string that downstream code
+/// either ignores or misreads as a transient adapter failure.
+///
+/// G6 invariant: an asset outside the declared universe MUST surface a typed
+/// refusal — never a silent skip and never an empty `Vec`/`None` that a caller
+/// can mistake for "no opinion".
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UnsupportedAssetReason {
+    /// The token address/symbol is not in the strategy's declared universe at
+    /// all (the common case: an LLM-proposed token nobody allow-listed).
+    OutOfUniverse,
+    /// The strategy/protocol pair maps to no asset universe whatsoever, so
+    /// every asset is implicitly rejected (e.g. `("dex","sushiswap")`).
+    UnknownUniverse,
+    /// Token exists in the universe but for a different chain id.
+    ChainMismatch,
+    /// Token exists in the universe but under a different protocol.
+    ProtocolMismatch,
+    /// Token exists in the universe but is not permitted in the requested role
+    /// (e.g. a debt-only aToken used as a swap input).
+    RoleMismatch,
+}
+
+impl UnsupportedAssetReason {
+    /// Stable wire code. Kept distinct from the enum's serde repr so renaming a
+    /// Rust variant can never silently change the on-the-wire contract.
+    pub fn code(self) -> &'static str {
+        match self {
+            UnsupportedAssetReason::OutOfUniverse => "out_of_universe",
+            UnsupportedAssetReason::UnknownUniverse => "unknown_universe",
+            UnsupportedAssetReason::ChainMismatch => "chain_mismatch",
+            UnsupportedAssetReason::ProtocolMismatch => "protocol_mismatch",
+            UnsupportedAssetReason::RoleMismatch => "role_mismatch",
+        }
+    }
+}
+
+/// Structured refusal emitted when the declared-universe gate rejects an asset.
+///
+/// Serializes to the canonical refusal envelope so callers (executor, validator,
+/// decision log) can pattern-match on `refusal == "asset_not_in_universe"`
+/// rather than scraping an error string:
+///
+/// ```json
+/// {"refusal":"asset_not_in_universe","reason":"role_mismatch",
+///  "asset":"0x…","role":"input","strategy_type":"dex",
+///  "protocol":"uniswap_v3","chain_id":8453}
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetRefusal {
+    /// Constant discriminator — always `"asset_not_in_universe"`. Lets a caller
+    /// branch on the refusal kind without parsing the message.
+    pub refusal: &'static str,
+    pub reason: UnsupportedAssetReason,
+    /// The token as the caller supplied it (address or symbol), preserved
+    /// verbatim for log/forensic correlation.
+    pub asset: String,
+    pub role: TradeAssetRole,
+    pub strategy_type: String,
+    pub protocol: String,
+    pub chain_id: u64,
+}
+
+impl AssetRefusal {
+    pub const REFUSAL: &'static str = "asset_not_in_universe";
+
+    pub fn new(
+        reason: UnsupportedAssetReason,
+        asset: &str,
+        role: TradeAssetRole,
+        strategy_type: &str,
+        protocol: &str,
+        chain_id: u64,
+    ) -> Self {
+        AssetRefusal {
+            refusal: Self::REFUSAL,
+            reason,
+            asset: asset.to_string(),
+            role,
+            strategy_type: normalize_strategy_type(strategy_type),
+            protocol: normalize_protocol(protocol),
+            chain_id,
+        }
+    }
+
+    /// Compact single-line JSON for embedding in an error message / decision
+    /// log. Infallible: the shape is closed and always serializes.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| {
+            format!(
+                "{{\"refusal\":\"{}\",\"reason\":\"{}\",\"asset\":\"{}\"}}",
+                Self::REFUSAL,
+                self.reason.code(),
+                self.asset
+            )
+        })
+    }
+}
+
+impl std::fmt::Display for AssetRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_json())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TradeAssetRole {
@@ -29,6 +138,20 @@ pub enum TradeAssetRole {
     Collateral,
     Wrapper,
     Debt,
+}
+
+impl TradeAssetRole {
+    /// All roles, used by the declared-universe gate to detect a role-mismatch
+    /// (token is in the universe but not permitted in the requested role).
+    pub fn all() -> [TradeAssetRole; 5] {
+        [
+            TradeAssetRole::Input,
+            TradeAssetRole::Output,
+            TradeAssetRole::Collateral,
+            TradeAssetRole::Wrapper,
+            TradeAssetRole::Debt,
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -135,6 +258,158 @@ pub fn is_supported_trade_asset_for_config(
                 && asset.roles.contains(&role)
         })
 }
+
+/// Declared-universe gate (G6).
+///
+/// Returns the matched [`SupportedAsset`] when `token` is in the strategy's
+/// declared universe for `role`, otherwise a typed [`AssetRefusal`] that names
+/// *why* it was rejected. This is the hard gate: callers MUST treat `Err` as a
+/// refusal to act, not as "no assets configured, proceed".
+///
+/// Reason classification (most-specific-wins) is derived by re-probing the
+/// universe with relaxed predicates so an operator can tell "you typed a token
+/// nobody allow-listed" (`OutOfUniverse`) apart from "that token is valid but
+/// you used it in the wrong role / on the wrong chain / under the wrong
+/// protocol". Distinguishing these is the whole point of G6 — a silent `None`
+/// collapsed all four into "nothing happened".
+pub fn gate_trade_asset(
+    strategy_type: &str,
+    chain_id: u64,
+    protocol: &str,
+    token: &str,
+    role: TradeAssetRole,
+) -> Result<SupportedAsset, AssetRefusal> {
+    gate_trade_asset_for_config(strategy_type, chain_id, protocol, token, role, None)
+}
+
+/// Config-aware variant of [`gate_trade_asset`]. Honors a per-bot
+/// `strategy_config` asset universe override before falling back to the default
+/// registry.
+pub fn gate_trade_asset_for_config(
+    strategy_type: &str,
+    chain_id: u64,
+    protocol: &str,
+    token: &str,
+    role: TradeAssetRole,
+    strategy_config: Option<&Value>,
+) -> Result<SupportedAsset, AssetRefusal> {
+    if let Some(asset) = is_supported_trade_asset_for_config(
+        strategy_type,
+        chain_id,
+        protocol,
+        token,
+        role,
+        strategy_config,
+    ) {
+        return Ok(asset);
+    }
+
+    let refuse = |reason| {
+        Err(AssetRefusal::new(
+            reason,
+            token,
+            role,
+            strategy_type,
+            protocol,
+            chain_id,
+        ))
+    };
+
+    // The strategy/protocol pair maps to no universe at all — every asset is
+    // implicitly rejected, so the rejection is about the universe, not the
+    // token. Surface that distinctly from "token not allow-listed".
+    let universe = supported_assets_for_config(strategy_type, chain_id, protocol, strategy_config);
+    if universe.is_empty() {
+        return refuse(UnsupportedAssetReason::UnknownUniverse);
+    }
+
+    // Token IS in the universe but mismatched on role — most actionable reason
+    // for the operator, so check it before broader fallbacks.
+    let token_in_universe_any_role = TradeAssetRole::all().iter().any(|&any_role| {
+        any_role != role
+            && is_supported_trade_asset_for_config(
+                strategy_type,
+                chain_id,
+                protocol,
+                token,
+                any_role,
+                strategy_config,
+            )
+            .is_some()
+    });
+    if token_in_universe_any_role {
+        return refuse(UnsupportedAssetReason::RoleMismatch);
+    }
+
+    // Token is recognized on a different chain in the same protocol family.
+    if token_matches_under(strategy_type, token, role, strategy_config, |asset| {
+        asset.chain_id != registry_chain_id(chain_id)
+            && asset.protocol == normalize_protocol(protocol)
+    }) {
+        return refuse(UnsupportedAssetReason::ChainMismatch);
+    }
+
+    // Token is recognized under a different protocol for this strategy.
+    if token_matches_under(strategy_type, token, role, strategy_config, |asset| {
+        asset.protocol != normalize_protocol(protocol)
+    }) {
+        return refuse(UnsupportedAssetReason::ProtocolMismatch);
+    }
+
+    refuse(UnsupportedAssetReason::OutOfUniverse)
+}
+
+/// Probe whether `token` matches any asset (under `role`) across the candidate
+/// protocols/chains for `strategy_type` where `predicate` holds. Used to
+/// classify near-miss refusal reasons (chain/protocol mismatch) without
+/// hard-coding the protocol/chain tables here.
+fn token_matches_under(
+    strategy_type: &str,
+    token: &str,
+    role: TradeAssetRole,
+    strategy_config: Option<&Value>,
+    predicate: impl Fn(&SupportedAsset) -> bool,
+) -> bool {
+    let key = normalize_token(token);
+    let normalized_strategy = normalize_strategy_type(strategy_type);
+
+    for &candidate_protocol in candidate_protocols_for(&normalized_strategy) {
+        for &candidate_chain in CANDIDATE_CHAIN_IDS {
+            let assets = supported_assets_for_config(
+                &normalized_strategy,
+                candidate_chain,
+                candidate_protocol,
+                strategy_config,
+            );
+            let matched = assets.iter().any(|asset| {
+                (normalize_token(&asset.address) == key || normalize_token(&asset.symbol) == key)
+                    && asset.roles.contains(&role)
+                    && predicate(asset)
+            });
+            if matched {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Protocols that share an asset universe with `strategy_type`. Mirrors the
+/// match arms in [`supported_assets_for`] so classification probes the same
+/// surface the gate enforces.
+fn candidate_protocols_for(strategy_type: &str) -> &'static [&'static str] {
+    match strategy_type {
+        "dex" | "mm" | "multi" => &["uniswap_v3", "aerodrome"],
+        "yield" => &["aave_v3"],
+        "hyperliquid_perp" => &["hyperliquid"],
+        _ => &[],
+    }
+}
+
+/// Chains probed when classifying a chain-mismatch refusal. Covers the chains
+/// the default registries know about (Ethereum, Base, Base-Sepolia, Arbitrum,
+/// HyperEVM testnet/mainnet) plus the local fork ids.
+const CANDIDATE_CHAIN_IDS: &[u64] = &[1, 8453, 84532, 42161, 998, 999, 31337, 31338, 31339];
 
 fn configured_assets_from_value(
     config: &Value,
@@ -786,5 +1061,214 @@ mod tests {
             !assets.is_empty(),
             "all-invalid config should fall back to defaults instead of empty universe"
         );
+    }
+
+    // ── G6: declared-universe gate — typed refusal, no silent skip ──────────
+
+    const BASE_SEPOLIA_USDC: &str = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+    const RANDOM_TOKEN: &str = "0x000000000000000000000000000000000000dEaD";
+
+    /// In-universe asset passes the gate and returns the matched asset (not an
+    /// empty/None that downstream misreads as "no restriction").
+    #[test]
+    fn gate_accepts_in_universe_asset() {
+        let asset = gate_trade_asset(
+            "dex",
+            84532,
+            "aerodrome",
+            BASE_SEPOLIA_USDC,
+            TradeAssetRole::Input,
+        )
+        .expect("USDC is in the dex/aerodrome universe and must pass the gate");
+        assert_eq!(asset.symbol, "USDC");
+        assert!(asset.roles.contains(&TradeAssetRole::Input));
+    }
+
+    /// Out-of-universe asset yields a STRUCTURED refusal — the whole point of
+    /// G6. Regression: previously `is_supported_trade_asset` returned `None`
+    /// and the swap was silently skipped with no machine-readable reason.
+    #[test]
+    fn gate_refuses_out_of_universe_asset_with_structured_reason() {
+        let refusal = gate_trade_asset(
+            "dex",
+            84532,
+            "aerodrome",
+            RANDOM_TOKEN,
+            TradeAssetRole::Output,
+        )
+        .expect_err("a random token must be refused, not silently skipped");
+
+        assert_eq!(refusal.refusal, AssetRefusal::REFUSAL);
+        assert_eq!(refusal.reason, UnsupportedAssetReason::OutOfUniverse);
+        assert_eq!(refusal.asset, RANDOM_TOKEN);
+        assert_eq!(refusal.role, TradeAssetRole::Output);
+        assert_eq!(refusal.chain_id, 84532);
+
+        // The wire envelope is the contract downstream parses.
+        let json: serde_json::Value =
+            serde_json::from_str(&refusal.to_json()).expect("refusal serializes to JSON");
+        assert_eq!(json["refusal"], "asset_not_in_universe");
+        assert_eq!(json["reason"], "out_of_universe");
+        assert_eq!(json["asset"], RANDOM_TOKEN);
+    }
+
+    /// A strategy/protocol pair with no registry universe rejects every asset
+    /// with `UnknownUniverse` — distinct from "token not allow-listed". This is
+    /// the case the old empty-`Vec` return collapsed into silence.
+    #[test]
+    fn gate_refuses_unknown_universe_when_protocol_unsupported() {
+        let refusal = gate_trade_asset(
+            "dex",
+            84532,
+            "sushiswap", // no universe mapped for dex/sushiswap
+            BASE_SEPOLIA_USDC,
+            TradeAssetRole::Input,
+        )
+        .expect_err("an unmapped protocol must refuse, not return an empty universe");
+        assert_eq!(refusal.reason, UnsupportedAssetReason::UnknownUniverse);
+    }
+
+    /// Token is in the universe but used in a disallowed role → RoleMismatch,
+    /// not OutOfUniverse. A custom output-only token used as an Input must be
+    /// refused with the precise reason — the gate must distinguish "you used a
+    /// known token in the wrong role" from "unknown token". A per-config
+    /// universe is used so the role set is exact and not collapsed by the
+    /// aToken→underlying metadata aliasing.
+    #[test]
+    fn gate_refuses_role_mismatch_for_output_only_token() {
+        let output_only = "0x2222222222222222222222222222222222222222";
+        let config = serde_json::json!({
+            "asset_universe": {
+                "allowed_assets": [{
+                    "strategy_type": "dex",
+                    "protocol": "uniswap_v3",
+                    "chain_id": 1,
+                    "symbol": "OUTONLY",
+                    "address": output_only,
+                    "decimals": 18,
+                    "roles": ["output"],
+                    "valuation_adapter": "chainlink_usd"
+                }]
+            }
+        });
+
+        let refusal = gate_trade_asset_for_config(
+            "dex",
+            1,
+            "uniswap_v3",
+            output_only,
+            TradeAssetRole::Input,
+            Some(&config),
+        )
+        .expect_err("an output-only token used as Input must be refused");
+        assert_eq!(refusal.reason, UnsupportedAssetReason::RoleMismatch);
+
+        // Sanity: the same token IS accepted in its declared role.
+        assert!(
+            gate_trade_asset_for_config(
+                "dex",
+                1,
+                "uniswap_v3",
+                output_only,
+                TradeAssetRole::Output,
+                Some(&config),
+            )
+            .is_ok()
+        );
+    }
+
+    /// Token is valid but on the wrong chain → ChainMismatch. WETH exists in
+    /// the dex universe on Ethereum (chain 1); requesting it on a chain whose
+    /// registry has a different WETH address surfaces the chain-mismatch reason
+    /// rather than a generic out-of-universe refusal.
+    #[test]
+    fn gate_refuses_chain_mismatch_for_cross_chain_address() {
+        // Ethereum-mainnet USDC address, requested on Base-Sepolia where the
+        // USDC address differs — same symbol family, wrong chain.
+        let eth_usdc = supported_assets_for("dex", 1, "uniswap_v3")
+            .into_iter()
+            .find(|asset| asset.symbol == "USDC")
+            .expect("ethereum dex universe has USDC");
+
+        // Only meaningful if the addresses actually differ across chains.
+        if eth_usdc.address.eq_ignore_ascii_case(BASE_SEPOLIA_USDC) {
+            return;
+        }
+
+        let refusal = gate_trade_asset(
+            "dex",
+            84532,
+            "aerodrome",
+            &eth_usdc.address,
+            TradeAssetRole::Input,
+        )
+        .expect_err("an ethereum-address USDC on base-sepolia must be refused");
+        assert_eq!(refusal.reason, UnsupportedAssetReason::ChainMismatch);
+    }
+
+    /// Config-aware gate honors a per-bot universe override: a configured custom
+    /// token passes, a default-pair token now outside the override is refused
+    /// with a structured reason (not silently dropped).
+    #[test]
+    fn gate_for_config_enforces_override_universe() {
+        let config = serde_json::json!({
+            "asset_universe": {
+                "allowed_assets": [{
+                    "strategy_type": "dex",
+                    "protocol": "uniswap_v3",
+                    "chain_id": 1,
+                    "symbol": "DAI",
+                    "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                    "decimals": 18,
+                    "roles": ["input", "output"],
+                    "valuation_adapter": "chainlink_usd"
+                }]
+            }
+        });
+
+        assert!(
+            gate_trade_asset_for_config(
+                "dex",
+                1,
+                "uniswap_v3",
+                "DAI",
+                TradeAssetRole::Input,
+                Some(&config)
+            )
+            .is_ok()
+        );
+
+        let refusal = gate_trade_asset_for_config(
+            "dex",
+            1,
+            "uniswap_v3",
+            "WETH",
+            TradeAssetRole::Input,
+            Some(&config),
+        )
+        .expect_err("WETH is outside the override universe and must be refused");
+        assert_eq!(refusal.refusal, AssetRefusal::REFUSAL);
+    }
+
+    /// The reason wire codes are stable and decoupled from serde variant names.
+    #[test]
+    fn unsupported_asset_reason_codes_are_stable() {
+        assert_eq!(
+            UnsupportedAssetReason::OutOfUniverse.code(),
+            "out_of_universe"
+        );
+        assert_eq!(
+            UnsupportedAssetReason::UnknownUniverse.code(),
+            "unknown_universe"
+        );
+        assert_eq!(
+            UnsupportedAssetReason::ChainMismatch.code(),
+            "chain_mismatch"
+        );
+        assert_eq!(
+            UnsupportedAssetReason::ProtocolMismatch.code(),
+            "protocol_mismatch"
+        );
+        assert_eq!(UnsupportedAssetReason::RoleMismatch.code(), "role_mismatch");
     }
 }

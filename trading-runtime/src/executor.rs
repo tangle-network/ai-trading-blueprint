@@ -20,7 +20,7 @@ use crate::simulator::{
     SimulationRequest, TransactionSimulator,
     risk_analyzer::{TradeContext, analyze_simulation},
 };
-use crate::supported_assets::{SupportedAsset, TradeAssetRole, is_supported_trade_asset};
+use crate::supported_assets::{SupportedAsset, TradeAssetRole};
 use crate::types::{TradeIntent, ValidationResult};
 use crate::vault_client::{Approval as VaultApproval, EncodedTransaction, VaultClient};
 
@@ -426,6 +426,14 @@ pub enum EnvelopeExecShape {
     DebtReduction(crate::contracts::ITradingVault::DebtReductionParams),
 }
 
+/// Declared-universe gate (G6) at the execution boundary.
+///
+/// Refuses any intent whose tokens fall outside the strategy's declared asset
+/// universe with a *structured* refusal — the `AssetRefusal` JSON is embedded
+/// in the error message so the caller / decision log can pattern-match
+/// `refusal == "asset_not_in_universe"` and read the typed reason, instead of
+/// the swap being silently dropped or the empty-universe case being misread as
+/// "no restriction".
 fn validate_supported_execution_tokens(
     intent: &TradeIntent,
     supported_assets: Option<&[SupportedAsset]>,
@@ -437,11 +445,16 @@ fn validate_supported_execution_tokens(
         (&intent.token_in, TradeAssetRole::Input),
         (&intent.token_out, TradeAssetRole::Output),
     ] {
-        if !execution_token_is_supported(intent, strategy_type, token, role, supported_assets) {
+        if let Err(refusal) =
+            gate_execution_token(intent, strategy_type, token, role, supported_assets)
+        {
             return Err(TradingError::AdapterError {
                 protocol: intent.target_protocol.clone(),
+                // Structured refusal envelope first so downstream parsers get a
+                // stable, machine-readable code; the human sentence follows.
                 message: format!(
-                    "Token {token} is not supported for {} bots on chain {}",
+                    "{} — Token {token} is not supported for {} bots on chain {}",
+                    refusal.to_json(),
                     strategy_type.to_ascii_uppercase(),
                     intent.chain_id
                 ),
@@ -451,33 +464,67 @@ fn validate_supported_execution_tokens(
     Ok(())
 }
 
-fn execution_token_is_supported(
+/// Gate a single execution token against the supplied or default universe.
+/// Returns the matched asset on success, or a typed [`AssetRefusal`] naming why
+/// the token was rejected.
+fn gate_execution_token(
     intent: &TradeIntent,
     strategy_type: &str,
     token: &str,
     role: TradeAssetRole,
     supported_assets: Option<&[SupportedAsset]>,
-) -> bool {
+) -> Result<SupportedAsset, crate::supported_assets::AssetRefusal> {
+    use crate::supported_assets::{AssetRefusal, UnsupportedAssetReason};
+
     if let Some(assets) = supported_assets {
+        // Caller-provided per-bot universe (multi-bot HTTP path). Classify the
+        // refusal the same way the registry gate does: empty universe →
+        // UnknownUniverse, present-but-wrong-role → RoleMismatch, else
+        // OutOfUniverse. Chain/protocol mismatch don't apply here because the
+        // caller already scoped the slice to this bot.
         let key = token.trim().to_ascii_lowercase();
-        return assets.iter().any(|asset| {
-            asset.strategy_type == strategy_type
-                && asset.protocol == intent.target_protocol
-                && asset.chain_id == intent.chain_id
-                && asset.roles.contains(&role)
-                && (asset.address.trim().eq_ignore_ascii_case(token)
-                    || asset.symbol.trim().to_ascii_lowercase() == key)
-        });
+        let matches_role = |role: TradeAssetRole| {
+            assets.iter().find(|asset| {
+                asset.strategy_type == strategy_type
+                    && asset.protocol == intent.target_protocol
+                    && asset.chain_id == intent.chain_id
+                    && asset.roles.contains(&role)
+                    && (asset.address.trim().eq_ignore_ascii_case(token)
+                        || asset.symbol.trim().to_ascii_lowercase() == key)
+            })
+        };
+        if let Some(asset) = matches_role(role) {
+            return Ok(asset.clone());
+        }
+        let refuse = |reason| {
+            Err(AssetRefusal::new(
+                reason,
+                token,
+                role,
+                strategy_type,
+                &intent.target_protocol,
+                intent.chain_id,
+            ))
+        };
+        if assets.is_empty() {
+            return refuse(UnsupportedAssetReason::UnknownUniverse);
+        }
+        if TradeAssetRole::all()
+            .into_iter()
+            .any(|other| other != role && matches_role(other).is_some())
+        {
+            return refuse(UnsupportedAssetReason::RoleMismatch);
+        }
+        return refuse(UnsupportedAssetReason::OutOfUniverse);
     }
 
-    is_supported_trade_asset(
+    crate::supported_assets::gate_trade_asset(
         strategy_type,
         intent.chain_id,
         &intent.target_protocol,
         token,
         role,
     )
-    .is_some()
 }
 
 fn strategy_type_for_protocol(protocol: &str) -> Option<&'static str> {
@@ -838,6 +885,71 @@ mod tests {
             .err()
             .expect("should reject unsupported chain");
         assert!(err.to_string().contains("Unsupported chain_id"), "{err}");
+    }
+
+    /// G6: an out-of-universe token at the execution boundary is REFUSED with a
+    /// structured `asset_not_in_universe` envelope embedded in the error — not
+    /// silently allowed through. Regression: validate_supported_execution_tokens
+    /// previously emitted only a free-text string that downstream couldn't
+    /// machine-parse, and the registry probe returned a bare `None`.
+    #[test]
+    fn validate_execution_tokens_refuses_out_of_universe_with_structured_envelope() {
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("s")
+            .action(Action::Swap)
+            .token_in("0x036CbD53842c5426634e7929541eC2318f3dCF7e") // base-sepolia USDC (in universe)
+            .token_out("0x000000000000000000000000000000000000dEaD") // out of universe
+            .amount_in(Decimal::from(1))
+            .min_amount_out(Decimal::from(1))
+            .target_protocol("aerodrome")
+            .chain_id(84532)
+            .deadline_secs(600)
+            .build()
+            .expect("intent builds");
+
+        let err = validate_supported_execution_tokens(&intent, None)
+            .expect_err("out-of-universe token_out must be refused");
+
+        let message = match &err {
+            TradingError::AdapterError { message, .. } => message.clone(),
+            other => panic!("expected AdapterError, got {other:?}"),
+        };
+
+        // The structured envelope must be parseable out of the message prefix.
+        let envelope = message
+            .split(" — ")
+            .next()
+            .expect("message has an envelope prefix");
+        let json: serde_json::Value =
+            serde_json::from_str(envelope).expect("refusal envelope is valid JSON");
+        assert_eq!(json["refusal"], "asset_not_in_universe");
+        assert_eq!(json["reason"], "out_of_universe");
+        assert_eq!(json["role"], "output");
+        assert_eq!(
+            json["asset"], "0x000000000000000000000000000000000000dEaD",
+            "the offending token is named in the refusal"
+        );
+    }
+
+    /// G6: an in-universe token passes the execution-boundary gate — the gate
+    /// lifts agency, it does not block legitimate trades.
+    #[test]
+    fn validate_execution_tokens_accepts_in_universe_pair() {
+        let intent = TradeIntentBuilder::new()
+            .strategy_id("s")
+            .action(Action::Swap)
+            .token_in("0x036CbD53842c5426634e7929541eC2318f3dCF7e") // USDC
+            .token_out("0x4200000000000000000000000000000000000006") // WETH
+            .amount_in(Decimal::from(1))
+            .min_amount_out(Decimal::from(1))
+            .target_protocol("aerodrome")
+            .chain_id(84532)
+            .deadline_secs(600)
+            .build()
+            .expect("intent builds");
+
+        validate_supported_execution_tokens(&intent, None)
+            .expect("an in-universe USDC→WETH swap must pass the gate");
     }
 
     #[test]
