@@ -830,7 +830,9 @@ async fn test_protected_routes_reject_no_auth() {
         ("POST", "/api/bots/test/start"),
         ("POST", "/api/bots/test/stop"),
         ("POST", "/api/bots/test/run-now"),
-        ("GET", "/api/bots"),
+        // NOTE: GET /api/bots is intentionally PUBLIC (the arena fleet/leaderboard
+        // reads the roster without sign-in) — asserted separately below. Per-bot
+        // reads, secrets, control, and debug routes stay protected.
         ("GET", "/api/bots/test"),
         ("GET", "/api/bots/test/metrics"),
         ("GET", "/api/bots/test/metrics/history"),
@@ -861,6 +863,28 @@ async fn test_protected_routes_reject_no_auth() {
 
         assert_eq!(response.status(), 401, "{method} {uri} should require auth");
     }
+
+    // GET /api/bots is the public fleet/leaderboard read — it must NOT 401.
+    let public = app()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/bots")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        public.status(),
+        401,
+        "GET /api/bots is a public leaderboard read and must not require auth"
+    );
+    assert_eq!(
+        public.status(),
+        200,
+        "GET /api/bots should return 200 unauthenticated"
+    );
 }
 
 // ---------------------------------------------------------------------------
