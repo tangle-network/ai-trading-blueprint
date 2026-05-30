@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { createFeedbackTrajectory, validateRunRecord } from '@tangle-network/agent-eval'
 import { sha256 } from '../lib/crypto.js'
+import { assertStrictlyHistorical, candleOpenMs } from '../lib/lookahead_validator.js'
 import { currentCommitSha, runPersonaSuite } from './persona-runner.js'
 import { type PersonaEvalResult } from './persona-types.js'
 import { tradingLifecyclePersonas } from './lifecycle-personas.js'
@@ -196,7 +197,16 @@ async function prepareRealApiContext(): Promise<RealApiContext> {
   }
   const ctx: RealApiContext = { tradingApiUrl, token, baseSnapshotId: '' }
   await getJson(ctx, '/health')
-  await postJson(ctx, '/market-data/candles', { candles: loadRealApiCandles() })
+  const candles = loadRealApiCandles()
+  // HARD walk-forward lookahead guard (G2): a recorded market window must be
+  // strictly historical — you cannot have recorded a candle that has not closed
+  // yet. Any candle opening at/after the eval's wall-clock decision cursor is the
+  // future leaking in; fail here, before any turn runs, rather than reward
+  // fictional edge. (Synthetic candles use relative seconds and are trivially in
+  // the past, so this only bites a real recorded feed that smuggles a future
+  // bucket — exactly the bug we want to catch.)
+  assertWalkForwardWindow(candles, Date.now(), 'real-api-candle-feed')
+  await postJson(ctx, '/market-data/candles', { candles })
   const snapshot = await postJson<SandboxSnapshot>(ctx, '/evolution/sandbox/snapshot', {
     base_repo: 'https://github.com/tangle-network/ai-trading-blueprint',
     base_ref: currentCommitSha(),
@@ -276,6 +286,36 @@ function loadRealApiCandles(): unknown[] {
     return syntheticEvolutionCandles()
   }
   throw new Error('real-api lifecycle eval requires TRADING_EVAL_CANDLES_JSON with recorded market candles; set TRADING_EVAL_ALLOW_SYNTHETIC_CANDLES=1 only for API-route smoke tests')
+}
+
+const HOUR_MS = 3_600_000
+
+// Latest candle open time in a window, epoch-ms (null if none carry a
+// timestamp). The walk-forward cursor for a window fed to decide-at-now is just
+// after this candle's close, but the lookahead ASSERTION must use the eval's
+// own decision cursor — deriving the cursor from the window itself is
+// tautological (the max can never exceed itself), so it would catch nothing.
+export function latestCandleOpenMs(candles: ReadonlyArray<unknown>): number | null {
+  let maxOpen: number | null = null
+  for (const candle of candles) {
+    const openMs = candleOpenMs(candle as never)
+    if (openMs === null) continue
+    if (maxOpen === null || openMs > maxOpen) maxOpen = openMs
+  }
+  return maxOpen
+}
+
+// Assert a fed candle window is strictly historical relative to the eval's
+// decision cursor `decisionMs`. Throws LookaheadAssertionError on the first
+// candle opening at/after the cursor. `decisionMs` is the walk-forward "now"
+// the eval is standing at when it feeds the window — supplied EXTERNALLY (not
+// derived from the window) so a future-dated candle is actually caught.
+export function assertWalkForwardWindow(
+  candles: ReadonlyArray<unknown>,
+  decisionMs: number,
+  label: string,
+): void {
+  assertStrictlyHistorical(candles as never[], decisionMs, label)
 }
 
 interface EvalBacktestConfig {
