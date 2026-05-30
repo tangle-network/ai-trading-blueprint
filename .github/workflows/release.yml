@@ -65,14 +65,46 @@ jobs:
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "Operator binaries: $BINARIES"
           gh release upload "$TAG" $FILES --repo "$GITHUB_REPOSITORY" --clobber
 
-  # Once every arch binary is uploaded to the release, trigger the on-chain
-  # binary publish in tnt-core. Runs once (not per-matrix-leg) since the build
-  # job fans out across targets but publishing is target-specific (x86_64).
-  publish-onchain:
+  # Once both arch legs have uploaded their tarballs + .sha256 sidecars, emit a
+  # per-binary multi-arch manifest (`tangle-binary-manifest/v1`) so the on-chain
+  # BinaryVersion can point at ONE uri that the manager resolves per operator
+  # arch (see tangle-network/blueprint manager `sources/manifest.rs`). Runs once.
+  manifest:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger tnt-core binary publish
+      - name: Build + upload per-binary multi-arch manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          mkdir -p /tmp/m
+          for b in $BINARIES; do
+            entries=""
+            for triple in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+              case "$triple" in *x86_64*) arch=x86_64;; *aarch64*) arch=aarch64;; esac
+              asset="${b}-${triple}.tar.xz"
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "${asset}.sha256" --dir /tmp/m --clobber
+              sha="$(awk '{print $1}' "/tmp/m/${asset}.sha256")"
+              entries="${entries}{\"os\":\"linux\",\"arch\":\"${arch}\",\"url\":\"${BASE}/${asset}\",\"sha256\":\"${sha}\"},"
+            done
+            entries="${entries%,}"
+            printf '{"schema":"tangle-binary-manifest/v1","blueprint":"%s","version":"%s","binaries":[%s]}\n' \
+              "$b" "$TAG" "$entries" > "/tmp/m/${b}-manifest.json"
+            cat "/tmp/m/${b}-manifest.json"
+            gh release upload "$TAG" "/tmp/m/${b}-manifest.json" --repo "$GITHUB_REPOSITORY" --clobber
+          done
+
+  # After the manifest is published as a release asset, trigger the on-chain
+  # publish in tnt-core. binaryUri points at the multi-arch manifest, so one
+  # version serves every operator arch. Runs once.
+  publish-onchain:
+    needs: [release, manifest]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger tnt-core binary publish (multi-arch manifest)
         env:
           GH_TOKEN: ${{ secrets.TNT_CORE_PUBLISH_TOKEN }}
         run: |
@@ -85,5 +117,5 @@ jobs:
             -f blueprint_id=13 \
             -f binary_name=trading-blueprint \
             -f network=base-sepolia \
-            -f target=x86_64-unknown-linux-gnu \
+            -f manifest=true \
             -f set_active=true
