@@ -1,0 +1,4 @@
+{
+  "//": "Tick tools are CommonJS (module.exports / require) and ship verbatim to /home/agent/tools/ in the sandbox, where no parent package.json forces ESM. This declaration pins the same CommonJS resolution in-repo so `node <tool>.js` and the replay tests behave identically to the box.",
+  "type": "commonjs"
+}
