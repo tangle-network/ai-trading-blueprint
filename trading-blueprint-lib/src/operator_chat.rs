@@ -421,11 +421,26 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
         return;
     }
 
+    // Carry an inline profile whose `instructions` globs point opencode at the
+    // operator charter + full trading protocol that activate.rs writes into the
+    // workspace. Without this the sidecar builds OPENCODE_CONFIG_CONTENT with no
+    // `instructions` field, so opencode loads neither AGENTS.md nor
+    // profile-instructions.md and answers as the default coding assistant
+    // instead of the trading operator. Model/provider still come from the
+    // OPENCODE_MODEL_* env the sidecar injects; we only add instructions here.
     let run_body = json!({
         "identifier": "default",
         "message": message,
         "sessionId": session_id.clone(),
-        "timeout": default_chat_agent_run_timeout_ms()
+        "timeout": default_chat_agent_run_timeout_ms(),
+        "backend": {
+            "inlineProfile": {
+                "instructions": [
+                    "AGENTS.md",
+                    ".opencode/profile-instructions.md"
+                ]
+            }
+        }
     });
     let result = send_chat_request(
         &target,
@@ -462,9 +477,14 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
             json!({ "success": false, "error": { "message": message } }),
         ),
     };
+    // The sidecar /agents/run response is { success, data: { finalText, … } }.
+    // Read data.finalText first; keep legacy "response" + error.message as
+    // fallbacks so older/error payloads still surface something.
     let assistant_text = payload
-        .get("response")
+        .get("data")
+        .and_then(|data| data.get("finalText"))
         .and_then(Value::as_str)
+        .or_else(|| payload.get("response").and_then(Value::as_str))
         .or_else(|| {
             payload
                 .get("error")

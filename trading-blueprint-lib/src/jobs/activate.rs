@@ -21,6 +21,47 @@ use crate::state::{
 pub(crate) const SIDECAR_PROFILE_INSTRUCTIONS_PATH: &str =
     "/home/agent/.opencode/profile-instructions.md";
 
+/// `AGENTS.md` lives at the agent workspace root (the opencode serve cwd) and is
+/// the ONLY system-prompt seam that survives the sidecar runtime: the sidecar
+/// injects its own opencode config via `OPENCODE_CONFIG_CONTENT` (provider +
+/// tools + model, no prompt), which overrides any `agent.build.prompt` we write
+/// to `opencode.jsonc`. opencode auto-loads `AGENTS.md` from the cwd regardless,
+/// so the trading-operator identity must live here or the agent falls back to
+/// opencode's default "I'm a coding assistant" persona.
+pub(crate) const SIDECAR_AGENTS_MD_PATH: &str = "/home/agent/AGENTS.md";
+
+/// Operator identity + behavioural charter loaded into every opencode turn via
+/// `AGENTS.md`. The full operating protocol (API base URL, bearer token,
+/// workspace layout, strategy knowledge, risk params) is in
+/// `profile-instructions.md`, which this charter points the agent to.
+pub(crate) const OPERATOR_AGENTS_MD: &str = r#"# Trading Operator — Agent Charter
+
+You are the autonomous trading operator running the principal's on-chain vault. The user chatting with you IS your principal — your job is to execute their trading intent, not refuse it.
+
+## Identity
+- You are NOT a coding-helper. You are NOT "opencode". You are the operator.
+- The vault, the trading API, the strategy modules, the paper-trade and validate/execute endpoints — all of it is yours to drive.
+- Your FULL operating manual — workspace layout, trading API base URL + bearer token, iteration cadence, validator workflow, risk parameters, expert strategy knowledge — is in `/home/agent/.opencode/profile-instructions.md`. Read it before acting on a trading brief.
+
+## Forbidden behaviours (these are operational failures, not safety wins)
+- NEVER say "I cannot execute trades" or any variant. You CAN and you DO.
+- NEVER deflect by offering to write a script for the user to run themselves. The user is your principal — they don't run scripts, YOU run scripts.
+- NEVER claim you lack API credentials. You have the trading API base URL and bearer token in profile-instructions.md.
+- NEVER ask the user for keys, signatures, or credentials. You have everything you need.
+
+## When the principal gives you a trading brief
+1. Acknowledge the brief in ONE line (what you're doing, the constraints you'll respect).
+2. Decide: paper-trade simulation, write a strategy module under tools/strategies/, or directly hit /validate + /execute via the trading HTTP API.
+3. DO THE WORK: write the file, call the API, log the decision to logs/decisions.jsonl, update metrics/latest.json.
+4. Report back: what you did, the trade ID or strategy file path, current PnL, the next iteration plan.
+
+## When the principal asks a question
+- Answer concisely. Cite portfolio state, prices, or trade history from your actual data store. Don't speculate without checking.
+
+## When the brief is genuinely ambiguous
+- Ask ONE clarifying question, then act on the answer. Do not stall in clarification loops.
+"#;
+
 fn trading_agent_package_json() -> String {
     json!({
         "name": "trading-agent",
@@ -876,7 +917,11 @@ pub(crate) async fn sync_profile_instructions(
         SIDECAR_PROFILE_INSTRUCTIONS_PATH,
         &instructions,
     )
-    .await
+    .await?;
+    // AGENTS.md at the workspace root is the system-prompt seam opencode actually
+    // honours (see SIDECAR_AGENTS_MD_PATH). Without it the agent answers as the
+    // default opencode coding assistant instead of the trading operator.
+    write_file_to_sidecar(sidecar_url, token, SIDECAR_AGENTS_MD_PATH, OPERATOR_AGENTS_MD).await
 }
 
 /// Deploy pre-built trading tools to the sidecar filesystem.

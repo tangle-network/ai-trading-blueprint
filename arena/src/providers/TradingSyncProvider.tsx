@@ -160,6 +160,10 @@ function usableVaultAddress(vaultAddress: string | null | undefined): Address | 
 
 async function fetchOperatorBots(source: OperatorSource): Promise<OperatorBotResponse[]> {
   const path = source.deploymentKind === 'instance' ? '/api/bot' : '/api/bots?limit=200';
+  // The fleet roster (/api/bots) is a PUBLIC leaderboard — fetch it without the
+  // viewer's session token so the arena shows ALL bots before (or without) the
+  // user authenticating. Instance deployments (/api/bot) stay authenticated.
+  const isPublicFleet = source.deploymentKind !== 'instance';
   const data = await operatorJsonWithAuth<any>(
     source.apiUrl,
     path,
@@ -169,6 +173,7 @@ async function fetchOperatorBots(source: OperatorSource): Promise<OperatorBotRes
     },
     {
       refreshOnUnauthorized: false,
+      auth: !isPublicFleet,
     },
   );
 
@@ -333,7 +338,9 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
       const storedProvisions = provisionsStore.get();
 
       const operatorFetches = activeOperatorSources
-        .filter((source) => source.apiUrl && source.token)
+        // Fleet sources are fetched publicly (no token); only require a token
+        // for instance deployments, which serve a single private bot.
+        .filter((source) => source.apiUrl && (source.deploymentKind !== 'instance' || source.token))
         .map(async (source) => {
           try {
             return await fetchOperatorBots(source);

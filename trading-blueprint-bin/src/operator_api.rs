@@ -1143,19 +1143,23 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
 }
 
 async fn list_bots(
-    SessionAuth(caller): SessionAuth,
+    headers: axum::http::HeaderMap,
     Query(query): Query<BotListQuery>,
 ) -> ApiResult<BotListResponse> {
     let limit = query.limit.unwrap_or(50).min(200);
     let offset = query.offset.unwrap_or(0);
 
-    // Caller-scoping: a consumer session lists only the bots it submitted (plus
-    // legacy un-attributed bots). The operator key running this binary is the
-    // fleet admin and sees everything. `None` viewer == admin scope.
-    let viewer: Option<&str> = if is_operator_admin(&caller) {
-        None
-    } else {
-        Some(caller.as_str())
+    // Optional auth: the fleet list is a PUBLIC leaderboard. Caller-scoping:
+    //   - unauthenticated viewer  → `None` (public scope: the full roster, as
+    //     read-only BotSummary — the arena shows ALL bots across operators)
+    //   - authenticated admin      → `None` (sees everything)
+    //   - authenticated consumer   → `Some(addr)` (own + legacy un-attributed)
+    // Secrets/control endpoints keep the strict `SessionAuth` extractor.
+    let caller = optional_session_caller(&headers);
+    let viewer: Option<&str> = match caller.as_deref() {
+        Some(addr) if is_operator_admin(addr) => None,
+        Some(addr) => Some(addr),
+        None => None,
     };
 
     // Exact match by on-chain call_id + service_id (most reliable lookup)
@@ -1966,6 +1970,28 @@ fn is_operator_admin(caller: &str) -> bool {
         .ok()
         .filter(|op| !op.is_empty())
         .is_some_and(|op| op.eq_ignore_ascii_case(caller))
+}
+
+/// Extract + validate an OPTIONAL session token from the `Authorization` header.
+/// Returns the caller address for a valid `Bearer <token>`, else `None`.
+///
+/// Public read endpoints (the fleet list / leaderboard) use this instead of the
+/// `SessionAuth` extractor so an unauthenticated viewer gets the public scope
+/// rather than a 401. The arena is a public competition UI: the bot roster and
+/// PnL are meant to be visible to everyone; secrets/control stay behind
+/// `SessionAuth`.
+fn optional_session_caller(headers: &axum::http::HeaderMap) -> Option<String> {
+    let raw = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
+    let token = raw
+        .strip_prefix("Bearer ")
+        .or_else(|| raw.strip_prefix("bearer "))?
+        .trim();
+    sandbox_runtime::session_auth::validate_session_token(token)
+        .ok()
+        .map(|claims| claims.address)
 }
 
 fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusCode, String)> {
