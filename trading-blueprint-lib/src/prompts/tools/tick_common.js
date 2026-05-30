@@ -377,8 +377,11 @@ async function runTick(family, decide) {
     const out = (await decide(ctx)) || {};
     const decision = out.decision || { action: 'skip', reason: `${family}-no-decision` };
 
-    logDecision({ ...decision, ...(out.entryExtra || {}), state: out.checkedState ?? null, run_started_at: runStartedAt });
-    writeMetrics({ action: decision.action, reason: decision.reason, ...(out.metrics || {}) });
+    const { provenanceHash } = require('/home/agent/tools/log-decision');
+    const recipe_hash = provenanceHash({ family, harness: ctx.harness ?? {}, strategy_config: (config && config.strategy_config) ?? null });
+    const input_hash = provenanceHash({ family, checked_state: out.checkedState ?? null, intent: decision.intent ?? null });
+    logDecision({ ...decision, ...(out.entryExtra || {}), state: out.checkedState ?? null, run_started_at: runStartedAt, recipe_hash, input_hash });
+    writeMetrics({ action: decision.action, reason: decision.reason, ...(out.metrics || {}), recipe_hash, input_hash });
 
     const result = {
       result_schema_version: 1,
