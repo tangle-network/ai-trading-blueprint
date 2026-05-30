@@ -25,6 +25,7 @@ import { tangleJobsAbi } from '~/lib/contracts/abis';
 import { addresses } from '~/lib/contracts/addresses';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
+import { BinaryUpdatesPanel } from '~/components/operator/BinaryUpdatesPanel';
 import { botStatusBadgeVariant, botStatusLabel, normalizeDisplayNumber } from '~/lib/format';
 import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 import { getTradeValidationDisplay } from '~/lib/tradeValidation';
@@ -262,6 +263,9 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
         service={service}
         serviceRemainingSeconds={serviceRemainingSeconds}
       />
+      {!!bot.serviceId && (
+        <BinaryUpdatesPanel serviceId={bot.serviceId} blueprintId={service?.blueprintId} />
+      )}
       {isOwner && (
         <AdvancedCard detail={detail} />
       )}

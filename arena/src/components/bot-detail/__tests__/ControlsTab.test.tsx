@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: mocks.walletAddress }),
   useWriteContract: () => ({ writeContract: mocks.writeContract, isPending: false }),
+  useReadContract: () => ({ data: undefined, isLoading: false }),
 }));
 
 vi.mock('~/lib/hooks/useOperatorAuth', () => ({
