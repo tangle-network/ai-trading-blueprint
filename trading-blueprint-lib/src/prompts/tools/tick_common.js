@@ -214,7 +214,55 @@ function rsi(values, period = 14) {
   return 100 - (100 / (1 + rs));
 }
 
-async function fetchCandles(api, asset) {
+// Thrown when a candle feed carries a bucket that opens at or after the decision
+// time. Lookahead is a correctness violation (the tick is reading the future),
+// not a transient fetch failure, so this error is NOT collapsed to an empty
+// window by fetchCandles — it propagates so runTick records a hard `error`
+// decision the Rust verifier and the walk-forward eval both fail on.
+class LookaheadViolationError extends Error {
+  constructor(message, detail) {
+    super(message);
+    this.name = 'LookaheadViolationError';
+    this.code = 'lookahead_violation';
+    this.detail = detail || {};
+  }
+}
+
+// Open timestamp of a candle in epoch-ms, or null when the feed carries no
+// usable timestamp. Accepts seconds or ms (heuristic: < 1e12 is seconds) and the
+// common positional/aliased shapes the candle endpoints emit.
+function candleOpenMs(candle) {
+  if (Array.isArray(candle)) return normalizeEpochMs(candle[0]);
+  const raw = candle?.timestamp ?? candle?.open_time ?? candle?.openTime ?? candle?.time ?? candle?.t;
+  return normalizeEpochMs(raw);
+}
+
+function normalizeEpochMs(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n < 1e12 ? n * 1000 : n;
+}
+
+// HARD lookahead guard (G2): a tick deciding at `decisionMs` may only see
+// candles that have already opened. Any bucket opening at/after the decision
+// time is the future leaking into the input window — throw so the tick cannot
+// silently trade on it. `decisionMs` defaults to wall-clock now; the eval feeds
+// a fixed walk-forward cursor so the assertion is deterministic.
+function assertNoLookahead(candles, decisionMs) {
+  const cutoff = Number.isFinite(decisionMs) ? decisionMs : Date.now();
+  for (let i = 0; i < candles.length; i += 1) {
+    const openMs = candleOpenMs(candles[i]);
+    if (openMs !== null && openMs >= cutoff) {
+      throw new LookaheadViolationError(
+        `lookahead: candle opens at ${new Date(openMs).toISOString()} >= decision ${new Date(cutoff).toISOString()}`,
+        { candle_index: i, candle_open_ms: openMs, decision_ms: cutoff },
+      );
+    }
+  }
+}
+
+async function fetchCandles(api, asset, decisionMs) {
+  let candles;
   try {
     await api.apiCall('POST', '/market-data/candles/fetch', {
       tokens: [asset],
@@ -226,19 +274,22 @@ async function fetchCandles(api, asset) {
       `/market-data/candles?token=${encodeURIComponent(asset)}&limit=80`,
     );
     const data = body(response);
-    const candles = Array.isArray(data)
+    candles = Array.isArray(data)
       ? data
       : Array.isArray(data.candles)
         ? data.candles
         : Array.isArray(data.data)
           ? data.data
           : [];
-    return candles
-      .map((candle) => asNumber(candle.close ?? candle.c ?? candle.price ?? candle[4], null))
-      .filter((n) => Number.isFinite(n) && n > 0);
   } catch {
     return [];
   }
+  // Run the lookahead assertion OUTSIDE the fetch try/catch so a genuine
+  // violation surfaces instead of being masked as an empty window.
+  assertNoLookahead(candles, decisionMs);
+  return candles
+    .map((candle) => asNumber(candle.close ?? candle.c ?? candle.price ?? candle[4], null))
+    .filter((n) => Number.isFinite(n) && n > 0);
 }
 
 function logDecision(entry) {
@@ -377,8 +428,11 @@ async function runTick(family, decide) {
     const out = (await decide(ctx)) || {};
     const decision = out.decision || { action: 'skip', reason: `${family}-no-decision` };
 
-    logDecision({ ...decision, ...(out.entryExtra || {}), state: out.checkedState ?? null, run_started_at: runStartedAt });
-    writeMetrics({ action: decision.action, reason: decision.reason, ...(out.metrics || {}) });
+    const { provenanceHash } = require('/home/agent/tools/log-decision');
+    const recipe_hash = provenanceHash({ family, harness: ctx.harness ?? {}, strategy_config: (config && config.strategy_config) ?? null });
+    const input_hash = provenanceHash({ family, checked_state: out.checkedState ?? null, intent: decision.intent ?? null });
+    logDecision({ ...decision, ...(out.entryExtra || {}), state: out.checkedState ?? null, run_started_at: runStartedAt, recipe_hash, input_hash });
+    writeMetrics({ action: decision.action, reason: decision.reason, ...(out.metrics || {}), recipe_hash, input_hash });
 
     const result = {
       result_schema_version: 1,
@@ -437,6 +491,9 @@ module.exports = {
   ema,
   rsi,
   fetchCandles,
+  assertNoLookahead,
+  candleOpenMs,
+  LookaheadViolationError,
   logDecision,
   writeMetrics,
   recommendSlippageBps,

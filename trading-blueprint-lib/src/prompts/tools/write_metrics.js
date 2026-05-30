@@ -82,6 +82,12 @@ async function main() {
   let unrealizedPnl = parseNumber(extra.unrealized_pnl);
   let realizedPnl = parseNumber(extra.realized_pnl);
 
+  // Decision-provenance hashes (F2+F3): pass through verbatim when the caller
+  // (tick_common.js runTick) supplies them so each metrics snapshot is joinable
+  // to its decisions.jsonl line by recipe_hash + input_hash. Strings only.
+  const recipeHash = typeof extra.recipe_hash === 'string' ? extra.recipe_hash : null;
+  const inputHash = typeof extra.input_hash === 'string' ? extra.input_hash : null;
+
   if (config && config.api_url && config.token) {
     try {
       const portfolioResult = await postJson(config.api_url, config.token, '/portfolio/state', {});
@@ -164,6 +170,8 @@ async function main() {
     ...(tradeCount != null ? { trade_count: tradeCount } : {}),
     ...(unrealizedPnl != null ? { unrealized_pnl: unrealizedPnl } : {}),
     ...(realizedPnl != null ? { realized_pnl: realizedPnl } : {}),
+    ...(recipeHash != null ? { recipe_hash: recipeHash } : {}),
+    ...(inputHash != null ? { input_hash: inputHash } : {}),
   };
 
   fs.writeFileSync(METRICS_FILE, JSON.stringify(metrics, null, 2));
