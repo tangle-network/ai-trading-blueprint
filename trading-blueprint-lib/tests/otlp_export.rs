@@ -77,7 +77,10 @@ fn operator_exports_spans_as_otlp_http_json() {
     // Point the exporter at the mock collector and give it a tenant key.
     // SAFETY: single-threaded test setup before any telemetry thread spawns.
     unsafe {
-        std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", format!("http://127.0.0.1:{port}"));
+        std::env::set_var(
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            format!("http://127.0.0.1:{port}"),
+        );
         std::env::set_var("TANGLE_API_KEY", "sk-tan-proof-key");
         std::env::set_var("RUST_LOG", "info");
     }
@@ -116,7 +119,10 @@ fn operator_exports_spans_as_otlp_http_json() {
     );
     // Body: OTLP envelope carrying our service identity + the span.
     let body = req.split("\r\n\r\n").nth(1).unwrap_or("");
-    assert!(body.contains("resourceSpans"), "body not OTLP-shaped: {body}");
+    assert!(
+        body.contains("resourceSpans"),
+        "body not OTLP-shaped: {body}"
+    );
     assert!(
         body.contains("service.name") && body.contains("trading-operator-test"),
         "service.name resource attribute missing from export body: {body}"

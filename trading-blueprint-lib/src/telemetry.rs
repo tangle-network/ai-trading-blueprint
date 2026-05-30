@@ -115,9 +115,7 @@ fn build_otlp_provider(service_name: &str) -> Option<(SdkTracerProvider, String)
     {
         Ok(exporter) => exporter,
         Err(err) => {
-            eprintln!(
-                "telemetry: OTLP exporter init failed ({err}); stdout logs only"
-            );
+            eprintln!("telemetry: OTLP exporter init failed ({err}); stdout logs only");
             return None;
         }
     };

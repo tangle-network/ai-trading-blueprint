@@ -921,7 +921,13 @@ pub(crate) async fn sync_profile_instructions(
     // AGENTS.md at the workspace root is the system-prompt seam opencode actually
     // honours (see SIDECAR_AGENTS_MD_PATH). Without it the agent answers as the
     // default opencode coding assistant instead of the trading operator.
-    write_file_to_sidecar(sidecar_url, token, SIDECAR_AGENTS_MD_PATH, OPERATOR_AGENTS_MD).await
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        SIDECAR_AGENTS_MD_PATH,
+        OPERATOR_AGENTS_MD,
+    )
+    .await
 }
 
 /// Deploy pre-built trading tools to the sidecar filesystem.
