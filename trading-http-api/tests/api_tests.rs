@@ -1820,9 +1820,35 @@ async fn test_single_bot_portfolio_normalizes_raw_base_units() {
         .unwrap()
         .to_bytes();
     let portfolio_json: serde_json::Value = serde_json::from_slice(&portfolio_body).unwrap();
-    assert_eq!(portfolio_json["total_value_usd"], "995.57601");
-    assert_eq!(portfolio_json["positions"][0]["amount"], "0.429");
-    assert_eq!(portfolio_json["positions"][0]["value_usd"], "995.57601");
+    // Honest paper fill deducts fee+impact+gas, so the received WETH and its USD
+    // value land just below the fee-free 0.429 / $995.58. This test's purpose —
+    // base-unit normalization (18-dec base units → a human-readable decimal) —
+    // still holds: the amount is a clean sub-1.0 decimal, not raw base units.
+    let total = portfolio_json["total_value_usd"]
+        .as_str()
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
+    let amt = portfolio_json["positions"][0]["amount"]
+        .as_str()
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
+    let val = portfolio_json["positions"][0]["value_usd"]
+        .as_str()
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
+    assert!(
+        (total - 992.44).abs() < 0.5,
+        "total {total} should be ~$995.58 minus fees"
+    );
+    assert!(total < 995.57601, "honest fill must deduct fees");
+    assert!(
+        amt > 0.42 && amt < 0.429,
+        "normalized amount {amt} (raw base units would be ~4.29e17)"
+    );
+    assert!((val - total).abs() < 1e-6, "single position value == total");
 }
 
 #[tokio::test]
@@ -1910,8 +1936,24 @@ async fn test_single_bot_swap_estimates_output_amount_instead_of_using_placehold
     let value_usd = portfolio_json["positions"][0]["value_usd"]
         .as_str()
         .expect("position value");
-    assert_eq!(amount.parse::<f64>().unwrap(), 0.4);
-    assert_eq!(value_usd.parse::<f64>().unwrap(), 1000.0);
+    // Honest paper fill (paper_fill_costs): uniswap_v3 30bps taker + price impact +
+    // $0.05 gas are deducted from the swap output, so the position sits just below
+    // the fee-free 0.4 WETH / $1000 notional. Guards that the output is ESTIMATED
+    // (not a placeholder floor) AND that fees actually reduce it.
+    let amount_f = amount.parse::<f64>().unwrap();
+    let value_f = value_usd.parse::<f64>().unwrap();
+    assert!(
+        (amount_f - 0.39874).abs() < 1e-4,
+        "amount {amount_f} should be ~0.4 WETH minus uniswap fee+impact+gas"
+    );
+    assert!(
+        amount_f < 0.4,
+        "honest fill must deduct fees from the 0.4 fee-free output"
+    );
+    assert!(
+        value_f > 990.0 && value_f < 1000.0,
+        "value {value_f} should be ~$1000 minus fees"
+    );
 }
 
 #[tokio::test]
@@ -4969,14 +5011,38 @@ async fn test_multi_bot_portfolio_state_synthesizes_paper_swap_positions() {
         .to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let positions = json["positions"].as_array().unwrap();
-    assert_eq!(json["total_value_usd"], "3000");
+    // Honest paper fill deducts uniswap fee+impact+$0.05 gas, so the synthesized
+    // USDC position sits just below the fee-free $3000 notional.
+    let total = json["total_value_usd"]
+        .as_str()
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
+    assert!(
+        (total - 2990.05).abs() < 0.5,
+        "total {total} should be ~$3000 minus fees"
+    );
+    assert!(
+        total < 3000.0,
+        "honest fill must deduct fees from the $3000 notional"
+    );
     assert_eq!(positions.len(), 1);
     assert_eq!(
         positions[0]["token"],
         "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
     );
-    assert_eq!(positions[0]["amount"], "3000");
-    assert_eq!(positions[0]["value_usd"], "3000");
+    let pos_amt = positions[0]["amount"]
+        .as_str()
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
+    let pos_val = positions[0]["value_usd"]
+        .as_str()
+        .unwrap()
+        .parse::<f64>()
+        .unwrap();
+    assert!((pos_amt - 2990.05).abs() < 0.5, "position amount {pos_amt}");
+    assert!((pos_val - 2990.05).abs() < 0.5, "position value {pos_val}");
     assert_eq!(json["warnings"], serde_json::json!([]));
 }
 

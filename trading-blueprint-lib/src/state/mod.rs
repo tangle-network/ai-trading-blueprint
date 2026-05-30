@@ -379,8 +379,7 @@ pub fn bots_by_operator(
         .map_err(|e| e.to_string())?
         .into_iter()
         .filter(|b| {
-            b.operator_address.to_lowercase() == op
-                && bot_visible_to(&b.submitter_address, viewer)
+            b.operator_address.to_lowercase() == op && bot_visible_to(&b.submitter_address, viewer)
         })
         .collect();
     all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -401,9 +400,7 @@ pub fn bots_by_strategy(
         .values()
         .map_err(|e| e.to_string())?
         .into_iter()
-        .filter(|b| {
-            b.strategy_type == strat && bot_visible_to(&b.submitter_address, viewer)
-        })
+        .filter(|b| b.strategy_type == strat && bot_visible_to(&b.submitter_address, viewer))
         .collect();
     all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     let total = all.len();
@@ -739,7 +736,9 @@ mod tests {
 
         // Scoping composes with the operator/strategy facets.
         assert_eq!(
-            bots_by_operator("0xOp1", Some("0xbob"), 50, 0).unwrap().total,
+            bots_by_operator("0xOp1", Some("0xbob"), 50, 0)
+                .unwrap()
+                .total,
             3 // legacy b1/b3 are 0xOp1 + bob1
         );
         assert_eq!(

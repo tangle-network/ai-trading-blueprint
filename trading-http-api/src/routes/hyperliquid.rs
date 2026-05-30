@@ -885,7 +885,7 @@ async fn get_account(
             withdrawable: capital,
             positions: Vec::new(),
             open_orders: Vec::new(),
-        }))
+        }));
     }
     // Live: read-only public query via the dummy-key-tolerant read client.
     let client = get_hl_read_client(&state)?;

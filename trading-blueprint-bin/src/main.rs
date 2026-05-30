@@ -779,7 +779,6 @@ fn load_job_pricing(
     Ok(config)
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;

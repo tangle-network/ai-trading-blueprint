@@ -1,5 +1,15 @@
 {
   description = "AI Trading Blueprint — dev environment + cacheable multi-language toolchain profile (Cachix: tangle-sandbox)";
+
+  # Shared binary cache so the agent-harness closure (opencode/claude-code/codex
+  # /…) and nixpkgs deps resolve from cache instead of rebuilding from source.
+  nixConfig = {
+    extra-substituters = [ "https://tangle-sandbox.cachix.org" ];
+    extra-trusted-public-keys = [
+      "tangle-sandbox.cachix.org-1:Phh3AbYMAfvfAHAkxKyRXuLPgPlbA2BJ+u3AKTL5JPM="
+    ];
+  };
+
   inputs = {
     # Pinned to nixos-24.11 so the closure shares store paths with the
     # shared `tangle-sandbox` Cachix instance (otherwise nixpkgs-unstable
@@ -52,13 +62,31 @@
         mediaDeps       = callGroup ./nix/media.nix;
         languageServers = callGroup ./nix/language-servers.nix;
 
+        # Coding-agent harness CLIs (opencode, claude-code, codex, …). Owned
+        # here — duplicated from the shared recipe so the blueprint-sidecar
+        # image is self-sufficient (see nix/agent-clis.nix).
+        agentClisAttrs  = import ./nix/agent-clis.nix { inherit pkgs; };
+        agentClis = [
+          agentClisAttrs.opencode
+          agentClisAttrs.claude-code
+          agentClisAttrs.codex
+          agentClisAttrs.amp
+          agentClisAttrs.factory-droids
+          agentClisAttrs.qwen-code
+          agentClisAttrs.gemini-cli
+          agentClisAttrs.codex-acp
+          agentClisAttrs.github-copilot
+          agentClisAttrs.pi
+          agentClisAttrs.forge
+        ];
+
         # Kitchen sink across every category.
         allPkgs =
           systemDeps ++ coreCLIs ++ rustDeps ++ jsDeps ++ pythonDeps
           ++ goDeps ++ cppDeps ++ cryptoEvmDeps ++ cryptoL1Deps
           ++ cryptoZkDeps ++ aiDeps ++ mobileDeps ++ dbDeps
           ++ infraDeps ++ observabilityDeps ++ mediaDeps
-          ++ languageServers;
+          ++ languageServers ++ agentClis;
 
         # `buildEnv` collects every package into a single store path
         # addressable for Cachix push/pull. ignoreCollisions tolerates
@@ -102,7 +130,16 @@
         packages.go            = mkProfile "go" (systemDeps ++ coreCLIs ++ goDeps);
         packages.cpp           = mkProfile "cpp" (systemDeps ++ coreCLIs ++ cppDeps);
         packages.crypto        = mkProfile "crypto" (systemDeps ++ coreCLIs ++ cryptoEvmDeps ++ cryptoL1Deps ++ cryptoZkDeps);
-        packages.ai            = mkProfile "ai" (systemDeps ++ coreCLIs ++ pythonDeps ++ aiDeps);
+        packages.ai            = mkProfile "ai" (systemDeps ++ coreCLIs ++ pythonDeps ++ aiDeps ++ agentClis);
+        # Harness profile baked into the blueprint-sidecar image at
+        # /nix/profile/bin — opencode/claude-code/codex/qwen/gemini/amp/pi/
+        # forge/factory-droids/codex-acp/github-copilot + node runtime.
+        # NOTE: no nodejs here — the npm-tarball agent wrappers reference
+        # nodejs_22 by absolute store path (it stays in the closure), and
+        # putting `node` on /nix/profile/bin would shadow the server base's
+        # node (with its node-pty native module) when NIX_BIN_PATH is prepended.
+        packages.sidecar-harness = mkProfile "sidecar-harness"
+          (agentClis ++ [ pkgs.bash pkgs.coreutils pkgs.cacert ]);
         packages.web           = mkProfile "web" (coreCLIs ++ jsDeps);
         packages.mobile        = mkProfile "mobile" (coreCLIs ++ jsDeps ++ mobileDeps);
         packages.infra         = mkProfile "infra" (coreCLIs ++ infraDeps ++ observabilityDeps);

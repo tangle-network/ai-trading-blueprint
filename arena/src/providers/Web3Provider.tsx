@@ -75,9 +75,22 @@ const PARENT_ORIGIN = detectTangleCloudParentOrigin({
 });
 export const isEmbeddedInTangleCloud = PARENT_ORIGIN !== null;
 
+// Some viem chains ship a browser-hostile default RPC. Notably Ethereum
+// mainnet defaults to https://eth.merkle.io, which sends no
+// Access-Control-Allow-Origin header, so every browser read is blocked by CORS.
+// Override those chains with a CORS-enabled public endpoint (env-overridable).
+const CORS_SAFE_RPC: Record<number, string> = {
+  1: import.meta.env.VITE_ETHEREUM_RPC_URL || 'https://ethereum-rpc.publicnode.com',
+};
+
 const baseDefaultConfig = getDefaultConfig({
   chains: walletChains,
-  transports: Object.fromEntries(walletChains.map((chain) => [chain.id, http(chain.rpcUrls.default.http[0])])),
+  transports: Object.fromEntries(
+    walletChains.map((chain) => [
+      chain.id,
+      http(CORS_SAFE_RPC[chain.id] ?? chain.rpcUrls.default.http[0]),
+    ]),
+  ),
   walletConnectProjectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '3fcc6bba6f1de962d911bb5b5c3dba68',
   appName: 'AI Trading Arena',
   appDescription: 'AI-powered trading competition platform on Tangle Network',

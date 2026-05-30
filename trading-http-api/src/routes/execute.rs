@@ -2151,8 +2151,7 @@ async fn execute_paper_trade(
             );
             // Effective price paid per unit token_out — strictly worse than mid
             // because the bot received less token_out for the same notional in.
-            let fill_price =
-                (net_out > Decimal::ZERO).then(|| notional_usd / net_out);
+            let fill_price = (net_out > Decimal::ZERO).then(|| notional_usd / net_out);
             tracing::info!(
                 bot_id = %bot_id,
                 protocol = %req.intent.target_protocol,
@@ -2164,7 +2163,12 @@ async fn execute_paper_trade(
                 gas_cost_usd = %gas_cost_usd,
                 "paper fill costs applied"
             );
-            (Some(net_out), Some(total_cost_bps), fill_price, Some(gas_cost_usd))
+            (
+                Some(net_out),
+                Some(total_cost_bps),
+                fill_price,
+                Some(gas_cost_usd),
+            )
         }
         _ => (valuation.amount_out, None, None, None),
     };
@@ -3869,7 +3873,10 @@ mod tests {
             paper_fill_costs("aerodrome", gross_out, notional, &cfg);
 
         assert_eq!(fee_bps, 5, "aerodrome taker fee from protocol_fees");
-        assert_eq!(impact_bps, 5, "5 bps impact for $5k on $10M reference depth");
+        assert_eq!(
+            impact_bps, 5,
+            "5 bps impact for $5k on $10M reference depth"
+        );
         assert_eq!(total_cost_bps, 10, "fee + impact");
         assert_eq!(gas_cost_usd, Decimal::ZERO, "gas disabled in this case");
         assert_eq!(net_out, Decimal::new(1998, 3), "1.998 WETH after costs");
@@ -3886,7 +3893,10 @@ mod tests {
             paper_fill_costs("not_a_real_dex", gross_out, notional, &cfg);
 
         assert_eq!(fee_bps, 30, "fallback fee");
-        assert_eq!(impact_bps, 5, "5 bps impact for $5k on $10M reference depth");
+        assert_eq!(
+            impact_bps, 5,
+            "5 bps impact for $5k on $10M reference depth"
+        );
         assert_eq!(total_cost_bps, 35);
         // 2.0 * (1 - 0.0035) = 1.9930
         assert_eq!(net_out, Decimal::new(1993, 3));
@@ -3981,7 +3991,10 @@ mod tests {
         // Default $0.05/swap.
         assert_eq!(gas_cost_usd, "0.050000".parse::<Decimal>().unwrap());
         // fee+impact alone (gas=0) → 1.998; gas pushes net strictly lower.
-        assert!(net_out < Decimal::new(1998, 3), "gas must reduce net below the fee+impact-only fill");
+        assert!(
+            net_out < Decimal::new(1998, 3),
+            "gas must reduce net below the fee+impact-only fill"
+        );
         // gas in WETH = 0.05 * 2.0 / 5000 = 0.00002 → net = 1.998 - 0.00002 = 1.99798
         assert_eq!(net_out, "1.99798".parse::<Decimal>().unwrap());
     }
