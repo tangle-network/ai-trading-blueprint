@@ -2,14 +2,11 @@ import { createConfig } from 'wagmi';
 import { ConnectKitProvider, getDefaultConfig } from 'connectkit';
 import { type ReactNode } from 'react';
 import type { Chain } from 'viem';
-import { defaultConnectKitOptions, getTangleWalletChains } from '@tangle-network/blueprint-ui';
+import { defaultConnectKitOptions } from '@tangle-network/blueprint-ui';
 import { Web3Shell } from '@tangle-network/blueprint-ui/components';
 import {
   executionForkChain,
-  hyperEvmMainnet,
-  hyperEvmMainnetConfigured,
-  hyperEvmTestnet,
-  hyperEvmTestnetConfigured,
+  networks,
   tangleLocal,
 } from '~/lib/contracts/chains';
 import { http } from 'wagmi';
@@ -39,8 +36,15 @@ function dedupeChains(chains: readonly Chain[]): readonly [Chain, ...Chain[]] {
   return unique as [Chain, ...Chain[]];
 }
 
+// The wallet-switchable chain set is derived from the SAME `networks` map the
+// network selector (`selectedChainIdStore`) reads from. Previously this was a
+// hardcoded Tangle-only list (getTangleWalletChains → local/testnet/mainnet/eth)
+// that omitted Base Sepolia and HyperEVM even though they're configured + offered
+// in the selector — so `switchChain(84532)` was rejected by the connector ("chain
+// not configured"), stranding the wallet on chain 31337. Sourcing both from
+// `networks` makes every selectable network wallet-switchable, by construction.
 function getArenaWalletChains(): readonly [Chain, ...Chain[]] {
-  const tangleChains = getTangleWalletChains(tangleLocal);
+  const configuredChains = Object.values(networks).map((n) => n.chain);
   const executionForkRpc = executionForkChain.rpcUrls.default.http[0];
   const shouldIncludeLocalExecutionFork =
     import.meta.env.VITE_USE_LOCAL_CHAIN === 'true' &&
@@ -49,11 +53,9 @@ function getArenaWalletChains(): readonly [Chain, ...Chain[]] {
     isLocalRpcUrl(executionForkRpc);
 
   return dedupeChains([
-    tangleLocal,
+    tangleLocal, // keep as default (first) chain
     ...(shouldIncludeLocalExecutionFork ? [executionForkChain] : []),
-    ...(hyperEvmTestnetConfigured ? [hyperEvmTestnet] : []),
-    ...(hyperEvmMainnetConfigured ? [hyperEvmMainnet] : []),
-    ...tangleChains.slice(1),
+    ...configuredChains,
   ]);
 }
 
