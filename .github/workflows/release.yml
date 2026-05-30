@@ -52,7 +52,12 @@ jobs:
             A="${b}-${TARGET}.tar.xz"
             tar -cJf "$A" -C target/release "$b"
             sha256sum "$A" > "${A}.sha256"; cat "${A}.sha256"
-            FILES="$FILES $A ${A}.sha256"
+            # Hash of the EXTRACTED (stripped) binary. The blueprint-manager's
+            # Remote/Github fetcher unpacks the archive and verifies the binary
+            # file against the on-chain BlueprintBinary.sha256 — that's the
+            # extracted binary, NOT the tarball. setBlueprintSources uses this.
+            sha256sum "$BIN" | awk '{print $1}' > "${b}-${TARGET}.bin.sha256"; cat "${b}-${TARGET}.bin.sha256"
+            FILES="$FILES $A ${A}.sha256 ${b}-${TARGET}.bin.sha256"
           done
           echo "FILES=$FILES" >> "$GITHUB_ENV"
       - name: Publish GitHub Release
@@ -96,6 +101,22 @@ jobs:
             cat "/tmp/m/${b}-manifest.json"
             gh release upload "$TAG" "/tmp/m/${b}-manifest.json" --repo "$GITHUB_REPOSITORY" --clobber
           done
+
+          # cargo-dist dist-manifest.json: the blueprint-manager's Remote/Github
+          # fetcher (sources/{remote,github}.rs) parses a cargo_dist_schema::DistManifest
+          # and refuses to download unless it declares the target binary as an
+          # executable-zip artifact with an executable asset of that name. This is
+          # the INITIAL-fetch path (distinct from the tangle-binary-manifest above,
+          # which drives in-place upgrades). One shared manifest validates every
+          # binary name; setBlueprintSources' dist_url points operators here.
+          arts=""
+          for b in $BINARIES; do
+            arts="${arts}\"${b}\":{\"kind\":\"executable-zip\",\"assets\":[{\"name\":\"${b}\",\"kind\":\"executable\"}]},"
+          done
+          arts="${arts%,}"
+          printf '{"artifacts":{%s}}\n' "$arts" > /tmp/m/dist-manifest.json
+          cat /tmp/m/dist-manifest.json
+          gh release upload "$TAG" /tmp/m/dist-manifest.json --repo "$GITHUB_REPOSITORY" --clobber
 
   # After the manifest is published as a release asset, trigger the on-chain
   # publish in tnt-core. binaryUri points at the multi-arch manifest, so one
