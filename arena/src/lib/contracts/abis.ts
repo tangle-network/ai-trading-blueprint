@@ -150,6 +150,101 @@ export const tangleServicesAbi = [
   },
 ] as const;
 
+// Binary version management (BlueprintsBinaryVersions on the Tangle core address).
+// Operators read effectiveBinaryVersion(serviceId) vs the blueprint's latest published
+// version and approve a rollout via ackBinaryVersion / setServiceUpgradePolicy.
+export const blueprintsBinaryVersionsAbi = [
+  {
+    type: 'function',
+    name: 'getBinaryVersion',
+    inputs: [
+      { name: 'blueprintId', type: 'uint64' },
+      { name: 'versionId', type: 'uint64' },
+    ],
+    outputs: [
+      {
+        name: '',
+        type: 'tuple',
+        components: [
+          { name: 'versionId', type: 'uint64' },
+          { name: 'sha256Hash', type: 'bytes32' },
+          { name: 'binaryUri', type: 'string' },
+          { name: 'attestationHash', type: 'bytes32' },
+          { name: 'publishedAt', type: 'uint64' },
+          { name: 'deprecated', type: 'bool' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'getBinaryVersionCount',
+    inputs: [{ name: 'blueprintId', type: 'uint64' }],
+    outputs: [{ name: '', type: 'uint64' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'effectiveBinaryVersion',
+    inputs: [{ name: 'serviceId', type: 'uint64' }],
+    outputs: [
+      {
+        name: '',
+        type: 'tuple',
+        components: [
+          { name: 'versionId', type: 'uint64' },
+          { name: 'sha256Hash', type: 'bytes32' },
+          { name: 'binaryUri', type: 'string' },
+          { name: 'attestationHash', type: 'bytes32' },
+          { name: 'publishedAt', type: 'uint64' },
+          { name: 'deprecated', type: 'bool' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'ackBinaryVersion',
+    inputs: [
+      { name: 'serviceId', type: 'uint64' },
+      { name: 'versionId', type: 'uint64' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setServiceUpgradePolicy',
+    inputs: [
+      { name: 'serviceId', type: 'uint64' },
+      { name: 'policy', type: 'uint8' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    name: 'BinaryVersionPublished',
+    inputs: [
+      { name: 'blueprintId', type: 'uint64', indexed: true },
+      { name: 'versionId', type: 'uint64', indexed: true },
+      { name: 'sha256Hash', type: 'bytes32', indexed: false },
+      { name: 'binaryUri', type: 'string', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'OperatorBinaryAcked',
+    inputs: [
+      { name: 'serviceId', type: 'uint64', indexed: true },
+      { name: 'versionId', type: 'uint64', indexed: true },
+      { name: 'operator', type: 'address', indexed: true },
+    ],
+  },
+] as const;
+
 // Arena-specific ABIs (stay local)
 export const tradingVaultAbi = [
   { type: 'function', name: 'asset', inputs: [], outputs: [{ name: '', type: 'address' }], stateMutability: 'view' },

@@ -64,3 +64,26 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "Operator binaries: $BINARIES"
           gh release upload "$TAG" $FILES --repo "$GITHUB_REPOSITORY" --clobber
+
+  # Once every arch binary is uploaded to the release, trigger the on-chain
+  # binary publish in tnt-core. Runs once (not per-matrix-leg) since the build
+  # job fans out across targets but publishing is target-specific (x86_64).
+  publish-onchain:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger tnt-core binary publish
+        env:
+          GH_TOKEN: ${{ secrets.TNT_CORE_PUBLISH_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          gh workflow run publish-blueprint-binary.yml \
+            --repo tangle-network/tnt-core \
+            --ref main \
+            -f blueprint_repo=tangle-network/ai-trading-blueprint \
+            -f tag="$TAG" \
+            -f blueprint_id=13 \
+            -f binary_name=trading-blueprint \
+            -f network=base-sepolia \
+            -f target=x86_64-unknown-linux-gnu \
+            -f set_active=true
