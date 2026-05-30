@@ -19,7 +19,7 @@ interface AuthTarget {
 
 export function OperatorAccessCard({
   title = 'Operator authentication required',
-  description = 'Connect your wallet to load operator-managed bot data.',
+  description = 'Sign a message with your connected wallet to load operator-managed bot data.',
   apiUrl = OPERATOR_API_URL,
   apiUrls,
 }: {
@@ -92,7 +92,7 @@ export function OperatorAccessCard({
         onClick={() => { void authenticate(); }}
         disabled={isAuthenticating}
       >
-        {isAuthenticating ? 'Connecting...' : 'Connect Wallet'}
+        {isAuthenticating ? 'Authenticating...' : 'Authenticate'}
       </Button>
       {error && (
         <p className="mt-3 text-xs text-crimson-500">{error}</p>

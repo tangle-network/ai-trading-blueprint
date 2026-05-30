@@ -47,6 +47,16 @@ jobs:
 
       - name: Build arena UI
         working-directory: arena
+        # The build runs HERE (not in CF Pages' build system), so Vite only sees
+        # env from this step — CF Pages dashboard vars do NOT apply. Bake the live
+        # operator backend URL in so the deployed arena fetches bots/leaderboard
+        # from the operator instead of falling back to the empty-state card.
+        # Single operator for now (the Hetzner trading box behind Caddy TLS),
+        # overridable via repo variable, and superseded by on-chain multi-operator
+        # discovery (#136). The operator's CORS_ALLOWED_ORIGINS must include this
+        # arena origin (cross-origin fetch + bearer-token auth).
+        env:
+          VITE_OPERATOR_API_URL: ${{ vars.TRADING_OPERATOR_API_URL || 'https://178.104.232.124.sslip.io' }}
         run: pnpm run build
 
       # `cloudflare/wrangler-action` tries to install wrangler via `pnpm add`
