@@ -18,6 +18,44 @@ proposes a plan; a deterministic engine runs it; a validator can verify it.
 This doc captures the candidate ideas, a judging rubric, and an adoption ranking.
 It is the tracking artifact for the work; specific items become tasks/PRs.
 
+## Design principle: this lifts agency, it does not cage it
+
+The point is NOT to make the agent less agentic. It is to separate two kinds of
+agency and treat them differently:
+
+- **Agency over cognition** — what to research, what to hypothesize, reading data,
+  deciding *what* to compute, designing/extending strategies, interpreting results,
+  talking to the principal. **Keep this maximal; expand it.**
+- **Agency over mechanism** — *how* the committed, money-moving decision is expressed
+  (hand-written imperative JS vs. a typed plan). Reducing free-wheeling here is a
+  **gain**: raw mechanism is exactly where the agent currently hallucinates, skips
+  silently, and fails to reproduce. That "freedom" is where failures live, not value.
+
+Today the agent is maximally free (writes arbitrary JS) but **cannot reliably
+exercise that freedom**. This work improves its ability to do reliably what it
+already attempts unreliably, and hands it powers it never had (reproducibility,
+attestation, principled self-tuning, transparency).
+
+Guards (G2/G6) only stop **wrong or fake** actions — lookahead is not a real live
+capability; trading an unlisted asset is a bug. Removing footguns ≠ reducing useful
+agency. F2/F3 are pure observability (zero constraint).
+
+The one real "caging" risk is the typed DSL (F1/M1). It stays tide-lifting only if
+designed against these four rules — **violating them is the regression signal to stop:**
+
+1. **Composable + extensible vocabulary** — the agent builds new sub-pipelines from
+   primitives (`call_sub_pipeline`) and can propose new operators. The vocabulary
+   *grows*; it is not a fixed dropdown.
+2. **Escape hatch, not a wall** — dangerous ops are *gated behind an explicit
+   acknowledgement*, never forbidden outright. The agent can still do the unusual
+   thing; it just has to declare it.
+3. **Free-form cognition stays free** — research, hypotheses, regime reasoning, and
+   principal conversation remain open-ended. Only the *committed executable decision*
+   must be typed.
+4. **Determinism is a domain requirement, not distrust** — a human quant PM also
+   expresses their edge as code a deterministic backtest runs; that is what makes the
+   edge auditable and (for us) on-chain attestable.
+
 ## Why this is a fit for THIS product (not generic)
 
 - We already have a `validate → execute` envelope and per-strategy tick tools — a
