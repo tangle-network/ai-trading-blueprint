@@ -539,6 +539,14 @@ async fn synthesize_trade_positions(
     Ok(synthesized)
 }
 
+/// Baseline starting capital for a paper bot whose strategy config does not
+/// declare `initial_capital_usd`. Without a seed the synthetic portfolio is
+/// empty, so deterministic ticks see zero inventory and decide
+/// `inventory-below-minimum` forever — the bot can never place a trade. A paper
+/// fleet bot with no capital is inert, so every paper bot is funded to a
+/// sensible default (matches the ~$10k the explicitly-configured bots carry).
+const DEFAULT_PAPER_INITIAL_CAPITAL_USD: i64 = 10_000;
+
 fn seed_initial_paper_cash(
     positions: &mut HashMap<String, SyntheticPositionAccumulator>,
     bot: &crate::BotContext,
@@ -547,30 +555,28 @@ fn seed_initial_paper_cash(
         return;
     }
 
-    let strategy = match bot.strategy_config.as_object() {
-        Some(strategy) => strategy,
-        None => return,
-    };
+    let strategy = bot.strategy_config.as_object();
     let token = strategy
-        .get("cash_token")
+        .and_then(|strategy| strategy.get("cash_token"))
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty() && !token_is_zero_placeholder(value))
         .unwrap_or("USDC");
-    let capital = strategy
-        .get("initial_capital_usd")
-        .or_else(|| strategy.get("initial_capital"))
-        .or_else(|| strategy.get("cash_balance"))
+    let configured_capital = strategy
+        .and_then(|strategy| {
+            strategy
+                .get("initial_capital_usd")
+                .or_else(|| strategy.get("initial_capital"))
+                .or_else(|| strategy.get("cash_balance"))
+        })
         .and_then(|value| match value {
             serde_json::Value::String(value) => parse_decimal_maybe(value),
             serde_json::Value::Number(value) => parse_decimal_maybe(&value.to_string()),
             _ => None,
         })
-        .unwrap_or(Decimal::ZERO);
-
-    if capital <= Decimal::ZERO {
-        return;
-    }
+        .filter(|capital| *capital > Decimal::ZERO);
+    let capital =
+        configured_capital.unwrap_or_else(|| Decimal::from(DEFAULT_PAPER_INITIAL_CAPITAL_USD));
 
     credit_spot_position(
         positions,
@@ -1164,5 +1170,54 @@ mod tests {
         assert_eq!(position.amount, Decimal::new(10000, 0));
         assert_eq!(position.entry_price, Some(Decimal::ONE));
         assert!(!positions.contains_key("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2|spot"));
+    }
+
+    #[test]
+    fn paper_bot_without_configured_capital_is_seeded_with_default() {
+        // Regression: bots whose strategy_config omits initial_capital_usd were
+        // seeded with nothing, so deterministic ticks saw inventory_usd=0 and
+        // decided inventory-below-minimum forever — they could never trade.
+        let bot = crate::BotContext {
+            bot_id: "bot-default".to_string(),
+            vault_address: "factory:0x1234".to_string(),
+            paper_trade: true,
+            chain_id: 84532,
+            rpc_url: "http://localhost:8545".to_string(),
+            strategy_config: serde_json::json!({ "strategy_type": "mm" }),
+            risk_params: serde_json::json!({}),
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        };
+        let mut positions = HashMap::new();
+
+        seed_initial_paper_cash(&mut positions, &bot);
+
+        let position = positions.get("usdc|spot").expect("default paper cash");
+        assert_eq!(position.token, "USDC");
+        assert_eq!(
+            position.amount,
+            Decimal::from(DEFAULT_PAPER_INITIAL_CAPITAL_USD)
+        );
+        assert_eq!(position.entry_price, Some(Decimal::ONE));
+    }
+
+    #[test]
+    fn live_bot_is_never_seeded_with_default_capital() {
+        let bot = crate::BotContext {
+            bot_id: "bot-live".to_string(),
+            vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+            paper_trade: false,
+            chain_id: 84532,
+            rpc_url: "http://localhost:8545".to_string(),
+            strategy_config: serde_json::json!({}),
+            risk_params: serde_json::json!({}),
+            validator_endpoints: vec![],
+            validation_trust: trading_runtime::ValidationTrust::PerTrade,
+        };
+        let mut positions = HashMap::new();
+
+        seed_initial_paper_cash(&mut positions, &bot);
+
+        assert!(positions.is_empty());
     }
 }
