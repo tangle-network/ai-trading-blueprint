@@ -833,14 +833,9 @@ async fn test_protected_routes_reject_no_auth() {
         ("POST", "/api/bots/test/start"),
         ("POST", "/api/bots/test/stop"),
         ("POST", "/api/bots/test/run-now"),
-        // NOTE: GET /api/bots is intentionally PUBLIC (the arena fleet/leaderboard
-        // reads the roster without sign-in) — asserted separately below. Per-bot
-        // reads, secrets, control, and debug routes stay protected.
-        ("GET", "/api/bots/test"),
-        ("GET", "/api/bots/test/metrics"),
-        ("GET", "/api/bots/test/metrics/history"),
-        ("GET", "/api/bots/test/trades"),
-        ("GET", "/api/bots/test/portfolio/state"),
+        // NOTE: bot roster/detail/metrics/trades/portfolio are intentionally
+        // public arena reads; secrets, controls, debug, progress, and terminal
+        // routes stay protected.
         ("GET", "/api/bots/test/activation-progress"),
         ("GET", "/api/bots/test/live/terminal/sessions"),
         ("POST", "/api/bots/test/live/terminal/sessions"),
@@ -888,6 +883,50 @@ async fn test_protected_routes_reject_no_auth() {
         200,
         "GET /api/bots should return 200 unauthenticated"
     );
+}
+
+#[tokio::test]
+async fn test_public_bot_read_routes_allow_no_auth_and_hide_tokens() {
+    let _dir = init_test_env();
+    let bot = seed_bot("public-read-bot-1", "perp", true);
+
+    let detail = app()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/bots/{}", bot.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), StatusCode::OK);
+    let body = detail.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["id"], bot.id);
+    assert!(
+        json.get("trading_api_token").is_none(),
+        "public bot detail must never serialize the trading API token"
+    );
+
+    for uri in [
+        format!("/api/bots/{}/metrics", bot.id),
+        format!("/api/bots/{}/trades", bot.id),
+        format!("/api/bots/{}/portfolio/state", bot.id),
+    ] {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK, "{uri} is a public read");
+    }
 }
 
 // ---------------------------------------------------------------------------
