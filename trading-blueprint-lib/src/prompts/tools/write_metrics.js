@@ -12,6 +12,13 @@ const PHASE_FILE = '/home/agent/state/phase.json';
 const DB_FILE = '/home/agent/data/trading.json';
 const CONFIG_FILE = '/home/agent/config/api.json';
 
+function ensureParentDir(path) {
+  const dir = path.split('/').slice(0, -1).join('/');
+  if (dir) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
 function readJson(path, fallback) {
   try {
     return JSON.parse(fs.readFileSync(path, 'utf8'));
@@ -65,6 +72,8 @@ function postJson(baseUrl, token, path, body) {
 }
 
 async function main() {
+  [METRICS_FILE, PHASE_FILE, DB_FILE, CONFIG_FILE].forEach(ensureParentDir);
+
   const phase = readJson(PHASE_FILE, { current: 'research', iteration: 0 });
   const db = readJson(DB_FILE, { trades: [], signals: [] });
   const config = readJson(CONFIG_FILE, null);

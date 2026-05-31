@@ -71,62 +71,78 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
   } as const;
 
   const results = useQueries({
-    queries: enrichable.entries.map(({ botId, operatorApiUrl, operatorKind }) => ({
-      queryKey: [
-        'bot-enrichment',
-        operatorApiUrl,
-        botId,
-        getDeploymentKindForOperatorKind(operatorKind),
-        authByUrl[operatorKind ?? 'cloud'].authCacheKey,
-      ] as const,
-      queryFn: async (): Promise<MetricsSnapshot[]> => {
-        const from = new Date(Date.now() - 30 * 86400000).toISOString();
-        const to = new Date().toISOString();
-        const path = `${buildBotScopedPathForDeploymentKind(
-          getDeploymentKindForOperatorKind(operatorKind),
-          botId,
-          '/metrics/history',
-        )}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=100`;
-        const data = await operatorJsonWithAuth<MetricsSnapshot[] | MetricsHistoryResponse>(
+    queries: enrichable.entries.map(({ botId, operatorApiUrl, operatorKind }) => {
+      const deploymentKind = getDeploymentKindForOperatorKind(operatorKind);
+      const auth = authByUrl[operatorKind ?? 'cloud'];
+      const needsAuth = deploymentKind !== 'fleet';
+      const authKey = needsAuth ? auth.authCacheKey : 'public';
+
+      return {
+        queryKey: [
+          'bot-enrichment',
           operatorApiUrl,
-          path,
-          authByUrl[operatorKind ?? 'cloud'],
-        );
-        return normalizeSnapshots(data);
-      },
-      staleTime: 60_000,
-      refetchInterval: 60_000,
-      retry: 1,
-      enabled: !!operatorApiUrl && !!authByUrl[operatorKind ?? 'cloud'].getCachedToken(),
-    })),
+          botId,
+          deploymentKind,
+          authKey,
+        ] as const,
+        queryFn: async (): Promise<MetricsSnapshot[]> => {
+          const from = new Date(Date.now() - 30 * 86400000).toISOString();
+          const to = new Date().toISOString();
+          const path = `${buildBotScopedPathForDeploymentKind(
+            deploymentKind,
+            botId,
+            '/metrics/history',
+          )}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=100`;
+          const data = await operatorJsonWithAuth<MetricsSnapshot[] | MetricsHistoryResponse>(
+            operatorApiUrl,
+            path,
+            auth,
+            { auth: needsAuth },
+          );
+          return normalizeSnapshots(data);
+        },
+        staleTime: 60_000,
+        refetchInterval: 60_000,
+        retry: 1,
+        enabled: !!operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
+      };
+    }),
   });
 
   const portfolioResults = useQueries({
-    queries: enrichable.entries.map(({ botId, operatorApiUrl, operatorKind }) => ({
-      queryKey: [
-        'bot-enrichment-portfolio',
-        operatorApiUrl,
-        botId,
-        getDeploymentKindForOperatorKind(operatorKind),
-        authByUrl[operatorKind ?? 'cloud'].authCacheKey,
-      ] as const,
-      queryFn: async (): Promise<PortfolioStateResponse> => {
-        const path = buildBotScopedPathForDeploymentKind(
-          getDeploymentKindForOperatorKind(operatorKind),
-          botId,
-          '/portfolio/state',
-        );
-        return operatorJsonWithAuth<PortfolioStateResponse>(
+    queries: enrichable.entries.map(({ botId, operatorApiUrl, operatorKind }) => {
+      const deploymentKind = getDeploymentKindForOperatorKind(operatorKind);
+      const auth = authByUrl[operatorKind ?? 'cloud'];
+      const needsAuth = deploymentKind !== 'fleet';
+      const authKey = needsAuth ? auth.authCacheKey : 'public';
+
+      return {
+        queryKey: [
+          'bot-enrichment-portfolio',
           operatorApiUrl,
-          path,
-          authByUrl[operatorKind ?? 'cloud'],
-        );
-      },
-      staleTime: 10_000,
-      refetchInterval: 15_000,
-      retry: 1,
-      enabled: !!operatorApiUrl && !!authByUrl[operatorKind ?? 'cloud'].getCachedToken(),
-    })),
+          botId,
+          deploymentKind,
+          authKey,
+        ] as const,
+        queryFn: async (): Promise<PortfolioStateResponse> => {
+          const path = buildBotScopedPathForDeploymentKind(
+            deploymentKind,
+            botId,
+            '/portfolio/state',
+          );
+          return operatorJsonWithAuth<PortfolioStateResponse>(
+            operatorApiUrl,
+            path,
+            auth,
+            { auth: needsAuth },
+          );
+        },
+        staleTime: 10_000,
+        refetchInterval: 15_000,
+        retry: 1,
+        enabled: !!operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
+      };
+    }),
   });
 
   const prevRef = useRef<Bot[]>(bots);

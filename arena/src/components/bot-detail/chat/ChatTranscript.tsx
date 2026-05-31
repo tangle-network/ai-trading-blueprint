@@ -123,7 +123,7 @@ function AgentRunGroup({
       </button>
 
       {visibleParts.length > 0 && (
-        <div className={cn('mt-1 space-y-2.5 rounded-lg p-2', branding.containerBgClass)}>
+        <div className={cn('mt-1 space-y-2 rounded-lg p-1.5', branding.containerBgClass)}>
           {visibleParts.map(({ part, msgId, index }) => {
             const key = `${msgId}-${index}`;
             if (part.type === 'text') {
@@ -132,7 +132,7 @@ function AgentRunGroup({
                 return null;
               }
               return (
-                <div key={key} className="px-3 py-2">
+                <div key={key} className="px-2.5 py-1.5">
                   <AppMarkdown className="text-[14px] leading-6">{text}</AppMarkdown>
                 </div>
               );
@@ -209,13 +209,13 @@ export function ChatTranscript({
 
   return (
     <div className="flex flex-col h-full flex-1 min-h-0">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-sm text-arena-elements-textTertiary">
             No messages yet
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {groups.map((group, groupIndex) => {
               if (group.type === 'user') {
                 return (

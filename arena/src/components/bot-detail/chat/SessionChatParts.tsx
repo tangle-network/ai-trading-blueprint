@@ -98,7 +98,7 @@ function renderTextWithBreaks(text: string) {
 
 function renderCodeBlock(code: string, language?: string) {
   return (
-    <pre className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-3 py-2.5 font-data text-[11px] leading-5 text-arena-elements-textPrimary">
+    <pre className="overflow-x-auto rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-3 py-2 font-data text-[11px] leading-5 text-arena-elements-textPrimary">
       <code className={language ? `language-${language}` : undefined}>{code}</code>
     </pre>
   );
@@ -151,7 +151,7 @@ function DetailSection({
   return (
     <div
       className={cn(
-        'rounded-xl border px-2.5 py-2.5',
+        'rounded-lg border px-2.5 py-2',
         tone === 'error'
           ? 'border-crimson-500/20 bg-crimson-500/5'
           : 'border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/60',
@@ -159,7 +159,7 @@ function DetailSection({
     >
       <div
         className={cn(
-          'mb-1.5 text-[10px] font-display font-semibold uppercase tracking-[0.12em]',
+          'mb-1 text-[10px] font-display font-semibold uppercase tracking-[0.12em]',
           tone === 'error' ? 'text-crimson-600 dark:text-crimson-300' : 'text-arena-elements-textTertiary',
         )}
       >
@@ -350,12 +350,12 @@ export function ToolRow({ part }: { part: ToolPart }) {
   const iconClass = TOOL_CATEGORY_ICON_CLASS[category] ?? TOOL_CATEGORY_ICON_CLASS.other;
 
   return (
-    <div className="rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/70">
+    <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/70">
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          'w-full rounded-xl px-2.5 py-2.5 text-left transition-colors',
+          'w-full rounded-lg px-2.5 py-1.5 text-left transition-colors',
           'hover:bg-arena-elements-item-backgroundHover/80',
           open && 'bg-arena-elements-item-backgroundHover/50',
         )}
@@ -363,7 +363,7 @@ export function ToolRow({ part }: { part: ToolPart }) {
         <div className="flex items-center gap-2.5">
           <div
             className={cn(
-              'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border',
+              'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
               isRunning && 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
               isComplete && 'border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300',
               isError && 'border-crimson-500/20 bg-crimson-500/8 text-crimson-600 dark:text-crimson-300',
@@ -412,7 +412,7 @@ export function ToolRow({ part }: { part: ToolPart }) {
       </button>
 
       {open && (
-        <div className="space-y-2.5 border-t border-arena-elements-dividerColor/50 px-2.5 py-2.5">
+        <div className="space-y-2 border-t border-arena-elements-dividerColor/50 px-2.5 py-2">
           {safePart.state.input !== undefined && <DetailSection label="Input" value={safePart.state.input} />}
           {safePart.state.output !== undefined && <DetailSection label="Output" value={safePart.state.output} />}
           {errorText && <DetailSection label="Error" value={errorText} tone="error" />}
@@ -457,12 +457,12 @@ export function ReasoningRow({
   }, [durationMs, isActive]);
 
   return (
-    <div className="rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/70">
+    <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/70">
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          'w-full rounded-xl px-2.5 py-2.5 text-left transition-colors',
+          'w-full rounded-lg px-2.5 py-1.5 text-left transition-colors',
           'hover:bg-arena-elements-item-backgroundHover/80',
           open && 'bg-arena-elements-item-backgroundHover/50',
         )}
@@ -470,7 +470,7 @@ export function ReasoningRow({
         <div className="flex items-center gap-2.5">
           <div
             className={cn(
-              'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border',
+              'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
               isActive
                 ? 'border-violet-500/25 bg-violet-500/10 text-violet-700 shadow-[0_0_20px_rgba(139,92,246,0.12)] dark:text-violet-300'
                 : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/50 text-arena-elements-textTertiary',
@@ -499,7 +499,7 @@ export function ReasoningRow({
       </button>
 
       {open && (
-        <div className="border-t border-arena-elements-dividerColor/50 px-3 py-3">
+        <div className="border-t border-arena-elements-dividerColor/50 px-3 py-2">
           {text ? (
             <AppMarkdown className="text-[13px] leading-6 text-arena-elements-textSecondary">{text}</AppMarkdown>
           ) : (

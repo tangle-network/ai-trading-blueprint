@@ -191,12 +191,23 @@ export interface RevisionArena {
   modes: RevisionModeCapability[];
 }
 
+type FetchOperatorBotApiOptions = {
+  auth?: boolean;
+};
+
 async function fetchOperatorBotApi<T>(
   apiUrl: string,
   auth: Pick<ReturnType<typeof useOperatorAuth>, 'getCachedToken' | 'getToken'>,
   path: string,
+  options: FetchOperatorBotApiOptions = {},
 ): Promise<T> {
-  return operatorJsonWithAuth<T>(apiUrl, path, auth);
+  return operatorJsonWithAuth<T>(apiUrl, path, auth, options);
+}
+
+function fleetReadRequiresAuth(
+  deploymentKind: ReturnType<typeof getDeploymentKindForOperatorKind>,
+): boolean {
+  return deploymentKind !== 'fleet';
 }
 
 function mapApiSimulation(trade: ApiTrade): TradeSimulation | undefined {
@@ -443,18 +454,25 @@ export function useBotTrades(
   const auth = useOperatorAuth(apiUrl);
   const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
+  const needsAuth = fleetReadRequiresAuth(deploymentKind);
+  const authKey = needsAuth ? auth.authCacheKey : 'public';
 
   return useQuery<Trade[]>({
-    queryKey: ['bot-trades', apiUrl, botId, limit, deploymentKind, options.chainId, options.assetMetadata, auth.authCacheKey],
+    queryKey: ['bot-trades', apiUrl, botId, limit, deploymentKind, options.chainId, options.assetMetadata, authKey],
     queryFn: async () => {
       const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=${limit}`;
-      const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(apiUrl, auth, path);
+      const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(
+        apiUrl,
+        auth,
+        path,
+        { auth: needsAuth },
+      );
       return normalizeTrades(data).map((t) => mapApiTrade(t, botName, options.chainId, options.assetMetadata));
     },
     staleTime: 15_000,
     refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
-    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
+    enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
   });
 }
 
@@ -467,12 +485,19 @@ export function useBotRecentValidations(
   const auth = useOperatorAuth(apiUrl);
   const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
+  const needsAuth = fleetReadRequiresAuth(deploymentKind);
+  const authKey = needsAuth ? auth.authCacheKey : 'public';
 
   return useQuery<Trade[]>({
-    queryKey: ['bot-recent-validations', apiUrl, botId, deploymentKind, options.chainId, options.assetMetadata, auth.authCacheKey],
+    queryKey: ['bot-recent-validations', apiUrl, botId, deploymentKind, options.chainId, options.assetMetadata, authKey],
     queryFn: async () => {
       const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=5`;
-      const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(apiUrl, auth, path);
+      const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(
+        apiUrl,
+        auth,
+        path,
+        { auth: needsAuth },
+      );
       return normalizeTrades(data).map((t) => mapApiTrade(t, botName, options.chainId, options.assetMetadata));
     },
     refetchInterval: options.refetchInterval ?? 5_000,
@@ -480,7 +505,7 @@ export function useBotRecentValidations(
     refetchOnMount: 'always',
     retry: 1,
     retryDelay: 3_000,
-    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
+    enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
   });
 }
 
@@ -489,19 +514,26 @@ export function useBotPortfolio(botId: string, options: BotApiQueryOptions = {})
   const auth = useOperatorAuth(apiUrl);
   const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
+  const needsAuth = fleetReadRequiresAuth(deploymentKind);
+  const authKey = needsAuth ? auth.authCacheKey : 'public';
 
   return useQuery<Portfolio | null>({
-    queryKey: ['bot-portfolio', apiUrl, botId, deploymentKind, options.chainId, options.assetMetadata, auth.authCacheKey],
+    queryKey: ['bot-portfolio', apiUrl, botId, deploymentKind, options.chainId, options.assetMetadata, authKey],
     queryFn: async () => {
       const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/portfolio/state');
-      const data = await fetchOperatorBotApi<RawPortfolioState>(apiUrl, auth, path);
+      const data = await fetchOperatorBotApi<RawPortfolioState>(
+        apiUrl,
+        auth,
+        path,
+        { auth: needsAuth },
+      );
       return mapApiPortfolioState(data, botId, options.chainId, options.assetMetadata);
     },
     staleTime: 10_000,
     gcTime: 60_000,
     refetchOnMount: false,
     refetchInterval: options.refetchInterval,
-    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
+    enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
   });
 }
 
@@ -510,20 +542,27 @@ export function useBotMetrics(botId: string, days = 30, options: BotApiQueryOpti
   const auth = useOperatorAuth(apiUrl);
   const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
+  const needsAuth = fleetReadRequiresAuth(deploymentKind);
+  const authKey = needsAuth ? auth.authCacheKey : 'public';
 
   return useQuery<ApiMetricsSnapshot[]>({
-    queryKey: ['bot-metrics', apiUrl, botId, days, deploymentKind, auth.authCacheKey],
+    queryKey: ['bot-metrics', apiUrl, botId, days, deploymentKind, authKey],
     queryFn: async () => {
       const from = new Date(Date.now() - days * 86400000).toISOString();
       const to = new Date().toISOString();
       const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/metrics/history')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=100`;
-      const data = await fetchOperatorBotApi<ApiMetricsSnapshot[] | ApiMetricsHistoryResponse>(apiUrl, auth, path);
+      const data = await fetchOperatorBotApi<ApiMetricsSnapshot[] | ApiMetricsHistoryResponse>(
+        apiUrl,
+        auth,
+        path,
+        { auth: needsAuth },
+      );
       return normalizeMetrics(data);
     },
     staleTime: 15_000,
     refetchOnMount: false,
     refetchInterval: options.refetchInterval,
-    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
+    enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
   });
 }
 
@@ -532,17 +571,24 @@ export function useBotMetricsSummary(botId: string, options: BotApiQueryOptions 
   const auth = useOperatorAuth(apiUrl);
   const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
+  const needsAuth = fleetReadRequiresAuth(deploymentKind);
+  const authKey = needsAuth ? auth.authCacheKey : 'public';
 
   return useQuery<ApiBotMetricsSummary>({
-    queryKey: ['bot-metrics-summary', apiUrl, botId, deploymentKind, auth.authCacheKey],
+    queryKey: ['bot-metrics-summary', apiUrl, botId, deploymentKind, authKey],
     queryFn: async () => {
       const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/metrics');
-      return fetchOperatorBotApi<ApiBotMetricsSummary>(apiUrl, auth, path);
+      return fetchOperatorBotApi<ApiBotMetricsSummary>(
+        apiUrl,
+        auth,
+        path,
+        { auth: needsAuth },
+      );
     },
     staleTime: 15_000,
     refetchOnMount: false,
     refetchInterval: options.refetchInterval,
-    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
+    enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
   });
 }
 

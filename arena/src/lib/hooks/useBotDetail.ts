@@ -56,18 +56,25 @@ export function useBotDetail(
   const apiUrl = operatorApiUrl ?? '';
   const auth = useOperatorAuth(apiUrl);
   const deploymentKind = getDeploymentKindForOperatorKind(operatorKind);
+  const needsAuth = deploymentKind !== 'fleet';
+  const authKey = needsAuth ? auth.authCacheKey : 'public';
 
   return useQuery<BotDetail>({
-    queryKey: ['bot-detail', apiUrl, botId, deploymentKind, auth.authCacheKey],
+    queryKey: ['bot-detail', apiUrl, botId, deploymentKind, authKey],
     queryFn: async () => {
       const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId);
-      const detail = await operatorJsonWithAuth<RawBotDetail>(apiUrl, path, auth);
+      const detail = await operatorJsonWithAuth<RawBotDetail>(
+        apiUrl,
+        path,
+        auth,
+        { auth: needsAuth },
+      );
       return {
         ...detail,
         workflow_id: normalizeOptionalWorkflowId(detail.workflow_id),
       };
     },
-    enabled: !!botId && !!apiUrl && !!auth.getCachedToken(),
+    enabled: !!botId && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
     staleTime: 10_000,
     refetchInterval: 15_000,
   });

@@ -562,6 +562,24 @@ function approvalItems(value: unknown): RunResultSection["items"] {
   return items;
 }
 
+function formatAssetSummary(value: unknown): string | null {
+  const asset = asRecord(value);
+  if (!asset) return null;
+
+  const symbol = formatResultValue(asset.symbol ?? asset.asset ?? asset.token ?? asset.address);
+  const balance = formatResultValue(asset.balance ?? asset.amount ?? asset.quantity);
+  const valueUsd = formatResultValue(asset.value_usd ?? asset.notional_usd ?? asset.usd_value);
+  const priceUsd = formatResultValue(asset.price_usd ?? asset.mark_price_usd);
+  const parts = [
+    symbol,
+    balance ? `${balance} units` : null,
+    valueUsd ? `$${valueUsd}` : null,
+    priceUsd ? `price $${priceUsd}` : null,
+  ].filter(Boolean);
+
+  return parts.length ? parts.join(" • ") : null;
+}
+
 function buildRunResultSections(result: Record<string, unknown>): RunResultSection[] {
   const sections: RunResultSection[] = [];
   const checkedState = asRecord(result.checked_state);
@@ -581,15 +599,33 @@ function buildRunResultSections(result: Record<string, unknown>): RunResultSecti
     const items: RunResultSection["items"] = [];
     pushResultItem(items, "NAV status", checkedState.nav_status);
     pushResultItem(items, "Mode", checkedState.mode);
+    pushResultItem(items, "Protocol", checkedState.protocol);
     pushResultItem(items, "Total NAV USDC", checkedState.total_nav_usdc);
+    pushResultItem(items, "Total NAV USD", checkedState.total_nav_usd);
+    pushResultItem(items, "Total value USD", checkedState.total_value_usd);
     pushResultItem(
       items,
       "Hyperliquid equity USDC",
       checkedState.hyperliquid_equity_usdc,
     );
     pushResultItem(items, "Perp margin USDC", checkedState.perp_margin_usdc);
+    pushResultItem(items, "WETH held", checkedState.weth_held);
+    pushResultItem(items, "USDC held", checkedState.usdc_held);
+    pushResultItem(items, "WETH price", checkedState.weth_price);
+    pushResultItem(items, "RSI 14", checkedState.rsi_14);
+    pushResultItem(items, "EMA 12", checkedState.ema_12);
+    pushResultItem(items, "EMA 26", checkedState.ema_26);
+    pushResultItem(items, "Candles", checkedState.candles);
+    pushResultItem(items, "Base weight", checkedState.base_weight);
+    pushResultItem(items, "Target base weight", checkedState.target_base_weight);
+    pushResultItem(items, "Rebalance band %", checkedState.rebalance_band_pct);
     pushResultItem(items, "Positions", checkedState.positions_count);
     pushResultItem(items, "Open orders", checkedState.open_orders_count);
+    if (Array.isArray(checkedState.assets)) {
+      checkedState.assets.slice(0, 6).forEach((asset, index) => {
+        pushResultItem(items, `Asset ${index + 1}`, formatAssetSummary(asset));
+      });
+    }
     if (items.length) sections.push({ title: "Checked State", items });
   }
 
@@ -632,6 +668,12 @@ function buildRunResultSections(result: Record<string, unknown>): RunResultSecti
     pushResultItem(items, "Attempted", tradeAction.attempted);
     pushResultItem(items, "Validation status", tradeAction.validation_status);
     pushResultItem(items, "Execution status", tradeAction.execution_status);
+    pushResultItem(items, "Tx hash", tradeAction.tx_hash);
+    pushResultItem(items, "Paper", tradeAction.paper_trade);
+    pushResultItem(items, "Notional USD", tradeAction.notional_usd);
+    pushResultItem(items, "Protocol", tradeAction.target_protocol);
+    pushResultItem(items, "Token in", tradeAction.token_in);
+    pushResultItem(items, "Token out", tradeAction.token_out);
     if (items.length) sections.push({ title: "Trade", items });
   }
 
@@ -794,6 +836,7 @@ export function RunsTab({
   const baseApiUrl = operatorApiUrl ?? "";
   const { data: operatorMeta } = useOperatorMeta(baseApiUrl);
   const deploymentKind = getDeploymentKindForOperatorKind(operatorKind);
+  const needsAuth = deploymentKind !== "fleet";
   const apiUrl =
     operatorMeta && baseApiUrl
       ? `${baseApiUrl}${buildBotScopedPathForDeploymentKind(deploymentKind, botId)}`
@@ -811,6 +854,7 @@ export function RunsTab({
     typeof window === "undefined" ? false : window.innerWidth < 1100,
   );
   const runsCacheKey = `${baseApiUrl}::${botId}::runs`;
+  const authKey = needsAuth ? token : "public";
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -828,8 +872,8 @@ export function RunsTab({
   }, []);
 
   const runsQuery = useInfiniteQuery({
-    queryKey: ["bot-runs", apiUrl, token, botId],
-    enabled: isAuthenticated && !!apiUrl && !!token,
+    queryKey: ["bot-runs", apiUrl, authKey, botId],
+    enabled: !!apiUrl && (!needsAuth || (isAuthenticated && !!token)),
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) => {
       const cursor =
@@ -839,9 +883,7 @@ export function RunsTab({
       const response = await fetch(
         `${apiUrl}/runs?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          headers: needsAuth && token ? { Authorization: `Bearer ${token}` } : {},
         },
       );
 
@@ -899,12 +941,15 @@ export function RunsTab({
   const activeRun =
     runs.find((run) => run.runId === activeRunId) ?? runs[0] ?? null;
   const transcriptSessionId = resolveTranscriptSessionId(botId, activeRun);
+  const canStreamTranscript = Boolean(
+    transcriptSessionId && isAuthenticated && token,
+  );
 
   const stream = useBotSessionStream({
     apiUrl,
     token,
     sessionId: transcriptSessionId,
-    enabled: isAuthenticated && !!apiUrl && !!transcriptSessionId,
+    enabled: !!apiUrl && canStreamTranscript,
     cacheKey: runsCacheKey,
   });
 
@@ -923,6 +968,7 @@ export function RunsTab({
     runsQuery.error instanceof Error ? runsQuery.error.message : null,
   );
   const streamErrorMessage = activeRun?.transcriptAvailable
+    && canStreamTranscript
     ? extractRunsErrorMessage(stream.error)
     : null;
   const headerTitle = activeRun ? getRunTitle(activeRun) : "Autonomous Run";
@@ -959,7 +1005,7 @@ export function RunsTab({
     );
   }
 
-  if (!isAuthenticated) {
+  if (needsAuth && !isAuthenticated) {
     return (
       <AuthBanner
         onAuth={authenticate}
@@ -1009,10 +1055,10 @@ export function RunsTab({
       data-sandbox-ui="true"
       data-sandbox-theme="vault"
       className="arena-chat-shell glass-card overflow-hidden rounded-xl"
-      style={{ minHeight: "560px" }}
+      style={{ minHeight: "680px" }}
     >
       <div
-        className={`flex h-[min(640px,68vh)] min-h-[560px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
+        className={`flex h-[min(920px,calc(100vh-12rem))] min-h-[680px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
       >
         <RunsSidebar
           runs={runItems}
@@ -1063,7 +1109,7 @@ export function RunsTab({
           </div>
 
           <div className="min-h-0 flex-1 bg-arena-elements-background-depth-1/15">
-            {transcriptSessionId && !streamErrorMessage ? (
+            {canStreamTranscript && !streamErrorMessage ? (
               <ChatTranscript
                 messages={stream.messages}
                 partMap={stream.partMap}

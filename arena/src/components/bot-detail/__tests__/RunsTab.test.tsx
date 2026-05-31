@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createWrapper } from "~/test/mocks";
 
 const authState = {
-  token: "test-token",
+  token: "test-token" as string | null,
   isAuthenticated: true,
   isAuthenticating: false,
   authenticate: vi.fn(),
@@ -188,14 +188,65 @@ describe("RunsTab", () => {
       expect(fetchMock).toHaveBeenCalledWith(
         "http://localhost:9201/api/bots/bot-1/runs?limit=100&cursor=1775824500%3Arun-new",
         expect.objectContaining({
-          headers: {
-            Authorization: "Bearer test-token",
-          },
+          headers: {},
         }),
       );
     });
     expect(await screen.findByText("Research Run")).toBeInTheDocument();
     expect(screen.getByText("latest result")).toBeInTheDocument();
+  });
+
+  it("loads public fleet run summaries without wallet authentication", async () => {
+    authState.token = null;
+    authState.isAuthenticated = false;
+
+    const { RunsTab } = await import("../RunsTab");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/runs?limit=100")) {
+        return jsonResponse({
+          runs: [
+            {
+              run_id: "run-public",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_824_500,
+              completed_at: 1_775_824_560,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 60_000,
+              input_tokens: 10,
+              output_tokens: 6,
+              result: "public result",
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByText("public result")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:9201/api/bots/bot-1/runs?limit=100",
+      expect.objectContaining({ headers: {} }),
+    );
   });
 
   it("replays saved trading run JSON through the chat transcript when no full transcript was captured", async () => {

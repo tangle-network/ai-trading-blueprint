@@ -86,10 +86,14 @@ export function Header() {
         )}
 
         {/* Actions — pushed to the right */}
-        <div className="flex items-center gap-2 ml-auto shrink-0">
+        <div className="flex items-center gap-1 sm:gap-2 ml-auto shrink-0">
           <ChainSwitcher />
-          <ThemeToggle />
-          <TxDropdown />
+          <div className="hidden sm:block">
+            <ThemeToggle />
+          </div>
+          <div className="hidden sm:block">
+            <TxDropdown />
+          </div>
           <WalletButton />
         </div>
       </div>

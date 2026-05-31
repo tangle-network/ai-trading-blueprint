@@ -13,6 +13,13 @@ const fs = require('fs');
 const crypto = require('crypto');
 const LOG_FILE = '/home/agent/logs/decisions.jsonl';
 
+function ensureParentDir(path) {
+  const dir = path.split('/').slice(0, -1).join('/');
+  if (dir) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
 // Deterministic JSON: object keys sorted recursively, arrays preserve order,
 // undefined dropped. Identical logical content => identical string => identical
 // hash, regardless of key insertion order.
@@ -42,6 +49,7 @@ function logDecision(input) {
     timestamp: new Date().toISOString(),
     ...data,
   };
+  ensureParentDir(LOG_FILE);
   fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + '\n');
   return entry;
 }

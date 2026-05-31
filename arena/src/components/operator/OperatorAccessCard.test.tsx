@@ -80,7 +80,7 @@ describe('OperatorAccessCard', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Connect Wallet' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Authenticate' }));
 
     await waitFor(() => {
       expect(mocks.getAuthState('/instance-operator-api').authenticate).toHaveBeenCalledTimes(1);

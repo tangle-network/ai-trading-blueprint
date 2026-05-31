@@ -340,33 +340,35 @@ export default function BotDetailPage() {
         />
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
-          <TabsList>
-            <TabsTrigger value="performance">Performance</TabsTrigger>
-            <TabsTrigger value="positions">Positions</TabsTrigger>
-            <TabsTrigger value="trades">Trade History</TabsTrigger>
-            <TabsTrigger value="reasoning" className="relative">
-              Validation
-              {pendingValidationCount > 0 && (
-                <span className="ml-1.5 w-2 h-2 rounded-full bg-violet-500 animate-pulse inline-block" />
+          <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+            <TabsList className="w-max min-w-full">
+              <TabsTrigger value="performance">Performance</TabsTrigger>
+              <TabsTrigger value="positions">Positions</TabsTrigger>
+              <TabsTrigger value="trades">Trade History</TabsTrigger>
+              <TabsTrigger value="reasoning" className="relative">
+                Validation
+                {pendingValidationCount > 0 && (
+                  <span className="ml-1.5 w-2 h-2 rounded-full bg-violet-500 animate-pulse inline-block" />
+                )}
+              </TabsTrigger>
+              {operatorMeta?.features.chat && (
+                <TabsTrigger value="runs">Runs</TabsTrigger>
               )}
-            </TabsTrigger>
-            {operatorMeta?.features.chat && (
-              <TabsTrigger value="runs">Runs</TabsTrigger>
-            )}
-            <TabsTrigger value="arena">Revision Arena</TabsTrigger>
-            {operatorMeta?.features.chat && (
-              <TabsTrigger value="chat">Chat</TabsTrigger>
-            )}
-            {operatorMeta?.features.terminal && (
-              <TabsTrigger value="terminal">Terminal</TabsTrigger>
-            )}
-            {isHyperliquidPerpBot && (
-              <TabsTrigger value="vault">Vault</TabsTrigger>
-            )}
-            <TabsTrigger value="secrets">Secrets</TabsTrigger>
-            <TabsTrigger value="envelope">Envelope</TabsTrigger>
-            <TabsTrigger value="controls">Controls</TabsTrigger>
-          </TabsList>
+              <TabsTrigger value="arena">Revision Arena</TabsTrigger>
+              {operatorMeta?.features.chat && (
+                <TabsTrigger value="chat">Chat</TabsTrigger>
+              )}
+              {operatorMeta?.features.terminal && (
+                <TabsTrigger value="terminal">Terminal</TabsTrigger>
+              )}
+              {isHyperliquidPerpBot && (
+                <TabsTrigger value="vault">Vault</TabsTrigger>
+              )}
+              <TabsTrigger value="secrets">Secrets</TabsTrigger>
+              <TabsTrigger value="envelope">Envelope</TabsTrigger>
+              <TabsTrigger value="controls">Controls</TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="performance" className="mt-6">
             <PerformanceTab bot={bot} isLive={botIsLive} />

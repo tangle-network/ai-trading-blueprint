@@ -627,10 +627,10 @@ export function ChatTab({
       data-sandbox-ui="true"
       data-sandbox-theme="vault"
       className="arena-chat-shell glass-card rounded-xl overflow-hidden"
-      style={{ minHeight: "560px" }}
+      style={{ minHeight: "680px" }}
     >
       <div
-        className={`flex h-[min(640px,68vh)] min-h-[560px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
+        className={`flex h-[min(920px,calc(100vh-12rem))] min-h-[680px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
       >
         <SessionWorkspaceSidebar
           sessions={sessionItems}
