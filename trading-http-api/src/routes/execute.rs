@@ -2242,6 +2242,90 @@ async fn execute_paper_trade(
     }))
 }
 
+/// Per-trade paper return: the marked equity change from the prior trade's
+/// frozen equity to this trade's post-trade equity, as a percentage. Chained
+/// this way (vs the previous *trade's* equity, not the pre-trade snapshot) the
+/// per-trade series telescopes to the full-period return, so summing it (as the
+/// evolution scorecard does) approximates total return and the equity series is
+/// exact for high-water-mark / drawdown.
+fn paper_pnl_pct_from(equity_after: Decimal, equity_before: Decimal) -> Decimal {
+    if equity_before <= Decimal::ZERO {
+        return Decimal::ZERO;
+    }
+    ((equity_after - equity_before) / equity_before) * Decimal::from(100)
+}
+
+/// Starting capital used as the PnL baseline for a paper bot's first trade.
+/// Mirrors the synthetic-portfolio seed so equity and PnL agree: configured
+/// `initial_capital_usd` wins, otherwise the shared paper default.
+fn paper_initial_capital(strategy_config: &serde_json::Value) -> Decimal {
+    strategy_config
+        .as_object()
+        .and_then(|strategy| {
+            strategy
+                .get("initial_capital_usd")
+                .or_else(|| strategy.get("initial_capital"))
+                .or_else(|| strategy.get("cash_balance"))
+        })
+        .and_then(|value| match value {
+            serde_json::Value::String(value) => value.parse::<Decimal>().ok(),
+            serde_json::Value::Number(value) => value.to_string().parse::<Decimal>().ok(),
+            _ => None,
+        })
+        .filter(|capital| *capital > Decimal::ZERO)
+        .unwrap_or_else(|| {
+            Decimal::from(crate::routes::portfolio::DEFAULT_PAPER_INITIAL_CAPITAL_USD)
+        })
+}
+
+/// Freeze the post-trade account value onto the most recent paper trade as
+/// `paper_equity_after`, and chain `paper_pnl_pct` from the prior trade's frozen
+/// equity (or the bot's starting capital for the first trade). Called right
+/// after a paper trade records and its metrics snapshot is captured, so the
+/// snapshot's `account_value_usd` is this trade's marked equity.
+///
+/// Idempotent: only stamps when the latest trade is still unstamped, so repeat
+/// snapshot captures (e.g. on later ticks) never overwrite a trade's frozen
+/// equity with a later value. Best-effort — a failure here never fails the
+/// trade, it just leaves the fields null (the prior behavior).
+async fn stamp_latest_paper_trade_equity(
+    bot_id: &str,
+    strategy_config: &serde_json::Value,
+    account_value_usd: &str,
+) {
+    let equity_after = match account_value_usd.parse::<Decimal>() {
+        Ok(value) if value > Decimal::ZERO => value,
+        _ => return,
+    };
+    let page = match trade_store::trades_for_bot(bot_id, 2, 0) {
+        Ok(page) => page,
+        Err(error) => {
+            tracing::warn!(bot_id = %bot_id, %error, "paper equity stamp: trade lookup failed");
+            return;
+        }
+    };
+    let Some(latest) = page.trades.first() else {
+        return;
+    };
+    if latest.paper_equity_after.is_some() {
+        return;
+    }
+    let equity_before = page
+        .trades
+        .get(1)
+        .and_then(|prev| prev.paper_equity_after.as_deref())
+        .and_then(|value| value.parse::<Decimal>().ok())
+        .filter(|value| *value > Decimal::ZERO)
+        .unwrap_or_else(|| paper_initial_capital(strategy_config));
+
+    let mut updated = latest.clone();
+    updated.paper_equity_after = Some(equity_after.normalize().to_string());
+    updated.paper_pnl_pct = Some(paper_pnl_pct_from(equity_after, equity_before).normalize().to_string());
+    if let Err(error) = trade_store::record_trade(updated).await {
+        tracing::warn!(bot_id = %bot_id, %error, "paper equity stamp: persist failed");
+    }
+}
+
 /// Execute a paper Polymarket CLOB trade by simulating the order against the
 /// current live book instead of posting a signed order.
 async fn execute_paper_clob_trade(
@@ -3630,18 +3714,26 @@ async fn execute_multi_bot(
         ensure_clob_sell_inventory(&bot.bot_id, &clob_params)?;
         let result =
             execute_paper_clob_trade(&bot.bot_id, clob, &normalized_req, stored_validation).await?;
-        if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
+        match capture_metrics_snapshot_for_bot_with_state(
             &bot,
             Some(&state),
             &state.market_data_base_url,
         )
         .await
         {
-            tracing::warn!(
+            Ok(snapshot) => {
+                stamp_latest_paper_trade_equity(
+                    &bot.bot_id,
+                    &bot.strategy_config,
+                    &snapshot.account_value_usd,
+                )
+                .await
+            }
+            Err(error) => tracing::warn!(
                 bot_id = %bot.bot_id,
                 %error,
                 "failed to capture metrics snapshot after paper CLOB trade"
-            );
+            ),
         }
         return Ok(result.response);
     }
@@ -3655,18 +3747,26 @@ async fn execute_multi_bot(
             &bot.strategy_config,
         )
         .await?;
-        if let Err(error) = capture_metrics_snapshot_for_bot_with_state(
+        match capture_metrics_snapshot_for_bot_with_state(
             &bot,
             Some(&state),
             &state.market_data_base_url,
         )
         .await
         {
-            tracing::warn!(
+            Ok(snapshot) => {
+                stamp_latest_paper_trade_equity(
+                    &bot.bot_id,
+                    &bot.strategy_config,
+                    &snapshot.account_value_usd,
+                )
+                .await
+            }
+            Err(error) => tracing::warn!(
                 bot_id = %bot.bot_id,
                 %error,
                 "failed to capture metrics snapshot after paper trade"
-            );
+            ),
         }
         return Ok(response);
     }
@@ -3841,6 +3941,51 @@ fn parse_intent_hash_bytes(s: &str) -> Result<[u8; 32], (StatusCode, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paper_pnl_pct_gain_loss_flat_and_guard() {
+        // +10% gain
+        assert_eq!(
+            paper_pnl_pct_from(Decimal::from(11000), Decimal::from(10000)),
+            Decimal::from(10)
+        );
+        // -25% loss
+        assert_eq!(
+            paper_pnl_pct_from(Decimal::from(7500), Decimal::from(10000)),
+            Decimal::from(-25)
+        );
+        // flat
+        assert_eq!(
+            paper_pnl_pct_from(Decimal::from(10000), Decimal::from(10000)),
+            Decimal::ZERO
+        );
+        // zero/negative baseline must not divide-by-zero — guarded to 0
+        assert_eq!(
+            paper_pnl_pct_from(Decimal::from(5000), Decimal::ZERO),
+            Decimal::ZERO
+        );
+    }
+
+    #[test]
+    fn paper_initial_capital_prefers_config_then_default() {
+        assert_eq!(
+            paper_initial_capital(&serde_json::json!({ "initial_capital_usd": "25000" })),
+            Decimal::from(25000)
+        );
+        assert_eq!(
+            paper_initial_capital(&serde_json::json!({ "cash_balance": 5000 })),
+            Decimal::from(5000)
+        );
+        // missing / zero falls back to the shared paper default
+        assert_eq!(
+            paper_initial_capital(&serde_json::json!({ "strategy_type": "mm" })),
+            Decimal::from(crate::routes::portfolio::DEFAULT_PAPER_INITIAL_CAPITAL_USD)
+        );
+        assert_eq!(
+            paper_initial_capital(&serde_json::json!({ "initial_capital_usd": "0" })),
+            Decimal::from(crate::routes::portfolio::DEFAULT_PAPER_INITIAL_CAPITAL_USD)
+        );
+    }
 
     fn make_intent(
         token_in: &str,

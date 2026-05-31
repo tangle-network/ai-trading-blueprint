@@ -545,7 +545,7 @@ async fn synthesize_trade_positions(
 /// `inventory-below-minimum` forever — the bot can never place a trade. A paper
 /// fleet bot with no capital is inert, so every paper bot is funded to a
 /// sensible default (matches the ~$10k the explicitly-configured bots carry).
-const DEFAULT_PAPER_INITIAL_CAPITAL_USD: i64 = 10_000;
+pub(crate) const DEFAULT_PAPER_INITIAL_CAPITAL_USD: i64 = 10_000;
 
 fn seed_initial_paper_cash(
     positions: &mut HashMap<String, SyntheticPositionAccumulator>,
