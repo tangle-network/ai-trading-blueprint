@@ -93,6 +93,10 @@ fn default_allow_live_probe() -> bool {
     true
 }
 
+fn zero_string() -> String {
+    "0".to_string()
+}
+
 impl Default for RiskBudgetRequest {
     fn default() -> Self {
         Self {
@@ -187,6 +191,8 @@ pub struct RiskBudgetDecision {
     pub max_trades: Option<u64>,
     #[serde(default)]
     pub reserved_trades: u64,
+    #[serde(default = "zero_string")]
+    pub reserved_notional_usd: String,
     #[serde(default)]
     pub kill_conditions: Vec<String>,
     pub confidence_score: f64,
@@ -410,6 +416,7 @@ pub fn build_promotion_decision(
         max_loss_usd,
         max_trades,
         reserved_trades: 0,
+        reserved_notional_usd: "0".to_string(),
         kill_conditions,
         confidence_score,
         evidence_modes,
@@ -521,6 +528,31 @@ fn validate_and_reserve_live_decision(
         ));
     }
 
+    let needs_priced_notional = decision.max_notional_usd.is_some()
+        || (binary_outcome_decision(decision, check) && decision.max_loss_usd.is_some());
+    let trade_notional = if needs_priced_notional {
+        Some(check.notional_usd.ok_or_else(|| {
+            format!(
+                "risk budget decision '{}' requires priced notional before live execution",
+                decision.decision_id
+            )
+        })?)
+    } else {
+        check.notional_usd
+    };
+    let reserved_notional = parse_decimal(&decision.reserved_notional_usd).ok_or_else(|| {
+        format!(
+            "risk budget decision '{}' has invalid reserved_notional_usd '{}'",
+            decision.decision_id, decision.reserved_notional_usd
+        )
+    })?;
+    if reserved_notional < Decimal::ZERO {
+        return Err(format!(
+            "risk budget decision '{}' has negative reserved_notional_usd '{}'",
+            decision.decision_id, decision.reserved_notional_usd
+        ));
+    }
+
     if let Some(raw_max_notional) = decision.max_notional_usd.as_deref() {
         let max_notional = parse_decimal(raw_max_notional).ok_or_else(|| {
             format!(
@@ -528,16 +560,12 @@ fn validate_and_reserve_live_decision(
                 decision.decision_id, raw_max_notional
             )
         })?;
-        let notional = check.notional_usd.ok_or_else(|| {
-            format!(
-                "risk budget decision '{}' requires priced notional before live execution",
-                decision.decision_id
-            )
-        })?;
-        if notional > max_notional {
+        let notional = trade_notional.expect("priced notional checked above");
+        let total_notional = reserved_notional + notional;
+        if total_notional > max_notional {
             return Err(format!(
-                "risk budget decision '{}' max_notional_usd {} exceeded by trade notional {}",
-                decision.decision_id, max_notional, notional
+                "risk budget decision '{}' max_notional_usd {} exceeded by reserved notional {} plus trade notional {}",
+                decision.decision_id, max_notional, reserved_notional, notional
             ));
         }
     }
@@ -550,19 +578,16 @@ fn validate_and_reserve_live_decision(
                 decision.decision_id, raw_max_loss
             )
         })?;
-        let notional = check.notional_usd.ok_or_else(|| {
-            format!(
-                "risk budget decision '{}' requires priced notional before live outcome execution",
-                decision.decision_id
-            )
-        })?;
-        if notional > max_loss {
+        let notional = trade_notional.expect("priced notional checked above");
+        let total_notional = reserved_notional + notional;
+        if total_notional > max_loss {
             return Err(format!(
-                "risk budget decision '{}' max_loss_usd {} exceeded by binary outcome notional {}",
-                decision.decision_id, max_loss, notional
+                "risk budget decision '{}' max_loss_usd {} exceeded by reserved binary outcome notional {} plus trade notional {}",
+                decision.decision_id, max_loss, reserved_notional, notional
             ));
         }
     }
+    let next_reserved_notional = trade_notional.map(|notional| reserved_notional + notional);
     if let Some(max_trades) = decision.max_trades {
         if decision.reserved_trades >= max_trades {
             return Err(format!(
@@ -571,6 +596,9 @@ fn validate_and_reserve_live_decision(
             ));
         }
         decision.reserved_trades += 1;
+    }
+    if let Some(next_reserved_notional) = next_reserved_notional {
+        decision.reserved_notional_usd = next_reserved_notional.normalize().to_string();
     }
 
     Ok(())
@@ -864,6 +892,7 @@ mod tests {
             max_loss_usd: Some("5".to_string()),
             max_trades: Some(1),
             reserved_trades: 0,
+            reserved_notional_usd: "0".to_string(),
             kill_conditions: Vec::new(),
             confidence_score: 0.7,
             evidence_modes: vec![EvidenceMode::FastBacktest],
@@ -1037,6 +1066,49 @@ mod tests {
         .expect_err("binary outcome worst-case loss should be capped");
 
         assert!(err.contains("max_loss_usd"));
+    }
+
+    #[test]
+    fn live_binary_outcome_decision_reserves_cumulative_loss_budget() {
+        let mut decision = live_probe_decision("rbd-cumulative-loss", "bot-cumulative-loss");
+        decision.target_protocol = Some("hyperliquid".to_string());
+        decision.venue = Some("hyperliquid".to_string());
+        decision.max_notional_usd = Some("25".to_string());
+        decision.max_loss_usd = Some("5".to_string());
+        decision.max_trades = Some(3);
+        insert_decision(decision).expect("insert decision");
+
+        enforce_live_decision(LiveDecisionCheck {
+            bot_id: "bot-cumulative-loss",
+            paper_trade: false,
+            strategy_config: &serde_json::json!({}),
+            target_protocol: "hyperliquid",
+            metadata: &serde_json::json!({
+                "risk_budget_decision_id": "rbd-cumulative-loss",
+                "candidate_hash": "sha256:candidate",
+                "hyperliquid_market_type": "hyperp",
+                "outcome_label": "YES"
+            }),
+            notional_usd: Some(Decimal::new(300, 2)),
+        })
+        .expect("first trade should reserve loss budget");
+
+        let err = enforce_live_decision(LiveDecisionCheck {
+            bot_id: "bot-cumulative-loss",
+            paper_trade: false,
+            strategy_config: &serde_json::json!({}),
+            target_protocol: "hyperliquid",
+            metadata: &serde_json::json!({
+                "risk_budget_decision_id": "rbd-cumulative-loss",
+                "candidate_hash": "sha256:candidate",
+                "hyperliquid_market_type": "hyperp",
+                "outcome_label": "YES"
+            }),
+            notional_usd: Some(Decimal::new(300, 2)),
+        })
+        .expect_err("second trade should exceed cumulative loss budget");
+
+        assert!(err.contains("reserved binary outcome notional"));
     }
 
     #[test]

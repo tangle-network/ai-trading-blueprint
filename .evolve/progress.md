@@ -131,6 +131,7 @@ Changes:
 - Added metadata-based Hyperliquid valuation: `asset_size`, `limit_price`/`price`, and `notional_usdc` now produce priced notional before risk-budget enforcement; outcome prices must be `<= 1`, and `notional_usdc` must match `asset_size * price`.
 - Extended prediction trade metadata and synthetic portfolio reconstruction so Hyperliquid outcome trades are recorded as prediction/conditional-token exposure, not perps.
 - Clamped binary prediction live-probe notional to `max_loss_usd` and enforced `max_loss_usd` pre-dispatch for Polymarket and Hyperliquid outcome trades, because worst-case binary outcome loss equals notional.
+- Added cumulative per-decision notional reservation so multi-trigger live probes cannot exceed the decision's total `max_notional_usd` or binary `max_loss_usd` budget across several dispatches.
 - Updated the Hyperliquid provider and system prompt so agents treat Hyperps/outcome markets as `target_protocol="hyperliquid"` with prediction-specific metadata and a required risk-budget decision.
 - Updated TS self-improvement risk-budget inference so "Hyperliquid prediction/outcome/Hyperp" requests target venue/protocol `hyperliquid`, not `polymarket_clob`.
 - Fixed two pre-existing clippy test nits that blocked package-level clippy for the touched crates.

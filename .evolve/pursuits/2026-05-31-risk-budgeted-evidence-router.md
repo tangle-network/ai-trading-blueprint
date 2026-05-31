@@ -91,7 +91,7 @@ Hyperliquid prediction markets should reuse Hyperliquid execution transport but 
 - Shared helper: move Hyperliquid asset/size parsing into `trading-http-api/src/hyperliquid_intent.rs` so `/validate` and `/execute` hash/dispatch the same order representation.
 - Outcome asset IDs: support explicit numeric asset IDs plus Hyperliquid outcome encodings like `#17 -> 100000017` and `outcome_id/outcome_side -> 100000000 + outcome_id * 10 + side`.
 - Valuation: if Hyperliquid metadata supplies `asset_size`, `limit_price`/`price`, and/or `notional_usdc`, derive priced notional before live risk-budget enforcement; reject outcome prices above `1` and reject inconsistent `notional_usdc != asset_size * price`.
-- Risk: for binary prediction/outcome decisions, clamp tiny-live notional to `max_loss_usd` and reject any live outcome trade whose notional exceeds that loss cap.
+- Risk: for binary prediction/outcome decisions, clamp tiny-live notional to `max_loss_usd`, reject any live outcome trade whose notional exceeds that loss cap, and reserve cumulative notional per decision so repeated triggers cannot over-consume the budget.
 - Audit: record Hyperliquid outcome trades as `PredictionTradeMetadata` and carry outcome fields into Hyperliquid trade metadata.
 - Agent behavior: update Hyperliquid provider/system prompts and TS self-improvement risk-budget inference so Hyperps target `target_protocol="hyperliquid"` with prediction metadata, not Polymarket CLOB.
 
