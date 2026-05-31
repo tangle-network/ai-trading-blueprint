@@ -93,15 +93,15 @@ export function EnvelopeBuilder({
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {/* Left column: enforcement */}
-      <section className="rounded-lg border border-bp-elements-borderColor bg-bp-elements-background-depth-2 p-4 space-y-4">
-        <h4 className="text-sm font-semibold uppercase tracking-wide text-bp-elements-textPrimary">
+      <section className="rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 p-4 space-y-4">
+        <h4 className="text-sm font-semibold uppercase tracking-wide text-arena-elements-textPrimary">
           On-chain enforcement
         </h4>
         <EnforcementVariantPicker
           value={enforcementKind}
           onChange={setEnforcement}
         />
-        <div className="border-t border-bp-elements-borderColor pt-4">
+        <div className="border-t border-arena-elements-borderColor pt-4">
           <EnforcementFields
             value={enforcement}
             onChange={setEnforcement}
@@ -110,8 +110,8 @@ export function EnvelopeBuilder({
       </section>
 
       {/* Right column: identity, signers, policy */}
-      <section className="rounded-lg border border-bp-elements-borderColor bg-bp-elements-background-depth-2 p-4 space-y-4">
-        <h4 className="text-sm font-semibold uppercase tracking-wide text-bp-elements-textPrimary">
+      <section className="rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 p-4 space-y-4">
+        <h4 className="text-sm font-semibold uppercase tracking-wide text-arena-elements-textPrimary">
           Envelope binding & policy
         </h4>
 
@@ -186,8 +186,8 @@ export function EnvelopeBuilder({
           max={Math.max(1, draft.approval_signers.length)}
         />
 
-        <div className="border-t border-bp-elements-borderColor pt-3 space-y-3">
-          <h5 className="text-xs uppercase tracking-wide text-bp-elements-textTertiary font-medium">
+        <div className="border-t border-arena-elements-borderColor pt-3 space-y-3">
+          <h5 className="text-xs uppercase tracking-wide text-arena-elements-textTertiary font-medium">
             Trading policy
           </h5>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -236,7 +236,7 @@ export function EnvelopeBuilder({
       </section>
 
       {/* Bottom: validation + actions */}
-      <section className="lg:col-span-2 rounded-lg border border-bp-elements-borderColor bg-bp-elements-background-depth-2 p-4 space-y-3">
+      <section className="lg:col-span-2 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 p-4 space-y-3">
         <ValidationPanel issues={issues} />
         <div className="flex flex-wrap gap-2 justify-end">
           {onCancel && (
@@ -273,7 +273,7 @@ function SignersEditor({
     >
       <div className="space-y-2">
         {signers.length === 0 && (
-          <p className="text-xs text-bp-elements-textTertiary">No signers yet.</p>
+          <p className="text-xs text-arena-elements-textTertiary">No signers yet.</p>
         )}
         {signers.map((signer, idx) => (
           <SignerRow
@@ -341,7 +341,7 @@ function DecimalInput({
       inputMode="decimal"
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="h-11 rounded-lg px-3.5 py-2.5 text-base bg-bp-elements-background-depth-3 border border-bp-elements-borderColor text-bp-elements-textPrimary outline-none"
+      className="h-11 rounded-lg px-3.5 py-2.5 text-base bg-arena-elements-background-depth-3 border border-arena-elements-borderColor text-arena-elements-textPrimary outline-none"
     />
   );
 }

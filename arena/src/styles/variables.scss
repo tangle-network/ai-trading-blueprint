@@ -6,13 +6,16 @@
 /* ═══ Dark Theme (Default) ═══ */
 :root,
 :root[data-theme='dark'] {
-  --arena-elements-borderColor: rgba(240, 240, 245, 0.06);
+  /* Borders/dividers were 0.06 (≈invisible) — surfaces had no separation on
+     the near-black base ("dark on dark"). Lift to a readable contrast and widen
+     the depth ramp so cards/sections clearly sit above the page. */
+  --arena-elements-borderColor: rgba(240, 240, 245, 0.14);
   --arena-elements-borderColorActive: theme('colors.violet.400');
 
   --arena-elements-bg-depth-1: #0A0A0F;
-  --arena-elements-bg-depth-2: #12121A;
-  --arena-elements-bg-depth-3: #1A1A25;
-  --arena-elements-bg-depth-4: #22222E;
+  --arena-elements-bg-depth-2: #16161F;
+  --arena-elements-bg-depth-3: #20202C;
+  --arena-elements-bg-depth-4: #2B2B3A;
 
   --arena-elements-textPrimary: #F0F0F5;
   --arena-elements-textSecondary: #8A8A9E;
@@ -36,9 +39,9 @@
   --arena-elements-icon-primary: #F0F0F5;
   --arena-elements-icon-secondary: #5A5A6E;
 
-  --arena-elements-dividerColor: rgba(240, 240, 245, 0.06);
-  --arena-elements-item-backgroundHover: rgba(240, 240, 245, 0.03);
-  --arena-elements-item-backgroundActive: rgba(240, 240, 245, 0.06);
+  --arena-elements-dividerColor: rgba(240, 240, 245, 0.10);
+  --arena-elements-item-backgroundHover: rgba(240, 240, 245, 0.05);
+  --arena-elements-item-backgroundActive: rgba(240, 240, 245, 0.09);
   --arena-elements-focus: #8E59FF;
 
   /* shadcn/ui CSS Variables - Dark */
@@ -84,13 +87,15 @@
 
 /* ═══ Light Theme ═══ */
 :root[data-theme='light'] {
-  --arena-elements-borderColor: rgba(10, 10, 15, 0.10);
+  /* Darker, more present borders so surfaces separate on the light base
+     (mirror of the dark-theme contrast lift). */
+  --arena-elements-borderColor: rgba(10, 10, 15, 0.16);
   --arena-elements-borderColorActive: #7C3AED;
 
   --arena-elements-bg-depth-1: #F8F8FC;
-  --arena-elements-bg-depth-2: #EEEFF5;
-  --arena-elements-bg-depth-3: #E2E3EB;
-  --arena-elements-bg-depth-4: #D4D5DF;
+  --arena-elements-bg-depth-2: #EAEBF2;
+  --arena-elements-bg-depth-3: #DBDCE6;
+  --arena-elements-bg-depth-4: #CBCCD8;
 
   --arena-elements-textPrimary: #0E0E16;
   --arena-elements-textSecondary: #44445A;
@@ -114,9 +119,9 @@
   --arena-elements-icon-primary: #0E0E16;
   --arena-elements-icon-secondary: #6B6B82;
 
-  --arena-elements-dividerColor: rgba(10, 10, 15, 0.08);
-  --arena-elements-item-backgroundHover: rgba(10, 10, 15, 0.04);
-  --arena-elements-item-backgroundActive: rgba(10, 10, 15, 0.07);
+  --arena-elements-dividerColor: rgba(10, 10, 15, 0.12);
+  --arena-elements-item-backgroundHover: rgba(10, 10, 15, 0.05);
+  --arena-elements-item-backgroundActive: rgba(10, 10, 15, 0.09);
   --arena-elements-focus: #7C3AED;
 
   /* shadcn/ui CSS Variables - Light */
