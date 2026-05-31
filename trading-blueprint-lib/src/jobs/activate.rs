@@ -1519,7 +1519,10 @@ mod tests {
         assert!(tool.contains("@tangle-network/agent-runtime/analyst-loop"));
         assert!(tool.contains("@tangle-network/agent-knowledge"));
         assert!(tool.contains("/evolution/sandbox/snapshot"));
+        assert!(tool.contains("/evolution/promotion-gate"));
         assert!(tool.contains("/evolution/self-improve"));
+        assert!(tool.contains("mutateHarness"));
+        assert!(tool.contains("candidate_search"));
         assert!(tool.contains("FindingsStore"));
         assert!(tool.contains("runAnalystLoop"));
         assert!(tool.contains("proposeFromFindings"));

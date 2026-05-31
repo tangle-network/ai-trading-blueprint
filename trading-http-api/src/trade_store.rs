@@ -88,6 +88,10 @@ pub struct TradeRecord {
     /// strongest evidence key for Revision Arena promotion decisions.
     #[serde(default)]
     pub revision_id: Option<String>,
+    /// Risk-budget decision that authorized this live trade or paper/live probe.
+    /// Lets the allocator enforce per-decision trade caps and audit drift later.
+    #[serde(default)]
+    pub risk_budget_decision_id: Option<String>,
     /// Realized paper PnL percentage for this candidate-scoped paper trade.
     #[serde(default)]
     pub paper_pnl_pct: Option<String>,
@@ -101,19 +105,35 @@ pub struct HyperliquidTradeMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_size: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reduce_only: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_question: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct PredictionTradeMetadata {
     #[serde(default)]
+    pub venue: Option<String>,
+    #[serde(default)]
+    pub market_type: Option<String>,
+    #[serde(default)]
     pub condition_id: Option<String>,
     #[serde(default)]
     pub token_id: Option<String>,
+    #[serde(default)]
+    pub asset: Option<String>,
+    #[serde(default)]
+    pub asset_id: Option<String>,
     #[serde(default)]
     pub market_question: Option<String>,
     #[serde(default)]
@@ -122,6 +142,10 @@ pub struct PredictionTradeMetadata {
     pub outcome_index: Option<u8>,
     #[serde(default)]
     pub market_slug: Option<String>,
+    #[serde(default)]
+    pub resolution_source: Option<String>,
+    #[serde(default)]
+    pub resolution_time: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -334,6 +358,26 @@ pub fn paper_trades_for_revision(
         .into_iter()
         .filter(|t| {
             t.bot_id == bid && t.paper_trade && t.revision_id.as_deref() == Some(revision.as_str())
+        })
+        .collect();
+    all.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    Ok(all)
+}
+
+pub fn live_trades_for_risk_decision(
+    bot_id: &str,
+    decision_id: &str,
+) -> Result<Vec<TradeRecord>, String> {
+    let bid = bot_id.to_string();
+    let decision = decision_id.to_string();
+    let mut all: Vec<TradeRecord> = trades()?
+        .values()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|t| {
+            t.bot_id == bid
+                && !t.paper_trade
+                && t.risk_budget_decision_id.as_deref() == Some(decision.as_str())
         })
         .collect();
     all.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));

@@ -12,6 +12,9 @@
 //   --reason        Brief reasoning for the trade (logged)
 //   --token-id      CLOB token ID (optional, looked up from trading.json if omitted)
 //   --order-type    GTC (default), GTD, FOK, or FAK
+//   --risk-budget-decision-id  Required for live candidate/revision trades
+//   --candidate-hash  Candidate hash matching the returned risk-budget decision
+//   --revision-id   Sandbox revision ID matching the returned risk-budget decision
 
 const fs = require('fs');
 const http = require('http');
@@ -145,6 +148,9 @@ async function main() {
   let tokenId = parseArg('--token-id');
   let price = parseFloat(parseArg('--price') || '0');
   const orderType = (parseArg('--order-type') || 'GTC').toUpperCase();
+  const riskBudgetDecisionId = parseArg('--risk-budget-decision-id');
+  const candidateHash = parseArg('--candidate-hash');
+  const revisionId = parseArg('--revision-id');
 
   if (action !== 'buy' && action !== 'sell') { console.log(JSON.stringify({ error: 'Invalid --action. Use buy or sell.' })); process.exit(1); }
   if (!conditionId) { console.log(JSON.stringify({ error: 'Missing --condition-id' })); process.exit(1); }
@@ -250,6 +256,9 @@ async function main() {
       ...(outcomeMetadata.outcome_index !== undefined ? { outcome_index: outcomeMetadata.outcome_index } : {}),
       ...(market && market.question ? { market_question: market.question } : {}),
       ...(market && (market.slug || market.market_slug) ? { market_slug: market.slug || market.market_slug } : {}),
+      ...(riskBudgetDecisionId ? { risk_budget_decision_id: riskBudgetDecisionId } : {}),
+      ...(candidateHash ? { candidate_hash: candidateHash } : {}),
+      ...(revisionId ? { revision_id: revisionId } : {}),
       reason,
     },
   };

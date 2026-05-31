@@ -714,6 +714,89 @@ async fn test_workflow_tick_disables_stopped_bot_workflows() {
 }
 
 #[tokio::test]
+async fn test_promotion_conductor_activates_queued_backtest_pass_candidate() {
+    let _dir = common::init_test_env();
+
+    let bot_id = format!("trial-bot-{}", uuid::Uuid::new_v4());
+    let sandbox_id = format!("trial-sandbox-{}", uuid::Uuid::new_v4());
+    let run_id = format!("sir-{}", uuid::Uuid::new_v4());
+    let revision_id = format!("sr-{}", uuid::Uuid::new_v4());
+    let candidate_hash = format!("sha256:{}", uuid::Uuid::new_v4().simple());
+
+    let mut bot = fixtures::seed_bot_record(&bot_id, &sandbox_id, "dex", "0xAA", None);
+    let current = trading_runtime::backtest::BacktestConfig::default();
+    let mut candidate = current.clone();
+    candidate.harness.version = current.harness.version + 17;
+    let current_harness = serde_json::to_value(&current.harness).unwrap();
+    bots()
+        .unwrap()
+        .update(&bot_key(&bot_id), |b| {
+            b.harness_json = current_harness.clone();
+        })
+        .unwrap();
+    bot.harness_json = current_harness.clone();
+
+    trading_http_api::evolution_store::insert(
+        trading_http_api::evolution_store::SelfImprovementRun {
+            run_id: run_id.clone(),
+            bot_id: bot_id.clone(),
+            created_at: chrono::Utc::now().timestamp(),
+            user_intent: "Queue this candidate for a forward paper trial.".to_string(),
+            candidate_hash: candidate_hash.clone(),
+            approved: false,
+            status: trading_http_api::evolution_store::status::BACKTEST_PASS.to_string(),
+            blockers: vec!["missing persisted paper trading evidence for candidate".to_string()],
+            candles_used: 72,
+            current_config: serde_json::to_value(&current).unwrap(),
+            candidate_config: serde_json::to_value(&candidate).unwrap(),
+            paper_evidence: None,
+            evidence_report_id: None,
+            risk_budget_decision_id: None,
+            base_snapshot_id: Some("ss-test".to_string()),
+            sandbox_revision_id: Some(revision_id.clone()),
+            trial_deadline: None,
+            trades_target: Some(20),
+        },
+    )
+    .unwrap();
+
+    trading_blueprint_lib::jobs::promotion_conductor::run_promotion_conductor(&[bot]).await;
+
+    let updated = bots()
+        .unwrap()
+        .get(&bot_key(&bot_id))
+        .unwrap()
+        .expect("updated bot");
+    assert_eq!(
+        updated.active_trial_run_id.as_deref(),
+        Some(run_id.as_str())
+    );
+    assert_eq!(
+        updated.active_trial_candidate_hash.as_deref(),
+        Some(candidate_hash.as_str())
+    );
+    assert_eq!(updated.pre_trial_harness_json, Some(current_harness));
+    assert_eq!(updated.harness_json["version"].as_u64(), Some(18));
+
+    let marker = trading_http_api::trial_marker::get(&bot_id)
+        .unwrap()
+        .expect("trial marker");
+    assert_eq!(marker.run_id, run_id);
+    assert_eq!(marker.candidate_hash, candidate_hash);
+    assert_eq!(marker.revision_id.as_deref(), Some(revision_id.as_str()));
+
+    let run = trading_http_api::evolution_store::get(&bot_id, &marker.run_id)
+        .unwrap()
+        .expect("run");
+    assert_eq!(
+        run.status,
+        trading_http_api::evolution_store::status::PAPER_TRIAL
+    );
+    assert_eq!(run.trades_target, Some(20));
+    assert!(run.trial_deadline.is_some());
+}
+
+#[tokio::test]
 async fn test_deprovision_cleans_everything() {
     let _dir = common::init_test_env();
 
@@ -885,6 +968,9 @@ async fn test_system_prompt_includes_api_info() {
         validation_trust: trading_runtime::ValidationTrust::default(),
         baseline_backtest: None,
         renewal_webhook_url: None,
+        active_trial_run_id: None,
+        active_trial_candidate_hash: None,
+        pre_trial_harness_json: None,
     };
 
     let prompt = build_system_prompt("dex", &config);
@@ -1140,6 +1226,9 @@ async fn test_pack_profile_has_rich_content() {
         validation_trust: trading_runtime::ValidationTrust::default(),
         baseline_backtest: None,
         renewal_webhook_url: None,
+        active_trial_run_id: None,
+        active_trial_candidate_hash: None,
+        pre_trial_harness_json: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -1202,6 +1291,9 @@ async fn test_generic_strategy_gets_profile() {
         validation_trust: trading_runtime::ValidationTrust::default(),
         baseline_backtest: None,
         renewal_webhook_url: None,
+        active_trial_run_id: None,
+        active_trial_candidate_hash: None,
+        pre_trial_harness_json: None,
     };
 
     let profile = build_generic_agent_profile("exotic", &config);
@@ -1265,6 +1357,9 @@ async fn test_dex_profile_has_uniswap_content() {
         validation_trust: trading_runtime::ValidationTrust::default(),
         baseline_backtest: None,
         renewal_webhook_url: None,
+        active_trial_run_id: None,
+        active_trial_candidate_hash: None,
+        pre_trial_harness_json: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);
@@ -1315,6 +1410,9 @@ async fn test_all_packs_use_instructions_not_system_prompt() {
             validation_trust: trading_runtime::ValidationTrust::default(),
             baseline_backtest: None,
             renewal_webhook_url: None,
+            active_trial_run_id: None,
+            active_trial_candidate_hash: None,
+            pre_trial_harness_json: None,
         };
 
         let profile = build_pack_agent_profile(&pack, &config);
@@ -1361,6 +1459,9 @@ async fn test_build_pack_agent_profile_integration() {
         validation_trust: trading_runtime::ValidationTrust::default(),
         baseline_backtest: None,
         renewal_webhook_url: None,
+        active_trial_run_id: None,
+        active_trial_candidate_hash: None,
+        pre_trial_harness_json: None,
     };
 
     let profile = build_pack_agent_profile(&pack, &config);

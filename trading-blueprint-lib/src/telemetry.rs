@@ -197,6 +197,6 @@ mod tests {
         let h = build_headers(Some("sk-tan-abc"));
         assert_eq!(h.get("Authorization").unwrap(), "Bearer sk-tan-abc");
         // no key → no Authorization header (e.g. local unauthenticated collector)
-        assert!(build_headers(None).get("Authorization").is_none());
+        assert!(!build_headers(None).contains_key("Authorization"));
     }
 }

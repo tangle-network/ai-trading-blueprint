@@ -1,11 +1,25 @@
 {
-  "mode": "harden",
-  "status": "clean",
-  "generation": 11,
-  "activePursuit": "2026-04-19-fund-safety.md",
-  "critical": 0,
-  "high": 0,
-  "activeHarden": "2026-05-20-report.md",
-  "updatedAt": "2026-05-20T00:00:00Z",
-  "note": "Hyperliquid safety and autonomous promotion gates hardened; remaining live venue tests require funded Hyperliquid testnet credentials."
+  "mode": "evolve",
+  "goal": "Make AI trading REAL (non-custodial funds on Base Sepolia) AND make self-improvement actually produce promotable strategies",
+  "status": "round-7-live-drift-demotion-built-local",
+  "round": 7,
+  "generation": 3,
+  "updatedAt": "2026-05-31",
+  "subGoals": {
+    "vault-real-base-sepolia": {
+      "metric": "1 bot trades real funds non-custodially on Base Sepolia: deposit -> agent swap -> depositor withdraw, operator never custodies",
+      "baseline": "0 \u2014 vaults deployed only on local anvil(31338)+HL test(998/999); live fleet bots are factory:0x0 placeholders; all paper",
+      "target": "1 funded bot, full loop proven on 84532",
+      "blocker": "deployer 0x2420 has 0.00286 ETH on Base Sepolia \u2014 insufficient to deploy contract suite. NEEDS FAUCET (Drew). Real exec path + deploy script ARE built.",
+      "metricClaims": "This is the entire product thesis \u2014 non-custodial agent trading. Until proven on a real chain with real funds it is a demo, not a fundable product. The single experiment that turns 'well-architected' into 'real'."
+    },
+    "self-improve-produces": {
+      "metric": "# candidates that pass gates and promote (per cycle)",
+      "baseline": "0 \u2014 every one of 15+ historical runs BLOCKED; loop is dormant (never auto-triggers)",
+      "target": ">=1 promotable candidate; loop auto-runs on cadence",
+      "rootCause": "candidates were backtest-only, needed >=20 PAPER trades to promote, and never accumulated tagged forward evidence. Round 4 added box-side cadence and paper-trial orchestration. Round 5 added an auditable risk-budget decision layer so time-sensitive candidates that pass hard backtest/overfit gates can receive capped tiny-live probes before paper evidence accrues. Round 6 extended that fast path to Hyperliquid outcome markets by reusing Hyperliquid transport while tagging, valuing, and capping them like binary prediction markets. Round 7 added post-probe live drift evaluation and automatic decision demotion from venue marks, so live probes can be shut off when loss/slippage budgets breach; full active promotion still requires forward evidence.",
+      "metricClaims": "Self-improving agents is the moat. Zero promotions today = the loop is theater. One real promotion = a measurably better strategy = better depositor PnL, autonomously."
+    }
+  },
+  "nextDispatch": "/evolve round-8: deploy this branch to the live box, run a time-sensitive prediction-market candidate through /evolution/promotion-gate, confirm risk_decision.action=live_probe, submit one Polymarket CLOB capped probe and one Hyperliquid outcome dry/live probe carrying risk_budget_decision_id plus matching candidate_hash/revision_id, then call /evolution/risk-budget/decisions/{decision_id}/live-drift with venue marks and confirm keep_live/demote behavior. Base Sepolia vault-real remains blocked until deployer 0x2420 is funded; after funding, broadcast DeployTradingContracts.s.sol."
 }

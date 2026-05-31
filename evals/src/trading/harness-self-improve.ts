@@ -165,9 +165,9 @@ export async function runHarnessSelfImprovement(
       return wiring.dispatchWithSurface(surface, scenario)
     },
     driver: evolutionaryDriver({ mutator: harnessMutator({ baseline }) }),
-    populationSize: opts.populationSize ?? 8,
-    maxGenerations: opts.maxGenerations ?? 4,
-    promoteTopK: opts.promoteTopK ?? 3,
+    populationSize: opts.populationSize ?? 16,
+    maxGenerations: opts.maxGenerations ?? 6,
+    promoteTopK: opts.promoteTopK ?? 5,
     reps: opts.reps ?? 1,
     gate: defaultProductionGate<BacktestArtifact, BotScenario>({
       holdoutScenarios: holdout,

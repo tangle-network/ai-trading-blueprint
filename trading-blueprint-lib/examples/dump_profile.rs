@@ -58,6 +58,9 @@ fn main() {
         validation_trust: trading_runtime::ValidationTrust::default(),
         baseline_backtest: None,
         renewal_webhook_url: None,
+        active_trial_run_id: None,
+        active_trial_candidate_hash: None,
+        pre_trial_harness_json: None,
     };
 
     let profile = pack.build_agent_profile(&config);

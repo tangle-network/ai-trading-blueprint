@@ -51,6 +51,15 @@ SKIP_OPERATOR_REGISTER="${SKIP_OPERATOR_REGISTER:-0}"
 SKIP_SERVICE_CREATE="${SKIP_SERVICE_CREATE:-0}"
 BLUEPRINT_ID="${BLUEPRINT_ID:-}"
 SERVICE_ID="${SERVICE_ID:-}"
+SERVICE_OPERATORS="${SERVICE_OPERATORS:-}"
+SERVICE_PERMITTED_CALLERS="${SERVICE_PERMITTED_CALLERS:-}"
+SERVICE_CONFIG_HEX="${SERVICE_CONFIG_HEX:-0x}"
+SERVICE_TTL_SECONDS="${SERVICE_TTL_SECONDS:-0}"
+SERVICE_PAYMENT_TOKEN="${SERVICE_PAYMENT_TOKEN:-0x0000000000000000000000000000000000000000}"
+SERVICE_PAYMENT_AMOUNT="${SERVICE_PAYMENT_AMOUNT:-0}"
+SERVICE_CONFIDENTIALITY="${SERVICE_CONFIDENTIALITY:-0}"
+SERVICE_REQUEST_GAS_LIMIT="${SERVICE_REQUEST_GAS_LIMIT:-3000000}"
+SERVICE_APPROVE_GAS_LIMIT="${SERVICE_APPROVE_GAS_LIMIT:-3000000}"
 REPO_URL="${REPO_URL:-$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || echo "https://github.com/tangle-network/ai-trading-blueprint.git")}"
 REPO_REF="${REPO_REF:-$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
 LOCAL_KEYSTORE_DIR="${LOCAL_KEYSTORE_DIR:-$REPO_DIR/.deploy-keystore}"
@@ -102,6 +111,8 @@ fi
 OPERATOR_ADDRESS="$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null || true)"
 [ -n "$OPERATOR_ADDRESS" ] || { echo "ERROR: 'cast' (foundry) is required"; exit 1; }
 [ -f "$BLUEPRINT_DEFINITION" ] || { echo "ERROR: blueprint definition not found: $BLUEPRINT_DEFINITION"; exit 1; }
+SERVICE_OPERATORS="${SERVICE_OPERATORS:-[$OPERATOR_ADDRESS]}"
+SERVICE_PERMITTED_CALLERS="${SERVICE_PERMITTED_CALLERS:-[$OPERATOR_ADDRESS]}"
 
 if [[ "$RUN_VALIDATOR" = "1" ]]; then
   : "${VALIDATOR_SIGNER_KEY:?RUN_VALIDATOR=1 requires VALIDATOR_SIGNER_KEY (the EIP-712 signing key; needs no on-chain funds)}"
@@ -120,6 +131,10 @@ fi
 
 if ! command -v cargo-tangle >/dev/null 2>&1; then
   echo "ERROR: cargo-tangle is required locally" >&2
+  exit 1
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  echo "ERROR: jq is required locally" >&2
   exit 1
 fi
 
@@ -210,6 +225,47 @@ wait_for_service_count_above() {
     sleep 2
   done
   echo "ERROR: serviceCount did not exceed $threshold within 60s" >&2
+  return 1
+}
+
+send_operator_tx() {
+  local output="" tx_hash="" receipt="" status=""
+  for _ in $(seq 1 5); do
+    if output="$(
+      cast send --async "$@" \
+        --private-key "$PRIVATE_KEY" \
+        --rpc-url "$TANGLE_HTTP_RPC" 2>&1
+    )"; then
+      tx_hash="$(printf '%s\n' "$output" | grep -Eo '0x[0-9a-fA-F]{64}' | tail -n 1)"
+      if [[ -z "$tx_hash" ]]; then
+        echo "$output"
+        return 1
+      fi
+
+      for _ in $(seq 1 60); do
+        receipt="$(cast rpc eth_getTransactionReceipt "$tx_hash" --rpc-url "$TANGLE_HTTP_RPC" 2>/dev/null || true)"
+        if [[ -n "$receipt" && "$receipt" != "null" ]]; then
+          status="$(printf '%s' "$receipt" | jq -r '.status')"
+          if [[ "$status" == "0x1" || "$status" == "1" ]]; then
+            return 0
+          fi
+          echo "$receipt"
+          return 1
+        fi
+        sleep 2
+      done
+
+      echo "Timed out waiting for receipt: $tx_hash"
+      return 1
+    fi
+    if grep -Eqi "replacement transaction underpriced|transaction already imported|nonce too low" <<<"$output"; then
+      sleep 3
+      continue
+    fi
+    echo "$output"
+    return 1
+  done
+  echo "$output"
   return 1
 }
 
@@ -391,23 +447,39 @@ if [[ -n "$SERVICE_ID" || "$SKIP_SERVICE_CREATE" = "1" ]]; then
   fi
 else
   echo "=== Step 6: Request + approve service ==="
+  if [[ "$SERVICE_CONFIG_HEX" != 0x* ]]; then
+    echo "ERROR: SERVICE_CONFIG_HEX must be hex bytes, got: $SERVICE_CONFIG_HEX" >&2
+    exit 1
+  fi
   SERVICE_COUNT_BEFORE="$(service_count)"
+  REQUEST_ID="$(cast_uint "$(cast call "$TANGLE_CONTRACT" "serviceRequestCount()(uint64)" --rpc-url "$TANGLE_HTTP_RPC")")"
 
-  SERVICE_REQUEST_OUTPUT="$(cargo tangle blueprint service request \
-    "${TANGLE_ARGS[@]}" \
-    --blueprint-id "$BLUEPRINT_ID" \
-    --operator "$OPERATOR_ADDRESS" \
-    --ttl 0 \
-    --json)"
+  # Direct cast flow targets the tnt-core 0.13 service ABI deployed on Base Sepolia.
+  # cargo-tangle may be newer/older than the live diamond and has previously sent
+  # a stale requestService selector, leaving go-live blocked after operator setup.
+  if ! send_operator_tx "$TANGLE_CONTRACT" \
+    "requestService(uint64,address[],bytes,address[],uint64,address,uint256,uint8)" \
+    "$BLUEPRINT_ID" \
+    "$SERVICE_OPERATORS" \
+    "$SERVICE_CONFIG_HEX" \
+    "$SERVICE_PERMITTED_CALLERS" \
+    "$SERVICE_TTL_SECONDS" \
+    "$SERVICE_PAYMENT_TOKEN" \
+    "$SERVICE_PAYMENT_AMOUNT" \
+    "$SERVICE_CONFIDENTIALITY" \
+    --gas-limit "$SERVICE_REQUEST_GAS_LIMIT"; then
+    echo "ERROR: requestService failed for blueprint $BLUEPRINT_ID"
+    exit 1
+  fi
 
-  REQUEST_ID="$(echo "$SERVICE_REQUEST_OUTPUT" | grep -oP '"request_id":\s*\K\d+' || true)"
-  [ -n "$REQUEST_ID" ] || { echo "ERROR: could not parse request_id"; echo "$SERVICE_REQUEST_OUTPUT"; exit 1; }
-
-  cargo tangle blueprint service approve \
-    "${TANGLE_ARGS[@]}" \
-    --request-id "$REQUEST_ID" \
-    --staking-percent 100 \
-    --json
+  APPROVAL_PARAMS="($REQUEST_ID,[],[0,0,0,0],[0,0],[])"
+  if ! send_operator_tx "$TANGLE_CONTRACT" \
+    "approveService((uint64,(uint8,address,uint16)[],uint256[4],uint256[2],(uint8,bytes32,bytes32,uint64)[]))" \
+    "$APPROVAL_PARAMS" \
+    --gas-limit "$SERVICE_APPROVE_GAS_LIMIT"; then
+    echo "ERROR: approveService failed for request $REQUEST_ID"
+    exit 1
+  fi
 
   SERVICE_COUNT_AFTER="$(wait_for_service_count_above "$SERVICE_COUNT_BEFORE")"
   SERVICE_ID=$(( SERVICE_COUNT_AFTER - 1 ))

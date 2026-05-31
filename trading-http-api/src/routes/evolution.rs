@@ -10,12 +10,26 @@ use std::sync::Arc;
 use trading_runtime::backtest::{BacktestConfig, BacktestEngine, ExitRule, WalkForwardResult};
 
 use crate::candle_store::{self, CandleQuery};
-use crate::{MultiBotTradingState, TradingApiState, evolution_store, sandbox_store, trade_store};
+use crate::{
+    MultiBotTradingState, TradingApiState, evolution_store, risk_budget, sandbox_store, trade_store,
+};
 
 pub fn router() -> Router<Arc<TradingApiState>> {
     Router::new()
         .route("/evolution/run", post(run_evolution))
         .route("/evolution/promotion-gate", post(promotion_gate))
+        .route(
+            "/evolution/risk-budget/decisions/{decision_id}",
+            get(get_risk_budget_decision),
+        )
+        .route(
+            "/evolution/risk-budget/reports/{report_id}",
+            get(get_evidence_report),
+        )
+        .route(
+            "/evolution/risk-budget/decisions/{decision_id}/live-drift",
+            post(evaluate_live_drift),
+        )
         .route("/evolution/self-improve", post(self_improve))
         .route(
             "/evolution/self-improve/runs",
@@ -40,6 +54,18 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
     Router::new()
         .route("/evolution/run", post(run_evolution_multi_bot))
         .route("/evolution/promotion-gate", post(promotion_gate_multi_bot))
+        .route(
+            "/evolution/risk-budget/decisions/{decision_id}",
+            get(get_risk_budget_decision_multi_bot),
+        )
+        .route(
+            "/evolution/risk-budget/reports/{report_id}",
+            get(get_evidence_report_multi_bot),
+        )
+        .route(
+            "/evolution/risk-budget/decisions/{decision_id}/live-drift",
+            post(evaluate_live_drift_multi_bot),
+        )
         .route("/evolution/self-improve", post(self_improve_multi_bot))
         .route(
             "/evolution/self-improve/runs",
@@ -128,6 +154,8 @@ pub struct PromotionGateRequest {
     pub min_paper_trades: u64,
     #[serde(default = "default_max_paper_drawdown_pct")]
     pub max_paper_drawdown_pct: f64,
+    #[serde(default)]
+    pub risk_budget: risk_budget::RiskBudgetRequest,
 }
 
 fn default_min_paper_trades() -> u64 {
@@ -146,6 +174,8 @@ pub struct PromotionGateResponse {
     pub result: WalkForwardResult,
     pub candles_used: usize,
     pub paper: Option<PaperEvidence>,
+    pub evidence_report: risk_budget::EvidenceReport,
+    pub risk_decision: risk_budget::RiskBudgetDecision,
 }
 
 #[derive(Deserialize)]
@@ -163,6 +193,8 @@ pub struct SelfImproveRequest {
     pub min_paper_trades: u64,
     #[serde(default = "default_max_paper_drawdown_pct")]
     pub max_paper_drawdown_pct: f64,
+    #[serde(default)]
+    pub risk_budget: risk_budget::RiskBudgetRequest,
     #[serde(default)]
     pub sandbox_mutation: Option<SandboxMutationRequest>,
 }
@@ -361,6 +393,128 @@ async fn promotion_gate_multi_bot(
     promotion_gate_inner(&bot.bot_id, req).await
 }
 
+async fn get_risk_budget_decision(
+    State(state): State<Arc<TradingApiState>>,
+    Path(decision_id): Path<String>,
+) -> Result<Json<risk_budget::RiskBudgetDecision>, (StatusCode, String)> {
+    get_risk_budget_decision_inner(&state.bot_id, &decision_id).await
+}
+
+async fn get_risk_budget_decision_multi_bot(
+    State(_state): State<Arc<MultiBotTradingState>>,
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+    Path(decision_id): Path<String>,
+) -> Result<Json<risk_budget::RiskBudgetDecision>, (StatusCode, String)> {
+    get_risk_budget_decision_inner(&bot.bot_id, &decision_id).await
+}
+
+async fn get_risk_budget_decision_inner(
+    bot_id: &str,
+    decision_id: &str,
+) -> Result<Json<risk_budget::RiskBudgetDecision>, (StatusCode, String)> {
+    let decision = risk_budget::get_decision(decision_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                "risk budget decision not found".to_string(),
+            )
+        })?;
+    if decision.bot_id != bot_id {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "risk budget decision not found".to_string(),
+        ));
+    }
+    Ok(Json(decision))
+}
+
+async fn get_evidence_report(
+    State(state): State<Arc<TradingApiState>>,
+    Path(report_id): Path<String>,
+) -> Result<Json<risk_budget::EvidenceReport>, (StatusCode, String)> {
+    get_evidence_report_inner(&state.bot_id, &report_id).await
+}
+
+async fn get_evidence_report_multi_bot(
+    State(_state): State<Arc<MultiBotTradingState>>,
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+    Path(report_id): Path<String>,
+) -> Result<Json<risk_budget::EvidenceReport>, (StatusCode, String)> {
+    get_evidence_report_inner(&bot.bot_id, &report_id).await
+}
+
+async fn get_evidence_report_inner(
+    bot_id: &str,
+    report_id: &str,
+) -> Result<Json<risk_budget::EvidenceReport>, (StatusCode, String)> {
+    let report = risk_budget::get_report(report_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                "evidence report not found".to_string(),
+            )
+        })?;
+    if report.bot_id != bot_id {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "evidence report not found".to_string(),
+        ));
+    }
+    Ok(Json(report))
+}
+
+async fn evaluate_live_drift(
+    State(state): State<Arc<TradingApiState>>,
+    Path(decision_id): Path<String>,
+    Json(req): Json<risk_budget::LiveDriftRequest>,
+) -> Result<Json<risk_budget::LiveDriftReport>, (StatusCode, String)> {
+    evaluate_live_drift_inner(&state.bot_id, &decision_id, req).await
+}
+
+async fn evaluate_live_drift_multi_bot(
+    State(_state): State<Arc<MultiBotTradingState>>,
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+    Path(decision_id): Path<String>,
+    Json(req): Json<risk_budget::LiveDriftRequest>,
+) -> Result<Json<risk_budget::LiveDriftReport>, (StatusCode, String)> {
+    evaluate_live_drift_inner(&bot.bot_id, &decision_id, req).await
+}
+
+async fn evaluate_live_drift_inner(
+    bot_id: &str,
+    decision_id: &str,
+    req: risk_budget::LiveDriftRequest,
+) -> Result<Json<risk_budget::LiveDriftReport>, (StatusCode, String)> {
+    risk_budget::evaluate_live_drift(bot_id, decision_id, req)
+        .map(Json)
+        .map_err(|e| {
+            if e.contains("was not found") || e.contains("belongs to bot") {
+                (
+                    StatusCode::NOT_FOUND,
+                    "risk budget decision not found".to_string(),
+                )
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, e)
+            }
+        })
+}
+
+/// Run the promotion gate for a candidate and return the plain response. This is the
+/// entry the promotion conductor (trading-blueprint-lib) calls in-process once a paper
+/// trial has accrued enough forward evidence — it reuses the exact same gate the HTTP
+/// route uses, so there is one gate, not two.
+pub async fn run_promotion_gate(
+    bot_id: &str,
+    req: PromotionGateRequest,
+) -> Result<PromotionGateResponse, String> {
+    promotion_gate_inner(bot_id, req)
+        .await
+        .map(|json| json.0)
+        .map_err(|(_, msg)| msg)
+}
+
 async fn promotion_gate_inner(
     bot_id: &str,
     req: PromotionGateRequest,
@@ -386,35 +540,66 @@ async fn promotion_gate_inner(
     .await?
     .0;
 
-    let mut blockers = Vec::new();
+    let mut hard_blockers = Vec::new();
+    let mut paper_blockers = Vec::new();
     if !run.result.should_promote {
-        blockers.push("walk-forward backtest did not approve candidate".to_string());
+        hard_blockers.push("walk-forward backtest did not approve candidate".to_string());
     }
     if run.result.likely_overfit {
-        blockers.push("candidate is likely overfit out-of-sample".to_string());
+        hard_blockers.push("candidate is likely overfit out-of-sample".to_string());
     }
-    blockers.append(&mut evidence_blockers);
+    paper_blockers.append(&mut evidence_blockers);
 
     match paper.as_ref() {
         Some(p) => {
             if p.trades < req.min_paper_trades {
-                blockers.push(format!(
+                paper_blockers.push(format!(
                     "paper trading evidence has {} trades; need at least {}",
                     p.trades, req.min_paper_trades
                 ));
             }
             if !p.total_return_pct.is_finite() || p.total_return_pct <= 0.0 {
-                blockers.push("paper trading return must be positive and finite".to_string());
+                paper_blockers.push("paper trading return must be positive and finite".to_string());
             }
             if !p.max_drawdown_pct.is_finite() || p.max_drawdown_pct > req.max_paper_drawdown_pct {
-                blockers.push(format!(
+                paper_blockers.push(format!(
                     "paper max drawdown {:.2}% exceeds {:.2}% limit",
                     p.max_drawdown_pct, req.max_paper_drawdown_pct
                 ));
             }
         }
-        None => blockers.push("missing persisted paper trading evidence for candidate".to_string()),
+        None => paper_blockers
+            .push("missing persisted paper trading evidence for candidate".to_string()),
     }
+    let paper_passed = paper.is_some() && paper_blockers.is_empty();
+    let mut blockers = hard_blockers.clone();
+    blockers.extend(paper_blockers.clone());
+
+    let paper_summary = paper.as_ref().map(|p| risk_budget::PaperEvidenceSummary {
+        trades: p.trades,
+        total_return_pct: p.total_return_pct,
+        max_drawdown_pct: p.max_drawdown_pct,
+    });
+    let (evidence_report, risk_decision) =
+        risk_budget::build_promotion_decision(risk_budget::DecisionBuildInput {
+            bot_id,
+            candidate_hash: &candidate_hash,
+            revision_id: req.revision_id.clone(),
+            request: &req.risk_budget,
+            result: &run.result,
+            candles_used: run.candles_used,
+            paper: paper_summary,
+            paper_passed,
+            hard_blockers,
+            paper_blockers,
+        });
+    let (evidence_report, risk_decision) =
+        risk_budget::persist_decision_pair(evidence_report, risk_decision).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("persist risk budget decision: {e}"),
+            )
+        })?;
 
     Ok(Json(PromotionGateResponse {
         bot_id: bot_id.to_string(),
@@ -423,6 +608,8 @@ async fn promotion_gate_inner(
         result: run.result,
         candles_used: run.candles_used,
         paper,
+        evidence_report,
+        risk_decision,
     }))
 }
 
@@ -577,10 +764,34 @@ async fn self_improve_inner(
             paper: req.paper,
             min_paper_trades: req.min_paper_trades,
             max_paper_drawdown_pct: req.max_paper_drawdown_pct,
+            risk_budget: req.risk_budget,
         },
     )
     .await?
     .0;
+
+    // Lifecycle decision (the unlock for "self-improvement going nowhere"):
+    // a candidate that clears the walk-forward backtest but only lacks forward
+    // paper evidence must NOT dead-end as "blocked" — it enrolls in a paper trial
+    // so the promotion sweep can accrue real paper trades under its candidate_hash
+    // and re-run the gate later. Only a candidate that fails the backtest itself
+    // (not promotable / likely overfit) is genuinely blocked.
+    let backtest_passed = promotion.result.should_promote && !promotion.result.likely_overfit;
+    let (status, trial_deadline, trades_target) = if promotion.approved {
+        ("staged_for_operator_approval".to_string(), None, None)
+    } else if backtest_passed {
+        // Cleared backtest, only lacks forward paper evidence: queue for the promotion
+        // conductor (trading-blueprint-lib) to activate as a paper trial when the bot's
+        // single trial slot is free. The conductor sets `trial_deadline` on activation;
+        // we record the requested evidence target now so it survives the queue.
+        (
+            evolution_store::status::BACKTEST_PASS.to_string(),
+            None,
+            Some(req.min_paper_trades.max(1)),
+        )
+    } else {
+        ("blocked".to_string(), None, None)
+    };
 
     let run = evolution_store::SelfImprovementRun {
         run_id,
@@ -589,11 +800,7 @@ async fn self_improve_inner(
         user_intent: user_intent.to_string(),
         candidate_hash,
         approved: promotion.approved,
-        status: if promotion.approved {
-            "staged_for_operator_approval".to_string()
-        } else {
-            "blocked".to_string()
-        },
+        status,
         blockers: promotion.blockers.clone(),
         candles_used: promotion.candles_used,
         current_config: current_json,
@@ -602,12 +809,16 @@ async fn self_improve_inner(
             .paper
             .as_ref()
             .and_then(|paper| serde_json::to_value(paper).ok()),
+        evidence_report_id: Some(promotion.evidence_report.report_id.clone()),
+        risk_budget_decision_id: Some(promotion.risk_decision.decision_id.clone()),
         base_snapshot_id: sandbox_revision
             .as_ref()
             .map(|revision| revision.base_snapshot_id.clone()),
         sandbox_revision_id: sandbox_revision
             .as_ref()
             .map(|revision| revision.revision_id.clone()),
+        trial_deadline,
+        trades_target,
     };
     evolution_store::insert(run.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 

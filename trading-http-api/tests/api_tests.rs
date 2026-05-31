@@ -5011,25 +5011,27 @@ async fn test_multi_bot_portfolio_state_synthesizes_paper_swap_positions() {
         .to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let positions = json["positions"].as_array().unwrap();
-    // Honest paper fill deducts uniswap fee+impact+$0.05 gas, so the synthesized
-    // USDC position sits just below the fee-free $3000 notional.
+    // Paper bots seed default USDC cash. Honest paper fill deducts uniswap
+    // fee+impact+$0.05 gas, so the synthesized USDC position is starting cash
+    // plus just below the fee-free $3000 notional.
     let total = json["total_value_usd"]
         .as_str()
         .unwrap()
         .parse::<f64>()
         .unwrap();
     assert!(
-        (total - 2990.05).abs() < 0.5,
-        "total {total} should be ~$3000 minus fees"
+        (total - 12990.05).abs() < 0.5,
+        "total {total} should be seeded cash plus ~$3000 minus fees"
     );
     assert!(
-        total < 3000.0,
+        total < 13000.0,
         "honest fill must deduct fees from the $3000 notional"
     );
     assert_eq!(positions.len(), 1);
-    assert_eq!(
-        positions[0]["token"],
-        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    let position_token = positions[0]["token"].as_str().unwrap();
+    assert!(
+        position_token == "USDC" || position_token == "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "unexpected position token {position_token}"
     );
     let pos_amt = positions[0]["amount"]
         .as_str()
@@ -5041,8 +5043,11 @@ async fn test_multi_bot_portfolio_state_synthesizes_paper_swap_positions() {
         .unwrap()
         .parse::<f64>()
         .unwrap();
-    assert!((pos_amt - 2990.05).abs() < 0.5, "position amount {pos_amt}");
-    assert!((pos_val - 2990.05).abs() < 0.5, "position value {pos_val}");
+    assert!(
+        (pos_amt - 12990.05).abs() < 0.5,
+        "position amount {pos_amt}"
+    );
+    assert!((pos_val - 12990.05).abs() < 0.5, "position value {pos_val}");
     assert_eq!(json["warnings"], serde_json::json!([]));
 }
 
@@ -5109,6 +5114,7 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
         harness_version: None,
         candidate_hash: None,
         revision_id: None,
+        risk_budget_decision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -5230,6 +5236,7 @@ async fn test_multi_bot_portfolio_state_keeps_polymarket_buy_as_conditional_posi
         harness_version: None,
         candidate_hash: None,
         revision_id: None,
+        risk_budget_decision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -5260,10 +5267,12 @@ async fn test_multi_bot_portfolio_state_keeps_polymarket_buy_as_conditional_posi
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let positions = json["positions"].as_array().unwrap();
-    assert_eq!(positions.len(), 1);
-    assert_eq!(positions[0]["token"], "pm_yes_token");
-    assert_eq!(positions[0]["protocol"], "polymarket_clob");
-    assert_eq!(positions[0]["position_type"], "conditional_token");
+    let position = positions
+        .iter()
+        .find(|position| position["token"] == "pm_yes_token")
+        .expect("conditional token position");
+    assert_eq!(position["protocol"], "polymarket_clob");
+    assert_eq!(position["position_type"], "conditional_token");
 }
 
 #[tokio::test]
@@ -5296,9 +5305,13 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
         prediction_metadata: None,
         hyperliquid_metadata: Some(trading_http_api::trade_store::HyperliquidTradeMetadata {
             asset: Some("ETH".to_string()),
+            asset_id: None,
             asset_size: Some("0.05".to_string()),
             order_type: Some("market".to_string()),
             reduce_only: Some(false),
+            market_type: None,
+            outcome_label: None,
+            market_question: None,
         }),
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
@@ -5317,6 +5330,7 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
         harness_version: None,
         candidate_hash: None,
         revision_id: None,
+        risk_budget_decision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -5347,10 +5361,12 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let positions = json["positions"].as_array().unwrap();
-    assert_eq!(positions.len(), 1);
-    assert_eq!(positions[0]["token"], "ETH");
-    assert_eq!(positions[0]["protocol"], "hyperliquid");
-    assert_eq!(positions[0]["position_type"], "long_perp");
+    let position = positions
+        .iter()
+        .find(|position| position["token"] == "ETH")
+        .expect("hyperliquid ETH position");
+    assert_eq!(position["protocol"], "hyperliquid");
+    assert_eq!(position["position_type"], "long_perp");
 }
 
 #[tokio::test]
@@ -5593,6 +5609,7 @@ async fn test_multi_bot_portfolio_state_derives_cash_balance_from_synthetic_posi
         harness_version: None,
         candidate_hash: None,
         revision_id: None,
+        risk_budget_decision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -8111,6 +8128,7 @@ async fn test_evolution_promotion_gate_blocks_without_real_paper_evidence() {
     });
 
     let gate_resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -8134,6 +8152,269 @@ async fn test_evolution_promotion_gate_blocks_without_real_paper_evidence() {
             .unwrap()
             .contains("missing persisted paper trading evidence")
     }));
+}
+
+#[tokio::test]
+async fn test_evolution_promotion_gate_returns_tiny_live_for_time_sensitive_backtest_passer() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-gate-fast-path-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    let mut price = 100.0;
+    for i in 0..240 {
+        let phase = i % 20;
+        if phase < 8 {
+            price -= 1.5;
+        } else {
+            price += 1.6;
+        }
+        let open: f64 = price;
+        let close: f64 = price + if phase < 8 { -0.4 } else { 0.5 };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{open:.2}"),
+            "high": format!("{:.2}", open.max(close) + 0.5),
+            "low": format!("{:.2}", open.min(close) - 0.5),
+            "close": format!("{close:.2}"),
+            "volume": "100000"
+        }));
+        price = close;
+    }
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let mut current = backtest_config();
+    current["slippage"] = serde_json::json!({"model": "fixed_bps", "bps": 150});
+    current["gas_cost_usd"] = serde_json::json!("8");
+    current["taker_fee_bps"] = serde_json::json!(100);
+    current["harness"]["exit_rules"][0]["pct"] = serde_json::json!(4.0);
+
+    let mut candidate = backtest_config();
+    candidate["harness"]["exit_rules"][0]["pct"] = serde_json::json!(4.0);
+
+    let gate_body = serde_json::json!({
+        "current": current,
+        "candidate": candidate,
+        "token": "ETH",
+        "train_pct": 0.7,
+        "risk_budget": {
+            "market_type": "prediction_market",
+            "instrument_type": "binary_prediction",
+            "venue": "polymarket",
+            "target_protocol": "polymarket_clob",
+            "opportunity_half_life_secs": 900,
+            "user_posture": "aggressive",
+            "max_live_probe_notional_usd": "12.5",
+            "max_live_probe_loss_usd": "3",
+            "max_live_probe_trades": 1,
+            "ttl_seconds": 300
+        }
+    });
+
+    let gate_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/promotion-gate")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&gate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = gate_resp.status();
+    let bytes = gate_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["approved"], false);
+    assert_eq!(json["result"]["should_promote"], true);
+    assert_eq!(json["risk_decision"]["action"], "live_probe");
+    assert_eq!(json["risk_decision"]["promotion_level"], "tiny_live");
+    assert_eq!(json["risk_decision"]["can_trade_live"], true);
+    assert_eq!(json["risk_decision"]["target_protocol"], "polymarket_clob");
+    assert_eq!(json["risk_decision"]["max_notional_usd"], "3");
+    let decision_id = json["risk_decision"]["decision_id"].as_str().unwrap();
+    let report_id = json["evidence_report"]["report_id"].as_str().unwrap();
+    assert!(decision_id.starts_with("rbd-"));
+    assert!(report_id.starts_with("er-"));
+
+    let decision_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/evolution/risk-budget/decisions/{decision_id}"))
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(decision_resp.status(), 200);
+
+    let report_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/evolution/risk-budget/reports/{report_id}"))
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report_resp.status(), 200);
+}
+
+#[tokio::test]
+async fn test_evolution_live_drift_endpoint_reports_and_demotes_decision() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-live-drift-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+    let decision_id = format!("rbd-route-drift-{}", uuid::Uuid::new_v4());
+
+    trading_http_api::risk_budget::insert_decision(
+        trading_http_api::risk_budget::RiskBudgetDecision {
+            decision_id: decision_id.clone(),
+            bot_id: bot_id.clone(),
+            evidence_report_id: format!("er-route-drift-{}", uuid::Uuid::new_v4()),
+            created_at: chrono::Utc::now(),
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(5)),
+            candidate_hash: "sha256:candidate".to_string(),
+            revision_id: None,
+            action: trading_http_api::risk_budget::RiskDecisionAction::LiveProbe,
+            promotion_level: trading_http_api::risk_budget::PromotionLevel::TinyLive,
+            can_trade_live: true,
+            can_touch_funds: true,
+            target_protocol: Some("hyperliquid".to_string()),
+            venue: Some("hyperliquid".to_string()),
+            strategy_class: None,
+            market_type: Some("prediction_market".to_string()),
+            instrument_type: Some("binary_prediction".to_string()),
+            max_notional_usd: Some("5".to_string()),
+            max_loss_usd: Some("5".to_string()),
+            max_live_loss_pct: None,
+            max_live_slippage_bps: None,
+            max_trades: None,
+            reserved_trades: 1,
+            reserved_notional_usd: "5".to_string(),
+            kill_conditions: vec!["max_loss_hit".to_string()],
+            confidence_score: 0.7,
+            evidence_modes: vec![trading_http_api::risk_budget::EvidenceMode::TinyLiveProbe],
+            blockers: Vec::new(),
+            explanation: "route test".to_string(),
+            demoted_at: None,
+            demotion_reason: None,
+        },
+    )
+    .expect("insert decision");
+
+    trading_http_api::trade_store::record_trade(trading_http_api::trade_store::TradeRecord {
+        id: format!("trade-route-drift-{}", uuid::Uuid::new_v4()),
+        bot_id: bot_id.clone(),
+        timestamp: chrono::Utc::now(),
+        action: "buy".to_string(),
+        token_in: "USDC".to_string(),
+        token_out: "YES".to_string(),
+        amount_in: "5".to_string(),
+        min_amount_out: "10".to_string(),
+        target_protocol: "hyperliquid".to_string(),
+        tx_hash: "0xroute-drift".to_string(),
+        block_number: None,
+        gas_used: None,
+        paper_trade: false,
+        execution_status: Some(trading_http_api::trade_store::TradeExecutionStatus::Filled),
+        clob_order_id: None,
+        amount_out: Some("10".to_string()),
+        entry_price_usd: Some("0.5".to_string()),
+        notional_usd: Some("5".to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: Some("10".to_string()),
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: Some(trading_http_api::trade_store::PredictionTradeMetadata {
+            venue: Some("hyperliquid".to_string()),
+            market_type: Some("hyperp".to_string()),
+            asset_id: Some("100000017".to_string()),
+            outcome_label: Some("YES".to_string()),
+            ..Default::default()
+        }),
+        hyperliquid_metadata: None,
+        valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
+        validation: trading_http_api::trade_store::StoredValidation {
+            approved: true,
+            aggregate_score: 100,
+            intent_hash: "0xintent-route-drift".to_string(),
+            responses: Vec::new(),
+            simulation: None,
+        },
+        signal_price: None,
+        fill_price: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
+        candidate_hash: Some("sha256:candidate".to_string()),
+        revision_id: None,
+        risk_budget_decision_id: Some(decision_id.clone()),
+        paper_pnl_pct: None,
+        paper_equity_after: None,
+    })
+    .await
+    .expect("record trade");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/evolution/risk-budget/decisions/{decision_id}/live-drift"
+                ))
+                .header("authorization", format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "marks": { "100000017": "0" },
+                        "demote_on_breach": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["recommendation"], "demote");
+    assert_eq!(json["mark_to_market_pnl_usd"], "-5");
+    assert_eq!(json["decision"]["can_trade_live"], false);
+    assert!(json["decision"]["demoted_at"].is_string());
 }
 
 #[tokio::test]
