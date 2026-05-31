@@ -1233,11 +1233,22 @@ async fn list_bots(
 }
 
 async fn get_bot(
-    SessionAuth(_caller): SessionAuth,
+    headers: axum::http::HeaderMap,
     Path(bot_id): Path<String>,
 ) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
+    // Public bot detail (discovery/leaderboard). The owner or operator-admin
+    // gets the full record; everyone else gets the same view with the per-bot
+    // trading API token redacted (it authenticates control over the bot).
     let record = resolve_bot(&bot_id)?;
-    Ok(Json(BotDetailResponse::from_record(record)))
+    let submitter = record.submitter_address.clone();
+    let privileged = optional_session_caller(&headers)
+        .as_deref()
+        .is_some_and(|a| is_operator_admin(a) || a.eq_ignore_ascii_case(&submitter));
+    let mut resp = BotDetailResponse::from_record(record);
+    if !privileged {
+        resp.trading_api_token = String::new();
+    }
+    Ok(Json(resp))
 }
 
 /// Read the bot's deterministic-tick side effects (decisions.jsonl, metrics,
@@ -1726,7 +1737,6 @@ fn synthesize_run_result_transcript_parts(result: &str) -> Vec<serde_json::Value
 }
 
 async fn list_bot_runs(
-    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
     Query(params): Query<RunListQuery>,
 ) -> Result<Json<BotRunListResponse>, (StatusCode, String)> {
@@ -4735,7 +4745,6 @@ fn fallback_trade_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
 // ── Metrics / trades handlers ───────────────────────────────────────────
 
 async fn get_bot_metrics(
-    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
@@ -4788,7 +4797,6 @@ async fn get_bot_metrics(
 }
 
 async fn get_bot_metrics_history(
-    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
     Query(query): Query<MetricsHistoryQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
@@ -4808,7 +4816,6 @@ async fn get_bot_metrics_history(
 }
 
 async fn get_bot_trades(
-    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
     Query(query): Query<TradeListQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
@@ -4846,7 +4853,6 @@ async fn get_bot_baseline_backtest(
 }
 
 async fn get_bot_portfolio(
-    SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<PortfolioStateResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
