@@ -1751,6 +1751,28 @@ fn intent_revision_id(metadata: &serde_json::Value) -> Option<String> {
         .or_else(|| metadata_string(metadata, "sandbox_revision_id"))
 }
 
+/// Candidate hash for a persisted paper trade: the intent's own metadata wins, but
+/// when a self-improvement paper trial is active for this bot (set by the promotion
+/// conductor), fall back to the trial's candidate so the bot's forward paper trades
+/// accrue as promotion evidence under that candidate. Only applied on the paper path.
+fn resolve_candidate_hash(bot_id: &str, metadata: &serde_json::Value) -> Option<String> {
+    intent_candidate_hash(metadata).or_else(|| {
+        crate::trial_marker::get(bot_id)
+            .ok()
+            .flatten()
+            .map(|m| m.candidate_hash)
+    })
+}
+
+fn resolve_revision_id(bot_id: &str, metadata: &serde_json::Value) -> Option<String> {
+    intent_revision_id(metadata).or_else(|| {
+        crate::trial_marker::get(bot_id)
+            .ok()
+            .flatten()
+            .and_then(|m| m.revision_id)
+    })
+}
+
 fn trade_decision_source(metadata: &serde_json::Value) -> Option<String> {
     metadata_string(metadata, "decision_source")
         .or_else(|| metadata_string(metadata, "source"))
@@ -2221,8 +2243,8 @@ async fn execute_paper_trade(
         runner_signal: trade_runner_signal(&req.intent.metadata),
         agent_reasoning: trade_agent_reasoning(&req.intent.metadata),
         harness_version: trade_harness_version(&req.intent.metadata),
-        candidate_hash: intent_candidate_hash(&req.intent.metadata),
-        revision_id: intent_revision_id(&req.intent.metadata),
+        candidate_hash: resolve_candidate_hash(bot_id, &req.intent.metadata),
+        revision_id: resolve_revision_id(bot_id, &req.intent.metadata),
         paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
         paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
     };
@@ -2320,7 +2342,11 @@ async fn stamp_latest_paper_trade_equity(
 
     let mut updated = latest.clone();
     updated.paper_equity_after = Some(equity_after.normalize().to_string());
-    updated.paper_pnl_pct = Some(paper_pnl_pct_from(equity_after, equity_before).normalize().to_string());
+    updated.paper_pnl_pct = Some(
+        paper_pnl_pct_from(equity_after, equity_before)
+            .normalize()
+            .to_string(),
+    );
     if let Err(error) = trade_store::record_trade(updated).await {
         tracing::warn!(bot_id = %bot_id, %error, "paper equity stamp: persist failed");
     }
@@ -2400,8 +2426,8 @@ async fn execute_paper_clob_trade(
         runner_signal: trade_runner_signal(&req.intent.metadata),
         agent_reasoning: trade_agent_reasoning(&req.intent.metadata),
         harness_version: trade_harness_version(&req.intent.metadata),
-        candidate_hash: intent_candidate_hash(&req.intent.metadata),
-        revision_id: intent_revision_id(&req.intent.metadata),
+        candidate_hash: resolve_candidate_hash(bot_id, &req.intent.metadata),
+        revision_id: resolve_revision_id(bot_id, &req.intent.metadata),
         paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
         paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
     };

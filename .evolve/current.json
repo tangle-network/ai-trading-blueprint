@@ -1,11 +1,25 @@
 {
-  "mode": "harden",
-  "status": "clean",
-  "generation": 11,
-  "activePursuit": "2026-04-19-fund-safety.md",
-  "critical": 0,
-  "high": 0,
-  "activeHarden": "2026-05-20-report.md",
-  "updatedAt": "2026-05-20T00:00:00Z",
-  "note": "Hyperliquid safety and autonomous promotion gates hardened; remaining live venue tests require funded Hyperliquid testnet credentials."
+  "mode": "evolve",
+  "goal": "Make AI trading REAL (non-custodial funds on Base Sepolia) AND make self-improvement actually produce promotable strategies",
+  "status": "round-4-cadence-and-conductor-verified",
+  "round": 4,
+  "generation": 2,
+  "updatedAt": "2026-05-31",
+  "subGoals": {
+    "vault-real-base-sepolia": {
+      "metric": "1 bot trades real funds non-custodially on Base Sepolia: deposit -> agent swap -> depositor withdraw, operator never custodies",
+      "baseline": "0 \u2014 vaults deployed only on local anvil(31338)+HL test(998/999); live fleet bots are factory:0x0 placeholders; all paper",
+      "target": "1 funded bot, full loop proven on 84532",
+      "blocker": "deployer 0x2420 has 0.00286 ETH on Base Sepolia \u2014 insufficient to deploy contract suite. NEEDS FAUCET (Drew). Real exec path + deploy script ARE built.",
+      "metricClaims": "This is the entire product thesis \u2014 non-custodial agent trading. Until proven on a real chain with real funds it is a demo, not a fundable product. The single experiment that turns 'well-architected' into 'real'."
+    },
+    "self-improve-produces": {
+      "metric": "# candidates that pass gates and promote (per cycle)",
+      "baseline": "0 \u2014 every one of 15+ historical runs BLOCKED; loop is dormant (never auto-triggers)",
+      "target": ">=1 promotable candidate; loop auto-runs on cadence",
+      "rootCause": "candidates were backtest-only, needed >=20 PAPER trades to promote, and never accumulated tagged forward evidence. Round 4 now has box-side cadence that recovers delegated MCP tasks and launches TS-side candidate generation when no trial/non-terminal run is open; promotion still requires on-box deploy + >=20 tagged paper trades.",
+      "metricClaims": "Self-improving agents is the moat. Zero promotions today = the loop is theater. One real promotion = a measurably better strategy = better depositor PnL, autonomously."
+    }
+  },
+  "nextDispatch": "/evolve round-5: deploy this branch to the live box, watch cadence create/maintain a candidate trial, drive >=20 tagged paper trades, then prove promotion gate flips and run status reaches PROMOTED. Base Sepolia vault-real remains blocked until deployer 0x2420 is funded; after funding, broadcast DeployTradingContracts.s.sol."
 }

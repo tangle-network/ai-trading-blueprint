@@ -17,6 +17,7 @@ pub mod routes;
 pub mod sandbox_store;
 pub mod session_auth;
 pub mod trade_store;
+pub mod trial_marker;
 
 use alloy::primitives::Address;
 use axum::Router;

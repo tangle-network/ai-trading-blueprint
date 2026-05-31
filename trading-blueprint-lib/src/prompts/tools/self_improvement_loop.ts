@@ -48,6 +48,132 @@ function sha256(text) {
   return `sha256:${createHash('sha256').update(text).digest('hex')}`;
 }
 
+function clamp(value, lo, hi) {
+  return Math.min(hi, Math.max(lo, value));
+}
+
+function makeRng(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function jitter(rng, range) {
+  return (rng() * 2 - 1) * range;
+}
+
+function seedFor(runId, intent, index) {
+  const hex = createHash('sha256').update(`${runId}|${intent}|${index}`).digest('hex').slice(0, 8);
+  return Number.parseInt(hex, 16) >>> 0;
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function repairHarness(harness) {
+  const baseline = defaultBacktestConfig().harness;
+  if (!Array.isArray(harness.entry_rules) || harness.entry_rules.length === 0) {
+    harness.entry_rules = cloneJson(baseline.entry_rules);
+  }
+  if (!Array.isArray(harness.exit_rules) || harness.exit_rules.length === 0) {
+    harness.exit_rules = cloneJson(baseline.exit_rules);
+  }
+  if (!harness.position_sizing || typeof harness.position_sizing !== 'object') {
+    harness.position_sizing = cloneJson(baseline.position_sizing);
+  }
+  harness.entry_threshold = clamp(Number(harness.entry_threshold ?? baseline.entry_threshold), 0.05, 0.95);
+  harness.max_positions = Math.round(clamp(Number(harness.max_positions ?? baseline.max_positions), 1, 10));
+  return harness;
+}
+
+function mutateHarness(parent, seed, intent) {
+  const child = repairHarness(cloneJson(parent));
+  child.version = Number(parent.version || 1) + 1;
+  const rng = makeRng(seed);
+  const lower = String(intent || '').toLowerCase();
+  const conservative = lower.includes('conservative') || lower.includes('safer') || lower.includes('drawdown') || lower.includes('risk');
+  const aggressive = lower.includes('aggressive') || lower.includes('higher return') || lower.includes('more trades');
+  const kinds = [
+    'entry_threshold',
+    'rsi_threshold',
+    'rsi_period',
+    'ema_periods',
+    'stop_loss',
+    'take_profit',
+    'position_size',
+    'rule_weight',
+    'max_positions',
+  ];
+  const kind = conservative
+    ? kinds[Math.floor(rng() * Math.min(kinds.length, 7))]
+    : aggressive
+      ? kinds[Math.floor(rng() * kinds.length)]
+      : kinds[Math.floor(rng() * kinds.length)];
+
+  if (kind === 'entry_threshold') {
+    const direction = conservative ? 1 : aggressive ? -1 : 0;
+    child.entry_threshold = clamp(child.entry_threshold + direction * 0.03 + jitter(rng, 0.12), 0.05, 0.95);
+  } else if (kind === 'rsi_threshold') {
+    for (const rule of child.entry_rules) {
+      if (rule.signal?.type !== 'rsi') continue;
+      if (rule.condition?.type === 'below') {
+        rule.condition.threshold = clamp(Number(rule.condition.threshold) + jitter(rng, 8), 5, 45);
+      } else if (rule.condition?.type === 'above') {
+        rule.condition.threshold = clamp(Number(rule.condition.threshold) + jitter(rng, 8), 55, 95);
+      }
+      break;
+    }
+  } else if (kind === 'rsi_period') {
+    for (const rule of child.entry_rules) {
+      if (rule.signal?.type !== 'rsi') continue;
+      rule.signal.period = Math.round(clamp(Number(rule.signal.period) + jitter(rng, 4), 5, 50));
+      break;
+    }
+  } else if (kind === 'ema_periods') {
+    for (const rule of child.entry_rules) {
+      if (rule.signal?.type !== 'ema_cross') continue;
+      const shortPeriod = Math.round(clamp(Number(rule.signal.short_period) + jitter(rng, 3), 3, 50));
+      const longPeriod = Math.round(clamp(Number(rule.signal.long_period) + jitter(rng, 5), 10, 200));
+      if (shortPeriod < longPeriod) {
+        rule.signal.short_period = shortPeriod;
+        rule.signal.long_period = longPeriod;
+      }
+      break;
+    }
+  } else if (kind === 'stop_loss') {
+    for (const exit of child.exit_rules) {
+      if (exit.type !== 'stop_loss') continue;
+      const bias = conservative ? -0.4 : aggressive ? 0.4 : 0;
+      exit.pct = clamp(Number(exit.pct) + bias + jitter(rng, 2), 1, 15);
+      break;
+    }
+  } else if (kind === 'take_profit') {
+    for (const exit of child.exit_rules) {
+      if (exit.type !== 'take_profit') continue;
+      const bias = conservative ? -0.8 : aggressive ? 1.2 : 0;
+      exit.pct = clamp(Number(exit.pct) + bias + jitter(rng, 4), 2, 30);
+      break;
+    }
+  } else if (kind === 'position_size' && child.position_sizing.method === 'fixed_fraction') {
+    const bias = conservative ? -0.02 : aggressive ? 0.02 : 0;
+    child.position_sizing.fraction = clamp(Number(child.position_sizing.fraction) + bias + jitter(rng, 0.04), 0.02, 0.4);
+  } else if (kind === 'rule_weight' && child.entry_rules.length > 0) {
+    const rule = child.entry_rules[Math.floor(rng() * child.entry_rules.length)];
+    if (rule) rule.weight = clamp(Number(rule.weight || 0.1) + jitter(rng, 0.3), 0.05, 1.0);
+  } else if (kind === 'max_positions') {
+    const bias = conservative ? -1 : aggressive ? 1 : 0;
+    child.max_positions = Math.round(clamp(Number(child.max_positions) + bias + Math.round(jitter(rng, 2)), 1, 10));
+  }
+
+  return repairHarness(child);
+}
+
 function git(args) {
   const result = spawnSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
   return result.status === 0 ? result.stdout.trim() : null;
@@ -120,6 +246,91 @@ function defaultBacktestConfig() {
     slippage: { model: 'fixed_bps', bps: 5 },
     gas_cost_usd: '1',
     taker_fee_bps: 5,
+  };
+}
+
+function promotionScore(promotion) {
+  const result = promotion?.result || {};
+  const train = result.train || {};
+  const test = result.test || {};
+  const trainCandidate = train.candidate?.stats || {};
+  const testCandidate = test.candidate?.stats || {};
+  const sharpeDelta = Number(train.sharpe_delta || 0) + Number(test.sharpe_delta || 0);
+  const drawdownPenalty = Math.max(0, Number(train.drawdown_delta || 0)) + Math.max(0, Number(test.drawdown_delta || 0));
+  const returnBonus = Number(trainCandidate.total_return_pct || 0) + Number(testCandidate.total_return_pct || 0);
+  const tradeBonus = Number(trainCandidate.n_trades || 0) + Number(testCandidate.n_trades || 0);
+  const passBonus = result.should_promote && !result.likely_overfit ? 1_000 : 0;
+  return passBonus + sharpeDelta * 100 + returnBonus * 0.1 + tradeBonus * 0.01 - drawdownPenalty * 10;
+}
+
+async function probeCandidate(current, candidate, token, trainPct, minPaperTrades, maxPaperDrawdownPct) {
+  const response = await apiCall('POST', '/evolution/promotion-gate', {
+    current,
+    candidate,
+    token,
+    train_pct: trainPct,
+    min_paper_trades: minPaperTrades,
+    max_paper_drawdown_pct: maxPaperDrawdownPct,
+  });
+  return response.status >= 200 && response.status < 300
+    ? { ok: true, status: response.status, data: response.data, score: promotionScore(response.data) }
+    : { ok: false, status: response.status, data: response.data, score: Number.NEGATIVE_INFINITY };
+}
+
+async function selectCandidate(runId, intent, current) {
+  const populationSize = Math.max(1, Math.min(Number(process.env.SELF_IMPROVEMENT_POPULATION_SIZE || 16), 64));
+  const token = process.env.SELF_IMPROVEMENT_TOKEN || 'ETH';
+  const trainPct = Number(process.env.SELF_IMPROVEMENT_TRAIN_PCT || 0.7);
+  const minPaperTrades = Number(process.env.SELF_IMPROVEMENT_MIN_PAPER_TRADES || 20);
+  const maxPaperDrawdownPct = Number(process.env.SELF_IMPROVEMENT_MAX_PAPER_DRAWDOWN_PCT || 10);
+  const probes = [];
+
+  for (let i = 0; i < populationSize; i += 1) {
+    const candidate = {
+      ...cloneJson(current),
+      harness: mutateHarness(current.harness, seedFor(runId, intent, i), intent),
+    };
+    let probe;
+    try {
+      probe = await probeCandidate(current, candidate, token, trainPct, minPaperTrades, maxPaperDrawdownPct);
+    } catch (error) {
+      probe = { ok: false, status: 0, data: String(error.message || error), score: Number.NEGATIVE_INFINITY };
+    }
+    probes.push({
+      index: i,
+      candidate,
+      status: probe.status,
+      ok: probe.ok,
+      score: probe.score,
+      should_promote: Boolean(probe.data?.result?.should_promote),
+      likely_overfit: Boolean(probe.data?.result?.likely_overfit),
+      blockers: Array.isArray(probe.data?.blockers) ? probe.data.blockers : [],
+    });
+  }
+
+  const successful = probes.filter((probe) => probe.ok);
+  const backtestPassers = successful.filter((probe) => probe.should_promote && !probe.likely_overfit);
+  const pool = backtestPassers.length > 0 ? backtestPassers : successful;
+  const winner = (pool.length > 0 ? pool : probes).sort((a, b) => b.score - a.score)[0];
+  return {
+    population_size: populationSize,
+    token,
+    train_pct: trainPct,
+    min_paper_trades: minPaperTrades,
+    max_paper_drawdown_pct: maxPaperDrawdownPct,
+    selected_index: winner?.index ?? null,
+    backtest_passers: backtestPassers.length,
+    probes: probes.map(({ candidate, ...probe }) => ({
+      ...probe,
+      harness_version: candidate.harness.version,
+      entry_threshold: candidate.harness.entry_threshold,
+      max_positions: candidate.harness.max_positions,
+    })),
+    current,
+    candidate: winner?.candidate || {
+      ...cloneJson(current),
+      harness: mutateHarness(current.harness, seedFor(runId, intent, 0), intent),
+    },
   };
 }
 
@@ -236,15 +447,18 @@ async function createSnapshot(intent) {
   return response.data;
 }
 
-async function recordSelfImprove(intent, snapshot, analyst) {
+async function recordSelfImprove(intent, snapshot, analyst, candidateSearch) {
   const patch = currentPatch();
   const files = changedFiles();
   validatePatchForExport(patch, files);
   const response = await apiCall('POST', '/evolution/self-improve', {
     user_intent: intent,
-    current: defaultBacktestConfig(),
-    token: process.env.SELF_IMPROVEMENT_TOKEN || 'ETH',
-    train_pct: Number(process.env.SELF_IMPROVEMENT_TRAIN_PCT || 0.7),
+    current: candidateSearch.current,
+    candidate: candidateSearch.candidate,
+    token: candidateSearch.token,
+    train_pct: candidateSearch.train_pct,
+    min_paper_trades: candidateSearch.min_paper_trades,
+    max_paper_drawdown_pct: candidateSearch.max_paper_drawdown_pct,
     sandbox_mutation: {
       base_snapshot_id: snapshot.snapshot_id,
       patch,
@@ -281,9 +495,24 @@ async function run(intent) {
   const config = loadConfig();
   const packageStatus = await loadTanglePackages();
   const analyst = await runPackageAnalystLoop(runId, intent, config, packageStatus);
+  const candidateSearch = await selectCandidate(runId, intent, defaultBacktestConfig());
   const snapshot = await createSnapshot(intent);
-  const selfImprove = await recordSelfImprove(intent, snapshot, analyst);
-  const report = { run_id: runId, created_at: nowIso(), intent, package_status: { available: packageStatus.available, missing: packageStatus.missing }, analyst, snapshot, self_improve: selfImprove };
+  const selfImprove = await recordSelfImprove(intent, snapshot, analyst, candidateSearch);
+  const report = {
+    run_id: runId,
+    created_at: nowIso(),
+    intent,
+    package_status: { available: packageStatus.available, missing: packageStatus.missing },
+    analyst,
+    candidate_search: {
+      population_size: candidateSearch.population_size,
+      selected_index: candidateSearch.selected_index,
+      backtest_passers: candidateSearch.backtest_passers,
+      probes: candidateSearch.probes,
+    },
+    snapshot,
+    self_improve: selfImprove,
+  };
   writeJson(join(RUNS_DIR, `${runId}.json`), report);
   return report;
 }

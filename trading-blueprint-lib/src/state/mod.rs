@@ -79,6 +79,17 @@ pub struct TradingBotRecord {
     /// payload to this URL so human signers can rotate the envelope.
     #[serde(default)]
     pub renewal_webhook_url: Option<String>,
+    /// Self-improvement run currently occupying this (paper) bot's single trial slot.
+    /// While set, `harness_json` is the candidate's harness and the bot's paper trades
+    /// are tagged to `active_trial_candidate_hash` so the promotion gate finds evidence.
+    /// The promotion conductor sets/clears these.
+    #[serde(default)]
+    pub active_trial_run_id: Option<String>,
+    #[serde(default)]
+    pub active_trial_candidate_hash: Option<String>,
+    /// Harness to restore if the active trial is tabled (the bot's pre-trial baseline).
+    #[serde(default)]
+    pub pre_trial_harness_json: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -657,6 +668,9 @@ mod tests {
             validation_trust: trading_runtime::ValidationTrust::default(),
             baseline_backtest: None,
             renewal_webhook_url: None,
+            active_trial_run_id: None,
+            active_trial_candidate_hash: None,
+            pre_trial_harness_json: None,
         }
     }
 

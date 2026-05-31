@@ -211,6 +211,9 @@ fn seed_bot_with_identity(
         validation_trust: trading_runtime::ValidationTrust::default(),
         baseline_backtest: None,
         renewal_webhook_url: None,
+        active_trial_run_id: None,
+        active_trial_candidate_hash: None,
+        pre_trial_harness_json: None,
     };
     state::bots()
         .expect("bots store")

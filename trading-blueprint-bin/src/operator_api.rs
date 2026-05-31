@@ -1822,7 +1822,7 @@ async fn get_bot_run(
 /// whose sandbox already exists. Rebuilds the sidecar from the preserved bot
 /// record, then re-injects the operator AI keys so the agent path works. Runs
 /// once at startup. Best-effort — a per-bot failure is logged and skipped.
-pub(crate) async fn ensure_active_bot_sandboxes() {
+pub async fn ensure_active_bot_sandboxes() {
     let bots = match trading_blueprint_lib::state::list_bots(None, 10_000, 0) {
         Ok(page) => page.bots,
         Err(e) => {
@@ -5923,6 +5923,9 @@ mod tests {
             validation_trust: trading_runtime::ValidationTrust::default(),
             baseline_backtest: None,
             renewal_webhook_url: None,
+            active_trial_run_id: None,
+            active_trial_candidate_hash: None,
+            pre_trial_harness_json: None,
         };
         let _ = store.insert(state::bot_key("wd-bot"), bot);
 
@@ -6013,6 +6016,9 @@ mod tests {
             validation_trust: trading_runtime::ValidationTrust::default(),
             baseline_backtest: None,
             renewal_webhook_url: None,
+            active_trial_run_id: None,
+            active_trial_candidate_hash: None,
+            pre_trial_harness_json: None,
         };
         let _ = state::bots()
             .expect("bots store")

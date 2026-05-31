@@ -688,6 +688,16 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
     tracing::info!("workflow_tick() returned: {}", response);
     persist_executed_run_history(&response);
 
+    // 3.5. Promotion conductor: advance self-improvement paper trials (paper bots only).
+    //      Activates queued backtest-passing candidates, accrues forward paper evidence
+    //      under the candidate, and promotes/tables via the existing promotion gate.
+    //      Runs after trades are persisted so this tick's evidence is counted.
+    crate::jobs::promotion_conductor::run_promotion_conductor(&all_bots).await;
+
+    // 3.6. Self-improvement cadence: recover delegated MCP work and generate new
+    //      backtest candidates through the sandbox TS tools when no trial is open.
+    crate::jobs::self_improvement_cadence::run_self_improvement_cadence(&all_bots).await;
+
     // 4. Run fee settlement for winding-down bots
     let winding_down: Vec<_> = bots()?
         .values()

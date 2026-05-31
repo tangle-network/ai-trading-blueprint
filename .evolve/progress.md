@@ -61,3 +61,32 @@
 - Rust validator: 56
 - Backtest equivalence: 3 (synthetic + SL pattern + real Binance)
 - HL E2E: 7 (behind HYPERLIQUID_E2E=1 gate)
+
+## 2026-05-31 — Evolve round 4: self-improvement cadence + conductor verification
+
+Status: KEEP. The backtest-to-paper conductor is no longer just compile-clean; it has an activation regression test and the sandbox-local cadence now keeps both delegated MCP work and TS-side candidate generation alive across workflow ticks.
+
+Changes:
+- Added `self_improvement_cadence` in `trading-blueprint-lib`: active paper bots get periodic MCP task-store maintenance, and one eligible bot per tick can launch `/home/agent/tools/self-improvement-loop.ts run ...` in the sandbox when no trial or non-terminal evolution run is open.
+- Kept the crate boundary intact: TS mutates/probes candidates through `/evolution/promotion-gate`; Rust only schedules, activates paper trials, tags evidence, and promotes/tables.
+- Hardened trial evidence lookup by preferring revision-scoped paper trades before candidate-hash fallback.
+- Added an integration test proving a queued `backtest_pass` run swaps the paper bot harness, sets the trial marker, and advances to `paper_trial`.
+- Fixed the stale `TradeRecord` fixture missing `hyperliquid_metadata` so workspace lib tests compile.
+
+Verification:
+- `cargo check --workspace` passed.
+- `cargo test -p trading-blueprint-lib self_improvement_cadence --lib -- --nocapture` passed.
+- `cargo test -p trading-blueprint-lib --test integration test_promotion_conductor_activates_queued_backtest_pass_candidate -- --nocapture` passed.
+- `cargo test -p trading-blueprint-lib self_improvement_loop_uses_tangle_agent_packages_and_existing_api --lib -- --nocapture` passed.
+- `cargo test --workspace --lib` passed: 659 + 228 + 76 library tests.
+- `cargo clippy -p trading-blueprint-bin --tests -- -D warnings -A clippy::collapsible-if -A clippy::manual-inspect -A clippy::needless-question-mark -A clippy::too-many-arguments` passed after making startup sandbox recovery public to the bin crate surface.
+- `cargo test -p trading-http-api --test api_tests evolution_promotion_gate -- --nocapture` passed: 4 promotion-gate integration tests.
+- `cargo test -p trading-http-api --test api_tests self_improvement -- --nocapture` passed: 4 self-improvement API integration tests.
+- `npm run typecheck:evals` passed.
+- `npx tsc --target ES2022 --module ESNext --moduleResolution Bundler --noEmit --skipLibCheck trading-blueprint-lib/src/prompts/tools/self_improvement_loop.ts` passed.
+- `forge build` passed with existing Foundry/forge-lint warnings.
+
+Remaining:
+- Deploy this branch to the live box and observe a real sandbox cadence run.
+- Let an active paper trial accrue at least 20 tagged trades, then prove the gate advances a run to `promoted`.
+- Base Sepolia real-vault path is still blocked on funding deployer `0x2420...`; the deploy-only script compiles but should not be broadcast until funded.

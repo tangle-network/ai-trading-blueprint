@@ -361,6 +361,20 @@ async fn promotion_gate_multi_bot(
     promotion_gate_inner(&bot.bot_id, req).await
 }
 
+/// Run the promotion gate for a candidate and return the plain response. This is the
+/// entry the promotion conductor (trading-blueprint-lib) calls in-process once a paper
+/// trial has accrued enough forward evidence — it reuses the exact same gate the HTTP
+/// route uses, so there is one gate, not two.
+pub async fn run_promotion_gate(
+    bot_id: &str,
+    req: PromotionGateRequest,
+) -> Result<PromotionGateResponse, String> {
+    promotion_gate_inner(bot_id, req)
+        .await
+        .map(|json| json.0)
+        .map_err(|(_, msg)| msg)
+}
+
 async fn promotion_gate_inner(
     bot_id: &str,
     req: PromotionGateRequest,
@@ -582,6 +596,29 @@ async fn self_improve_inner(
     .await?
     .0;
 
+    // Lifecycle decision (the unlock for "self-improvement going nowhere"):
+    // a candidate that clears the walk-forward backtest but only lacks forward
+    // paper evidence must NOT dead-end as "blocked" — it enrolls in a paper trial
+    // so the promotion sweep can accrue real paper trades under its candidate_hash
+    // and re-run the gate later. Only a candidate that fails the backtest itself
+    // (not promotable / likely overfit) is genuinely blocked.
+    let backtest_passed = promotion.result.should_promote && !promotion.result.likely_overfit;
+    let (status, trial_deadline, trades_target) = if promotion.approved {
+        ("staged_for_operator_approval".to_string(), None, None)
+    } else if backtest_passed {
+        // Cleared backtest, only lacks forward paper evidence: queue for the promotion
+        // conductor (trading-blueprint-lib) to activate as a paper trial when the bot's
+        // single trial slot is free. The conductor sets `trial_deadline` on activation;
+        // we record the requested evidence target now so it survives the queue.
+        (
+            evolution_store::status::BACKTEST_PASS.to_string(),
+            None,
+            Some(req.min_paper_trades.max(1)),
+        )
+    } else {
+        ("blocked".to_string(), None, None)
+    };
+
     let run = evolution_store::SelfImprovementRun {
         run_id,
         bot_id: bot_id.to_string(),
@@ -589,11 +626,7 @@ async fn self_improve_inner(
         user_intent: user_intent.to_string(),
         candidate_hash,
         approved: promotion.approved,
-        status: if promotion.approved {
-            "staged_for_operator_approval".to_string()
-        } else {
-            "blocked".to_string()
-        },
+        status,
         blockers: promotion.blockers.clone(),
         candles_used: promotion.candles_used,
         current_config: current_json,
@@ -608,6 +641,8 @@ async fn self_improve_inner(
         sandbox_revision_id: sandbox_revision
             .as_ref()
             .map(|revision| revision.revision_id.clone()),
+        trial_deadline,
+        trades_target,
     };
     evolution_store::insert(run.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 

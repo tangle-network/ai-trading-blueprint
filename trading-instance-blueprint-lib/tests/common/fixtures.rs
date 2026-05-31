@@ -93,6 +93,9 @@ pub fn seed_bot_record(
         validation_trust: trading_blueprint_lib::state::ValidationTrust::default(),
         baseline_backtest: None,
         renewal_webhook_url: None,
+        active_trial_run_id: None,
+        active_trial_candidate_hash: None,
+        pre_trial_harness_json: None,
     };
     bots()
         .expect("bots store")

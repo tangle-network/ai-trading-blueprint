@@ -1262,6 +1262,9 @@ pub async fn provision_core(
         validation_trust: validation_trust.unwrap_or_default(),
         baseline_backtest: None,
         renewal_webhook_url,
+        active_trial_run_id: None,
+        active_trial_candidate_hash: None,
+        pre_trial_harness_json: None,
     };
 
     // 8. Store bot record
