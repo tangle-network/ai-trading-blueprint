@@ -152,3 +152,33 @@ Remaining:
 - Deploy this branch to the live box.
 - Run a live-box Hyperliquid outcome dry probe with a returned `risk_budget_decision_id`, `candidate_hash`, `asset_id`, `asset_size`, and `notional_usdc`.
 - Add mark-to-market live drift/demotion once outcome midprice ingestion is available from the live Hyperliquid info endpoint.
+
+## 2026-05-31 - Evolve round 7: live drift demotion
+
+Status: KEEP. Risk-budgeted live probes now have a post-dispatch feedback path. A candidate can still be promoted to a bounded tiny-live probe without waiting for paper evidence, but the same decision can now be evaluated against live fills and venue marks and automatically demoted when the decision's loss/slippage/TTL/trade-count budgets breach.
+
+Changes:
+- Added `/evolution/risk-budget/decisions/{decision_id}/live-drift` for single-bot and multi-bot API modes.
+- Added `LiveDriftReport` with trade count, total/reserved notional, average/max slippage, marked PnL, marked return, breaches, recommendation, and the updated decision snapshot.
+- Added decision fields for explicit `max_live_loss_pct`, `max_live_slippage_bps`, `demoted_at`, and `demotion_reason`.
+- The drift evaluator reads persisted live trades for the risk decision, accepts venue marks keyed by token/outcome asset ID/asset label, computes mark-to-market PnL, and atomically disables `can_trade_live`/`can_touch_funds` on breach.
+- Extended the sandbox self-improvement risk-budget request with `SELF_IMPROVEMENT_MAX_LIVE_LOSS_PCT` and `SELF_IMPROVEMENT_MAX_LIVE_SLIPPAGE_BPS`.
+- Updated the system prompt and Hyperliquid provider prompt so agents call the live-drift endpoint after live outcome probes.
+
+Verification:
+- `git diff --check` passed.
+- `cargo check --workspace` passed.
+- `cargo clippy -p trading-http-api -p trading-runtime -p trading-blueprint-lib --tests -- -D warnings -A clippy::collapsible-if -A clippy::manual-inspect -A clippy::needless-question-mark -A clippy::too-many-arguments` passed.
+- `cargo test --workspace --lib` passed.
+- `cargo test -p trading-http-api risk_budget --lib -- --nocapture` passed.
+- `cargo test -p trading-http-api test_evolution_live_drift_endpoint_reports_and_demotes_decision --test api_tests -- --nocapture` passed.
+- `cargo test -p trading-http-api routes::execute --lib -- --nocapture` passed.
+- `cargo test -p trading-http-api --test api_tests evolution_promotion_gate -- --nocapture` passed.
+- `cargo test -p trading-blueprint-lib providers::hyperliquid --lib -- --nocapture` passed.
+- `cargo test -p trading-blueprint-lib prompts --lib -- --nocapture` passed.
+- `npx tsc --target ES2022 --module ESNext --moduleResolution Bundler --noEmit --skipLibCheck trading-blueprint-lib/src/prompts/tools/self_improvement_loop.ts` passed.
+
+Remaining:
+- Deploy this branch to the live box.
+- Run real/dry venue probes and call live-drift with actual Polymarket/Hyperliquid marks.
+- Base Sepolia real-vault path remains blocked on funding deployer `0x2420...`.

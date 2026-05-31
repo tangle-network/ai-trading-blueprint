@@ -167,7 +167,8 @@ Rules for Hyperliquid outcomes:
 1. Never apply perp leverage, liquidation, bracket, or funding assumptions to outcome markets.
 2. Price must be between 0 and 1, and `notional_usdc` must equal `asset_size * price`.
 3. Live candidate trades require a returned risk-budget decision. The platform clamps binary outcome live-probe notional to `max_loss_usd` because worst-case loss equals notional.
-4. Use `buy` to open a YES/NO outcome token position; use `sell` or `redeem` to close/reduce it.
+4. After a live outcome probe, call `/evolution/risk-budget/decisions/{decision_id}/live-drift` with a mark keyed by outcome `asset_id`, `asset`, or token label so losing probes are automatically demoted.
+5. Use `buy` to open a YES/NO outcome token position; use `sell` or `redeem` to close/reduce it.
 
 ### Risk Management Rules
 1. Always set leverage BEFORE placing orders

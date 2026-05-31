@@ -4,7 +4,10 @@ use rust_decimal::Decimal;
 use sandbox_runtime::store::PersistentStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use trading_runtime::backtest::WalkForwardResult;
+
+use crate::trade_store;
 
 static EVIDENCE_REPORTS: OnceCell<PersistentStore<EvidenceReport>> = OnceCell::new();
 static DECISIONS: OnceCell<PersistentStore<RiskBudgetDecision>> = OnceCell::new();
@@ -84,6 +87,10 @@ pub struct RiskBudgetRequest {
     #[serde(default)]
     pub max_live_probe_loss_usd: Option<String>,
     #[serde(default)]
+    pub max_live_loss_pct: Option<String>,
+    #[serde(default)]
+    pub max_live_slippage_bps: Option<u32>,
+    #[serde(default)]
     pub max_live_probe_trades: Option<u64>,
     #[serde(default)]
     pub ttl_seconds: Option<u64>,
@@ -112,6 +119,8 @@ impl Default for RiskBudgetRequest {
             prefer_shadow: false,
             max_live_probe_notional_usd: None,
             max_live_probe_loss_usd: None,
+            max_live_loss_pct: None,
+            max_live_slippage_bps: None,
             max_live_probe_trades: None,
             ttl_seconds: None,
         }
@@ -188,6 +197,10 @@ pub struct RiskBudgetDecision {
     #[serde(default)]
     pub max_loss_usd: Option<String>,
     #[serde(default)]
+    pub max_live_loss_pct: Option<String>,
+    #[serde(default)]
+    pub max_live_slippage_bps: Option<u32>,
+    #[serde(default)]
     pub max_trades: Option<u64>,
     #[serde(default)]
     pub reserved_trades: u64,
@@ -199,6 +212,60 @@ pub struct RiskBudgetDecision {
     pub evidence_modes: Vec<EvidenceMode>,
     pub blockers: Vec<String>,
     pub explanation: String,
+    #[serde(default)]
+    pub demoted_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub demotion_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct LiveDriftRequest {
+    #[serde(default)]
+    pub marks: HashMap<String, String>,
+    #[serde(default = "default_demote_on_breach")]
+    pub demote_on_breach: bool,
+}
+
+fn default_demote_on_breach() -> bool {
+    true
+}
+
+impl Default for LiveDriftRequest {
+    fn default() -> Self {
+        Self {
+            marks: HashMap::new(),
+            demote_on_breach: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveDriftRecommendation {
+    KeepLive,
+    Demote,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LiveDriftReport {
+    pub decision_id: String,
+    pub bot_id: String,
+    pub checked_at: DateTime<Utc>,
+    pub live_trades: u64,
+    pub marked_trades: u64,
+    pub total_notional_usd: String,
+    pub reserved_notional_usd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub average_slippage_bps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_slippage_bps: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark_to_market_pnl_usd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark_to_market_return_pct: Option<String>,
+    pub breaches: Vec<String>,
+    pub recommendation: LiveDriftRecommendation,
+    pub decision: RiskBudgetDecision,
 }
 
 #[derive(Clone, Debug)]
@@ -414,6 +481,8 @@ pub fn build_promotion_decision(
         instrument_type: input.request.instrument_type.clone(),
         max_notional_usd,
         max_loss_usd,
+        max_live_loss_pct: input.request.max_live_loss_pct.clone(),
+        max_live_slippage_bps: input.request.max_live_slippage_bps,
         max_trades,
         reserved_trades: 0,
         reserved_notional_usd: "0".to_string(),
@@ -422,9 +491,272 @@ pub fn build_promotion_decision(
         evidence_modes,
         blockers,
         explanation: explanation.to_string(),
+        demoted_at: None,
+        demotion_reason: None,
     };
 
     (report, decision)
+}
+
+pub fn evaluate_live_drift(
+    bot_id: &str,
+    decision_id: &str,
+    request: LiveDriftRequest,
+) -> Result<LiveDriftReport, String> {
+    let mut outcome: Option<Result<LiveDriftReport, String>> = None;
+    let found = decisions()?
+        .update(&decision_key(decision_id), |decision| {
+            outcome = Some(evaluate_and_maybe_demote_live_drift(
+                decision, bot_id, &request,
+            ));
+        })
+        .map_err(|e| e.to_string())?;
+    if !found {
+        return Err(format!(
+            "risk budget decision '{decision_id}' was not found"
+        ));
+    }
+    outcome.unwrap_or_else(|| {
+        Err(format!(
+            "risk budget decision '{decision_id}' could not be evaluated"
+        ))
+    })
+}
+
+fn evaluate_and_maybe_demote_live_drift(
+    decision: &mut RiskBudgetDecision,
+    bot_id: &str,
+    request: &LiveDriftRequest,
+) -> Result<LiveDriftReport, String> {
+    if decision.bot_id != bot_id {
+        return Err(format!(
+            "risk budget decision '{}' belongs to bot '{}', not '{}'",
+            decision.decision_id, decision.bot_id, bot_id
+        ));
+    }
+
+    let trades = trade_store::live_trades_for_risk_decision(bot_id, &decision.decision_id)?;
+    let total_notional = trades
+        .iter()
+        .filter_map(|trade| trade.notional_usd.as_deref().and_then(parse_decimal))
+        .fold(Decimal::ZERO, |sum, notional| sum + notional);
+    let slippages: Vec<u32> = trades
+        .iter()
+        .filter_map(|trade| trade.slippage_bps.as_deref())
+        .filter_map(|value| value.trim().parse::<u32>().ok())
+        .collect();
+    let max_slippage_bps = slippages.iter().copied().max();
+    let average_slippage_bps = if slippages.is_empty() {
+        None
+    } else {
+        let total: u32 = slippages.iter().copied().sum();
+        Some(total as f64 / slippages.len() as f64)
+    };
+    let mark_to_market = mark_to_market_live_trades(&trades, &request.marks);
+
+    let now = Utc::now();
+    let mut breaches = Vec::new();
+    if let Some(expires_at) = decision.expires_at
+        && now >= expires_at
+    {
+        breaches.push(format!("decision expired at {}", expires_at.to_rfc3339()));
+    }
+    if let Some(max_trades) = decision.max_trades
+        && decision.reserved_trades >= max_trades
+    {
+        breaches.push(format!(
+            "max_trades {} consumed by reserved_trades {}",
+            max_trades, decision.reserved_trades
+        ));
+    }
+    if let (Some(max_slippage), Some(observed)) = (decision.max_live_slippage_bps, max_slippage_bps)
+        && observed > max_slippage
+    {
+        breaches.push(format!(
+            "live slippage {} bps exceeded {} bps limit",
+            observed, max_slippage
+        ));
+    }
+    if let Some((pnl, return_pct, _marked_trades, _marked_notional)) = mark_to_market
+        && pnl < Decimal::ZERO
+    {
+        let loss = -pnl;
+        if let Some(max_loss) = decision.max_loss_usd.as_deref().and_then(parse_decimal)
+            && loss >= max_loss
+        {
+            breaches.push(format!(
+                "mark-to-market loss {} reached max_loss_usd {}",
+                loss.normalize(),
+                max_loss.normalize()
+            ));
+        }
+        if let Some(max_loss_pct) = decision
+            .max_live_loss_pct
+            .as_deref()
+            .and_then(parse_decimal)
+            && -return_pct >= max_loss_pct
+        {
+            breaches.push(format!(
+                "mark-to-market loss {}% reached max_live_loss_pct {}%",
+                (-return_pct).normalize(),
+                max_loss_pct.normalize()
+            ));
+        }
+    }
+
+    let recommendation = if breaches.is_empty() {
+        LiveDriftRecommendation::KeepLive
+    } else {
+        LiveDriftRecommendation::Demote
+    };
+    if recommendation == LiveDriftRecommendation::Demote
+        && request.demote_on_breach
+        && decision.can_trade_live
+    {
+        decision.can_trade_live = false;
+        decision.can_touch_funds = false;
+        decision.demoted_at = Some(now);
+        decision.demotion_reason = Some(breaches.join("; "));
+        for breach in &breaches {
+            if !decision.blockers.contains(breach) {
+                decision.blockers.push(breach.clone());
+            }
+        }
+        decision.explanation = format!(
+            "Demoted by live drift monitor: {}",
+            decision.demotion_reason.clone().unwrap_or_default()
+        );
+    }
+
+    let (mark_to_market_pnl_usd, mark_to_market_return_pct, marked_trades) = mark_to_market
+        .map(|(pnl, return_pct, marked_trades, _)| {
+            (
+                Some(pnl.normalize().to_string()),
+                Some(return_pct.normalize().to_string()),
+                marked_trades,
+            )
+        })
+        .unwrap_or((None, None, 0));
+
+    Ok(LiveDriftReport {
+        decision_id: decision.decision_id.clone(),
+        bot_id: decision.bot_id.clone(),
+        checked_at: now,
+        live_trades: trades.len() as u64,
+        marked_trades,
+        total_notional_usd: total_notional.normalize().to_string(),
+        reserved_notional_usd: decision.reserved_notional_usd.clone(),
+        average_slippage_bps,
+        max_slippage_bps,
+        mark_to_market_pnl_usd,
+        mark_to_market_return_pct,
+        breaches,
+        recommendation,
+        decision: decision.clone(),
+    })
+}
+
+fn mark_to_market_live_trades(
+    trades: &[trade_store::TradeRecord],
+    marks: &HashMap<String, String>,
+) -> Option<(Decimal, Decimal, u64, Decimal)> {
+    let mut pnl = Decimal::ZERO;
+    let mut marked_notional = Decimal::ZERO;
+    let mut marked_trades = 0u64;
+
+    for trade in trades {
+        let Some(mark_price) = mark_price_for_trade(trade, marks) else {
+            continue;
+        };
+        let Some(entry_price) = trade_price(trade) else {
+            continue;
+        };
+        let Some(size) = trade_position_size(trade) else {
+            continue;
+        };
+        if mark_price < Decimal::ZERO || entry_price <= Decimal::ZERO || size <= Decimal::ZERO {
+            continue;
+        }
+
+        let sign = trade_pnl_sign(&trade.action);
+        pnl += (mark_price - entry_price) * size * sign;
+        let notional = trade
+            .notional_usd
+            .as_deref()
+            .and_then(parse_decimal)
+            .unwrap_or(entry_price * size);
+        marked_notional += notional;
+        marked_trades += 1;
+    }
+
+    if marked_trades == 0 || marked_notional <= Decimal::ZERO {
+        return None;
+    }
+    let return_pct = (pnl / marked_notional) * Decimal::from(100);
+    Some((pnl, return_pct, marked_trades, marked_notional))
+}
+
+fn mark_price_for_trade(
+    trade: &trade_store::TradeRecord,
+    marks: &HashMap<String, String>,
+) -> Option<Decimal> {
+    mark_candidates_for_trade(trade)
+        .into_iter()
+        .find_map(|key| marks.get(&key).and_then(|value| parse_decimal(value)))
+}
+
+fn mark_candidates_for_trade(trade: &trade_store::TradeRecord) -> Vec<String> {
+    let mut keys = vec![trade.token_out.clone()];
+    if let Some(prediction) = trade.prediction_metadata.as_ref() {
+        keys.extend(
+            [
+                prediction.token_id.as_ref(),
+                prediction.asset_id.as_ref(),
+                prediction.asset.as_ref(),
+                prediction.outcome_label.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .cloned(),
+        );
+    }
+    if let Some(hyperliquid) = trade.hyperliquid_metadata.as_ref() {
+        keys.extend(
+            [hyperliquid.asset_id.as_ref(), hyperliquid.asset.as_ref()]
+                .into_iter()
+                .flatten()
+                .cloned(),
+        );
+    }
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn trade_price(trade: &trade_store::TradeRecord) -> Option<Decimal> {
+    trade
+        .filled_price_usd
+        .as_deref()
+        .and_then(parse_decimal)
+        .or_else(|| trade.entry_price_usd.as_deref().and_then(parse_decimal))
+        .or_else(|| trade.requested_price_usd.as_deref().and_then(parse_decimal))
+}
+
+fn trade_position_size(trade: &trade_store::TradeRecord) -> Option<Decimal> {
+    trade
+        .filled_amount
+        .as_deref()
+        .and_then(parse_decimal)
+        .or_else(|| trade.amount_out.as_deref().and_then(parse_decimal))
+        .or_else(|| parse_decimal(&trade.min_amount_out))
+        .or_else(|| parse_decimal(&trade.amount_in))
+}
+
+fn trade_pnl_sign(action: &str) -> Decimal {
+    match normalize(action).as_str() {
+        "sell" | "close_long" | "open_short" => Decimal::NEGATIVE_ONE,
+        _ => Decimal::ONE,
+    }
 }
 
 pub fn risk_budget_decision_id(metadata: &Value) -> Option<String> {
@@ -890,6 +1222,8 @@ mod tests {
             instrument_type: Some("binary_prediction".to_string()),
             max_notional_usd: Some("25".to_string()),
             max_loss_usd: Some("5".to_string()),
+            max_live_loss_pct: None,
+            max_live_slippage_bps: None,
             max_trades: Some(1),
             reserved_trades: 0,
             reserved_notional_usd: "0".to_string(),
@@ -898,6 +1232,8 @@ mod tests {
             evidence_modes: vec![EvidenceMode::FastBacktest],
             blockers: Vec::new(),
             explanation: "test".to_string(),
+            demoted_at: None,
+            demotion_reason: None,
         }
     }
 
@@ -1200,5 +1536,113 @@ mod tests {
         .expect_err("candidate revision should require decision");
 
         assert!(err.contains("risk_budget_decision_id is required"));
+    }
+
+    #[tokio::test]
+    async fn live_drift_demotes_marked_binary_outcome_at_loss_cap() {
+        let bot_id = format!("bot-live-drift-{}", uuid::Uuid::new_v4());
+        let decision_id = format!("rbd-live-drift-{}", uuid::Uuid::new_v4());
+        let mut decision = live_probe_decision(&decision_id, &bot_id);
+        decision.target_protocol = Some("hyperliquid".to_string());
+        decision.venue = Some("hyperliquid".to_string());
+        decision.max_trades = None;
+        decision.max_notional_usd = Some("5".to_string());
+        decision.max_loss_usd = Some("5".to_string());
+        insert_decision(decision).expect("insert decision");
+
+        crate::trade_store::record_trade(crate::trade_store::TradeRecord {
+            id: format!("trade-live-drift-{}", uuid::Uuid::new_v4()),
+            bot_id: bot_id.clone(),
+            timestamp: Utc::now(),
+            action: "buy".to_string(),
+            token_in: "USDC".to_string(),
+            token_out: "YES".to_string(),
+            amount_in: "5".to_string(),
+            min_amount_out: "10".to_string(),
+            target_protocol: "hyperliquid".to_string(),
+            tx_hash: "0xhl-live-drift".to_string(),
+            block_number: None,
+            gas_used: None,
+            paper_trade: false,
+            execution_status: Some(crate::trade_store::TradeExecutionStatus::Filled),
+            clob_order_id: None,
+            amount_out: Some("10".to_string()),
+            entry_price_usd: Some("0.5".to_string()),
+            notional_usd: Some("5".to_string()),
+            requested_price_usd: None,
+            filled_price_usd: None,
+            filled_amount: Some("10".to_string()),
+            slippage_bps: Some("25".to_string()),
+            execution_reason: None,
+            prediction_metadata: Some(crate::trade_store::PredictionTradeMetadata {
+                venue: Some("hyperliquid".to_string()),
+                market_type: Some("hyperp".to_string()),
+                asset: Some("YES".to_string()),
+                asset_id: Some("100000017".to_string()),
+                outcome_label: Some("YES".to_string()),
+                ..Default::default()
+            }),
+            hyperliquid_metadata: Some(crate::trade_store::HyperliquidTradeMetadata {
+                asset: Some("#17".to_string()),
+                asset_id: Some("100000017".to_string()),
+                asset_size: Some("10".to_string()),
+                market_type: Some("hyperp".to_string()),
+                outcome_label: Some("YES".to_string()),
+                ..Default::default()
+            }),
+            valuation_status: crate::trade_store::TradeValuationStatus::Priced,
+            validation: crate::trade_store::StoredValidation {
+                approved: true,
+                aggregate_score: 100,
+                intent_hash: "0xintent-live-drift".to_string(),
+                responses: Vec::new(),
+                simulation: None,
+            },
+            signal_price: None,
+            fill_price: None,
+            signal_to_fill_ms: None,
+            decision_source: None,
+            runner_signal: None,
+            agent_reasoning: None,
+            harness_version: None,
+            candidate_hash: Some("sha256:candidate".to_string()),
+            revision_id: None,
+            risk_budget_decision_id: Some(decision_id.clone()),
+            paper_pnl_pct: None,
+            paper_equity_after: None,
+        })
+        .await
+        .expect("record live trade");
+
+        let report = evaluate_live_drift(
+            &bot_id,
+            &decision_id,
+            LiveDriftRequest {
+                marks: HashMap::from([("100000017".to_string(), "0".to_string())]),
+                demote_on_breach: true,
+            },
+        )
+        .expect("evaluate drift");
+
+        assert_eq!(report.recommendation, LiveDriftRecommendation::Demote);
+        assert_eq!(report.marked_trades, 1);
+        assert_eq!(report.mark_to_market_pnl_usd.as_deref(), Some("-5"));
+        assert!(
+            report
+                .breaches
+                .iter()
+                .any(|breach| { breach.contains("mark-to-market loss 5 reached max_loss_usd 5") })
+        );
+        assert!(!report.decision.can_trade_live);
+        assert!(report.decision.demoted_at.is_some());
+
+        let stored = get_decision(&decision_id)
+            .expect("get decision")
+            .expect("stored decision");
+        assert!(!stored.can_trade_live);
+        assert_eq!(
+            stored.demotion_reason.as_deref(),
+            report.decision.demotion_reason.as_deref()
+        );
     }
 }

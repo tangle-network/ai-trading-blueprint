@@ -8278,6 +8278,137 @@ async fn test_evolution_promotion_gate_returns_tiny_live_for_time_sensitive_back
 }
 
 #[tokio::test]
+async fn test_evolution_live_drift_endpoint_reports_and_demotes_decision() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-live-drift-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+    let decision_id = format!("rbd-route-drift-{}", uuid::Uuid::new_v4());
+
+    trading_http_api::risk_budget::insert_decision(
+        trading_http_api::risk_budget::RiskBudgetDecision {
+            decision_id: decision_id.clone(),
+            bot_id: bot_id.clone(),
+            evidence_report_id: format!("er-route-drift-{}", uuid::Uuid::new_v4()),
+            created_at: chrono::Utc::now(),
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(5)),
+            candidate_hash: "sha256:candidate".to_string(),
+            revision_id: None,
+            action: trading_http_api::risk_budget::RiskDecisionAction::LiveProbe,
+            promotion_level: trading_http_api::risk_budget::PromotionLevel::TinyLive,
+            can_trade_live: true,
+            can_touch_funds: true,
+            target_protocol: Some("hyperliquid".to_string()),
+            venue: Some("hyperliquid".to_string()),
+            strategy_class: None,
+            market_type: Some("prediction_market".to_string()),
+            instrument_type: Some("binary_prediction".to_string()),
+            max_notional_usd: Some("5".to_string()),
+            max_loss_usd: Some("5".to_string()),
+            max_live_loss_pct: None,
+            max_live_slippage_bps: None,
+            max_trades: None,
+            reserved_trades: 1,
+            reserved_notional_usd: "5".to_string(),
+            kill_conditions: vec!["max_loss_hit".to_string()],
+            confidence_score: 0.7,
+            evidence_modes: vec![trading_http_api::risk_budget::EvidenceMode::TinyLiveProbe],
+            blockers: Vec::new(),
+            explanation: "route test".to_string(),
+            demoted_at: None,
+            demotion_reason: None,
+        },
+    )
+    .expect("insert decision");
+
+    trading_http_api::trade_store::record_trade(trading_http_api::trade_store::TradeRecord {
+        id: format!("trade-route-drift-{}", uuid::Uuid::new_v4()),
+        bot_id: bot_id.clone(),
+        timestamp: chrono::Utc::now(),
+        action: "buy".to_string(),
+        token_in: "USDC".to_string(),
+        token_out: "YES".to_string(),
+        amount_in: "5".to_string(),
+        min_amount_out: "10".to_string(),
+        target_protocol: "hyperliquid".to_string(),
+        tx_hash: "0xroute-drift".to_string(),
+        block_number: None,
+        gas_used: None,
+        paper_trade: false,
+        execution_status: Some(trading_http_api::trade_store::TradeExecutionStatus::Filled),
+        clob_order_id: None,
+        amount_out: Some("10".to_string()),
+        entry_price_usd: Some("0.5".to_string()),
+        notional_usd: Some("5".to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: Some("10".to_string()),
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: Some(trading_http_api::trade_store::PredictionTradeMetadata {
+            venue: Some("hyperliquid".to_string()),
+            market_type: Some("hyperp".to_string()),
+            asset_id: Some("100000017".to_string()),
+            outcome_label: Some("YES".to_string()),
+            ..Default::default()
+        }),
+        hyperliquid_metadata: None,
+        valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
+        validation: trading_http_api::trade_store::StoredValidation {
+            approved: true,
+            aggregate_score: 100,
+            intent_hash: "0xintent-route-drift".to_string(),
+            responses: Vec::new(),
+            simulation: None,
+        },
+        signal_price: None,
+        fill_price: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
+        candidate_hash: Some("sha256:candidate".to_string()),
+        revision_id: None,
+        risk_budget_decision_id: Some(decision_id.clone()),
+        paper_pnl_pct: None,
+        paper_equity_after: None,
+    })
+    .await
+    .expect("record trade");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/evolution/risk-budget/decisions/{decision_id}/live-drift"
+                ))
+                .header("authorization", format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "marks": { "100000017": "0" },
+                        "demote_on_breach": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["recommendation"], "demote");
+    assert_eq!(json["mark_to_market_pnl_usd"], "-5");
+    assert_eq!(json["decision"]["can_trade_live"], false);
+    assert!(json["decision"]["demoted_at"].is_string());
+}
+
+#[tokio::test]
 async fn test_evolution_promotion_gate_ignores_forged_request_paper_evidence() {
     let mock = MockServer::start().await;
     let bot_id = format!("evo-gate-paper-{}", uuid::Uuid::new_v4());

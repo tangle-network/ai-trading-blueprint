@@ -220,6 +220,7 @@ Authorization: Bearer {token}
   Body: {{ "intent": {{...}}, "validation": {{...}} }}
 - POST /evolution/promotion-gate — Evaluate a candidate strategy and return an auditable `risk_decision`.
   For a live trade using a candidate hash or sandbox revision, copy the returned `risk_decision.decision_id` into `intent.metadata.risk_budget_decision_id` and include the matching `candidate_hash` or `revision_id`; never invent these values.
+- POST /evolution/risk-budget/decisions/{{decision_id}}/live-drift — After a candidate live probe, submit current venue marks as {{ "marks": {{ "<token_or_asset_id>": "<price>" }} }}; the API returns drift, breaches, and demotes the decision when loss/slippage budgets are breached.
   For DEX swaps, `amount_in` and `min_amount_out` are raw token base units, not human-readable decimals.
   For Hyperliquid: set target_protocol to "hyperliquid", use metadata fields:
   - "asset": "ETH" (or "BTC", "SOL", etc.)

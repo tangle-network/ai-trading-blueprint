@@ -1,8 +1,8 @@
 {
   "mode": "evolve",
   "goal": "Make AI trading REAL (non-custodial funds on Base Sepolia) AND make self-improvement actually produce promotable strategies",
-  "status": "round-6-hyperliquid-outcome-parity-built-local",
-  "round": 6,
+  "status": "round-7-live-drift-demotion-built-local",
+  "round": 7,
   "generation": 3,
   "updatedAt": "2026-05-31",
   "subGoals": {
@@ -17,9 +17,9 @@
       "metric": "# candidates that pass gates and promote (per cycle)",
       "baseline": "0 \u2014 every one of 15+ historical runs BLOCKED; loop is dormant (never auto-triggers)",
       "target": ">=1 promotable candidate; loop auto-runs on cadence",
-      "rootCause": "candidates were backtest-only, needed >=20 PAPER trades to promote, and never accumulated tagged forward evidence. Round 4 added box-side cadence and paper-trial orchestration. Round 5 added an auditable risk-budget decision layer so time-sensitive candidates that pass hard backtest/overfit gates can receive capped tiny-live probes before paper evidence accrues. Round 6 extended that fast path to Hyperliquid outcome markets by reusing Hyperliquid transport while tagging, valuing, and capping them like binary prediction markets; full active promotion still requires forward evidence.",
+      "rootCause": "candidates were backtest-only, needed >=20 PAPER trades to promote, and never accumulated tagged forward evidence. Round 4 added box-side cadence and paper-trial orchestration. Round 5 added an auditable risk-budget decision layer so time-sensitive candidates that pass hard backtest/overfit gates can receive capped tiny-live probes before paper evidence accrues. Round 6 extended that fast path to Hyperliquid outcome markets by reusing Hyperliquid transport while tagging, valuing, and capping them like binary prediction markets. Round 7 added post-probe live drift evaluation and automatic decision demotion from venue marks, so live probes can be shut off when loss/slippage budgets breach; full active promotion still requires forward evidence.",
       "metricClaims": "Self-improving agents is the moat. Zero promotions today = the loop is theater. One real promotion = a measurably better strategy = better depositor PnL, autonomously."
     }
   },
-  "nextDispatch": "/evolve round-7: deploy this branch to the live box, run a time-sensitive prediction-market candidate through /evolution/promotion-gate, confirm risk_decision.action=live_probe, submit one Polymarket CLOB capped probe and one Hyperliquid outcome dry/live probe carrying risk_budget_decision_id plus matching candidate_hash/revision_id, and then add mark-to-market live drift demotion from venue midprice snapshots. Base Sepolia vault-real remains blocked until deployer 0x2420 is funded; after funding, broadcast DeployTradingContracts.s.sol."
+  "nextDispatch": "/evolve round-8: deploy this branch to the live box, run a time-sensitive prediction-market candidate through /evolution/promotion-gate, confirm risk_decision.action=live_probe, submit one Polymarket CLOB capped probe and one Hyperliquid outcome dry/live probe carrying risk_budget_decision_id plus matching candidate_hash/revision_id, then call /evolution/risk-budget/decisions/{decision_id}/live-drift with venue marks and confirm keep_live/demote behavior. Base Sepolia vault-real remains blocked until deployer 0x2420 is funded; after funding, broadcast DeployTradingContracts.s.sol."
 }

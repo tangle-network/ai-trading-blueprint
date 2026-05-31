@@ -26,6 +26,10 @@ pub fn router() -> Router<Arc<TradingApiState>> {
             "/evolution/risk-budget/reports/{report_id}",
             get(get_evidence_report),
         )
+        .route(
+            "/evolution/risk-budget/decisions/{decision_id}/live-drift",
+            post(evaluate_live_drift),
+        )
         .route("/evolution/self-improve", post(self_improve))
         .route(
             "/evolution/self-improve/runs",
@@ -57,6 +61,10 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
         .route(
             "/evolution/risk-budget/reports/{report_id}",
             get(get_evidence_report_multi_bot),
+        )
+        .route(
+            "/evolution/risk-budget/decisions/{decision_id}/live-drift",
+            post(evaluate_live_drift_multi_bot),
         )
         .route("/evolution/self-improve", post(self_improve_multi_bot))
         .route(
@@ -455,6 +463,42 @@ async fn get_evidence_report_inner(
         ));
     }
     Ok(Json(report))
+}
+
+async fn evaluate_live_drift(
+    State(state): State<Arc<TradingApiState>>,
+    Path(decision_id): Path<String>,
+    Json(req): Json<risk_budget::LiveDriftRequest>,
+) -> Result<Json<risk_budget::LiveDriftReport>, (StatusCode, String)> {
+    evaluate_live_drift_inner(&state.bot_id, &decision_id, req).await
+}
+
+async fn evaluate_live_drift_multi_bot(
+    State(_state): State<Arc<MultiBotTradingState>>,
+    axum::Extension(bot): axum::Extension<crate::BotContext>,
+    Path(decision_id): Path<String>,
+    Json(req): Json<risk_budget::LiveDriftRequest>,
+) -> Result<Json<risk_budget::LiveDriftReport>, (StatusCode, String)> {
+    evaluate_live_drift_inner(&bot.bot_id, &decision_id, req).await
+}
+
+async fn evaluate_live_drift_inner(
+    bot_id: &str,
+    decision_id: &str,
+    req: risk_budget::LiveDriftRequest,
+) -> Result<Json<risk_budget::LiveDriftReport>, (StatusCode, String)> {
+    risk_budget::evaluate_live_drift(bot_id, decision_id, req)
+        .map(Json)
+        .map_err(|e| {
+            if e.contains("was not found") || e.contains("belongs to bot") {
+                (
+                    StatusCode::NOT_FOUND,
+                    "risk budget decision not found".to_string(),
+                )
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, e)
+            }
+        })
 }
 
 /// Run the promotion gate for a candidate and return the plain response. This is the

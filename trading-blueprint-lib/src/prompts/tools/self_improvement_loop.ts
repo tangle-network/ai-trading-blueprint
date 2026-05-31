@@ -282,6 +282,8 @@ function riskBudgetRequest(intent) {
     prefer_shadow: envBool('SELF_IMPROVEMENT_PREFER_SHADOW', false),
     max_live_probe_notional_usd: process.env.SELF_IMPROVEMENT_MAX_LIVE_PROBE_NOTIONAL_USD || undefined,
     max_live_probe_loss_usd: process.env.SELF_IMPROVEMENT_MAX_LIVE_PROBE_LOSS_USD || undefined,
+    max_live_loss_pct: process.env.SELF_IMPROVEMENT_MAX_LIVE_LOSS_PCT || undefined,
+    max_live_slippage_bps: envNumber('SELF_IMPROVEMENT_MAX_LIVE_SLIPPAGE_BPS'),
     max_live_probe_trades: envNumber('SELF_IMPROVEMENT_MAX_LIVE_PROBE_TRADES'),
     ttl_seconds: envNumber('SELF_IMPROVEMENT_RISK_BUDGET_TTL_SECS'),
   };
