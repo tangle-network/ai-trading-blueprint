@@ -2893,6 +2893,7 @@ async fn test_fallback_portfolio_recovers_swap_trade_store_positions() {
         harness_version: None,
         candidate_hash: None,
         revision_id: None,
+        risk_budget_decision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -3032,6 +3033,7 @@ async fn test_get_bot_metrics_history_falls_back_when_remote_payload_is_empty() 
         harness_version: None,
         candidate_hash: None,
         revision_id: None,
+        risk_budget_decision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -3131,6 +3133,7 @@ async fn test_get_bot_metrics_history_fallback_respects_limit_query() {
         harness_version: None,
         candidate_hash: None,
         revision_id: None,
+        risk_budget_decision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })

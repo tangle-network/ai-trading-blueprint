@@ -218,6 +218,8 @@ Authorization: Bearer {token}
   Body: {{ "strategy_id": "...", "action": "swap", "token_in": "0x...", "token_out": "0x...", "amount_in": "1000", "min_amount_out": "950", "target_protocol": "uniswap_v3" }}
 - POST /execute — Execute an approved trade on-chain (or via CLOB/Hyperliquid)
   Body: {{ "intent": {{...}}, "validation": {{...}} }}
+- POST /evolution/promotion-gate — Evaluate a candidate strategy and return an auditable `risk_decision`.
+  For a live trade using a candidate hash or sandbox revision, copy the returned `risk_decision.decision_id` into `intent.metadata.risk_budget_decision_id` and include the matching `candidate_hash` or `revision_id`; never invent these values.
   For DEX swaps, `amount_in` and `min_amount_out` are raw token base units, not human-readable decimals.
   For Hyperliquid: set target_protocol to "hyperliquid", use metadata fields:
   - "asset": "ETH" (or "BTC", "SOL", etc.)
@@ -232,6 +234,7 @@ Authorization: Bearer {token}
 - Execution chain ID: {chain_id}
 - Execution RPC: {rpc_url}
 - Supported trade assets: {supported_assets}
+- Live candidate trades are allowed only inside a returned risk-budget decision. If `/execute` rejects the decision as expired, over cap, wrong candidate/revision, or wrong venue, skip and log the reason.
 - For Aave decisions, use `/home/agent/tools/aave-reserve-status.js` before trading so you only consider assets available on the live fork.
 - POST /circuit-breaker/check — Check if circuit breaker is triggered
   Body: {{ "max_drawdown_pct": 10.0 }}
@@ -1008,6 +1011,10 @@ mod tests {
         assert!(
             prompt.contains("## Self-Improvement Contract"),
             "system prompt should include the self-improvement contract"
+        );
+        assert!(
+            prompt.contains("risk_budget_decision_id"),
+            "system prompt should require risk-budget decision IDs for live candidates"
         );
         assert!(
             prompt.contains("self_improvement.create_task"),

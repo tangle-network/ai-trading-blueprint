@@ -6356,6 +6356,7 @@ mod tests {
             harness_version: None,
             candidate_hash: None,
             revision_id: None,
+            risk_budget_decision_id: None,
             paper_pnl_pct: None,
             paper_equity_after: None,
         }

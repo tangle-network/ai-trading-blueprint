@@ -5109,6 +5109,7 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
         harness_version: None,
         candidate_hash: None,
         revision_id: None,
+        risk_budget_decision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -5230,6 +5231,7 @@ async fn test_multi_bot_portfolio_state_keeps_polymarket_buy_as_conditional_posi
         harness_version: None,
         candidate_hash: None,
         revision_id: None,
+        risk_budget_decision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -5317,6 +5319,7 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
         harness_version: None,
         candidate_hash: None,
         revision_id: None,
+        risk_budget_decision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -5593,6 +5596,7 @@ async fn test_multi_bot_portfolio_state_derives_cash_balance_from_synthetic_posi
         harness_version: None,
         candidate_hash: None,
         revision_id: None,
+        risk_budget_decision_id: None,
         paper_pnl_pct: None,
         paper_equity_after: None,
     })
@@ -8111,6 +8115,7 @@ async fn test_evolution_promotion_gate_blocks_without_real_paper_evidence() {
     });
 
     let gate_resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -8134,6 +8139,138 @@ async fn test_evolution_promotion_gate_blocks_without_real_paper_evidence() {
             .unwrap()
             .contains("missing persisted paper trading evidence")
     }));
+}
+
+#[tokio::test]
+async fn test_evolution_promotion_gate_returns_tiny_live_for_time_sensitive_backtest_passer() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-gate-fast-path-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    let mut price = 100.0;
+    for i in 0..240 {
+        let phase = i % 20;
+        if phase < 8 {
+            price -= 1.5;
+        } else {
+            price += 1.6;
+        }
+        let open: f64 = price;
+        let close: f64 = price + if phase < 8 { -0.4 } else { 0.5 };
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{open:.2}"),
+            "high": format!("{:.2}", open.max(close) + 0.5),
+            "low": format!("{:.2}", open.min(close) - 0.5),
+            "close": format!("{close:.2}"),
+            "volume": "100000"
+        }));
+        price = close;
+    }
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let mut current = backtest_config();
+    current["slippage"] = serde_json::json!({"model": "fixed_bps", "bps": 150});
+    current["gas_cost_usd"] = serde_json::json!("8");
+    current["taker_fee_bps"] = serde_json::json!(100);
+    current["harness"]["exit_rules"][0]["pct"] = serde_json::json!(4.0);
+
+    let mut candidate = backtest_config();
+    candidate["harness"]["exit_rules"][0]["pct"] = serde_json::json!(4.0);
+
+    let gate_body = serde_json::json!({
+        "current": current,
+        "candidate": candidate,
+        "token": "ETH",
+        "train_pct": 0.7,
+        "risk_budget": {
+            "market_type": "prediction_market",
+            "instrument_type": "binary_prediction",
+            "venue": "polymarket",
+            "target_protocol": "polymarket_clob",
+            "opportunity_half_life_secs": 900,
+            "user_posture": "aggressive",
+            "max_live_probe_notional_usd": "12.5",
+            "max_live_probe_loss_usd": "3",
+            "max_live_probe_trades": 1,
+            "ttl_seconds": 300
+        }
+    });
+
+    let gate_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/evolution/promotion-gate")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&gate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = gate_resp.status();
+    let bytes = gate_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["approved"], false);
+    assert_eq!(json["result"]["should_promote"], true);
+    assert_eq!(json["risk_decision"]["action"], "live_probe");
+    assert_eq!(json["risk_decision"]["promotion_level"], "tiny_live");
+    assert_eq!(json["risk_decision"]["can_trade_live"], true);
+    assert_eq!(json["risk_decision"]["target_protocol"], "polymarket_clob");
+    assert_eq!(json["risk_decision"]["max_notional_usd"], "12.5");
+    let decision_id = json["risk_decision"]["decision_id"].as_str().unwrap();
+    let report_id = json["evidence_report"]["report_id"].as_str().unwrap();
+    assert!(decision_id.starts_with("rbd-"));
+    assert!(report_id.starts_with("er-"));
+
+    let decision_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/evolution/risk-budget/decisions/{decision_id}"))
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(decision_resp.status(), 200);
+
+    let report_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/evolution/risk-budget/reports/{report_id}"))
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report_resp.status(), 200);
 }
 
 #[tokio::test]

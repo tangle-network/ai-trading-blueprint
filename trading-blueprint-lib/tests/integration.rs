@@ -750,6 +750,8 @@ async fn test_promotion_conductor_activates_queued_backtest_pass_candidate() {
             current_config: serde_json::to_value(&current).unwrap(),
             candidate_config: serde_json::to_value(&candidate).unwrap(),
             paper_evidence: None,
+            evidence_report_id: None,
+            risk_budget_decision_id: None,
             base_snapshot_id: Some("ss-test".to_string()),
             sandbox_revision_id: Some(revision_id.clone()),
             trial_deadline: None,

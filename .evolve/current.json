@@ -1,9 +1,9 @@
 {
   "mode": "evolve",
   "goal": "Make AI trading REAL (non-custodial funds on Base Sepolia) AND make self-improvement actually produce promotable strategies",
-  "status": "round-4-cadence-and-conductor-verified",
-  "round": 4,
-  "generation": 2,
+  "status": "round-5-risk-budget-router-built-local",
+  "round": 5,
+  "generation": 3,
   "updatedAt": "2026-05-31",
   "subGoals": {
     "vault-real-base-sepolia": {
@@ -17,9 +17,9 @@
       "metric": "# candidates that pass gates and promote (per cycle)",
       "baseline": "0 \u2014 every one of 15+ historical runs BLOCKED; loop is dormant (never auto-triggers)",
       "target": ">=1 promotable candidate; loop auto-runs on cadence",
-      "rootCause": "candidates were backtest-only, needed >=20 PAPER trades to promote, and never accumulated tagged forward evidence. Round 4 now has box-side cadence that recovers delegated MCP tasks and launches TS-side candidate generation when no trial/non-terminal run is open; promotion still requires on-box deploy + >=20 tagged paper trades.",
+      "rootCause": "candidates were backtest-only, needed >=20 PAPER trades to promote, and never accumulated tagged forward evidence. Round 4 added box-side cadence and paper-trial orchestration. Round 5 added an auditable risk-budget decision layer so time-sensitive candidates that pass hard backtest/overfit gates can receive capped tiny-live probes before paper evidence accrues; full active promotion still requires forward evidence.",
       "metricClaims": "Self-improving agents is the moat. Zero promotions today = the loop is theater. One real promotion = a measurably better strategy = better depositor PnL, autonomously."
     }
   },
-  "nextDispatch": "/evolve round-5: deploy this branch to the live box, watch cadence create/maintain a candidate trial, drive >=20 tagged paper trades, then prove promotion gate flips and run status reaches PROMOTED. Base Sepolia vault-real remains blocked until deployer 0x2420 is funded; after funding, broadcast DeployTradingContracts.s.sol."
+  "nextDispatch": "/evolve round-6: deploy this branch to the live box, run a time-sensitive prediction-market candidate through /evolution/promotion-gate, confirm risk_decision.action=live_probe and /execute enforces risk_budget_decision_id caps, then let cadence continue paper-trial evidence toward full PROMOTED. Base Sepolia vault-real remains blocked until deployer 0x2420 is funded; after funding, broadcast DeployTradingContracts.s.sol."
 }

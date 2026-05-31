@@ -1796,6 +1796,10 @@ fn trade_harness_version(metadata: &serde_json::Value) -> Option<u32> {
         .or_else(|| metadata_u32(metadata, "strategy_harness_version"))
 }
 
+fn trade_risk_budget_decision_id(metadata: &serde_json::Value) -> Option<String> {
+    crate::risk_budget::risk_budget_decision_id(metadata)
+}
+
 fn enforce_revision_execution_mode(
     bot_id: &str,
     paper_trade: bool,
@@ -2245,6 +2249,7 @@ async fn execute_paper_trade(
         harness_version: trade_harness_version(&req.intent.metadata),
         candidate_hash: resolve_candidate_hash(bot_id, &req.intent.metadata),
         revision_id: resolve_revision_id(bot_id, &req.intent.metadata),
+        risk_budget_decision_id: trade_risk_budget_decision_id(&req.intent.metadata),
         paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
         paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
     };
@@ -2428,6 +2433,7 @@ async fn execute_paper_clob_trade(
         harness_version: trade_harness_version(&req.intent.metadata),
         candidate_hash: resolve_candidate_hash(bot_id, &req.intent.metadata),
         revision_id: resolve_revision_id(bot_id, &req.intent.metadata),
+        risk_budget_decision_id: trade_risk_budget_decision_id(&req.intent.metadata),
         paper_pnl_pct: metadata_decimal_string(&req.intent.metadata, "paper_pnl_pct"),
         paper_equity_after: metadata_decimal_string(&req.intent.metadata, "paper_equity_after"),
     };
@@ -2707,6 +2713,7 @@ async fn execute_real_envelope_trade_inner(
         harness_version: trade_harness_version(&req.intent.metadata),
         candidate_hash: intent_candidate_hash(&req.intent.metadata),
         revision_id: intent_revision_id(&req.intent.metadata),
+        risk_budget_decision_id: trade_risk_budget_decision_id(&req.intent.metadata),
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -2875,6 +2882,7 @@ async fn execute_real_trade_inner(
         harness_version: trade_harness_version(&req.intent.metadata),
         candidate_hash: intent_candidate_hash(&req.intent.metadata),
         revision_id: intent_revision_id(&req.intent.metadata),
+        risk_budget_decision_id: trade_risk_budget_decision_id(&req.intent.metadata),
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -2976,6 +2984,7 @@ async fn execute_clob_trade(
         harness_version: trade_harness_version(&req.intent.metadata),
         candidate_hash: intent_candidate_hash(&req.intent.metadata),
         revision_id: intent_revision_id(&req.intent.metadata),
+        risk_budget_decision_id: trade_risk_budget_decision_id(&req.intent.metadata),
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -3231,6 +3240,7 @@ async fn execute_hyperliquid_trade(
         harness_version: trade_harness_version(&req.intent.metadata),
         candidate_hash: intent_candidate_hash(&req.intent.metadata),
         revision_id: intent_revision_id(&req.intent.metadata),
+        risk_budget_decision_id: trade_risk_budget_decision_id(&req.intent.metadata),
         paper_pnl_pct: None,
         paper_equity_after: None,
     };
@@ -3452,6 +3462,14 @@ async fn execute(
         )
         .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
         let clob_valuation = resolve_clob_valuation(clob_params.size, clob_params.price);
+        enforce_live_risk_budget_decision(
+            &state.bot_id,
+            state.paper_trade,
+            &state.strategy_config,
+            &normalized_request.intent.target_protocol,
+            &normalized_request.intent.metadata,
+            &clob_valuation,
+        )?;
         let result = execute_clob_trade(
             &state.bot_id,
             clob,
@@ -3463,6 +3481,15 @@ async fn execute(
         update_portfolio_after_trade(&state.portfolio, &normalized_request, &clob_valuation).await;
         return Ok(result);
     }
+
+    enforce_live_risk_budget_decision(
+        &state.bot_id,
+        state.paper_trade,
+        &state.strategy_config,
+        &normalized_request.intent.target_protocol,
+        &normalized_request.intent.metadata,
+        &valuation,
+    )?;
 
     let alert_sink = noop_alert_sink();
     let result = execute_real_trade(RealTradeExecution {
@@ -3486,6 +3513,26 @@ async fn execute(
 /// multi-bot configuration.
 fn noop_alert_sink() -> crate::alerts::AlertSink {
     crate::alerts::AlertSink::new(None, None)
+}
+
+fn enforce_live_risk_budget_decision(
+    bot_id: &str,
+    paper_trade: bool,
+    strategy_config: &serde_json::Value,
+    target_protocol: &str,
+    metadata: &serde_json::Value,
+    valuation: &TradeValuationSnapshot,
+) -> Result<(), (StatusCode, String)> {
+    crate::risk_budget::enforce_live_decision(crate::risk_budget::LiveDecisionCheck {
+        bot_id,
+        paper_trade,
+        strategy_config,
+        target_protocol,
+        metadata,
+        notional_usd: valuation.notional_usd,
+    })
+    .map(|_| ())
+    .map_err(|error| (StatusCode::FORBIDDEN, error))
 }
 
 /// Multi-bot execute handler -- resolves bot from request extensions (set by auth middleware).
@@ -3812,6 +3859,14 @@ async fn execute_multi_bot(
         )
         .map_err(|e| (StatusCode::BAD_REQUEST, e.clone()))?;
         let valuation = resolve_clob_valuation(clob_params.size, clob_params.price);
+        enforce_live_risk_budget_decision(
+            &bot.bot_id,
+            bot.paper_trade,
+            &bot.strategy_config,
+            &normalized_req.intent.target_protocol,
+            &normalized_req.intent.metadata,
+            &valuation,
+        )?;
         let response = execute_clob_trade(
             &bot.bot_id,
             clob,
@@ -3835,6 +3890,15 @@ async fn execute_multi_bot(
         }
         return Ok(response);
     }
+
+    enforce_live_risk_budget_decision(
+        &bot.bot_id,
+        bot.paper_trade,
+        &bot.strategy_config,
+        &normalized_req.intent.target_protocol,
+        &normalized_req.intent.metadata,
+        &valuation,
+    )?;
 
     // Hyperliquid perps bypass the vault executor — trades go directly to HL L1 API.
     if normalized_req.intent.target_protocol == "hyperliquid" {

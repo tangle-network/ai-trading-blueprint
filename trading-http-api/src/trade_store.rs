@@ -88,6 +88,10 @@ pub struct TradeRecord {
     /// strongest evidence key for Revision Arena promotion decisions.
     #[serde(default)]
     pub revision_id: Option<String>,
+    /// Risk-budget decision that authorized this live trade or paper/live probe.
+    /// Lets the allocator enforce per-decision trade caps and audit drift later.
+    #[serde(default)]
+    pub risk_budget_decision_id: Option<String>,
     /// Realized paper PnL percentage for this candidate-scoped paper trade.
     #[serde(default)]
     pub paper_pnl_pct: Option<String>,
@@ -334,6 +338,26 @@ pub fn paper_trades_for_revision(
         .into_iter()
         .filter(|t| {
             t.bot_id == bid && t.paper_trade && t.revision_id.as_deref() == Some(revision.as_str())
+        })
+        .collect();
+    all.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    Ok(all)
+}
+
+pub fn live_trades_for_risk_decision(
+    bot_id: &str,
+    decision_id: &str,
+) -> Result<Vec<TradeRecord>, String> {
+    let bid = bot_id.to_string();
+    let decision = decision_id.to_string();
+    let mut all: Vec<TradeRecord> = trades()?
+        .values()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|t| {
+            t.bot_id == bid
+                && !t.paper_trade
+                && t.risk_budget_decision_id.as_deref() == Some(decision.as_str())
         })
         .collect();
     all.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));

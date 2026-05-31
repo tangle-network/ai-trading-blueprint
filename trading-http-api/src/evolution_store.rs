@@ -44,6 +44,10 @@ pub struct SelfImprovementRun {
     pub candidate_config: serde_json::Value,
     pub paper_evidence: Option<serde_json::Value>,
     #[serde(default)]
+    pub evidence_report_id: Option<String>,
+    #[serde(default)]
+    pub risk_budget_decision_id: Option<String>,
+    #[serde(default)]
     pub base_snapshot_id: Option<String>,
     #[serde(default)]
     pub sandbox_revision_id: Option<String>,

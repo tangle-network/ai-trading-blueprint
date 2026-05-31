@@ -90,3 +90,34 @@ Remaining:
 - Deploy this branch to the live box and observe a real sandbox cadence run.
 - Let an active paper trial accrue at least 20 tagged trades, then prove the gate advances a run to `promoted`.
 - Base Sepolia real-vault path is still blocked on funding deployer `0x2420...`; the deploy-only script compiles but should not be broadcast until funded.
+
+## 2026-05-31 — Evolve round 5: risk-budgeted fast promotion
+
+Status: KEEP. The promotion path is no longer paper-only. `/evolution/promotion-gate` now returns a persisted `EvidenceReport` and `RiskBudgetDecision` beside the legacy boolean approval, and time-sensitive candidates that pass the hard backtest/overfit gates can receive a capped `tiny_live` / `live_probe` decision before paper evidence exists. Certified hot-path candidates without forward evidence still receive bounded probes, not uncapped active allocation.
+
+Changes:
+- Added `trading-http-api/src/risk_budget.rs` with promotion levels, decision actions, persisted reports/decisions, deterministic IDs, TTLs, and live enforcement helpers.
+- Extended `/evolution/promotion-gate` and `/evolution/self-improve` to accept `risk_budget`, persist audit artifacts, and return decision/report IDs.
+- Extended `TradeRecord` and `SelfImprovementRun` with risk-budget audit IDs.
+- Enforced `risk_budget_decision_id` before all current live venue branches in `/execute`: EVM/vault, Polymarket CLOB, and Hyperliquid.
+- Made the live budget check fail closed on malformed caps, wrong candidate/revision metadata, and counted-probe reuse; `max_trades` reservations happen before external dispatch to avoid concurrent over-consumption.
+- Updated TS self-improvement probes and the Polymarket submit tool so agents can request fast-path evaluation and carry the returned decision ID into live candidate trades.
+- Updated the agent prompt to require copying `risk_decision.decision_id` into `intent.metadata.risk_budget_decision_id` for live candidate execution.
+
+Verification:
+- `git diff --check` passed.
+- `cargo check --workspace` passed.
+- `cargo clippy -p trading-http-api --tests -- -D warnings -A clippy::collapsible-if -A clippy::manual-inspect -A clippy::needless-question-mark -A clippy::too-many-arguments` passed.
+- `cargo test --workspace --lib` passed.
+- `cargo test -p trading-http-api risk_budget --lib -- --nocapture` passed.
+- `cargo test -p trading-http-api routes::execute --lib -- --nocapture` passed.
+- `cargo test -p trading-http-api --test api_tests evolution_promotion_gate -- --nocapture` passed.
+- `cargo test -p trading-http-api --test api_tests self_improvement -- --nocapture` passed.
+- `cargo test -p trading-blueprint-lib --test integration test_promotion_conductor_activates_queued_backtest_pass_candidate -- --nocapture` passed.
+- `npm run typecheck:evals` passed.
+- `npx tsc --target ES2022 --module ESNext --moduleResolution Bundler --noEmit --skipLibCheck trading-blueprint-lib/src/prompts/tools/self_improvement_loop.ts` passed.
+
+Remaining:
+- Deploy this branch to the live box and prove a real time-sensitive candidate returns `risk_decision.action=live_probe`.
+- Submit a capped CLOB live probe carrying `risk_budget_decision_id` plus matching `candidate_hash` or `revision_id`, and verify `/execute` rejects missing, expired, wrong-candidate, wrong-protocol, malformed-cap, over-cap, and over-trade-count variants on box.
+- Add live drift/demotion automation against `max_loss_usd`; the decision object stores the cap, but this round only enforces notional, candidate/revision, venue/protocol, TTL, and trade-count pre-dispatch.

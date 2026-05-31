@@ -249,6 +249,39 @@ function defaultBacktestConfig() {
   };
 }
 
+function envBool(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).toLowerCase());
+}
+
+function envNumber(name) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function riskBudgetRequest(intent) {
+  const lower = String(intent || '').toLowerCase();
+  const prediction = lower.includes('prediction') || lower.includes('polymarket') || lower.includes('kalshi');
+  const urgent = lower.includes('urgent') || lower.includes('breaking') || lower.includes('now') || lower.includes('fast');
+  return {
+    strategy_class: process.env.SELF_IMPROVEMENT_STRATEGY_CLASS || 'self_improvement_candidate',
+    market_type: process.env.SELF_IMPROVEMENT_MARKET_TYPE || (prediction ? 'prediction_market' : 'directional'),
+    instrument_type: process.env.SELF_IMPROVEMENT_INSTRUMENT_TYPE || (prediction ? 'binary_prediction' : undefined),
+    venue: process.env.SELF_IMPROVEMENT_VENUE || (prediction ? 'polymarket' : undefined),
+    target_protocol: process.env.SELF_IMPROVEMENT_TARGET_PROTOCOL || (prediction ? 'polymarket_clob' : undefined),
+    opportunity_half_life_secs: envNumber('SELF_IMPROVEMENT_OPPORTUNITY_HALF_LIFE_SECS') || (urgent || prediction ? 900 : undefined),
+    user_posture: process.env.SELF_IMPROVEMENT_USER_POSTURE || (urgent ? 'aggressive' : 'balanced'),
+    certified_strategy: envBool('SELF_IMPROVEMENT_CERTIFIED_STRATEGY', false),
+    allow_live_probe: envBool('SELF_IMPROVEMENT_ALLOW_LIVE_PROBE', true),
+    prefer_shadow: envBool('SELF_IMPROVEMENT_PREFER_SHADOW', false),
+    max_live_probe_notional_usd: process.env.SELF_IMPROVEMENT_MAX_LIVE_PROBE_NOTIONAL_USD || undefined,
+    max_live_probe_loss_usd: process.env.SELF_IMPROVEMENT_MAX_LIVE_PROBE_LOSS_USD || undefined,
+    max_live_probe_trades: envNumber('SELF_IMPROVEMENT_MAX_LIVE_PROBE_TRADES'),
+    ttl_seconds: envNumber('SELF_IMPROVEMENT_RISK_BUDGET_TTL_SECS'),
+  };
+}
+
 function promotionScore(promotion) {
   const result = promotion?.result || {};
   const train = result.train || {};
@@ -263,7 +296,7 @@ function promotionScore(promotion) {
   return passBonus + sharpeDelta * 100 + returnBonus * 0.1 + tradeBonus * 0.01 - drawdownPenalty * 10;
 }
 
-async function probeCandidate(current, candidate, token, trainPct, minPaperTrades, maxPaperDrawdownPct) {
+async function probeCandidate(current, candidate, token, trainPct, minPaperTrades, maxPaperDrawdownPct, riskBudget) {
   const response = await apiCall('POST', '/evolution/promotion-gate', {
     current,
     candidate,
@@ -271,6 +304,7 @@ async function probeCandidate(current, candidate, token, trainPct, minPaperTrade
     train_pct: trainPct,
     min_paper_trades: minPaperTrades,
     max_paper_drawdown_pct: maxPaperDrawdownPct,
+    risk_budget: riskBudget,
   });
   return response.status >= 200 && response.status < 300
     ? { ok: true, status: response.status, data: response.data, score: promotionScore(response.data) }
@@ -283,6 +317,7 @@ async function selectCandidate(runId, intent, current) {
   const trainPct = Number(process.env.SELF_IMPROVEMENT_TRAIN_PCT || 0.7);
   const minPaperTrades = Number(process.env.SELF_IMPROVEMENT_MIN_PAPER_TRADES || 20);
   const maxPaperDrawdownPct = Number(process.env.SELF_IMPROVEMENT_MAX_PAPER_DRAWDOWN_PCT || 10);
+  const riskBudget = riskBudgetRequest(intent);
   const probes = [];
 
   for (let i = 0; i < populationSize; i += 1) {
@@ -292,7 +327,7 @@ async function selectCandidate(runId, intent, current) {
     };
     let probe;
     try {
-      probe = await probeCandidate(current, candidate, token, trainPct, minPaperTrades, maxPaperDrawdownPct);
+      probe = await probeCandidate(current, candidate, token, trainPct, minPaperTrades, maxPaperDrawdownPct, riskBudget);
     } catch (error) {
       probe = { ok: false, status: 0, data: String(error.message || error), score: Number.NEGATIVE_INFINITY };
     }
@@ -318,6 +353,7 @@ async function selectCandidate(runId, intent, current) {
     train_pct: trainPct,
     min_paper_trades: minPaperTrades,
     max_paper_drawdown_pct: maxPaperDrawdownPct,
+    risk_budget: riskBudget,
     selected_index: winner?.index ?? null,
     backtest_passers: backtestPassers.length,
     probes: probes.map(({ candidate, ...probe }) => ({
@@ -459,6 +495,7 @@ async function recordSelfImprove(intent, snapshot, analyst, candidateSearch) {
     train_pct: candidateSearch.train_pct,
     min_paper_trades: candidateSearch.min_paper_trades,
     max_paper_drawdown_pct: candidateSearch.max_paper_drawdown_pct,
+    risk_budget: candidateSearch.risk_budget,
     sandbox_mutation: {
       base_snapshot_id: snapshot.snapshot_id,
       patch,
@@ -508,6 +545,7 @@ async function run(intent) {
       population_size: candidateSearch.population_size,
       selected_index: candidateSearch.selected_index,
       backtest_passers: candidateSearch.backtest_passers,
+      risk_budget: candidateSearch.risk_budget,
       probes: candidateSearch.probes,
     },
     snapshot,

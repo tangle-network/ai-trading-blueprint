@@ -244,5 +244,6 @@ fn gate_request(run: &SelfImprovementRun) -> Result<PromotionGateRequest, String
         paper: None,
         min_paper_trades: run.trades_target.unwrap_or(DEFAULT_TRADES_TARGET),
         max_paper_drawdown_pct: MAX_PAPER_DRAWDOWN_PCT,
+        risk_budget: Default::default(),
     })
 }
