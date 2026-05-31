@@ -24,6 +24,7 @@ pub use extend::extend_core;
 pub use prompt::prompt;
 pub use provision::provision;
 pub use provision::provision_core;
+pub use provision::recreate_bot_sandbox;
 pub use start::start;
 pub use start::start_core;
 pub use status::status;
