@@ -262,14 +262,19 @@ function envNumber(name) {
 
 function riskBudgetRequest(intent) {
   const lower = String(intent || '').toLowerCase();
-  const prediction = lower.includes('prediction') || lower.includes('polymarket') || lower.includes('kalshi');
+  const hyperliquidPrediction = lower.includes('hyperliquid')
+    && (lower.includes('prediction') || lower.includes('hyperp') || lower.includes('outcome'));
+  const prediction = hyperliquidPrediction
+    || lower.includes('prediction')
+    || lower.includes('polymarket')
+    || lower.includes('kalshi');
   const urgent = lower.includes('urgent') || lower.includes('breaking') || lower.includes('now') || lower.includes('fast');
   return {
     strategy_class: process.env.SELF_IMPROVEMENT_STRATEGY_CLASS || 'self_improvement_candidate',
     market_type: process.env.SELF_IMPROVEMENT_MARKET_TYPE || (prediction ? 'prediction_market' : 'directional'),
     instrument_type: process.env.SELF_IMPROVEMENT_INSTRUMENT_TYPE || (prediction ? 'binary_prediction' : undefined),
-    venue: process.env.SELF_IMPROVEMENT_VENUE || (prediction ? 'polymarket' : undefined),
-    target_protocol: process.env.SELF_IMPROVEMENT_TARGET_PROTOCOL || (prediction ? 'polymarket_clob' : undefined),
+    venue: process.env.SELF_IMPROVEMENT_VENUE || (hyperliquidPrediction ? 'hyperliquid' : prediction ? 'polymarket' : undefined),
+    target_protocol: process.env.SELF_IMPROVEMENT_TARGET_PROTOCOL || (hyperliquidPrediction ? 'hyperliquid' : prediction ? 'polymarket_clob' : undefined),
     opportunity_half_life_secs: envNumber('SELF_IMPROVEMENT_OPPORTUNITY_HALF_LIFE_SECS') || (urgent || prediction ? 900 : undefined),
     user_posture: process.env.SELF_IMPROVEMENT_USER_POSTURE || (urgent ? 'aggressive' : 'balanced'),
     certified_strategy: envBool('SELF_IMPROVEMENT_CERTIFIED_STRATEGY', false),

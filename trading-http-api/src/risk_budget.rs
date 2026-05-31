@@ -174,6 +174,12 @@ pub struct RiskBudgetDecision {
     #[serde(default)]
     pub venue: Option<String>,
     #[serde(default)]
+    pub strategy_class: Option<String>,
+    #[serde(default)]
+    pub market_type: Option<String>,
+    #[serde(default)]
+    pub instrument_type: Option<String>,
+    #[serde(default)]
     pub max_notional_usd: Option<String>,
     #[serde(default)]
     pub max_loss_usd: Option<String>,
@@ -397,6 +403,9 @@ pub fn build_promotion_decision(
         can_touch_funds: can_trade_live,
         target_protocol: input.request.target_protocol.clone(),
         venue: input.request.venue.clone(),
+        strategy_class: input.request.strategy_class.clone(),
+        market_type: input.request.market_type.clone(),
+        instrument_type: input.request.instrument_type.clone(),
         max_notional_usd,
         max_loss_usd,
         max_trades,
@@ -532,6 +541,28 @@ fn validate_and_reserve_live_decision(
             ));
         }
     }
+    if binary_outcome_decision(decision, check)
+        && let Some(raw_max_loss) = decision.max_loss_usd.as_deref()
+    {
+        let max_loss = parse_decimal(raw_max_loss).ok_or_else(|| {
+            format!(
+                "risk budget decision '{}' has invalid max_loss_usd '{}'",
+                decision.decision_id, raw_max_loss
+            )
+        })?;
+        let notional = check.notional_usd.ok_or_else(|| {
+            format!(
+                "risk budget decision '{}' requires priced notional before live outcome execution",
+                decision.decision_id
+            )
+        })?;
+        if notional > max_loss {
+            return Err(format!(
+                "risk budget decision '{}' max_loss_usd {} exceeded by binary outcome notional {}",
+                decision.decision_id, max_loss, notional
+            ));
+        }
+    }
     if let Some(max_trades) = decision.max_trades {
         if decision.reserved_trades >= max_trades {
             return Err(format!(
@@ -584,6 +615,57 @@ fn is_fast_path_request(request: &RiskBudgetRequest) -> bool {
             .is_some_and(|market| normalize(market).contains("prediction"))
 }
 
+fn binary_outcome_request(request: &RiskBudgetRequest) -> bool {
+    request.market_type.as_deref().is_some_and(|market| {
+        let market = normalize(market);
+        market.contains("prediction") || market.contains("outcome") || market.contains("hyperp")
+    }) || request
+        .instrument_type
+        .as_deref()
+        .is_some_and(|instrument| {
+            let instrument = normalize(instrument);
+            instrument.contains("binary")
+                || instrument.contains("prediction")
+                || instrument.contains("outcome")
+        })
+}
+
+fn binary_outcome_decision(decision: &RiskBudgetDecision, check: &LiveDecisionCheck<'_>) -> bool {
+    normalize(check.target_protocol).contains("polymarket")
+        || metadata_is_binary_outcome(check.metadata)
+        || decision.market_type.as_deref().is_some_and(|market| {
+            let market = normalize(market);
+            market.contains("prediction") || market.contains("outcome") || market.contains("hyperp")
+        })
+        || decision
+            .instrument_type
+            .as_deref()
+            .is_some_and(|instrument| {
+                let instrument = normalize(instrument);
+                instrument.contains("binary")
+                    || instrument.contains("prediction")
+                    || instrument.contains("outcome")
+            })
+}
+
+fn metadata_is_binary_outcome(metadata: &Value) -> bool {
+    ["hyperliquid_market_type", "market_type", "instrument_type"]
+        .into_iter()
+        .filter_map(|key| metadata_string(metadata, key))
+        .map(|value| normalize(&value))
+        .any(|value| {
+            value.contains("prediction")
+                || value.contains("outcome")
+                || value.contains("hyperp")
+                || value.contains("binary")
+        })
+        || metadata_string(metadata, "outcome_label").is_some()
+        || metadata_string(metadata, "market_question").is_some()
+        || metadata_string(metadata, "outcome_asset_id").is_some()
+        || metadata.get("outcome_asset_id").is_some()
+        || metadata.get("outcome_id").is_some()
+}
+
 fn ttl_seconds(request: &RiskBudgetRequest) -> i64 {
     request
         .ttl_seconds
@@ -603,25 +685,30 @@ fn live_caps(
     level: PromotionLevel,
 ) -> (Option<String>, Option<String>, Option<u64>) {
     match level {
-        PromotionLevel::TinyLive => (
-            Some(
-                request
-                    .max_live_probe_notional_usd
-                    .clone()
-                    .unwrap_or_else(|| DEFAULT_LIVE_PROBE_NOTIONAL_USD.to_string()),
-            ),
-            Some(
-                request
-                    .max_live_probe_loss_usd
-                    .clone()
-                    .unwrap_or_else(|| DEFAULT_LIVE_PROBE_MAX_LOSS_USD.to_string()),
-            ),
-            Some(
-                request
-                    .max_live_probe_trades
-                    .unwrap_or(DEFAULT_LIVE_PROBE_TRADES),
-            ),
-        ),
+        PromotionLevel::TinyLive => {
+            let max_loss = request
+                .max_live_probe_loss_usd
+                .clone()
+                .unwrap_or_else(|| DEFAULT_LIVE_PROBE_MAX_LOSS_USD.to_string());
+            let requested_notional = request
+                .max_live_probe_notional_usd
+                .clone()
+                .unwrap_or_else(|| DEFAULT_LIVE_PROBE_NOTIONAL_USD.to_string());
+            let max_notional = if binary_outcome_request(request) {
+                clamp_decimal_string(&requested_notional, &max_loss)
+            } else {
+                requested_notional
+            };
+            (
+                Some(max_notional),
+                Some(max_loss),
+                Some(
+                    request
+                        .max_live_probe_trades
+                        .unwrap_or(DEFAULT_LIVE_PROBE_TRADES),
+                ),
+            )
+        }
         PromotionLevel::Active | PromotionLevel::Scaled => (
             request.max_live_probe_notional_usd.clone(),
             request.max_live_probe_loss_usd.clone(),
@@ -677,6 +764,13 @@ fn confidence_score(
 
 fn parse_decimal(raw: &str) -> Option<Decimal> {
     raw.trim().parse::<Decimal>().ok()
+}
+
+fn clamp_decimal_string(value: &str, cap: &str) -> String {
+    match (parse_decimal(value), parse_decimal(cap)) {
+        (Some(value), Some(cap)) if value > cap => cap.normalize().to_string(),
+        _ => value.to_string(),
+    }
 }
 
 fn normalize(value: &str) -> String {
@@ -763,6 +857,9 @@ mod tests {
             can_touch_funds: true,
             target_protocol: Some("polymarket_clob".to_string()),
             venue: Some("polymarket".to_string()),
+            strategy_class: None,
+            market_type: Some("prediction_market".to_string()),
+            instrument_type: Some("binary_prediction".to_string()),
             max_notional_usd: Some("25".to_string()),
             max_loss_usd: Some("5".to_string()),
             max_trades: Some(1),
@@ -802,7 +899,8 @@ mod tests {
         assert_eq!(decision.action, RiskDecisionAction::LiveProbe);
         assert_eq!(decision.promotion_level, PromotionLevel::TinyLive);
         assert!(decision.can_trade_live);
-        assert_eq!(decision.max_notional_usd.as_deref(), Some("25"));
+        assert_eq!(decision.max_notional_usd.as_deref(), Some("5"));
+        assert_eq!(decision.max_loss_usd.as_deref(), Some("5"));
         assert_eq!(decision.max_trades, Some(1));
     }
 
@@ -830,6 +928,35 @@ mod tests {
         assert_eq!(decision.action, RiskDecisionAction::LiveProbe);
         assert_eq!(decision.promotion_level, PromotionLevel::TinyLive);
         assert_eq!(decision.max_notional_usd.as_deref(), Some("25"));
+    }
+
+    #[test]
+    fn binary_prediction_probe_clamps_notional_to_loss_cap() {
+        let request = RiskBudgetRequest {
+            market_type: Some("prediction_market".to_string()),
+            instrument_type: Some("binary_prediction".to_string()),
+            max_live_probe_notional_usd: Some("12.5".to_string()),
+            max_live_probe_loss_usd: Some("3".to_string()),
+            opportunity_half_life_secs: Some(900),
+            ..Default::default()
+        };
+        let (_report, decision) = build_promotion_decision(DecisionBuildInput {
+            bot_id: "bot-binary-cap",
+            candidate_hash: "sha256:candidate",
+            revision_id: None,
+            request: &request,
+            result: &result(),
+            candles_used: 80,
+            paper: None,
+            paper_passed: false,
+            hard_blockers: Vec::new(),
+            paper_blockers: vec![
+                "missing persisted paper trading evidence for candidate".to_string(),
+            ],
+        });
+
+        assert_eq!(decision.max_notional_usd.as_deref(), Some("3"));
+        assert_eq!(decision.max_loss_usd.as_deref(), Some("3"));
     }
 
     #[test]
@@ -883,6 +1010,33 @@ mod tests {
         .expect_err("over cap should reject");
 
         assert!(err.contains("max_notional_usd"));
+    }
+
+    #[test]
+    fn live_binary_outcome_decision_rejects_notional_over_loss_cap() {
+        let mut decision = live_probe_decision("rbd-loss-cap", "bot-loss-cap");
+        decision.target_protocol = Some("hyperliquid".to_string());
+        decision.venue = Some("hyperliquid".to_string());
+        decision.max_notional_usd = Some("25".to_string());
+        decision.max_loss_usd = Some("5".to_string());
+        insert_decision(decision).expect("insert decision");
+
+        let err = enforce_live_decision(LiveDecisionCheck {
+            bot_id: "bot-loss-cap",
+            paper_trade: false,
+            strategy_config: &serde_json::json!({}),
+            target_protocol: "hyperliquid",
+            metadata: &serde_json::json!({
+                "risk_budget_decision_id": "rbd-loss-cap",
+                "candidate_hash": "sha256:candidate",
+                "hyperliquid_market_type": "hyperp",
+                "outcome_label": "YES"
+            }),
+            notional_usd: Some(Decimal::new(600, 2)),
+        })
+        .expect_err("binary outcome worst-case loss should be capped");
+
+        assert!(err.contains("max_loss_usd"));
     }
 
     #[test]

@@ -121,3 +121,33 @@ Remaining:
 - Deploy this branch to the live box and prove a real time-sensitive candidate returns `risk_decision.action=live_probe`.
 - Submit a capped CLOB live probe carrying `risk_budget_decision_id` plus matching `candidate_hash` or `revision_id`, and verify `/execute` rejects missing, expired, wrong-candidate, wrong-protocol, malformed-cap, over-cap, and over-trade-count variants on box.
 - Add live drift/demotion automation against `max_loss_usd`; the decision object stores the cap, but this round only enforces notional, candidate/revision, venue/protocol, TTL, and trade-count pre-dispatch.
+
+## 2026-05-31 — Evolve round 6: Hyperliquid outcome-market parity
+
+Status: KEEP. Hyperliquid prediction markets now reuse the Hyperliquid order transport while being tagged, valued, and capped like binary prediction markets. This closes the gap where Hyperliquid outcome probes could be gated as generic Hyperliquid trades instead of Polymarket-like bounded-loss outcome trades.
+
+Changes:
+- Added a shared `hyperliquid_intent` helper so `/validate` and `/execute` resolve Hyperliquid asset IDs, outcome encodings (`#17` -> `100000017`), `outcome_id/outcome_side`, and asset sizes identically.
+- Added metadata-based Hyperliquid valuation: `asset_size`, `limit_price`/`price`, and `notional_usdc` now produce priced notional before risk-budget enforcement; outcome prices must be `<= 1`, and `notional_usdc` must match `asset_size * price`.
+- Extended prediction trade metadata and synthetic portfolio reconstruction so Hyperliquid outcome trades are recorded as prediction/conditional-token exposure, not perps.
+- Clamped binary prediction live-probe notional to `max_loss_usd` and enforced `max_loss_usd` pre-dispatch for Polymarket and Hyperliquid outcome trades, because worst-case binary outcome loss equals notional.
+- Updated the Hyperliquid provider and system prompt so agents treat Hyperps/outcome markets as `target_protocol="hyperliquid"` with prediction-specific metadata and a required risk-budget decision.
+- Updated TS self-improvement risk-budget inference so "Hyperliquid prediction/outcome/Hyperp" requests target venue/protocol `hyperliquid`, not `polymarket_clob`.
+- Fixed two pre-existing clippy test nits that blocked package-level clippy for the touched crates.
+
+Verification:
+- `git diff --check` passed.
+- `cargo check --workspace` passed.
+- `cargo clippy -p trading-http-api -p trading-runtime -p trading-blueprint-lib --tests -- -D warnings -A clippy::collapsible-if -A clippy::manual-inspect -A clippy::needless-question-mark -A clippy::too-many-arguments` passed.
+- `cargo test --workspace --lib` passed.
+- `cargo test -p trading-http-api risk_budget --lib -- --nocapture` passed.
+- `cargo test -p trading-http-api routes::execute --lib -- --nocapture` passed.
+- `cargo test -p trading-http-api --test api_tests evolution_promotion_gate -- --nocapture` passed.
+- `cargo test -p trading-runtime hyperliquid::tests::parses_encoded_outcome_asset_symbols --lib -- --nocapture` passed.
+- `cargo test -p trading-blueprint-lib providers::hyperliquid --lib -- --nocapture` passed.
+- `npx tsc --target ES2022 --module ESNext --moduleResolution Bundler --noEmit --skipLibCheck trading-blueprint-lib/src/prompts/tools/self_improvement_loop.ts` passed.
+
+Remaining:
+- Deploy this branch to the live box.
+- Run a live-box Hyperliquid outcome dry probe with a returned `risk_budget_decision_id`, `candidate_hash`, `asset_id`, `asset_size`, and `notional_usdc`.
+- Add mark-to-market live drift/demotion once outcome midprice ingestion is available from the live Hyperliquid info endpoint.

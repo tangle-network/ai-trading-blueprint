@@ -223,9 +223,11 @@ Authorization: Bearer {token}
   For DEX swaps, `amount_in` and `min_amount_out` are raw token base units, not human-readable decimals.
   For Hyperliquid: set target_protocol to "hyperliquid", use metadata fields:
   - "asset": "ETH" (or "BTC", "SOL", etc.)
+  - outcome markets: "asset_id": 100000017, plus "hyperliquid_market_type": "hyperp" (coin label #17)
   - "limit_price": "2500" (for limit orders, omit for market)
   - "trigger_price": "2400" + "tpsl": "sl" (for stop-loss)
   - "trigger_price": "3000" + "tpsl": "tp" (for take-profit)
+  - candidate live probes: "risk_budget_decision_id" plus matching "candidate_hash" or "revision_id"
   When using `/home/agent/tools/api-client.js`, call `validate(intent)` first and pass the returned object directly into `execute(intent, validationResult)`.
   Do not hand-assemble `validation.approved`, `validator_responses`, or signatures.
 

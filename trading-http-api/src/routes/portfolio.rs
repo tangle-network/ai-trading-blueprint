@@ -643,7 +643,12 @@ fn apply_trade_to_synthetic_positions(
         return;
     }
 
-    let position_type = trade_position_type(&action, &trade.target_protocol);
+    let is_prediction_trade = trade.prediction_metadata.is_some();
+    let position_type = if is_prediction_trade {
+        PositionType::ConditionalToken
+    } else {
+        trade_position_type(&action, &trade.target_protocol)
+    };
     let size = trade
         .amount_out
         .as_deref()
@@ -659,7 +664,27 @@ fn apply_trade_to_synthetic_positions(
                 .unwrap_or(Decimal::ZERO)
         });
 
-    if trade_opens_position(&action, &trade.target_protocol) {
+    if is_prediction_trade && action == "buy" {
+        credit_position(
+            positions,
+            &trade.token_out,
+            &trade.target_protocol,
+            position_type,
+            size,
+            trade
+                .entry_price_usd
+                .as_deref()
+                .and_then(parse_decimal_maybe),
+        );
+    } else if is_prediction_trade && matches!(action.as_str(), "sell" | "redeem") {
+        debit_position(
+            positions,
+            &trade.token_out,
+            &trade.target_protocol,
+            position_type,
+            size,
+        );
+    } else if trade_opens_position(&action, &trade.target_protocol) {
         credit_position(
             positions,
             &trade.token_out,

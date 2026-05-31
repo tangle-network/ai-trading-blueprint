@@ -8,7 +8,7 @@ impl TradingProvider for HyperliquidProvider {
     }
 
     fn name(&self) -> &'static str {
-        "Hyperliquid Perpetuals"
+        "Hyperliquid Perpetuals and Outcome Markets"
     }
 
     fn protocol_adapters(&self) -> &[&'static str] {
@@ -28,7 +28,12 @@ impl TradingProvider for HyperliquidProvider {
     }
 
     fn handled_event_types(&self) -> &[&'static str] {
-        &["funding_rate", "liquidation", "price_move"]
+        &[
+            "funding_rate",
+            "liquidation",
+            "price_move",
+            "outcome_market",
+        ]
     }
 
     fn build_event_prompt(&self, ctx: &EventContext) -> Option<String> {
@@ -62,12 +67,22 @@ impl TradingProvider for HyperliquidProvider {
                  4. Check funding rate direction for confirmation",
                 data = ctx.data,
             )),
+            "outcome_market" => Some(format!(
+                "HYPERLIQUID OUTCOME MARKET UPDATE.\n\
+                 Data: {data}\n\n\
+                 Hyperliquid outcome markets are prediction markets on HyperCore. Steps:\n\
+                 1. Treat the instrument as binary bounded-downside exposure, not a perp\n\
+                 2. Build or fetch a risk_budget promotion decision before any live probe\n\
+                 3. Submit through /validate then /execute with target_protocol=\"hyperliquid\" and outcome metadata\n\
+                 4. Include asset or asset_id, asset_size, price/limit_price, notional_usdc, market_question, outcome_label, and risk_budget_decision_id",
+                data = ctx.data,
+            )),
             _ => None,
         }
     }
 }
 
-pub(crate) const HYPERLIQUID_EXPERT_PROMPT: &str = r#"## Hyperliquid Perpetuals — Full Trading API
+pub(crate) const HYPERLIQUID_EXPERT_PROMPT: &str = r##"## Hyperliquid Perpetuals and Outcome Markets — Full Trading API
 
 You have native Hyperliquid perps trading via the trading API. Use these endpoints
 instead of the on-chain bridge adapter — they're faster and support all order types.
@@ -126,6 +141,33 @@ Returns mid prices for all HL perp markets as `{"ETH": "2500.5", "BTC": "67432.1
 
 ### Asset IDs
 Use symbol strings ("ETH", "BTC", "SOL", etc.) or numeric indices (0=BTC, 1=ETH, ...).
+For Hyperliquid outcome markets ("Hyperps"), use the HyperCore outcome asset ID directly when available. Outcome coin labels like "#17" are accepted by `/execute` and map to asset `100000017`; `metadata.outcome_id` plus numeric `outcome_side` also maps to `100000000 + outcome_id * 10 + outcome_side`.
+
+### Outcome Markets / Hyperps — POST /validate then POST /execute
+
+Hyperliquid outcome markets are binary prediction contracts on HyperCore. They reuse `target_protocol: "hyperliquid"` and the Hyperliquid order transport, but they are risked like prediction markets, not perps.
+
+Required metadata for outcome live probes:
+```json
+{
+  "hyperliquid_market_type": "hyperp",
+  "asset": "#17",
+  "asset_size": "10",
+  "limit_price": "0.42",
+  "notional_usdc": "4.2",
+  "market_question": "Will ... resolve yes?",
+  "outcome_label": "YES",
+  "resolution_source": "official source or market rules",
+  "risk_budget_decision_id": "rbd-...",
+  "candidate_hash": "sha256:..."
+}
+```
+
+Rules for Hyperliquid outcomes:
+1. Never apply perp leverage, liquidation, bracket, or funding assumptions to outcome markets.
+2. Price must be between 0 and 1, and `notional_usdc` must equal `asset_size * price`.
+3. Live candidate trades require a returned risk-budget decision. The platform clamps binary outcome live-probe notional to `max_loss_usd` because worst-case loss equals notional.
+4. Use `buy` to open a YES/NO outcome token position; use `sell` or `redeem` to close/reduce it.
 
 ### Risk Management Rules
 1. Always set leverage BEFORE placing orders
@@ -140,7 +182,7 @@ For analysis, you can also call the HL info API directly:
 - `{"type": "metaAndAssetCtxs"}` — funding rates, open interest, metadata
 - `{"type": "candleSnapshot", "req": {"coin": "ETH", "interval": "1h", "startTime": <unix_ms>}}` — candles
 - `{"type": "l2Book", "coin": "ETH"}` — order book depth
-"#;
+"##;
 
 #[cfg(test)]
 mod tests {
@@ -151,6 +193,8 @@ mod tests {
     fn test_hyperliquid_expert_prompt_has_api() {
         let p = HyperliquidProvider;
         assert!(p.expert_prompt().contains("api.hyperliquid.xyz"));
+        assert!(p.expert_prompt().contains("hyperliquid_market_type"));
+        assert!(p.expert_prompt().contains("100000000"));
     }
 
     #[test]

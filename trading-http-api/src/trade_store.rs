@@ -105,19 +105,35 @@ pub struct HyperliquidTradeMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_size: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reduce_only: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market_question: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct PredictionTradeMetadata {
     #[serde(default)]
+    pub venue: Option<String>,
+    #[serde(default)]
+    pub market_type: Option<String>,
+    #[serde(default)]
     pub condition_id: Option<String>,
     #[serde(default)]
     pub token_id: Option<String>,
+    #[serde(default)]
+    pub asset: Option<String>,
+    #[serde(default)]
+    pub asset_id: Option<String>,
     #[serde(default)]
     pub market_question: Option<String>,
     #[serde(default)]
@@ -126,6 +142,10 @@ pub struct PredictionTradeMetadata {
     pub outcome_index: Option<u8>,
     #[serde(default)]
     pub market_slug: Option<String>,
+    #[serde(default)]
+    pub resolution_source: Option<String>,
+    #[serde(default)]
+    pub resolution_time: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

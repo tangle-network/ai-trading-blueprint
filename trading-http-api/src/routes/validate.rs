@@ -7,7 +7,6 @@ use alloy::sol_types::{SolCall, SolValue};
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::{Json, Router, extract::State, routing::post};
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use trading_runtime::aave_v3_registry::market_for_chain;
@@ -19,7 +18,7 @@ use trading_runtime::execution_hash::{
     hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
 };
 use trading_runtime::executor::get_adapter;
-use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
+use trading_runtime::hyperliquid::{HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
 use trading_runtime::polymarket_clob;
 use trading_runtime::supported_assets::{
@@ -460,35 +459,6 @@ fn format_action(action: &Action) -> String {
     .to_string()
 }
 
-fn hyperliquid_order_size(
-    metadata: &serde_json::Value,
-    fallback: &Decimal,
-) -> Result<String, (StatusCode, String)> {
-    let raw = ["asset_size", "sz", "size", "base_size"]
-        .into_iter()
-        .find_map(|key| {
-            metadata.get(key).and_then(|value| match value {
-                serde_json::Value::String(s) => Some(s.trim().to_string()),
-                serde_json::Value::Number(n) => Some(n.to_string()),
-                _ => None,
-            })
-        })
-        .unwrap_or_else(|| fallback.to_string());
-    let size = raw.parse::<Decimal>().map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("Invalid Hyperliquid asset_size '{raw}': {e}"),
-        )
-    })?;
-    if size <= Decimal::ZERO {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Hyperliquid asset_size must be greater than zero".to_string(),
-        ));
-    }
-    Ok(size.normalize().to_string())
-}
-
 fn hyperliquid_order_from_intent(
     intent: &TradeIntent,
 ) -> Result<PlaceOrderRequest, (StatusCode, String)> {
@@ -538,16 +508,14 @@ fn hyperliquid_order_from_intent(
         HlOrderType::Market
     };
 
-    let asset = if let Some(asset_str) = intent.metadata.get("asset").and_then(|v| v.as_str()) {
-        AssetId::Symbol(asset_str.to_string())
-    } else {
-        AssetId::Symbol(intent.token_out.clone())
-    };
+    let asset = crate::hyperliquid_intent::asset_from_metadata(&intent.metadata, &intent.token_out)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     Ok(PlaceOrderRequest {
         asset,
         is_buy,
-        size: hyperliquid_order_size(&intent.metadata, &intent.amount_in)?,
+        size: crate::hyperliquid_intent::order_size_string(&intent.metadata, &intent.amount_in)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?,
         order_type,
         reduce_only,
         cloid: None,

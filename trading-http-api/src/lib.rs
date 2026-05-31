@@ -5,6 +5,7 @@ pub mod candle_store;
 pub mod envelope_renewal;
 pub mod envelope_watcher;
 pub mod evolution_store;
+pub mod hyperliquid_intent;
 pub mod hyperliquid_mode;
 pub mod hyperliquid_nav;
 pub mod hyperliquid_settlement;

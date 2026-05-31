@@ -116,6 +116,7 @@ pub struct HyperliquidClient {
 
 const HYPERLIQUID_INFO_URL_MAINNET: &str = "https://api.hyperliquid.xyz/info";
 const HYPERLIQUID_INFO_URL_TESTNET: &str = "https://api.hyperliquid-testnet.xyz/info";
+const HYPERLIQUID_OUTCOME_ASSET_OFFSET: u32 = 100_000_000;
 
 #[derive(Debug, Deserialize)]
 struct HlMetaResponse {
@@ -172,6 +173,9 @@ impl HyperliquidClient {
         match id {
             AssetId::Index(i) => Ok(*i),
             AssetId::Symbol(sym) => {
+                if let Some(index) = parse_encoded_asset_index(sym) {
+                    return Ok(index);
+                }
                 let upper = sym.to_uppercase();
                 {
                     let cache = self.asset_map.read().await;
@@ -213,6 +217,9 @@ impl HyperliquidClient {
     }
 
     async fn asset_name(&self, asset: u32) -> Result<String, String> {
+        if asset >= HYPERLIQUID_OUTCOME_ASSET_OFFSET {
+            return Ok(format!("#{}", asset - HYPERLIQUID_OUTCOME_ASSET_OFFSET));
+        }
         {
             let cache = self.asset_map.read().await;
             if let Some(ref names) = *cache
@@ -829,6 +836,21 @@ fn format_hyperliquid_price(price: f64) -> String {
         .to_string()
 }
 
+fn parse_encoded_asset_index(symbol: &str) -> Option<u32> {
+    let trimmed = symbol.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(encoding) = trimmed
+        .strip_prefix('#')
+        .or_else(|| trimmed.strip_prefix('+'))
+    {
+        let encoding = encoding.parse::<u32>().ok()?;
+        return HYPERLIQUID_OUTCOME_ASSET_OFFSET.checked_add(encoding);
+    }
+    trimmed.parse::<u32>().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -902,6 +924,14 @@ mod tests {
         assert_eq!(format_hyperliquid_price(2084.3 * 1.01), "2105.1");
         assert_eq!(format_hyperliquid_price(75862.5 * 1.01), "76621");
         assert_eq!(format_hyperliquid_price(83.7915 * 0.99), "82.954");
+    }
+
+    #[test]
+    fn parses_encoded_outcome_asset_symbols() {
+        assert_eq!(parse_encoded_asset_index("#17"), Some(100_000_017));
+        assert_eq!(parse_encoded_asset_index("+17"), Some(100_000_017));
+        assert_eq!(parse_encoded_asset_index("100000017"), Some(100_000_017));
+        assert_eq!(parse_encoded_asset_index("ETH"), None);
     }
 
     #[test]

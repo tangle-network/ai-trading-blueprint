@@ -35,7 +35,7 @@ use trading_runtime::execution_hash::{
     hash_clob_order, hash_execution_payload, hash_hyperliquid_order,
 };
 use trading_runtime::executor::{TradeExecutor, get_adapter};
-use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
+use trading_runtime::hyperliquid::{HlOrderType, PlaceOrderRequest};
 use trading_runtime::intent::hash_intent;
 use trading_runtime::market_data::MarketDataClient;
 use trading_runtime::polymarket_clob::{self, ClobClient, OrderBook, PriceLevel, Side};
@@ -727,35 +727,6 @@ fn format_action(action: &trading_runtime::types::Action) -> String {
     .to_string()
 }
 
-fn hyperliquid_order_size(
-    metadata: &serde_json::Value,
-    fallback: &Decimal,
-) -> Result<String, (StatusCode, String)> {
-    let raw = ["asset_size", "sz", "size", "base_size"]
-        .into_iter()
-        .find_map(|key| {
-            metadata.get(key).and_then(|value| match value {
-                serde_json::Value::String(s) => Some(s.trim().to_string()),
-                serde_json::Value::Number(n) => Some(n.to_string()),
-                _ => None,
-            })
-        })
-        .unwrap_or_else(|| fallback.to_string());
-    let size = raw.parse::<Decimal>().map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("Invalid Hyperliquid asset_size '{raw}': {e}"),
-        )
-    })?;
-    if size <= Decimal::ZERO {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Hyperliquid asset_size must be greater than zero".to_string(),
-        ));
-    }
-    Ok(size.normalize().to_string())
-}
-
 fn hyperliquid_order_from_intent(
     intent: &TradeIntent,
 ) -> Result<PlaceOrderRequest, (StatusCode, String)> {
@@ -804,16 +775,14 @@ fn hyperliquid_order_from_intent(
         HlOrderType::Market
     };
 
-    let asset = if let Some(asset_str) = intent.metadata.get("asset").and_then(|v| v.as_str()) {
-        AssetId::Symbol(asset_str.to_string())
-    } else {
-        AssetId::Symbol(intent.token_out.clone())
-    };
+    let asset = crate::hyperliquid_intent::asset_from_metadata(&intent.metadata, &intent.token_out)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     Ok(PlaceOrderRequest {
         asset,
         is_buy,
-        size: hyperliquid_order_size(&intent.metadata, &intent.amount_in)?,
+        size: crate::hyperliquid_intent::order_size_string(&intent.metadata, &intent.amount_in)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?,
         order_type,
         reduce_only,
         cloid: None,
@@ -1147,6 +1116,12 @@ async fn resolve_market_valuation(
     intent: &IntentPayload,
     live_input: Option<&LiveRiskInput>,
 ) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
+    if intent.target_protocol == "hyperliquid"
+        && let Some(valuation) = resolve_hyperliquid_metadata_valuation(intent)?
+    {
+        return Ok(valuation);
+    }
+
     if intent.action.eq_ignore_ascii_case("swap") && intent.token_in != intent.token_out {
         return resolve_swap_valuation(market_client, chain_id, intent, live_input).await;
     }
@@ -1193,6 +1168,95 @@ async fn resolve_market_valuation(
             Ok(TradeValuationSnapshot::unpriced(position_size, amount_out))
         }
     }
+}
+
+fn resolve_hyperliquid_metadata_valuation(
+    intent: &IntentPayload,
+) -> Result<Option<TradeValuationSnapshot>, (StatusCode, String)> {
+    let amount_in = intent.amount_in.parse::<Decimal>().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Invalid amount_in '{}': {e}", intent.amount_in),
+        )
+    })?;
+    let position_size = crate::hyperliquid_intent::order_size(&intent.metadata, &amount_in)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if position_size <= Decimal::ZERO {
+        return Ok(Some(TradeValuationSnapshot::unpriced(position_size, None)));
+    }
+
+    let explicit_notional = crate::hyperliquid_intent::metadata_decimal_any(
+        &intent.metadata,
+        &["notional_usdc", "notional_usd", "position_notional_usd"],
+    );
+    let explicit_price = crate::hyperliquid_intent::metadata_decimal_any(
+        &intent.metadata,
+        &[
+            "limit_price",
+            "price",
+            "mark_price",
+            "mid_price",
+            "entry_price_usd",
+        ],
+    );
+    if let (Some(notional), Some(price)) = (explicit_notional, explicit_price) {
+        let implied_notional = position_size * price;
+        let mismatch = if notional > implied_notional {
+            notional - implied_notional
+        } else {
+            implied_notional - notional
+        };
+        if mismatch > Decimal::new(1, 6) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Hyperliquid notional_usdc {} does not match asset_size * price {}",
+                    notional.normalize(),
+                    implied_notional.normalize()
+                ),
+            ));
+        }
+    }
+
+    let Some(entry_price) = explicit_notional
+        .map(|notional| {
+            if notional <= Decimal::ZERO {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Hyperliquid notional_usd must be greater than zero".to_string(),
+                ));
+            }
+            Ok(notional / position_size)
+        })
+        .transpose()?
+        .or(explicit_price)
+    else {
+        return Ok(None);
+    };
+
+    if entry_price <= Decimal::ZERO {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Hyperliquid price must be greater than zero".to_string(),
+        ));
+    }
+    if crate::hyperliquid_intent::is_outcome_metadata(&intent.metadata)
+        && entry_price > Decimal::ONE
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Hyperliquid outcome price must be <= 1.0; got {}",
+                entry_price.normalize()
+            ),
+        ));
+    }
+
+    Ok(Some(TradeValuationSnapshot::priced(
+        position_size,
+        Some(position_size),
+        entry_price,
+    )))
 }
 
 async fn resolve_swap_valuation(
@@ -1854,36 +1918,77 @@ fn metadata_u8(metadata: &serde_json::Value, key: &str) -> Option<u8> {
 }
 
 fn extract_prediction_metadata(intent: &IntentPayload) -> Option<PredictionTradeMetadata> {
-    if intent.target_protocol != "polymarket_clob" {
+    let protocol = intent.target_protocol.as_str();
+    let is_polymarket = protocol == "polymarket_clob" || protocol == "polymarket";
+    let is_hyperliquid_outcome = protocol == "hyperliquid"
+        && crate::hyperliquid_intent::is_outcome_metadata(&intent.metadata);
+    if !is_polymarket && !is_hyperliquid_outcome {
         return None;
     }
 
     let condition_id = metadata_string(&intent.metadata, "condition_id");
     let token_id = metadata_string(&intent.metadata, "token_id")
+        .or_else(|| metadata_decimal_string(&intent.metadata, "asset_id"))
+        .or_else(|| metadata_decimal_string(&intent.metadata, "outcome_asset_id"))
+        .or_else(|| {
+            (is_polymarket && !intent.token_out.trim().is_empty())
+                .then_some(intent.token_out.clone())
+        });
+    let asset = metadata_string(&intent.metadata, "asset")
         .or_else(|| (!intent.token_out.trim().is_empty()).then_some(intent.token_out.clone()));
+    let asset_id = metadata_decimal_string(&intent.metadata, "asset_id")
+        .or_else(|| metadata_decimal_string(&intent.metadata, "outcome_asset_id"))
+        .or_else(|| {
+            crate::hyperliquid_intent::asset_from_metadata(&intent.metadata, &intent.token_out)
+                .ok()
+                .and_then(|asset| crate::hyperliquid_intent::asset_index(&asset))
+                .map(|index| index.to_string())
+        });
     let market_question = metadata_string(&intent.metadata, "market_question");
     let outcome_label = metadata_string(&intent.metadata, "outcome_label")
         .or_else(|| metadata_string(&intent.metadata, "outcome"));
     let outcome_index = metadata_u8(&intent.metadata, "outcome_index");
     let market_slug = metadata_string(&intent.metadata, "market_slug");
+    let resolution_source = metadata_string(&intent.metadata, "resolution_source");
+    let resolution_time = metadata_string(&intent.metadata, "resolution_time")
+        .or_else(|| metadata_string(&intent.metadata, "resolution_time_iso"))
+        .or_else(|| metadata_string(&intent.metadata, "expires_at"));
+    let venue = if is_hyperliquid_outcome {
+        Some("hyperliquid".to_string())
+    } else {
+        Some("polymarket".to_string())
+    };
+    let market_type = metadata_string(&intent.metadata, "market_type")
+        .or_else(|| metadata_string(&intent.metadata, "hyperliquid_market_type"))
+        .or_else(|| Some("prediction_market".to_string()));
 
     if condition_id.is_none()
         && token_id.is_none()
+        && asset.is_none()
+        && asset_id.is_none()
         && market_question.is_none()
         && outcome_label.is_none()
         && outcome_index.is_none()
         && market_slug.is_none()
+        && resolution_source.is_none()
+        && resolution_time.is_none()
     {
         return None;
     }
 
     Some(PredictionTradeMetadata {
+        venue,
+        market_type,
         condition_id,
         token_id,
+        asset,
+        asset_id,
         market_question,
         outcome_label,
         outcome_index,
         market_slug,
+        resolution_source,
+        resolution_time,
     })
 }
 
@@ -1990,10 +2095,16 @@ async fn update_portfolio_after_trade(
     valuation: &TradeValuationSnapshot,
 ) {
     let action_str = req.intent.action.to_lowercase();
-    let is_close = matches!(
-        action_str.as_str(),
-        "sell" | "close_long" | "close_short" | "withdraw" | "repay" | "redeem"
-    );
+    let is_hyperliquid_outcome = req.intent.target_protocol == "hyperliquid"
+        && crate::hyperliquid_intent::is_outcome_metadata(&req.intent.metadata);
+    let is_close = if is_hyperliquid_outcome {
+        matches!(action_str.as_str(), "sell" | "redeem")
+    } else {
+        matches!(
+            action_str.as_str(),
+            "sell" | "close_long" | "close_short" | "withdraw" | "repay" | "redeem"
+        )
+    };
 
     let mut state = portfolio.write().await;
 
@@ -2013,6 +2124,7 @@ async fn update_portfolio_after_trade(
         // Determine position type from protocol + action.
         let position_type = match (req.intent.target_protocol.as_str(), action_str.as_str()) {
             ("polymarket_clob", _) | ("polymarket", _) => PositionType::ConditionalToken,
+            ("hyperliquid", _) if is_hyperliquid_outcome => PositionType::ConditionalToken,
             (_, "open_long") => PositionType::LongPerp,
             (_, "open_short") => PositionType::ShortPerp,
             (_, "supply") => PositionType::Lending,
@@ -3020,7 +3132,7 @@ async fn execute_hyperliquid_trade(
     valuation: &TradeValuationSnapshot,
     signed_envelope: Option<&SignedEnvelope>,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {
-    use trading_runtime::hyperliquid::{AssetId, HlOrderType, PlaceOrderRequest};
+    use trading_runtime::hyperliquid::{HlOrderType, PlaceOrderRequest};
 
     super::hyperliquid::require_hyperliquid_execution_ready(state, bot).await?;
     let hl_client = super::hyperliquid::get_hl_client(state)?;
@@ -3148,15 +3260,11 @@ async fn execute_hyperliquid_trade(
         (HlOrderType::Market, "market")
     };
 
-    // Resolve asset — prefer metadata.asset, fall back to token_out symbol
-    let asset_symbol =
-        if let Some(asset_str) = req.intent.metadata.get("asset").and_then(|v| v.as_str()) {
-            asset_str.to_string()
-        } else {
-            req.intent.token_out.clone()
-        };
-    let asset = AssetId::Symbol(asset_symbol.clone());
-    let asset_size = hyperliquid_order_size(
+    let asset =
+        crate::hyperliquid_intent::asset_from_metadata(&req.intent.metadata, &req.intent.token_out)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let asset_symbol = crate::hyperliquid_intent::asset_label(&asset);
+    let asset_size = crate::hyperliquid_intent::order_size_string(
         &req.intent.metadata,
         &req.intent.amount_in.parse::<Decimal>().map_err(|e| {
             (
@@ -3164,7 +3272,8 @@ async fn execute_hyperliquid_trade(
                 format!("Invalid amount_in '{}': {e}", req.intent.amount_in),
             )
         })?,
-    )?;
+    )
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     let hl_req = PlaceOrderRequest {
         asset,
@@ -3228,6 +3337,15 @@ async fn execute_hyperliquid_trade(
             asset_size: Some(asset_size.to_string()),
             order_type: Some(order_type_label.to_string()),
             reduce_only: Some(reduce_only),
+            market_type: metadata_string(&req.intent.metadata, "hyperliquid_market_type")
+                .or_else(|| metadata_string(&req.intent.metadata, "market_type")),
+            outcome_label: metadata_string(&req.intent.metadata, "outcome_label")
+                .or_else(|| metadata_string(&req.intent.metadata, "outcome")),
+            market_question: metadata_string(&req.intent.metadata, "market_question"),
+            asset_id: crate::hyperliquid_intent::asset_index(&hl_req.asset)
+                .map(|index| index.to_string())
+                .or_else(|| metadata_decimal_string(&req.intent.metadata, "asset_id"))
+                .or_else(|| metadata_decimal_string(&req.intent.metadata, "outcome_asset_id")),
         }),
         valuation_status: valuation.valuation_status,
         validation: stored_validation,
@@ -4765,6 +4883,120 @@ mod tests {
         let order = hyperliquid_order_from_intent(&intent).expect("order");
 
         assert_eq!(order.size, "0.0052");
+    }
+
+    #[test]
+    fn hyperliquid_outcome_order_hash_accepts_encoded_asset() {
+        let mut req = make_execute_request(Some(1_999_999_999));
+        req.intent.action = "buy".to_string();
+        req.intent.target_protocol = "hyperliquid".to_string();
+        req.intent.token_in = "USDC".to_string();
+        req.intent.token_out = "USDC".to_string();
+        req.intent.amount_in = "4.2".to_string();
+        req.intent.min_amount_out = "0".to_string();
+        req.intent.metadata = serde_json::json!({
+            "hyperliquid_market_type": "hyperp",
+            "asset": "#17",
+            "asset_size": "10",
+            "limit_price": "0.42",
+            "notional_usdc": "4.2",
+            "outcome_label": "YES",
+            "market_question": "Will the market resolve yes?",
+            "hyperliquid_account_address": "0x0000000000000000000000000000000000000001"
+        });
+
+        let intent = parse_execute_request(&req, Some(42161)).expect("intent");
+        let order = hyperliquid_order_from_intent(&intent).expect("order");
+        let metadata = extract_prediction_metadata(&req.intent).expect("prediction metadata");
+
+        assert!(matches!(
+            order.asset,
+            trading_runtime::hyperliquid::AssetId::Index(100_000_017)
+        ));
+        assert_eq!(order.size, "10");
+        assert_eq!(metadata.venue.as_deref(), Some("hyperliquid"));
+        assert_eq!(metadata.outcome_label.as_deref(), Some("YES"));
+    }
+
+    #[test]
+    fn hyperliquid_outcome_valuation_uses_asset_size_and_probability_price() {
+        let intent = IntentPayload {
+            strategy_id: "s".to_string(),
+            action: "buy".to_string(),
+            token_in: "USDC".to_string(),
+            token_out: "USDC".to_string(),
+            amount_in: "4.2".to_string(),
+            min_amount_out: "0".to_string(),
+            target_protocol: "hyperliquid".to_string(),
+            amount_format: Some(AmountFormat::Human),
+            metadata: serde_json::json!({
+                "hyperliquid_market_type": "hyperp",
+                "asset": "#17",
+                "asset_size": "10",
+                "limit_price": "0.42",
+                "notional_usdc": "4.2"
+            }),
+        };
+
+        let valuation = resolve_hyperliquid_metadata_valuation(&intent)
+            .expect("valuation")
+            .expect("priced");
+
+        assert_eq!(valuation.position_size, Decimal::from(10));
+        assert_eq!(valuation.entry_price_usd, Some(Decimal::new(42, 2)));
+        assert_eq!(valuation.notional_usd, Some(Decimal::new(420, 2)));
+    }
+
+    #[test]
+    fn hyperliquid_outcome_valuation_rejects_price_above_one() {
+        let intent = IntentPayload {
+            strategy_id: "s".to_string(),
+            action: "buy".to_string(),
+            token_in: "USDC".to_string(),
+            token_out: "USDC".to_string(),
+            amount_in: "12".to_string(),
+            min_amount_out: "0".to_string(),
+            target_protocol: "hyperliquid".to_string(),
+            amount_format: Some(AmountFormat::Human),
+            metadata: serde_json::json!({
+                "hyperliquid_market_type": "hyperp",
+                "asset": "#17",
+                "asset_size": "10",
+                "limit_price": "1.2"
+            }),
+        };
+
+        let err = resolve_hyperliquid_metadata_valuation(&intent)
+            .expect_err("outcome price >1 should reject");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("outcome price"));
+    }
+
+    #[test]
+    fn hyperliquid_valuation_rejects_notional_price_mismatch() {
+        let intent = IntentPayload {
+            strategy_id: "s".to_string(),
+            action: "buy".to_string(),
+            token_in: "USDC".to_string(),
+            token_out: "USDC".to_string(),
+            amount_in: "4.2".to_string(),
+            min_amount_out: "0".to_string(),
+            target_protocol: "hyperliquid".to_string(),
+            amount_format: Some(AmountFormat::Human),
+            metadata: serde_json::json!({
+                "asset": "ETH",
+                "asset_size": "10",
+                "limit_price": "0.42",
+                "notional_usdc": "5"
+            }),
+        };
+
+        let err = resolve_hyperliquid_metadata_valuation(&intent)
+            .expect_err("notional/price mismatch should reject");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("asset_size * price"));
     }
 
     #[test]

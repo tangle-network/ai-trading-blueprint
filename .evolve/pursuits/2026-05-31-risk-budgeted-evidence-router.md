@@ -81,3 +81,31 @@ Verification:
 
 ## Review Gate
 Touches trade execution, persistence, and API shape; mandatory diff audit before final. Local diff hygiene and targeted clippy are clean.
+
+## Generation 4 Addendum: Hyperliquid Outcome-Market Parity
+
+### Thesis
+Hyperliquid prediction markets should reuse Hyperliquid execution transport but inherit prediction-market evidence, valuation, and max-loss semantics.
+
+### Design
+- Shared helper: move Hyperliquid asset/size parsing into `trading-http-api/src/hyperliquid_intent.rs` so `/validate` and `/execute` hash/dispatch the same order representation.
+- Outcome asset IDs: support explicit numeric asset IDs plus Hyperliquid outcome encodings like `#17 -> 100000017` and `outcome_id/outcome_side -> 100000000 + outcome_id * 10 + side`.
+- Valuation: if Hyperliquid metadata supplies `asset_size`, `limit_price`/`price`, and/or `notional_usdc`, derive priced notional before live risk-budget enforcement; reject outcome prices above `1` and reject inconsistent `notional_usdc != asset_size * price`.
+- Risk: for binary prediction/outcome decisions, clamp tiny-live notional to `max_loss_usd` and reject any live outcome trade whose notional exceeds that loss cap.
+- Audit: record Hyperliquid outcome trades as `PredictionTradeMetadata` and carry outcome fields into Hyperliquid trade metadata.
+- Agent behavior: update Hyperliquid provider/system prompts and TS self-improvement risk-budget inference so Hyperps target `target_protocol="hyperliquid"` with prediction metadata, not Polymarket CLOB.
+
+### Result
+KEEP. Hyperliquid outcomes are now "similar to Polymarket" at the strategy/risk/audit layer while staying "Hyperliquid" at the transport and asset-ID layer.
+
+Verification:
+- `git diff --check` passed.
+- `cargo check --workspace` passed.
+- `cargo clippy -p trading-http-api -p trading-runtime -p trading-blueprint-lib --tests -- -D warnings -A clippy::collapsible-if -A clippy::manual-inspect -A clippy::needless-question-mark -A clippy::too-many-arguments` passed.
+- `cargo test --workspace --lib` passed.
+- `cargo test -p trading-http-api risk_budget --lib -- --nocapture` passed.
+- `cargo test -p trading-http-api routes::execute --lib -- --nocapture` passed.
+- `cargo test -p trading-http-api --test api_tests evolution_promotion_gate -- --nocapture` passed.
+- `cargo test -p trading-runtime hyperliquid::tests::parses_encoded_outcome_asset_symbols --lib -- --nocapture` passed.
+- `cargo test -p trading-blueprint-lib providers::hyperliquid --lib -- --nocapture` passed.
+- `npx tsc --target ES2022 --module ESNext --moduleResolution Bundler --noEmit --skipLibCheck trading-blueprint-lib/src/prompts/tools/self_improvement_loop.ts` passed.

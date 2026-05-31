@@ -5298,9 +5298,13 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
         prediction_metadata: None,
         hyperliquid_metadata: Some(trading_http_api::trade_store::HyperliquidTradeMetadata {
             asset: Some("ETH".to_string()),
+            asset_id: None,
             asset_size: Some("0.05".to_string()),
             order_type: Some("market".to_string()),
             reduce_only: Some(false),
+            market_type: None,
+            outcome_label: None,
+            market_question: None,
         }),
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
         validation: trading_http_api::trade_store::StoredValidation {
@@ -8239,7 +8243,7 @@ async fn test_evolution_promotion_gate_returns_tiny_live_for_time_sensitive_back
     assert_eq!(json["risk_decision"]["promotion_level"], "tiny_live");
     assert_eq!(json["risk_decision"]["can_trade_live"], true);
     assert_eq!(json["risk_decision"]["target_protocol"], "polymarket_clob");
-    assert_eq!(json["risk_decision"]["max_notional_usd"], "12.5");
+    assert_eq!(json["risk_decision"]["max_notional_usd"], "3");
     let decision_id = json["risk_decision"]["decision_id"].as_str().unwrap();
     let report_id = json["evidence_report"]["report_id"].as_str().unwrap();
     assert!(decision_id.starts_with("rbd-"));

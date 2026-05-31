@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn short_series_is_all_unknown() {
         // 20 bars is below the default 50+24 warmup → every bar Unknown.
-        let candles = synth_candles(&vec![100.0; 20]);
+        let candles = synth_candles(&[100.0; 20]);
         let regimes = classify_series(&candles, Thresholds::default());
         assert!(regimes.iter().all(|r| matches!(r, Regime::Unknown)));
     }
