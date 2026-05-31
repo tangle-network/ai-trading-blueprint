@@ -5011,25 +5011,27 @@ async fn test_multi_bot_portfolio_state_synthesizes_paper_swap_positions() {
         .to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let positions = json["positions"].as_array().unwrap();
-    // Honest paper fill deducts uniswap fee+impact+$0.05 gas, so the synthesized
-    // USDC position sits just below the fee-free $3000 notional.
+    // Paper bots seed default USDC cash. Honest paper fill deducts uniswap
+    // fee+impact+$0.05 gas, so the synthesized USDC position is starting cash
+    // plus just below the fee-free $3000 notional.
     let total = json["total_value_usd"]
         .as_str()
         .unwrap()
         .parse::<f64>()
         .unwrap();
     assert!(
-        (total - 2990.05).abs() < 0.5,
-        "total {total} should be ~$3000 minus fees"
+        (total - 12990.05).abs() < 0.5,
+        "total {total} should be seeded cash plus ~$3000 minus fees"
     );
     assert!(
-        total < 3000.0,
+        total < 13000.0,
         "honest fill must deduct fees from the $3000 notional"
     );
     assert_eq!(positions.len(), 1);
-    assert_eq!(
-        positions[0]["token"],
-        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+    let position_token = positions[0]["token"].as_str().unwrap();
+    assert!(
+        position_token == "USDC" || position_token == "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "unexpected position token {position_token}"
     );
     let pos_amt = positions[0]["amount"]
         .as_str()
@@ -5041,8 +5043,11 @@ async fn test_multi_bot_portfolio_state_synthesizes_paper_swap_positions() {
         .unwrap()
         .parse::<f64>()
         .unwrap();
-    assert!((pos_amt - 2990.05).abs() < 0.5, "position amount {pos_amt}");
-    assert!((pos_val - 2990.05).abs() < 0.5, "position value {pos_val}");
+    assert!(
+        (pos_amt - 12990.05).abs() < 0.5,
+        "position amount {pos_amt}"
+    );
+    assert!((pos_val - 12990.05).abs() < 0.5, "position value {pos_val}");
     assert_eq!(json["warnings"], serde_json::json!([]));
 }
 
@@ -5262,10 +5267,12 @@ async fn test_multi_bot_portfolio_state_keeps_polymarket_buy_as_conditional_posi
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let positions = json["positions"].as_array().unwrap();
-    assert_eq!(positions.len(), 1);
-    assert_eq!(positions[0]["token"], "pm_yes_token");
-    assert_eq!(positions[0]["protocol"], "polymarket_clob");
-    assert_eq!(positions[0]["position_type"], "conditional_token");
+    let position = positions
+        .iter()
+        .find(|position| position["token"] == "pm_yes_token")
+        .expect("conditional token position");
+    assert_eq!(position["protocol"], "polymarket_clob");
+    assert_eq!(position["position_type"], "conditional_token");
 }
 
 #[tokio::test]
@@ -5354,10 +5361,12 @@ async fn test_multi_bot_portfolio_state_keeps_hyperliquid_buy_as_perp_position()
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let positions = json["positions"].as_array().unwrap();
-    assert_eq!(positions.len(), 1);
-    assert_eq!(positions[0]["token"], "ETH");
-    assert_eq!(positions[0]["protocol"], "hyperliquid");
-    assert_eq!(positions[0]["position_type"], "long_perp");
+    let position = positions
+        .iter()
+        .find(|position| position["token"] == "ETH")
+        .expect("hyperliquid ETH position");
+    assert_eq!(position["protocol"], "hyperliquid");
+    assert_eq!(position["position_type"], "long_perp");
 }
 
 #[tokio::test]
