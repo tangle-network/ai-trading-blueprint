@@ -1807,6 +1807,48 @@ async fn get_bot_run(
 
 // ── Secrets handlers ─────────────────────────────────────────────────────
 
+/// Recreate sidecar sandboxes for active bots whose operator-local sandbox was
+/// lost (e.g. host rebuilt + data volume re-attached). Idempotent: skips bots
+/// whose sandbox already exists. Rebuilds the sidecar from the preserved bot
+/// record, then re-injects the operator AI keys so the agent path works. Runs
+/// once at startup. Best-effort — a per-bot failure is logged and skipped.
+pub(crate) async fn ensure_active_bot_sandboxes() {
+    let bots = match trading_blueprint_lib::state::list_bots(None, 10_000, 0) {
+        Ok(page) => page.bots,
+        Err(e) => {
+            tracing::warn!("self-heal: list_bots failed: {e}");
+            return;
+        }
+    };
+    let ai_env = operator_ai_env().ok();
+    let mut healed = 0usize;
+    for bot in bots {
+        if !bot.trading_active {
+            continue;
+        }
+        if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_ok() {
+            continue;
+        }
+        match trading_blueprint_lib::jobs::recreate_bot_sandbox(&bot).await {
+            Ok(_new_id) => {
+                if let Some(env) = ai_env.clone() {
+                    if let Err(e) =
+                        trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot.id, env, None)
+                            .await
+                    {
+                        tracing::warn!(bot_id = %bot.id, %e, "self-heal: re-activate failed");
+                    }
+                }
+                healed += 1;
+            }
+            Err(e) => tracing::warn!(bot_id = %bot.id, %e, "self-heal: sandbox recreate failed"),
+        }
+    }
+    if healed > 0 {
+        tracing::info!("self-heal: recreated {healed} missing bot sandbox(es)");
+    }
+}
+
 fn operator_ai_env() -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let mut env = serde_json::Map::new();
     let providers: &[(&str, &str, &str, &[&str])] = &[

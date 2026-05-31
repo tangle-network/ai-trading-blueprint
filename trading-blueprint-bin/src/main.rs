@@ -263,6 +263,11 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
     // ── 5. Reconcile sandbox state with Docker ───────────────────────────────
     sandbox_runtime::reaper::reconcile_on_startup().await;
 
+    // Self-heal: if the operator-local sandbox state was lost (host rebuilt +
+    // data volume re-attached), recreate missing sidecars for active bots from
+    // their preserved records so the fleet survives a box replacement.
+    operator_api::ensure_active_bot_sandboxes().await;
+
     // ── 6. Spawn reaper + GC background tasks ────────────────────────────────
     {
         let config = sandbox_runtime::runtime::SidecarRuntimeConfig::load();

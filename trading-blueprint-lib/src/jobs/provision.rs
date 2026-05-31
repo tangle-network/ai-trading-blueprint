@@ -688,6 +688,96 @@ fn required_factory_signatures(requested: U256, signer_count: usize) -> Result<U
     Ok(required)
 }
 
+/// Self-heal a bot whose sidecar sandbox is missing from operator-local state.
+///
+/// When the operator's local sandbox state is lost but the bot record survives
+/// (e.g. the host was rebuilt and the data volume re-attached), the sandbox
+/// container is gone while `bot.sandbox_id` still points at it. provision
+/// dedups existing bots and activate only injects into an existing sandbox, so
+/// nothing recreates it — the bot is wedged on `stale_state`. This rebuilds the
+/// same base env provision constructs, creates a fresh sidecar, and repoints the
+/// bot at the new sandbox id. Idempotent: a no-op when the sandbox exists.
+///
+/// Caller is responsible for re-injecting secrets afterwards (operator AI keys)
+/// via `activate_bot_with_secrets`.
+pub async fn recreate_bot_sandbox(bot: &crate::state::TradingBotRecord) -> Result<String, String> {
+    if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_ok() {
+        return Ok(bot.sandbox_id.clone());
+    }
+
+    // Mirror the base (secret-free) env provision_core builds for the sidecar.
+    let mut env = Map::new();
+    env.insert(
+        "TRADING_HTTP_API_URL".into(),
+        Value::String(bot.trading_api_url.clone()),
+    );
+    env.insert(
+        "TRADING_API_TOKEN".into(),
+        Value::String(bot.trading_api_token.clone()),
+    );
+    env.insert(
+        "STRATEGY_TYPE".into(),
+        Value::String(bot.strategy_type.clone()),
+    );
+    env.insert("RPC_URL".into(), Value::String(bot.rpc_url.clone()));
+    env.insert("CHAIN_ID".into(), Value::String(bot.chain_id.to_string()));
+    env.insert(
+        "OPERATOR_ADDRESS".into(),
+        Value::String(bot.operator_address.clone()),
+    );
+    env.insert(
+        "SUBMITTER_ADDRESS".into(),
+        Value::String(bot.submitter_address.clone()),
+    );
+    if !bot.vault_address.is_empty() {
+        env.insert(
+            "VAULT_ADDRESS".into(),
+            Value::String(bot.vault_address.clone()),
+        );
+    }
+    env.insert(
+        "STRATEGY_CONFIG".into(),
+        Value::String(serde_json::to_string(&bot.strategy_config).unwrap_or_default()),
+    );
+    let env_json = serde_json::to_string(&env).unwrap_or_default();
+
+    let lifetime_days = if bot.max_lifetime_days == 0 {
+        30
+    } else {
+        bot.max_lifetime_days
+    };
+    let params = CreateSandboxParams {
+        name: bot.name.clone(),
+        image: std::env::var("SIDECAR_IMAGE")
+            .unwrap_or_else(|_| sandbox_runtime::DEFAULT_SIDECAR_IMAGE.to_string()),
+        agent_identifier: format!("trading-{}", bot.strategy_type),
+        env_json,
+        capabilities_json: r#"["all_harness"]"#.to_string(),
+        max_lifetime_seconds: lifetime_days * 86400,
+        idle_timeout_seconds: 0,
+        disk_gb: 10,
+        ..Default::default()
+    };
+
+    let (record, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, None)
+        .await
+        .map_err(|e| format!("self-heal create_sidecar failed: {e}"))?;
+
+    let mut updated = bot.clone();
+    updated.sandbox_id = record.id.clone();
+    crate::state::bots()?
+        .insert(updated.id.clone(), updated)
+        .map_err(|e| format!("self-heal save bot failed: {e}"))?;
+
+    tracing::info!(
+        bot_id = %bot.id,
+        old_sandbox = %bot.sandbox_id,
+        new_sandbox = %record.id,
+        "self-heal: recreated missing sidecar sandbox"
+    );
+    Ok(record.id)
+}
+
 fn build_trading_sandbox_params(
     request: &TradingProvisionRequest,
     env_json: String,
