@@ -72,11 +72,14 @@
   --chart-4: 263 90% 66%;
   --chart-5: 348 100% 61%;
 
-  /* Glass morphism tokens */
-  --glass-bg: rgba(18, 18, 26, 0.60);
-  --glass-bg-strong: rgba(18, 18, 26, 0.80);
-  --glass-border: rgba(240, 240, 245, 0.06);
-  --glass-border-hover: rgba(240, 240, 245, 0.12);
+  /* Glass morphism tokens — the actual card surface (.glass-card reads these).
+     Lift the surface clearly above the #0A0A0F page (was rgba(18,18,26,.60)
+     ≈ #0E0E14, indistinguishable from the page → "dark on dark"). Mirror the
+     light theme, where cards sit a full step above the base. */
+  --glass-bg: rgba(32, 32, 46, 0.72);
+  --glass-bg-strong: rgba(40, 40, 56, 0.86);
+  --glass-border: rgba(240, 240, 245, 0.12);
+  --glass-border-hover: rgba(240, 240, 245, 0.20);
   --glass-blur: 16px;
 
   /* Gradient mesh colors */
