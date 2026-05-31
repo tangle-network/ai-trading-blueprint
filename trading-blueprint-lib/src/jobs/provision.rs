@@ -763,10 +763,13 @@ pub async fn recreate_bot_sandbox(bot: &crate::state::TradingBotRecord) -> Resul
         .await
         .map_err(|e| format!("self-heal create_sidecar failed: {e}"))?;
 
-    let mut updated = bot.clone();
-    updated.sandbox_id = record.id.clone();
+    // Repoint the bot at the new sandbox. Must update the record under its
+    // canonical key (`bot:{id}`), not the raw id — otherwise get_bot/activate
+    // keep reading the stale sandbox_id.
     crate::state::bots()?
-        .insert(updated.id.clone(), updated)
+        .update(&crate::state::bot_key(&bot.id), |b| {
+            b.sandbox_id = record.id.clone();
+        })
         .map_err(|e| format!("self-heal save bot failed: {e}"))?;
 
     tracing::info!(
