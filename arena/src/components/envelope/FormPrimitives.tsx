@@ -24,12 +24,12 @@ interface FieldShellProps {
 export function FieldShell({ label, hint, error, children }: FieldShellProps) {
   return (
     <label className="flex flex-col gap-1 text-sm">
-      <span className="text-xs uppercase tracking-wide text-bp-elements-textTertiary font-medium">
+      <span className="text-xs uppercase tracking-wide text-arena-elements-textTertiary font-medium">
         {label}
       </span>
       {children}
       {hint && !error && (
-        <span className="text-xs text-bp-elements-textTertiary">{hint}</span>
+        <span className="text-xs text-arena-elements-textTertiary">{hint}</span>
       )}
       {error && <span className="text-xs text-red-500">{error}</span>}
     </label>
@@ -230,7 +230,7 @@ export function AmountField({
           placeholder="0"
         />
         <div className="flex items-center gap-2">
-          <label htmlFor={`${id}-dec`} className="text-xs text-bp-elements-textTertiary shrink-0">
+          <label htmlFor={`${id}-dec`} className="text-xs text-arena-elements-textTertiary shrink-0">
             Scale:
           </label>
           <select
@@ -241,7 +241,7 @@ export function AmountField({
               setDecimals(next);
               commit(draft, next);
             }}
-            className="text-xs bg-bp-elements-background-depth-3 border border-bp-elements-borderColor rounded px-2 py-1 outline-none"
+            className="text-xs bg-arena-elements-background-depth-3 border border-arena-elements-borderColor rounded px-2 py-1 outline-none"
           >
             {COMMON_DECIMALS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -249,7 +249,7 @@ export function AmountField({
               </option>
             ))}
           </select>
-          <span className="text-[10px] font-mono text-bp-elements-textTertiary truncate">
+          <span className="text-[10px] font-mono text-arena-elements-textTertiary truncate">
             raw = {value}
           </span>
         </div>
@@ -378,12 +378,12 @@ export function ToggleField({ label, value, onChange, hint }: ToggleFieldProps) 
         className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors ${
           value
             ? 'border-violet-500/40 bg-violet-500/10 text-violet-400'
-            : 'border-bp-elements-borderColor bg-bp-elements-background-depth-3 text-bp-elements-textSecondary'
+            : 'border-arena-elements-borderColor bg-arena-elements-background-depth-3 text-arena-elements-textSecondary'
         }`}
       >
         <span
           className={`block h-3 w-3 rounded-full transition-colors ${
-            value ? 'bg-violet-400' : 'bg-bp-elements-textTertiary'
+            value ? 'bg-violet-400' : 'bg-arena-elements-textTertiary'
           }`}
         />
         {value ? 'On' : 'Off'}
@@ -438,7 +438,7 @@ export function SelectField<T extends string | number>({
           const numeric = opts.find((o) => String(o.value) === raw);
           if (numeric) onChange(numeric.value);
         }}
-        className="h-11 rounded-lg px-3.5 py-2.5 text-base bg-bp-elements-background-depth-3 border border-bp-elements-borderColor text-bp-elements-textPrimary outline-none"
+        className="h-11 rounded-lg px-3.5 py-2.5 text-base bg-arena-elements-background-depth-3 border border-arena-elements-borderColor text-arena-elements-textPrimary outline-none"
       >
         {opts.map((opt) => (
           <option key={String(opt.value)} value={String(opt.value)}>

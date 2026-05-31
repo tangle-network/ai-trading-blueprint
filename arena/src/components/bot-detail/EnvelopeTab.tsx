@@ -224,7 +224,7 @@ function SignAndSubmitCard({
 
   return (
     <Card title="Sign and submit envelope">
-      <div className="flex gap-1 mb-3 border-b border-bp-elements-borderColor">
+      <div className="flex gap-1 mb-3 border-b border-arena-elements-borderColor">
         <ModeTabButton active={mode === 'build'} onClick={() => setMode('build')}>
           Build
         </ModeTabButton>
@@ -265,7 +265,7 @@ function SignAndSubmitCard({
             <p className="text-xs text-red-500">PUT /envelope: {submitError.message}</p>
           )}
           {(signing || submitting) && (
-            <p className="text-xs text-bp-elements-textTertiary">
+            <p className="text-xs text-arena-elements-textTertiary">
               {signing ? 'Awaiting signature…' : 'Submitting…'}
             </p>
           )}
@@ -334,7 +334,7 @@ function ModeTabButton({
       className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
         active
           ? 'border-violet-500 text-violet-400'
-          : 'border-transparent text-bp-elements-textTertiary hover:text-bp-elements-textSecondary'
+          : 'border-transparent text-arena-elements-textTertiary hover:text-arena-elements-textSecondary'
       }`}
     >
       {children}

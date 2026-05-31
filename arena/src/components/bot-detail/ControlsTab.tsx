@@ -236,6 +236,19 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {!isOwner && detail.submitter_address && (
+        <div className="lg:col-span-2 flex items-start gap-3 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-4 py-3">
+          <div className="i-ph:eye text-lg mt-0.5 text-arena-elements-textTertiary" />
+          <div className="text-sm text-arena-elements-textSecondary">
+            <span className="font-medium text-arena-elements-textPrimary">View-only.</span>{' '}
+            This bot belongs to{' '}
+            <span className="font-data text-arena-elements-textPrimary">
+              {`${detail.submitter_address.slice(0, 6)}…${detail.submitter_address.slice(-4)}`}
+            </span>
+            . Connect that wallet to start/stop, run, or change its strategy.
+          </div>
+        </div>
+      )}
       <StatusCard
         bot={bot}
         detail={detail}

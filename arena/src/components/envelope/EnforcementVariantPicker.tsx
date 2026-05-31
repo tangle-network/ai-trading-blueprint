@@ -30,7 +30,7 @@ export function EnforcementVariantPicker({ value, onChange, disabled }: Props) {
           const next = e.target.value as EnforcementKind;
           onChange(defaultEnforcementForKind(next));
         }}
-        className="h-11 rounded-lg px-3.5 py-2.5 text-base bg-bp-elements-background-depth-3 border border-bp-elements-borderColor text-bp-elements-textPrimary outline-none disabled:opacity-40"
+        className="h-11 rounded-lg px-3.5 py-2.5 text-base bg-arena-elements-background-depth-3 border border-arena-elements-borderColor text-arena-elements-textPrimary outline-none disabled:opacity-40"
         data-testid="enforcement-variant-picker"
       >
         {ENFORCEMENT_KINDS.map((kind) => (
