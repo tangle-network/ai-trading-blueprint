@@ -260,6 +260,21 @@ function getRunSubtitle(run: BotRun): string {
   return `${formatRunTimestamp(run.startedAt)} • ${getStatusLabel(run.status)}`;
 }
 
+function isInformativeRun(run: BotRun): boolean {
+  const result = run.result?.trim();
+  return Boolean(run.error || (result && result !== "No messages."));
+}
+
+function chooseDefaultRun(runs: BotRun[]): BotRun | null {
+  return (
+    runs.find((run) => run.status === "running")
+    ?? runs.find((run) => run.workflowKind === "trading" && isInformativeRun(run))
+    ?? runs.find(isInformativeRun)
+    ?? runs[0]
+    ?? null
+  );
+}
+
 function deriveTranscriptSessionId(botId: string, run: BotRun): string | null {
   if (!Number.isFinite(run.startedAt) || run.startedAt <= 0) {
     return null;
@@ -423,6 +438,8 @@ function RunsSidebar({
             ? "max-h-56 overflow-y-auto py-1"
             : "min-h-0 flex-1 overflow-y-auto py-1"
         }
+        tabIndex={0}
+        aria-label="Autonomous runs"
       >
         {runs.length === 0 ? (
           <div className="px-3 py-3 text-[11px] font-data text-arena-elements-textTertiary">
@@ -435,10 +452,11 @@ function RunsSidebar({
               return (
                 <button
                   key={run.id}
-                  className={`group flex w-full items-center gap-2 px-3 py-2 text-left transition-colors ${
+                  aria-pressed={isActive}
+                  className={`group flex w-full items-center gap-2 border-l-2 px-3 py-2.5 text-left transition-colors ${
                     isActive
-                      ? "bg-arena-elements-item-backgroundActive"
-                      : "hover:bg-arena-elements-item-backgroundHover"
+                      ? "border-amber-500 bg-arena-elements-item-backgroundActive"
+                      : "border-transparent hover:bg-arena-elements-item-backgroundHover"
                   }`}
                   onClick={() => onSelect(run.id)}
                 >
@@ -500,7 +518,7 @@ function RunsSidebar({
 function RunMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 p-3">
-      <div className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
+      <div className="text-[12px] font-data font-medium text-arena-elements-textSecondary">
         {label}
       </div>
       <div className="mt-1 text-sm font-data text-arena-elements-textPrimary">
@@ -708,7 +726,7 @@ function RunResultSummary({ result }: { result: string }) {
           <dl className="mt-2 space-y-1.5">
             {section.items.map((item) => (
               <div key={`${section.title}-${item.label}`} className="grid gap-1 sm:grid-cols-[150px_minmax(0,1fr)]">
-                <dt className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                <dt className="text-[12px] font-data font-medium text-arena-elements-textSecondary">
                   {item.label}
                 </dt>
                 <dd className="break-words text-sm font-data text-arena-elements-textPrimary">
@@ -775,10 +793,14 @@ function RunDetailPanel({ run }: { run: BotRun }) {
         </div>
       </div>
 
-      <div className="overflow-y-auto px-4 py-4">
+      <div
+        className="overflow-y-auto px-4 py-4"
+        tabIndex={0}
+        aria-label="Run details"
+      >
         {(run.error || run.result) && (
           <div className="mb-4 rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 p-4">
-            <div className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
+            <div className="text-[12px] font-data font-medium text-arena-elements-textSecondary">
               {run.error ? "Error" : "Result"}
             </div>
             {run.error ? (
@@ -934,12 +956,12 @@ export function RunsTab({
     }
 
     if (!activeRunId || !runs.some((run) => run.runId === activeRunId)) {
-      setActiveRunId(runs[0]!.runId);
+      setActiveRunId(chooseDefaultRun(runs)?.runId ?? "");
     }
   }, [activeRunId, runs]);
 
   const activeRun =
-    runs.find((run) => run.runId === activeRunId) ?? runs[0] ?? null;
+    runs.find((run) => run.runId === activeRunId) ?? chooseDefaultRun(runs);
   const transcriptSessionId = resolveTranscriptSessionId(botId, activeRun);
   const canStreamTranscript = Boolean(
     transcriptSessionId && isAuthenticated && token,

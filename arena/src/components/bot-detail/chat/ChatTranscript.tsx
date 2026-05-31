@@ -209,7 +209,12 @@ export function ChatTranscript({
 
   return (
     <div className="flex flex-col h-full flex-1 min-h-0">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-3 py-3"
+        tabIndex={0}
+        aria-label="Conversation transcript"
+      >
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-sm text-arena-elements-textTertiary">
             No messages yet
