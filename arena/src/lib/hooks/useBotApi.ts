@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   HyperliquidTradeMetadata,
   PredictionTradeMetadata,
@@ -19,7 +20,8 @@ import {
 } from '~/lib/operator/meta';
 import { useOperatorAuth } from './useOperatorAuth';
 import { operatorJsonWithAuth } from '~/lib/operator/fetch';
-import type { BotOperatorKind } from '~/lib/types/bot';
+import type { Bot, BotOperatorKind } from '~/lib/types/bot';
+import { tokenMetadataFromStrategyConfig } from '~/lib/assetUniverse';
 
 interface ApiTrade {
   id: string;
@@ -474,6 +476,118 @@ export function useBotTrades(
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
   });
+}
+
+export interface LatestAgentTrade {
+  trade: Trade;
+  bot: Bot;
+}
+
+export function useLatestAgentTrades(
+  bots: Bot[],
+  {
+    limit = 10,
+    perBotLimit = 4,
+    maxBots = 32,
+  }: {
+    limit?: number;
+    perBotLimit?: number;
+    maxBots?: number;
+  } = {},
+) {
+  const botFingerprint = bots.map((bot) => [
+    bot.id,
+    bot.name,
+    bot.status,
+    bot.totalTrades,
+    bot.operatorKind ?? 'none',
+    bot.operatorApiUrl ?? 'none',
+    bot.chainId ?? 'none',
+  ].join(':')).join('|');
+
+  const candidates = useMemo(() => {
+    return bots
+      .filter((bot) =>
+        bot.verificationState === 'authoritative'
+        && !!bot.operatorApiUrl
+        && bot.status !== 'archived'
+        && bot.status !== 'unknown'
+        && (bot.totalTrades > 0 || bot.status === 'active' || bot.tradingActive === true),
+      )
+      .slice(0, maxBots)
+      .map((bot) => ({
+        bot,
+        deploymentKind: getDeploymentKindForOperatorKind(bot.operatorKind),
+        assetMetadata: tokenMetadataFromStrategyConfig(bot.strategyConfig),
+      }));
+  }, [botFingerprint, bots, maxBots]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const authByUrl = {
+    cloud: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'cloud')?.operatorApiUrl ?? ''),
+    instance: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'instance')?.operatorApiUrl ?? ''),
+    tee: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'tee')?.operatorApiUrl ?? ''),
+  } as const;
+
+  const results = useQueries({
+    queries: candidates.map(({ bot, deploymentKind, assetMetadata }) => {
+      const auth = authByUrl[bot.operatorKind ?? 'cloud'];
+      const needsAuth = fleetReadRequiresAuth(deploymentKind);
+      const authKey = needsAuth ? auth.authCacheKey : 'public';
+
+      return {
+        queryKey: [
+          'latest-agent-trades',
+          bot.operatorApiUrl,
+          bot.id,
+          perBotLimit,
+          deploymentKind,
+          bot.chainId,
+          authKey,
+        ] as const,
+        queryFn: async (): Promise<LatestAgentTrade[]> => {
+          const path = `${buildBotScopedPathForDeploymentKind(
+            deploymentKind,
+            bot.id,
+            '/trades',
+          )}?limit=${perBotLimit}`;
+          const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(
+            bot.operatorApiUrl ?? '',
+            auth,
+            path,
+            { auth: needsAuth },
+          );
+          return normalizeTrades(data).map((trade) => ({
+            trade: mapApiTrade(trade, bot.name, bot.chainId, assetMetadata),
+            bot,
+          }));
+        },
+        staleTime: 10_000,
+        refetchOnMount: 'always' as const,
+        refetchInterval: 15_000,
+        retry: 1,
+        enabled: !!bot.operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
+      };
+    }),
+  });
+
+  const dataFingerprint = results.map((result) =>
+    result.data ? result.data.map((item) => `${item.trade.id}:${item.trade.timestamp}`).join(',') : 'x',
+  ).join('|');
+
+  const trades = useMemo(() => {
+    return results
+      .flatMap((result) => result.data ?? [])
+      .sort((a, b) => b.trade.timestamp - a.trade.timestamp)
+      .slice(0, limit);
+  }, [dataFingerprint, limit]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return {
+    trades,
+    isLoading: results.some((result) => result.isLoading) && trades.length === 0,
+    isFetching: results.some((result) => result.isFetching),
+    isError: results.length > 0 && results.every((result) => result.isError),
+    candidateCount: candidates.length,
+  };
 }
 
 export function useBotRecentValidations(

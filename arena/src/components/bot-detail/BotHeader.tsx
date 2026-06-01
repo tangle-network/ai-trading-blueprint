@@ -217,11 +217,11 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
   ];
 
   return (
-    <div className="sticky top-[var(--header-height)] z-30 mb-4 -mx-4 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1 px-4 py-2.5 shadow-[0_8px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.22)] sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+    <div className="sticky top-[var(--header-height)] z-30 mb-4 -mx-4 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1 px-4 py-2 shadow-[0_8px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.22)] sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
       <div className="mx-auto max-w-[1320px]">
         <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
-            <div className="mb-1.5 flex flex-wrap items-center gap-2 text-sm">
+            <div className="mb-1 flex flex-wrap items-center gap-2 text-sm">
               <Link
                 to="/arena"
                 className="inline-flex items-center gap-1.5 font-display font-medium text-arena-elements-textTertiary transition-colors hover:text-violet-700 dark:hover:text-violet-400"
@@ -247,7 +247,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
             </div>
 
             <div className="flex flex-col gap-1.5 md:flex-row md:items-end">
-              <h1 className="min-w-0 max-w-[820px] break-words font-display text-3xl font-bold leading-[1.05] tracking-tight">
+              <h1 className="min-w-0 max-w-[720px] break-words font-display text-2xl font-bold leading-[1.08] tracking-tight sm:text-[1.65rem]">
                 {explicitTitle}
               </h1>
               <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 pb-0.5 text-sm text-arena-elements-textTertiary">
@@ -267,11 +267,11 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
               </div>
             </div>
 
-            <div className="mt-2.5 flex flex-wrap gap-2">
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-data text-xs text-arena-elements-textTertiary">
               {[...titleParts.metadata, ...trustItems.map((item) => `${item.label}: ${item.value}`)].map((label) => (
                 <span
                   key={label}
-                  className="inline-flex min-h-7 items-center rounded-full border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 px-2.5 py-1 font-data text-xs text-arena-elements-textSecondary"
+                  className="inline-flex min-h-5 items-center text-arena-elements-textSecondary"
                 >
                   {label}
                 </span>
@@ -280,13 +280,13 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
           </div>
 
           <Tooltip.Provider delayDuration={150}>
-            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6 xl:min-w-[640px]">
+            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6 xl:min-w-[560px]">
               {metrics.map((stat) => (
                 <div
                   key={stat.label}
-                  className="min-h-[58px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+                  className="min-h-[48px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
                 >
-                  <div className="mb-1 flex min-h-[18px] items-start gap-1 text-[10px] font-data font-medium uppercase leading-tight tracking-wider text-arena-elements-textTertiary">
+                  <div className="mb-0.5 flex min-h-[16px] items-start gap-1 text-[9px] font-data font-medium uppercase leading-tight tracking-wider text-arena-elements-textTertiary">
                     <span className="break-words">{stat.label}</span>
                     {stat.title && (
                       <Tooltip.Root>
@@ -313,7 +313,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                       </Tooltip.Root>
                     )}
                   </div>
-                  <div className={`truncate font-data text-lg font-bold leading-tight ${stat.color}`}>
+                  <div className={`truncate font-data text-base font-bold leading-tight ${stat.color}`}>
                     {stat.value}
                   </div>
                 </div>
@@ -322,7 +322,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
           </Tooltip.Provider>
         </div>
 
-        <div className="mt-2 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className="mt-1.5 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           {navItems.length > 0 && onTabChange && (
             <nav
               className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1"

@@ -38,7 +38,6 @@ import { ErrorBoundary } from "~/components/ErrorBoundary";
 import { EnvelopeNeededBanner } from "~/components/bot-detail/EnvelopeNeededBanner";
 import { useAccount } from "wagmi";
 import { useBotDetail } from "~/lib/hooks/useBotDetail";
-import { useBotLiveSummary } from "~/lib/hooks/useBotLiveSummary";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
 import { useRouteOperatorAutoAuth } from "~/lib/hooks/useRouteOperatorAutoAuth";
 import { useOperatorSyncScope } from "~/lib/hooks/useOperatorSyncScope";
@@ -49,7 +48,7 @@ import {
   getOperatorKindForBlueprint,
   useOperatorMeta,
 } from "~/lib/operator/meta";
-import { formatNumber, isLiveBotStatus, normalizeDisplayNumber } from "~/lib/format";
+import { isLiveBotStatus } from "~/lib/format";
 import {
   provisionsForOwner,
   type TrackedProvision,
@@ -87,42 +86,57 @@ function isBotTabValue(value: string | null | undefined): value is BotTabValue {
   return !!value && (VALID_BOT_TABS as readonly string[]).includes(value);
 }
 
-function formatImmersivePercent(value: number | null): string {
-  if (value == null) return "—";
-  const displayValue = normalizeDisplayNumber(value, 1);
-  return `${displayValue > 0 ? "+" : ""}${formatNumber(displayValue, {
-    maximumFractionDigits: 1,
-    minimumFractionDigits: 1,
-  })}%`;
-}
-
-function formatImmersiveCurrency(value: number | null): string {
-  if (value == null) return "—";
-  return `$${formatNumber(value, { maximumFractionDigits: value >= 1000 ? 0 : 2 })}`;
+function isImmersiveTab(value: BotTabValue): value is "runs" | "chat" {
+  return value === "runs" || value === "chat";
 }
 
 export default function BotDetailPage() {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
+  const fromTabParam = searchParams.get("from");
   const activeTab: BotTabValue = isBotTabValue(tabParam)
     ? tabParam
     : "performance";
+  const immersiveReturnTab: BotTabValue =
+    isBotTabValue(fromTabParam) && !isImmersiveTab(fromTabParam)
+      ? fromTabParam
+      : "performance";
 
   const handleTabChange = useCallback(
-    (next: string) => {
+    (next: string, options?: { replace?: boolean }) => {
       if (!isBotTabValue(next)) return;
       setSearchParams(
         (prev) => {
           const updated = new URLSearchParams(prev);
+          const previousTab = prev.get("tab");
+          const previousFrom = prev.get("from");
+
           if (next === "performance") {
             updated.delete("tab");
           } else {
             updated.set("tab", next);
           }
+
+          if (isImmersiveTab(next)) {
+            const returnTab =
+              isBotTabValue(previousTab) && !isImmersiveTab(previousTab)
+                ? previousTab
+                : isBotTabValue(previousFrom) && !isImmersiveTab(previousFrom)
+                  ? previousFrom
+                  : "performance";
+            if (returnTab === "performance") {
+              updated.delete("from");
+            } else {
+              updated.set("from", returnTab);
+            }
+          } else {
+            updated.delete("from");
+          }
+
           return updated;
         },
-        { replace: true },
+        options?.replace ? { replace: true } : undefined,
       );
     },
     [setSearchParams],
@@ -247,9 +261,6 @@ export default function BotDetailPage() {
   );
 
   const botTargetChainId = bot ? getBotStrategyChainId(bot) : null;
-  const botTargetNetwork = botTargetChainId != null
-    ? networks[botTargetChainId]?.label ?? `Chain ${botTargetChainId}`
-    : "Unknown network";
 
   useEffect(() => {
     if (!bot) return;
@@ -287,15 +298,7 @@ export default function BotDetailPage() {
 
   // Must call hooks before early returns (React rules of hooks)
   const botIsLive = bot ? isLiveBotStatus(bot.status) : false;
-  const immersiveTab = activeTab === "runs" || activeTab === "chat";
-  const immersiveSummary = useBotLiveSummary({
-    botId: bot?.id ?? "",
-    botName: displayBotName,
-    operatorApiUrl: bot?.operatorApiUrl,
-    operatorKind: bot?.operatorKind,
-    chainId: bot?.chainId,
-    enabled: Boolean(bot) && immersiveTab,
-  });
+  const immersiveTab = isImmersiveTab(activeTab);
   const pendingValidationCount = usePendingValidationCount(
     bot?.id ?? "",
     displayBotName,
@@ -401,11 +404,11 @@ export default function BotDetailPage() {
             <div className="flex min-w-0 items-center gap-3">
               <button
                 type="button"
-                onClick={() => handleTabChange("performance")}
+                onClick={() => handleTabChange(immersiveReturnTab, { replace: true })}
                 className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm font-display font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
               >
                 <span className="i-ph:arrow-left text-sm" aria-hidden="true" />
-                Agent
+                Back
               </button>
               <div className="min-w-0">
                 <div className="truncate font-display text-base font-semibold text-arena-elements-textPrimary">
@@ -414,25 +417,6 @@ export default function BotDetailPage() {
                 <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
                   {activeTab === "runs" ? "Trading Runs" : "Chat"}
                 </div>
-              </div>
-              <div className="hidden min-w-0 items-center gap-1.5 xl:flex">
-                {[
-                  bot.paperTrade ? "Paper" : "Live",
-                  botTargetNetwork,
-                  `NAV ${formatImmersiveCurrency(immersiveSummary.portfolioValue)}`,
-                  `30D ${formatImmersivePercent(immersiveSummary.pnlPercent)}`,
-                  `Sharpe ${immersiveSummary.sharpeRatio == null ? "—" : formatNumber(immersiveSummary.sharpeRatio, {
-                    maximumFractionDigits: 2,
-                    minimumFractionDigits: 2,
-                  })}`,
-                ].map((label) => (
-                  <span
-                    key={label}
-                    className="max-w-[210px] truncate rounded-full border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/60 px-2.5 py-1 font-data text-xs text-arena-elements-textSecondary"
-                  >
-                    {label}
-                  </span>
-                ))}
               </div>
             </div>
 

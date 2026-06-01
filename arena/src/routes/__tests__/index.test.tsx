@@ -28,6 +28,7 @@ vi.mock('react-router', () => ({
 
 vi.mock('wagmi', () => ({
   useAccount: () => accountState,
+  useSignMessage: () => ({ signMessageAsync: async () => '0xsig' }),
 }));
 
 vi.mock('@tangle-network/blueprint-ui/components', () => ({
@@ -49,6 +50,10 @@ vi.mock('~/components/arena/FilterBar', () => ({
 
 vi.mock('~/components/arena/LeaderboardTable', () => ({
   LeaderboardTable: () => <div>table</div>,
+}));
+
+vi.mock('~/components/arena/LatestAgentTrades', () => ({
+  LatestAgentTrades: () => <div>latest trades</div>,
 }));
 
 vi.mock('~/components/arena/SparklineChart', () => ({

@@ -7,6 +7,7 @@ import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { FilterBar } from '~/components/arena/FilterBar';
 import { LeaderboardTable } from '~/components/arena/LeaderboardTable';
+import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
 import { Badge, Identicon } from '@tangle-network/blueprint-ui/components';
 import { SparklineChart } from '~/components/arena/SparklineChart';
 import { SkeletonCard } from '~/components/ui/Skeleton';
@@ -208,6 +209,8 @@ export default function IndexPage() {
           ))}
         </div>
       </section>
+
+      <LatestAgentTrades bots={leaderboardBots} />
 
       <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
