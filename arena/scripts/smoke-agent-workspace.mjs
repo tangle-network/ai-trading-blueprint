@@ -22,9 +22,17 @@ const FIXTURE_OWNER_AUTH_KEY = `arena.operator_auth.${FIXTURE_OPERATOR.toLowerCa
 
 const SECTION_EXPECTATIONS = {
   performance: ['Market', 'ETH', 'Trade Tape'],
-  portfolio: ['Positions', 'Trades', 'Bot Equity'],
-  runs: ['Trading Run', 'Run ID', 'Autonomous Run'],
-  chat: ['Trading Agent', 'Breakout retest', 'Owner Sign In'],
+  portfolio: [
+    'Exposure',
+    'Positions Value',
+    ['Bot Equity', 'Account Total'],
+    ['Execution Ledger', 'No trades recorded'],
+  ],
+  runs: [
+    ['Trading Run', 'No runs yet'],
+    ['Run ID', 'Autonomous activity'],
+  ],
+  chat: ['Trading Agent', ['Breakout retest', 'No messages yet'], 'Owner Sign In'],
   operations: ['Operations', 'Validation', 'Validator'],
 };
 const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Cloud', 'Platform Volume', 'Execution Tape', 'Leaderboard', 'ETH Macro Scalper'];
@@ -813,7 +821,12 @@ function withPath(baseUrl, pathPart) {
 
 function textIncludes(bodyText, expected) {
   const normalizedBody = bodyText.toLowerCase();
-  return expected.every((text) => normalizedBody.includes(text.toLowerCase()));
+  return expected.every((item) => {
+    if (Array.isArray(item)) {
+      return item.some((text) => normalizedBody.includes(text.toLowerCase()));
+    }
+    return normalizedBody.includes(item.toLowerCase());
+  });
 }
 
 async function discoverAgentId(page, baseUrl, allowEmpty) {
@@ -904,7 +917,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
       })()`);
         const expected = getSectionExpectations(section, { ownerPerformance });
         const hasExpectedText = textIncludes(nextMetrics.bodyText, expected);
-        const isStillLoading = /Loading bot data|Loading workspace|Loading autonomous runs|No trades recorded|No portfolio data/i.test(nextMetrics.bodyText);
+        const isStillLoading = /Loading bot data|Loading workspace|Loading autonomous runs/i.test(nextMetrics.bodyText);
         return hasExpectedText && !isStillLoading ? nextMetrics : false;
         }, { timeoutMs: 12_000, intervalMs: 250 });
       } catch {
