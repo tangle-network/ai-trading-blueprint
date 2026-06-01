@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const blueprintUiState = vi.hoisted(() => ({
   networks: {} as Record<number, unknown>,
+  selectedChainId: 31337,
 }));
 
 vi.mock('@tangle-network/blueprint-ui', () => ({
@@ -27,6 +28,12 @@ vi.mock('@tangle-network/blueprint-ui', () => ({
   allTangleChains: [],
   mainnet: {},
   resolveRpcUrl: vi.fn(),
+  selectedChainIdStore: {
+    get: vi.fn(() => blueprintUiState.selectedChainId),
+    set: vi.fn((chainId: number) => {
+      blueprintUiState.selectedChainId = chainId;
+    }),
+  },
   configureNetworks: vi.fn((networks: Record<number, unknown>) => {
     blueprintUiState.networks = networks;
   }),
@@ -47,6 +54,7 @@ describe('HyperEVM chain configuration', () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
     blueprintUiState.networks = {};
+    blueprintUiState.selectedChainId = 31337;
   });
 
   it('does not configure HyperEVM testnet with only enabled, chain id, RPC, and asset token', async () => {
@@ -129,5 +137,16 @@ describe('HyperEVM chain configuration', () => {
         tradingVault: VAULT,
       },
     });
+  });
+
+  it('does not expose the local chain when local chain mode is disabled', async () => {
+    vi.stubEnv('VITE_USE_LOCAL_CHAIN', 'false');
+    vi.stubEnv('VITE_CHAIN_ID', '8453');
+
+    const { networks } = await importChains();
+
+    expect(networks[31337]).toBeUndefined();
+    expect(networks[8453]).toBeDefined();
+    expect(blueprintUiState.selectedChainId).toBe(8453);
   });
 });

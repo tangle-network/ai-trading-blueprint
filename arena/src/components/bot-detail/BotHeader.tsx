@@ -9,6 +9,7 @@ import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
 import { botStatusBadgeVariant, botStatusLabel, formatNumber, normalizeDisplayNumber } from '~/lib/format';
 import { resolveBotDisplayName } from '~/lib/utils/botNames';
 import { buildVaultPath } from '~/lib/utils/vaultRoute';
+import { networks } from '~/lib/contracts/chains';
 import { HEADER_RETURN_PERCENT_COPY } from './metricCopy';
 
 interface BotHeaderProps {
@@ -46,6 +47,52 @@ function groupNavItems(items: BotHeaderNavItem[]) {
   return groups;
 }
 
+function readNumber(value: unknown): number | null {
+  const numberValue = typeof value === 'number'
+    ? value
+    : typeof value === 'string'
+      ? Number(value)
+      : null;
+  return numberValue != null && Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number | null {
+  const value = readNumber(
+    strategyConfig?.initial_capital_usd
+      ?? strategyConfig?.initial_capital
+      ?? strategyConfig?.cash_balance,
+  );
+  return value != null && value > 0 ? value : null;
+}
+
+function cleanBotTitle(displayName: string) {
+  const statusPattern = /\s*\((active|paused|stopped|unknown|winding down|archived|awaiting secrets)\)\s*$/i;
+  const titleWithoutStatus = displayName.replace(statusPattern, '').trim();
+  const parentheticalMetadata = Array.from(titleWithoutStatus.matchAll(/\(([^)]+)\)/g))
+    .map((match) => match[1]?.trim())
+    .filter((value): value is string => Boolean(value));
+  const withoutParentheticals = titleWithoutStatus.replace(/\s*\([^)]*\)/g, '').trim();
+  const [identity, ...params] = withoutParentheticals.split(/\s+-\s+/);
+
+  return {
+    title: identity?.trim() || displayName,
+    metadata: [
+      ...parentheticalMetadata,
+      params.join(' - ').trim(),
+    ].filter(Boolean),
+  };
+}
+
+function formatCapital(value: number | null): string {
+  if (value == null) return '—';
+  return `$${formatNumber(value, { maximumFractionDigits: value >= 1000 ? 0 : 2 })}`;
+}
+
+function strategyChainId(bot: Bot): number | undefined {
+  const configChainId = readNumber(bot.strategyConfig?.protocol_chain_id ?? bot.strategyConfig?.chain_id);
+  return configChainId ?? bot.chainId;
+}
+
 export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHeaderProps) {
   const { data: detail } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
   const hasVaultAddress = Boolean(
@@ -56,6 +103,13 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
     fallbackName: bot.name,
     strategyType: detail?.strategy_type ?? bot.strategyType,
   });
+  const titleParts = cleanBotTitle(displayName);
+  const initialCapitalUsd = readInitialCapitalUsd(bot.strategyConfig);
+  const maxDrawdownLimit = readNumber(bot.riskParams?.max_drawdown_pct);
+  const targetChainId = strategyChainId(bot);
+  const targetNetwork = targetChainId != null
+    ? networks[targetChainId]?.label ?? `Chain ${targetChainId}`
+    : 'Unknown network';
   const summary = useBotLiveSummary({
     botId: bot.id,
     botName: displayName,
@@ -145,6 +199,13 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
     },
   ];
   const navGroups = groupNavItems(navItems);
+  const trustItems = [
+    { label: 'Mode', value: bot.paperTrade ? 'Paper' : 'Live' },
+    { label: 'Network', value: targetNetwork },
+    { label: 'Capital', value: formatCapital(initialCapitalUsd) },
+    { label: 'Max DD', value: maxDrawdownLimit == null ? '—' : `${formatNumber(maxDrawdownLimit, { maximumFractionDigits: 1 })}%` },
+    { label: 'Telemetry', value: '30s public snapshots' },
+  ];
 
   return (
     <div className="sticky top-[var(--header-height)] z-30 mb-5 -mx-4 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1 px-4 py-3 shadow-[0_8px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.22)] sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
@@ -178,7 +239,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
 
             <div className="flex flex-col gap-2 md:flex-row md:items-end">
               <h1 className="min-w-0 max-w-[920px] break-words font-display text-2xl font-bold leading-tight tracking-tight md:text-3xl">
-                {displayName}
+                {titleParts.title}
               </h1>
               <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 pb-0.5 text-sm text-arena-elements-textTertiary">
                 <span className="inline-flex min-w-0 items-center gap-1.5 font-data" title={bot.operatorAddress}>
@@ -195,6 +256,17 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                   </span>
                 )}
               </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {[...titleParts.metadata, ...trustItems.map((item) => `${item.label}: ${item.value}`)].map((label) => (
+                <span
+                  key={label}
+                  className="inline-flex min-h-7 items-center rounded-full border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 px-2.5 py-1 font-data text-[11px] uppercase tracking-wider text-arena-elements-textSecondary"
+                >
+                  {label}
+                </span>
+              ))}
             </div>
           </div>
 

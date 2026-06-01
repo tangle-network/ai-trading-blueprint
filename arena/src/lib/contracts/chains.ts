@@ -7,10 +7,12 @@ import {
   rpcUrl,
   configureNetworks,
   getNetworks,
+  selectedChainIdStore,
   type CoreAddresses,
 } from '@tangle-network/blueprint-ui';
 
 const forkMode = import.meta.env.VITE_FORK_MODE === 'true';
+const localChainEnabled = import.meta.env.VITE_USE_LOCAL_CHAIN === 'true';
 const executionForkChainId = Number(import.meta.env.VITE_DEX_ETHEREUM_CHAIN_ID ?? sharedTangleLocal.id);
 const executionForkRpcUrl = import.meta.env.VITE_DEX_ETHEREUM_RPC_URL ?? rpcUrl;
 
@@ -43,7 +45,7 @@ function nonZeroAddressEnv(value: string | undefined): Address | undefined {
 }
 
 const includeLocalExecutionFork =
-  import.meta.env.VITE_USE_LOCAL_CHAIN === 'true' &&
+  localChainEnabled &&
   import.meta.env.VITE_DEX_ETHEREUM_ENABLED !== 'false' &&
   executionForkChainId !== sharedTangleLocal.id &&
   isLocalRpcUrl(executionForkRpcUrl);
@@ -286,21 +288,25 @@ const tangleMainnetEnvelopeV3 = envelopeV3Addresses(tangleMainnet.id);
 
 // Configure arena networks at module load time.
 configureNetworks<ArenaAddresses>({
-  [tangleLocal.id]: {
-    chain: tangleLocal,
-    rpcUrl: tangleLocal.rpcUrls.default.http[0] ?? rpcUrl,
-    label: forkMode ? 'Ethereum Local Fork' : 'Tangle Local',
-    shortLabel: 'Local',
-    addresses: {
-      jobs: (import.meta.env.VITE_TANGLE_CONTRACT ?? '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9') as Address,
-      services: (import.meta.env.VITE_TANGLE_CONTRACT ?? '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9') as Address,
-      tangle: (import.meta.env.VITE_TANGLE_CONTRACT ?? '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9') as Address,
-      vaultFactory: (import.meta.env.VITE_VAULT_FACTORY ?? ZERO_ADDRESS) as Address,
-      tradingBlueprint: (import.meta.env.VITE_TRADING_BLUEPRINT ?? ZERO_ADDRESS) as Address,
-      tradeValidator: localEnvelopeV3.tradeValidator,
-      tradingVault: localEnvelopeV3.tradingVault,
-    },
-  },
+  ...(localChainEnabled
+    ? {
+        [tangleLocal.id]: {
+          chain: tangleLocal,
+          rpcUrl: tangleLocal.rpcUrls.default.http[0] ?? rpcUrl,
+          label: forkMode ? 'Ethereum Local Fork' : 'Tangle Local',
+          shortLabel: 'Local',
+          addresses: {
+            jobs: (import.meta.env.VITE_TANGLE_CONTRACT ?? '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9') as Address,
+            services: (import.meta.env.VITE_TANGLE_CONTRACT ?? '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9') as Address,
+            tangle: (import.meta.env.VITE_TANGLE_CONTRACT ?? '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9') as Address,
+            vaultFactory: (import.meta.env.VITE_VAULT_FACTORY ?? ZERO_ADDRESS) as Address,
+            tradingBlueprint: (import.meta.env.VITE_TRADING_BLUEPRINT ?? ZERO_ADDRESS) as Address,
+            tradeValidator: localEnvelopeV3.tradeValidator,
+            tradingVault: localEnvelopeV3.tradingVault,
+          },
+        },
+      }
+    : {}),
   ...(includeLocalExecutionFork
     ? {
         [executionForkChain.id]: {
@@ -452,3 +458,15 @@ configureNetworks<ArenaAddresses>({
 
 /** Backwards-compatible accessor. */
 export const networks = getNetworks<ArenaAddresses>();
+
+const preferredChainId = Number(import.meta.env.VITE_CHAIN_ID);
+const fallbackSelectedChainId = Number.isFinite(preferredChainId) && networks[preferredChainId]
+  ? preferredChainId
+  : Number(Object.keys(networks)[0]);
+
+if (Number.isFinite(fallbackSelectedChainId)) {
+  const selectedChainId = selectedChainIdStore.get();
+  if (!selectedChainId || !networks[selectedChainId]) {
+    selectedChainIdStore.set(fallbackSelectedChainId);
+  }
+}

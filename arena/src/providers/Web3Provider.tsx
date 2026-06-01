@@ -44,16 +44,17 @@ function dedupeChains(chains: readonly Chain[]): readonly [Chain, ...Chain[]] {
 // not configured"), stranding the wallet on chain 31337. Sourcing both from
 // `networks` makes every selectable network wallet-switchable, by construction.
 function getArenaWalletChains(): readonly [Chain, ...Chain[]] {
+  const localChainEnabled = import.meta.env.VITE_USE_LOCAL_CHAIN === 'true';
   const configuredChains = Object.values(networks).map((n) => n.chain);
   const executionForkRpc = executionForkChain.rpcUrls.default.http[0];
   const shouldIncludeLocalExecutionFork =
-    import.meta.env.VITE_USE_LOCAL_CHAIN === 'true' &&
+    localChainEnabled &&
     import.meta.env.VITE_DEX_ETHEREUM_ENABLED !== 'false' &&
     executionForkChain.id !== tangleLocal.id &&
     isLocalRpcUrl(executionForkRpc);
 
   return dedupeChains([
-    tangleLocal, // keep as default (first) chain
+    ...(localChainEnabled ? [tangleLocal] : []),
     ...(shouldIncludeLocalExecutionFork ? [executionForkChain] : []),
     ...configuredChains,
   ]);
