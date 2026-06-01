@@ -9,6 +9,7 @@ import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
 import { botStatusBadgeVariant, botStatusLabel, formatNumber, normalizeDisplayNumber } from '~/lib/format';
 import { resolveBotDisplayName } from '~/lib/utils/botNames';
 import { buildVaultPath } from '~/lib/utils/vaultRoute';
+import { getBotStrategyChainId, readStrategyNumber } from '~/lib/utils/botStrategy';
 import { networks } from '~/lib/contracts/chains';
 import { HEADER_RETURN_PERCENT_COPY } from './metricCopy';
 
@@ -47,17 +48,8 @@ function groupNavItems(items: BotHeaderNavItem[]) {
   return groups;
 }
 
-function readNumber(value: unknown): number | null {
-  const numberValue = typeof value === 'number'
-    ? value
-    : typeof value === 'string'
-      ? Number(value)
-      : null;
-  return numberValue != null && Number.isFinite(numberValue) ? numberValue : null;
-}
-
 function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number | null {
-  const value = readNumber(
+  const value = readStrategyNumber(
     strategyConfig?.initial_capital_usd
       ?? strategyConfig?.initial_capital
       ?? strategyConfig?.cash_balance,
@@ -88,11 +80,6 @@ function formatCapital(value: number | null): string {
   return `$${formatNumber(value, { maximumFractionDigits: value >= 1000 ? 0 : 2 })}`;
 }
 
-function strategyChainId(bot: Bot): number | undefined {
-  const configChainId = readNumber(bot.strategyConfig?.protocol_chain_id ?? bot.strategyConfig?.chain_id);
-  return configChainId ?? bot.chainId;
-}
-
 export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHeaderProps) {
   const { data: detail } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
   const hasVaultAddress = Boolean(
@@ -105,8 +92,8 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
   });
   const titleParts = cleanBotTitle(displayName);
   const initialCapitalUsd = readInitialCapitalUsd(bot.strategyConfig);
-  const maxDrawdownLimit = readNumber(bot.riskParams?.max_drawdown_pct);
-  const targetChainId = strategyChainId(bot);
+  const maxDrawdownLimit = readStrategyNumber(bot.riskParams?.max_drawdown_pct);
+  const targetChainId = getBotStrategyChainId(bot);
   const targetNetwork = targetChainId != null
     ? networks[targetChainId]?.label ?? `Chain ${targetChainId}`
     : 'Unknown network';

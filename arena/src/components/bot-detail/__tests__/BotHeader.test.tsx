@@ -111,6 +111,32 @@ describe('BotHeader', () => {
     expect(screen.getByRole('heading', { name: 'Base Sepolia Rollout Plan' })).toBeInTheDocument();
   });
 
+  it('separates strategy identity from execution metadata', () => {
+    mockDetail = {
+      validator_endpoints: ['https://validator.example'],
+      name: 'MM ETH/USDC Aerodrome (Base mainnet) - band 3% target 0.5 (active)',
+      strategy_type: 'dex',
+    };
+
+    render(<BotHeader bot={makeBot({
+      chainId: 1,
+      strategyConfig: {
+        protocol_chain_id: 8453,
+        initial_capital_usd: 10_000,
+      },
+      riskParams: {
+        max_drawdown_pct: 10,
+      },
+    })} />);
+
+    expect(screen.getByRole('heading', { name: 'MM ETH/USDC Aerodrome' })).toBeInTheDocument();
+    expect(screen.getByText('Base mainnet')).toBeInTheDocument();
+    expect(screen.getByText('band 3% target 0.5')).toBeInTheDocument();
+    expect(screen.getByText('Network: Base')).toBeInTheDocument();
+    expect(screen.getByText('Capital: $10,000')).toBeInTheDocument();
+    expect(screen.getByText('Max DD: 10%')).toBeInTheDocument();
+  });
+
   it('links to the vault with the bot chain id', () => {
     mockDetail = { validator_endpoints: ['https://validator.example'] };
     const vaultAddress = '0x1111111111111111111111111111111111111111';

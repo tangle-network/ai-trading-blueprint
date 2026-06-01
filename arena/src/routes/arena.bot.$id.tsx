@@ -10,6 +10,7 @@ import {
   Tabs,
   TabsContent,
 } from "@tangle-network/blueprint-ui/components";
+import { selectedChainIdStore } from "@tangle-network/blueprint-ui";
 import {
   BotHeader,
   type BotHeaderNavItem,
@@ -60,7 +61,9 @@ import {
   findMatchingInstanceRouteProvision,
 } from "~/lib/utils/instanceBotRoute";
 import { resolveBotDisplayName } from "~/lib/utils/botNames";
+import { getBotStrategyChainId } from "~/lib/utils/botStrategy";
 import { tokenMetadataFromStrategyConfig } from "~/lib/assetUniverse";
+import { networks } from "~/lib/contracts/chains";
 
 export const meta: MetaFunction = () => [{ title: "Bot — AI Trading Arena" }];
 
@@ -238,6 +241,16 @@ export default function BotDetailPage() {
     () => tokenMetadataFromStrategyConfig(bot?.strategyConfig),
     [bot?.strategyConfig],
   );
+
+  useEffect(() => {
+    if (!bot) return;
+    const targetChainId = getBotStrategyChainId(bot);
+    if (!targetChainId || !networks[targetChainId]) return;
+    if (selectedChainIdStore.get() !== targetChainId) {
+      selectedChainIdStore.set(targetChainId);
+    }
+  }, [bot]);
+
   const { data: operatorMeta } = useOperatorMeta(
     bot?.operatorApiUrl ?? routeOperatorApiUrl,
   );
