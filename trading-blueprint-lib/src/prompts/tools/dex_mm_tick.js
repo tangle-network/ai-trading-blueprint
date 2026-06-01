@@ -89,7 +89,9 @@ async function decide(ctx) {
     || (config.strategy_config && config.strategy_config.protocol)
     || 'aerodrome';
   const targetBaseWeight = clamp(t.asNumber(mm.target_base_weight, 0.5), 0, 1);
-  const bandPct = Math.max(0.01, t.asNumber(mm.rebalance_band_pct, 0.1));
+  const paperTrade = config.strategy_config && config.strategy_config.paper_trade === true;
+  const minBandPct = paperTrade ? 0.0001 : 0.01;
+  const bandPct = Math.max(minBandPct, t.asNumber(mm.rebalance_band_pct, 0.1));
   const minOrderUsd = t.asNumber(harness.min_order_usd, 10);
   const maxDrawdownPct = t.asNumber((harness.risk || {}).max_drawdown_pct, 10);
   const useRecipe = mm.use_recipe !== false && runRecipe != null;

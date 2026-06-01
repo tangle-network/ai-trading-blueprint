@@ -372,6 +372,20 @@ async fn run_direct_fast_tick(
             Some(format!("canonical harness sync failed: {err}")),
         );
     }
+    if let Err(err) =
+        sync_fast_tick_tools_to_sidecar(tool, &sandbox.sidecar_url, &sandbox.token).await
+    {
+        let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
+        return fast_tick_task_result(
+            bot,
+            started_at,
+            completed_at,
+            String::new(),
+            String::new(),
+            1,
+            Some(format!("fast tick tool sync failed: {err}")),
+        );
+    }
 
     let exec = SandboxExecRequest {
         sidecar_url: sandbox.sidecar_url.clone(),
@@ -466,6 +480,86 @@ async fn sync_canonical_harness_to_sidecar(
         &harness_json,
     )
     .await
+}
+
+fn fast_tick_tool_bundle(tool: &str) -> Option<Vec<(&'static str, &'static str)>> {
+    let mut files = vec![
+        (
+            "/home/agent/tools/api-client.js",
+            include_str!("../prompts/tools/api_client.js"),
+        ),
+        (
+            "/home/agent/tools/log-decision.js",
+            include_str!("../prompts/tools/log_decision.js"),
+        ),
+    ];
+
+    match tool {
+        "hyperliquid-tick.js" => files.push((
+            "/home/agent/tools/hyperliquid-tick.js",
+            include_str!("../prompts/tools/hyperliquid_tick.js"),
+        )),
+        "dex-tick.js" => {
+            files.push((
+                "/home/agent/tools/tick-common.js",
+                include_str!("../prompts/tools/tick_common.js"),
+            ));
+            files.push((
+                "/home/agent/tools/dex-tick.js",
+                include_str!("../prompts/tools/dex_tick.js"),
+            ));
+        }
+        "dex-mm-tick.js" => {
+            files.push((
+                "/home/agent/tools/tick-common.js",
+                include_str!("../prompts/tools/tick_common.js"),
+            ));
+            files.push((
+                "/home/agent/tools/tick-recipe-dsl.js",
+                include_str!("../prompts/tools/tick_recipe_dsl.js"),
+            ));
+            files.push((
+                "/home/agent/tools/dex-mm-tick.js",
+                include_str!("../prompts/tools/dex_mm_tick.js"),
+            ));
+        }
+        "yield-tick.js" => {
+            files.push((
+                "/home/agent/tools/tick-common.js",
+                include_str!("../prompts/tools/tick_common.js"),
+            ));
+            files.push((
+                "/home/agent/tools/yield-tick.js",
+                include_str!("../prompts/tools/yield_tick.js"),
+            ));
+        }
+        "multi-tick.js" => {
+            files.push((
+                "/home/agent/tools/tick-common.js",
+                include_str!("../prompts/tools/tick_common.js"),
+            ));
+            files.push((
+                "/home/agent/tools/multi-tick.js",
+                include_str!("../prompts/tools/multi_tick.js"),
+            ));
+        }
+        _ => return None,
+    }
+
+    Some(files)
+}
+
+async fn sync_fast_tick_tools_to_sidecar(
+    tool: &str,
+    sidecar_url: &str,
+    token: &str,
+) -> Result<(), String> {
+    let bundle = fast_tick_tool_bundle(tool)
+        .ok_or_else(|| format!("unsupported deterministic tick tool: {tool}"))?;
+    for (path, content) in bundle {
+        crate::jobs::activate::write_file_to_sidecar(sidecar_url, token, path, content).await?;
+    }
+    Ok(())
 }
 
 async fn run_due_fast_ticks(
@@ -975,5 +1069,26 @@ mod tests {
             selected.is_none(),
             "wind-down bot should not run the normal deterministic fast tick"
         );
+    }
+
+    #[test]
+    fn fast_tick_bundle_updates_selected_tool_and_shared_runtime() {
+        let bundle = fast_tick_tool_bundle("dex-mm-tick.js").expect("mm bundle");
+        let paths: Vec<_> = bundle.iter().map(|(path, _)| *path).collect();
+
+        assert!(paths.contains(&"/home/agent/tools/api-client.js"));
+        assert!(paths.contains(&"/home/agent/tools/log-decision.js"));
+        assert!(paths.contains(&"/home/agent/tools/tick-common.js"));
+        assert!(paths.contains(&"/home/agent/tools/tick-recipe-dsl.js"));
+        assert!(paths.contains(&"/home/agent/tools/dex-mm-tick.js"));
+    }
+
+    #[test]
+    fn deterministic_ticks_allow_tight_paper_bands_without_lowering_live_floor() {
+        let mm = include_str!("../prompts/tools/dex_mm_tick.js");
+        let multi = include_str!("../prompts/tools/multi_tick.js");
+
+        assert!(mm.contains("paperTrade ? 0.0001 : 0.01"));
+        assert!(multi.contains("paperTrade ? 0.0005 : 0.02"));
     }
 }

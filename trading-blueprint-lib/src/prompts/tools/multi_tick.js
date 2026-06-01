@@ -31,7 +31,9 @@ function targetAssets(config, harness) {
 async function decide(ctx) {
   const { api, config, harness } = ctx;
   const assets = targetAssets(config, harness);
-  const bandPct = Math.max(0.02, t.asNumber((harness.portfolio || {}).rebalance_band_pct, 0.05));
+  const paperTrade = config.strategy_config && config.strategy_config.paper_trade === true;
+  const minBandPct = paperTrade ? 0.0005 : 0.02;
+  const bandPct = Math.max(minBandPct, t.asNumber((harness.portfolio || {}).rebalance_band_pct, 0.05));
   const minOrderUsd = t.asNumber(harness.min_order_usd, 10);
   const maxDrawdownPct = t.asNumber((harness.risk || {}).max_drawdown_pct, 10);
   const protocol = (harness.execution && harness.execution.protocol) || 'uniswap_v3';
