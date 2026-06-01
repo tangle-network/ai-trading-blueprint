@@ -460,6 +460,17 @@ function startFixtureOperatorServer() {
       });
       return;
     }
+    if (pathname === '/api/platform/trades') {
+      const limit = Number(url.searchParams.get('limit') ?? trades.length);
+      const offset = Number(url.searchParams.get('offset') ?? 0);
+      json(res, 200, {
+        trades: trades.slice(offset, offset + limit),
+        total: trades.length,
+        limit,
+        offset,
+      });
+      return;
+    }
     if (pathname === `/api/bots/${FIXTURE_BOT_ID}/trades`) {
       const limit = Number(url.searchParams.get('limit') ?? trades.length);
       const offset = Number(url.searchParams.get('offset') ?? 0);

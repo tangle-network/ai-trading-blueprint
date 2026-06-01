@@ -730,6 +730,7 @@ pub fn build_operator_router() -> Router {
             post(abort_chat_session),
         )
         .route("/api/bots/{bot_id}/session/events", get(stream_chat_events))
+        .route("/api/platform/trades", get(get_platform_trades))
         .route("/api/platform/volume", get(get_platform_volume))
         // Provision progress
         .route("/api/provisions", get(list_provisions))
@@ -5059,6 +5060,12 @@ async fn get_platform_volume(
     Query(query): Query<trading_http_api::routes::trades::PlatformVolumeQuery>,
 ) -> Result<Json<trading_http_api::trade_store::PlatformVolumeResponse>, (StatusCode, String)> {
     trading_http_api::routes::trades::resolve_platform_volume(&query).map(Json)
+}
+
+async fn get_platform_trades(
+    Query(query): Query<trading_http_api::routes::trades::TradeListQuery>,
+) -> Result<Json<trading_http_api::routes::trades::TradeListResponse>, (StatusCode, String)> {
+    trading_http_api::routes::trades::resolve_platform_trades(&query).map(Json)
 }
 
 async fn get_bot_baseline_backtest(

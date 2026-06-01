@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import type { Address } from 'viem';
+import { isAddress, type Address } from 'viem';
 import { Badge, Identicon, Skeleton } from '@tangle-network/blueprint-ui/components';
 import { AssetPairDisplay } from '~/components/bot-detail/shared/AssetDisplay';
 import { formatNumber } from '~/lib/format';
@@ -77,7 +77,9 @@ export function LatestAgentTrades({
           </p>
         </div>
         <Badge variant="outline" className="font-data text-xs">
-          {trades.length > 0 ? `${visibleTrades.length} recent` : `${candidateCount} agents`}
+          {trades.length > 0
+            ? `${visibleTrades.length} recent`
+            : `${candidateCount} source${candidateCount === 1 ? '' : 's'}`}
         </Badge>
       </div>
 
@@ -99,14 +101,16 @@ export function LatestAgentTrades({
         </div>
       ) : (
         <div className={`${isPanel ? 'min-h-0 flex-1 overflow-y-auto' : ''} divide-y divide-arena-elements-dividerColor/50`}>
-          {visibleTrades.map(({ trade, bot }) => {
+          {visibleTrades.map(({ trade, bot, botId, botName }) => {
             const venue = VENUE_CONFIG[trade.venue];
             const label = marketLabel(trade);
             const showStatus = trade.status.toLowerCase() !== venue.label.toLowerCase();
+            const operatorAddress = bot?.operatorAddress;
+            const hasOperatorAddress = operatorAddress != null && isAddress(operatorAddress);
             return (
               <Link
-                key={`${bot.id}:${trade.id}`}
-                to={`/arena/bot/${encodeURIComponent(bot.id)}/portfolio`}
+                key={`${botId}:${trade.id}`}
+                to={`/arena/bot/${encodeURIComponent(botId)}/portfolio`}
                 className={`group grid grid-cols-[1fr_auto] gap-3 px-4 py-3 transition-colors hover:bg-arena-elements-item-backgroundHover sm:px-5 ${isPanel ? '' : 'lg:grid-cols-[7rem_1.3fr_1.4fr_6rem_5rem]'}`}
               >
                 <div className={isPanel ? 'col-span-2 flex items-center justify-between gap-2' : 'flex items-center gap-2'}>
@@ -127,13 +131,19 @@ export function LatestAgentTrades({
 
                 <div className={isPanel ? 'col-span-2 min-w-0' : 'min-w-0'}>
                   <div className="flex min-w-0 items-center gap-2">
-                    <Identicon address={bot.operatorAddress as Address} size={20} />
+                    {hasOperatorAddress ? (
+                      <Identicon address={operatorAddress as Address} size={20} />
+                    ) : (
+                      <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
+                    )}
                     <span className="truncate font-display text-base font-semibold text-arena-elements-textPrimary group-hover:text-violet-700 dark:group-hover:text-violet-300">
-                      {bot.name}
+                      {bot?.name ?? botName}
                     </span>
                   </div>
                   <div className="mt-0.5 truncate font-data text-xs text-arena-elements-textTertiary">
-                    {bot.operatorAddress.slice(0, 6)}...{bot.operatorAddress.slice(-4)}
+                    {hasOperatorAddress && operatorAddress
+                      ? `${operatorAddress.slice(0, 6)}...${operatorAddress.slice(-4)}`
+                      : botId}
                   </div>
                 </div>
 

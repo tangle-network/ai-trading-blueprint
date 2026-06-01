@@ -497,10 +497,18 @@ async fn spawn_mock_metrics_only_stale_trading_api() -> String {
 }
 
 async fn record_operator_trade(bot_id: &str, id: &str) {
+    record_operator_trade_at(bot_id, id, chrono::Utc::now()).await;
+}
+
+async fn record_operator_trade_at(
+    bot_id: &str,
+    id: &str,
+    timestamp: chrono::DateTime<chrono::Utc>,
+) {
     trading_http_api::trade_store::record_trade(trading_http_api::trade_store::TradeRecord {
         id: id.to_string(),
         bot_id: bot_id.to_string(),
-        timestamp: chrono::Utc::now(),
+        timestamp,
         action: "swap".to_string(),
         token_in: "USDC".to_string(),
         token_out: "WETH".to_string(),
@@ -1099,6 +1107,56 @@ async fn test_public_bot_read_routes_allow_no_auth_and_hide_tokens() {
 
         assert_eq!(response.status(), StatusCode::OK, "{uri} is a public read");
     }
+}
+
+#[tokio::test]
+async fn test_public_platform_trades_route_returns_latest_trades_across_bots() {
+    let _dir = init_test_env();
+    let base = chrono::Utc::now() + chrono::Duration::days(730);
+    let older_bot = seed_bot("platform-trades-public-a", "dex", true);
+    let newer_bot = seed_bot("platform-trades-public-b", "dex", true);
+    let suffix = chrono::Utc::now()
+        .timestamp_nanos_opt()
+        .expect("timestamp nanos");
+    let older_id = format!("platform-public-older-{suffix}");
+    let newer_id = format!("platform-public-newer-{suffix}");
+
+    record_operator_trade_at(&older_bot.id, &older_id, base).await;
+    record_operator_trade_at(
+        &newer_bot.id,
+        &newer_id,
+        base + chrono::Duration::minutes(1),
+    )
+    .await;
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/platform/trades?limit=200")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let trades = json["trades"].as_array().unwrap();
+    let newer_position = trades
+        .iter()
+        .position(|trade| trade["id"].as_str() == Some(newer_id.as_str()))
+        .expect("newer public platform trade present");
+    let older_position = trades
+        .iter()
+        .position(|trade| trade["id"].as_str() == Some(older_id.as_str()))
+        .expect("older public platform trade present");
+
+    assert!(newer_position < older_position);
+    assert!(json["total"].as_u64().unwrap() >= 2);
+    assert_eq!(json["limit"], 200);
+    assert_eq!(json["offset"], 0);
 }
 
 // ---------------------------------------------------------------------------

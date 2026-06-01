@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef, useSyncExternalStore } from 'react';
 import { Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useAccount } from 'wagmi';
@@ -78,7 +78,12 @@ export default function HomePage() {
   // Data sources
   const { services, isLoading: servicesLoading } = useUserServices(userAddress);
   const { bots: rawBots, isLoading: botsLoading, operatorDataState } = useBots();
-  const bots = useBotEnrichment(rawBots);
+  const [enrichmentEnabled, setEnrichmentEnabled] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setEnrichmentEnabled(true), 900);
+    return () => window.clearTimeout(timer);
+  }, []);
+  const bots = useBotEnrichment(rawBots, { enabled: enrichmentEnabled });
 
   const myProvisions = useStableProvisions(userAddress);
   const authoritativeBots = useMemo(

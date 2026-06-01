@@ -4,7 +4,6 @@ import { useAccount } from 'wagmi';
 import { ChainSwitcher, Identicon, TangleLogo, ThemeToggle } from '@tangle-network/blueprint-ui/components';
 import { cn } from '@tangle-network/blueprint-ui';
 import { useBots } from '~/lib/hooks/useBots';
-import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { botStatusLabel, formatNumber } from '~/lib/format';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
@@ -32,8 +31,7 @@ function formatReturn(value: number) {
 export function ArenaAppShell() {
   const location = useLocation();
   const { isConnected } = useAccount();
-  const { bots: rawBots } = useBots();
-  const bots = useBotEnrichment(rawBots);
+  const { bots } = useBots();
   const activeAgents = bots
     .filter((bot) => bot.verificationState !== 'unverified')
     .filter((bot) => bot.status === 'active' || bot.status === 'paused' || bot.totalTrades > 0)

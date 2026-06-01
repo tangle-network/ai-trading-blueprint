@@ -1,6 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { AreaData, HistogramData, Time, UTCTimestamp } from 'lightweight-charts';
 import { Badge, Skeleton } from '@tangle-network/blueprint-ui/components';
+import { loadLightweightCharts } from '~/components/bot-detail/lightweightChartRuntime';
 import { formatNumber } from '~/lib/format';
+import { useChartTheme } from '~/lib/hooks/useChartTheme';
 import { usePlatformVolumeSeries } from '~/lib/hooks/useBotApi';
 import {
   PLATFORM_VOLUME_RANGES,
@@ -50,24 +53,166 @@ function bucketValue(bucket: PlatformVolumeBucket, mode: PlatformVolumeMode): nu
   }
 }
 
-function buildLinePath(values: number[], maxValue: number, width: number, height: number, padX: number, padY: number): string {
-  if (values.length === 0) return '';
-  const innerWidth = width - padX * 2;
-  const innerHeight = height - padY * 2;
-  return values.map((value, index) => {
-    const x = padX + (values.length === 1 ? innerWidth : (index / (values.length - 1)) * innerWidth);
-    const y = padY + innerHeight - (maxValue > 0 ? (value / maxValue) * innerHeight : 0);
-    return `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
-  }).join(' ');
+function toChartTime(timestamp: number): UTCTimestamp {
+  return Math.floor(timestamp / 1000) as UTCTimestamp;
 }
 
-function chartLabels(buckets: PlatformVolumeBucket[]): PlatformVolumeBucket[] {
-  if (buckets.length <= 3) return buckets;
-  return [
-    buckets[0],
-    buckets[Math.floor(buckets.length / 2)],
-    buckets[buckets.length - 1],
-  ];
+function toHistogramData(
+  buckets: PlatformVolumeBucket[],
+  mode: PlatformVolumeMode,
+  positiveColor: string,
+): HistogramData<Time>[] {
+  return buckets.map((bucket) => ({
+    time: toChartTime(bucket.timestamp),
+    value: bucketValue(bucket, mode),
+    color: `${positiveColor}c8`,
+  }));
+}
+
+function toAreaData(
+  buckets: PlatformVolumeBucket[],
+  mode: PlatformVolumeMode,
+): AreaData<Time>[] {
+  return buckets.map((bucket) => ({
+    time: toChartTime(bucket.timestamp),
+    value: bucketValue(bucket, mode),
+  }));
+}
+
+function PlatformVolumeTradingChart({
+  buckets,
+  mode,
+  bucketMs,
+  heightClassName,
+}: {
+  buckets: PlatformVolumeBucket[];
+  mode: PlatformVolumeMode;
+  bucketMs: number;
+  heightClassName: string;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartTheme = useChartTheme();
+  const dataFingerprint = buckets.map((bucket) =>
+    `${bucket.timestamp}:${bucketValue(bucket, mode)}:${bucket.totalTradeCount}`,
+  ).join('|');
+
+  useEffect(() => {
+    let disposed = false;
+    let cleanup: (() => void) | null = null;
+
+    loadLightweightCharts().then((charts) => {
+      if (disposed || !containerRef.current) return;
+
+      const chart = charts.createChart(containerRef.current, {
+        autoSize: true,
+        height: containerRef.current.clientHeight || 240,
+        layout: {
+          background: { type: charts.ColorType.Solid, color: 'transparent' },
+          textColor: chartTheme.tickColor,
+          attributionLogo: false,
+          fontFamily: "'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        },
+        grid: {
+          vertLines: { color: 'transparent' },
+          horzLines: { color: chartTheme.gridColor },
+        },
+        rightPriceScale: {
+          borderVisible: false,
+          scaleMargins: { top: 0.12, bottom: 0.1 },
+        },
+        timeScale: {
+          borderVisible: false,
+          rightOffset: 2,
+          barSpacing: buckets.length < 8 ? 28 : buckets.length < 40 ? 12 : 5,
+          timeVisible: bucketMs < 24 * 60 * 60 * 1000,
+          secondsVisible: false,
+        },
+        crosshair: {
+          mode: charts.CrosshairMode.Magnet,
+          vertLine: {
+            color: chartTheme.tickColor,
+            labelBackgroundColor: chartTheme.tooltipBg,
+            style: charts.LineStyle.Dashed,
+          },
+          horzLine: {
+            color: chartTheme.tickColor,
+            labelBackgroundColor: chartTheme.tooltipBg,
+            style: charts.LineStyle.Dotted,
+          },
+        },
+        handleScale: {
+          axisPressedMouseMove: true,
+          mouseWheel: true,
+          pinch: true,
+        },
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: false,
+        },
+        localization: {
+          priceFormatter: formatUsd,
+        },
+      });
+
+      if (mode === 'bucket') {
+        const histogramSeries = chart.addSeries(charts.HistogramSeries, {
+          priceFormat: { type: 'custom', formatter: formatUsd },
+          lastValueVisible: true,
+          priceLineVisible: true,
+          priceLineColor: chartTheme.positive,
+          priceLineWidth: 1,
+          priceLineStyle: charts.LineStyle.Dashed,
+        });
+        histogramSeries.setData(toHistogramData(buckets, mode, chartTheme.positive));
+      } else {
+        const lineColor = mode === 'cumulative' ? '#8b5cf6' : chartTheme.positive;
+        const areaSeries = chart.addSeries(charts.AreaSeries, {
+          lineColor,
+          topColor: mode === 'cumulative' ? 'rgba(139,92,246,0.18)' : chartTheme.positiveGradientStart,
+          bottomColor: chartTheme.gradientEnd,
+          lineWidth: 2,
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: 4,
+          crosshairMarkerBorderColor: chartTheme.hoverBorderColor,
+          crosshairMarkerBackgroundColor: lineColor,
+          lastPriceAnimation: charts.LastPriceAnimationMode.OnDataUpdate,
+          lastValueVisible: true,
+          priceLineVisible: true,
+          priceLineColor: lineColor,
+          priceLineWidth: 1,
+          priceLineStyle: charts.LineStyle.Dashed,
+        });
+        areaSeries.setData(toAreaData(buckets, mode));
+      }
+
+      chart.timeScale().fitContent();
+
+      const resizeObserver = new ResizeObserver(() => {
+        if (!containerRef.current) return;
+        chart.resize(containerRef.current.clientWidth, containerRef.current.clientHeight);
+      });
+      resizeObserver.observe(containerRef.current);
+      cleanup = () => {
+        resizeObserver.disconnect();
+        chart.remove();
+      };
+    });
+
+    return () => {
+      disposed = true;
+      cleanup?.();
+    };
+  }, [bucketMs, buckets.length, chartTheme, dataFingerprint, mode]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`${heightClassName} w-full overflow-hidden`}
+      aria-label="Platform volume chart"
+    />
+  );
 }
 
 export function PlatformVolumeChart({
@@ -82,14 +227,7 @@ export function PlatformVolumeChart({
   const modeLabel = mode === 'bucket' ? selectedRange.bucketLabel : MODES.find((item) => item.value === mode)?.label ?? 'Volume';
   const buckets = series.buckets;
   const values = useMemo(() => buckets.map((bucket) => bucketValue(bucket, mode)), [buckets, mode]);
-  const maxValue = Math.max(...values, 0);
   const latestValue = values[values.length - 1] ?? 0;
-  const width = 640;
-  const height = 260;
-  const padX = 28;
-  const padY = 24;
-  const innerHeight = height - padY * 2;
-  const linePath = buildLinePath(values, maxValue, width, height, padX, padY);
   const hasVolume = series.summary.totalUsd > 0;
   const isCommand = variant === 'command';
   const operatorCoverage = coverage.candidateOperators > 0
@@ -223,86 +361,12 @@ export function PlatformVolumeChart({
                 </div>
               )}
 
-              <svg
-                viewBox={`0 0 ${width} ${height}`}
-                role="img"
-                aria-label={`${selectedRange.label} platform volume chart`}
-                className={`${isCommand ? 'h-[220px]' : 'h-[222px]'} w-full overflow-visible`}
-              >
-                <defs>
-                  <linearGradient id="platformVolumeFill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="rgba(16,185,129,0.28)" />
-                    <stop offset="100%" stopColor="rgba(139,92,246,0.02)" />
-                  </linearGradient>
-                </defs>
-                {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-                  const y = padY + ratio * innerHeight;
-                  return (
-                    <line
-                      key={ratio}
-                      x1={padX}
-                      x2={width - padX}
-                      y1={y}
-                      y2={y}
-                      stroke="currentColor"
-                      className="text-arena-elements-dividerColor/60"
-                      strokeWidth="1"
-                    />
-                  );
-                })}
-
-                {mode === 'bucket' ? values.map((value, index) => {
-                  const innerWidth = width - padX * 2;
-                  const barGap = values.length > 90 ? 0.35 : 1.8;
-                  const barWidth = Math.max(1, innerWidth / Math.max(values.length, 1) - barGap);
-                  const x = padX + index * (innerWidth / Math.max(values.length, 1));
-                  const barHeight = maxValue > 0 ? (value / maxValue) * innerHeight : 0;
-                  const y = padY + innerHeight - barHeight;
-                  return (
-                    <rect
-                      key={`${buckets[index]?.timestamp ?? index}`}
-                      x={x}
-                      y={y}
-                      width={barWidth}
-                      height={Math.max(barHeight, value > 0 ? 1 : 0)}
-                      rx="1.5"
-                      fill="rgba(16,185,129,0.72)"
-                    />
-                  );
-                }) : (
-                  <>
-                    <path
-                      d={`${linePath} L ${width - padX} ${height - padY} L ${padX} ${height - padY} Z`}
-                      fill="url(#platformVolumeFill)"
-                    />
-                    <path
-                      d={linePath}
-                      fill="none"
-                      stroke={mode === 'cumulative' ? '#8b5cf6' : '#10b981'}
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </>
-                )}
-
-                {chartLabels(buckets).map((bucket) => {
-                  const index = buckets.indexOf(bucket);
-                  const x = padX + (buckets.length <= 1 ? 0 : (index / (buckets.length - 1)) * (width - padX * 2));
-                  return (
-                    <text
-                      key={bucket.timestamp}
-                      x={x}
-                      y={height - 3}
-                      textAnchor={index === 0 ? 'start' : index === buckets.length - 1 ? 'end' : 'middle'}
-                      fill="currentColor"
-                      className="text-arena-elements-textTertiary font-data text-[11px]"
-                    >
-                      {bucket.label}
-                    </text>
-                  );
-                })}
-              </svg>
+              <PlatformVolumeTradingChart
+                buckets={buckets}
+                mode={mode}
+                bucketMs={series.bucketMs}
+                heightClassName={isCommand ? 'h-[220px]' : 'h-[222px]'}
+              />
             </div>
           ) : (
             <div

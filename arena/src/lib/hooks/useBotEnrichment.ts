@@ -72,10 +72,19 @@ export function normalizeTradeHistoryCount(data: unknown): number | null {
   return explicitCount ?? visibleCount;
 }
 
-export function useBotEnrichment(bots: Bot[]): Bot[] {
+export interface BotEnrichmentOptions {
+  enabled?: boolean;
+}
+
+export function useBotEnrichment(
+  bots: Bot[],
+  options: BotEnrichmentOptions = {},
+): Bot[] {
+  const enabled = options.enabled ?? true;
   const botIds = bots.map((b) => b.id).join(',');
 
   const enrichable = useMemo(() => {
+    if (!enabled) return { indices: [], entries: [] };
     const indices: number[] = [];
     const entries: Array<{ botId: string; operatorApiUrl: string; operatorKind: Bot['operatorKind'] }> = [];
     for (let i = 0; i < bots.length; i++) {
@@ -89,7 +98,7 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
       });
     }
     return { indices, entries };
-  }, [botIds, bots]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [botIds, bots, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const authByUrl = {
     cloud: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'cloud')?.operatorApiUrl ?? ''),
@@ -131,7 +140,7 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
         staleTime: 60_000,
         refetchInterval: 60_000,
         retry: 1,
-        enabled: !!operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
+        enabled: enabled && !!operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
       };
     }),
   });
@@ -167,7 +176,7 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
         staleTime: 10_000,
         refetchInterval: 15_000,
         retry: 1,
-        enabled: !!operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
+        enabled: enabled && !!operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
       };
     }),
   });
@@ -204,7 +213,7 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
         staleTime: 30_000,
         refetchInterval: 60_000,
         retry: 1,
-        enabled: !!operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
+        enabled: enabled && !!operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
       };
     }),
   });

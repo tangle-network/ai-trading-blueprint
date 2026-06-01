@@ -34,6 +34,7 @@ pub fn router() -> Router<Arc<TradingApiState>> {
     Router::new()
         .route("/trades", get(list_trades))
         .route("/trades/{trade_id}", get(get_trade))
+        .route("/platform/trades", get(get_platform_trades))
         .route("/platform/volume", get(get_platform_volume))
 }
 
@@ -42,7 +43,25 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
     Router::new()
         .route("/trades", get(list_trades_multi_bot))
         .route("/trades/{trade_id}", get(get_trade))
+        .route("/platform/trades", get(get_platform_trades))
         .route("/platform/volume", get(get_platform_volume))
+}
+
+pub fn resolve_platform_trades(
+    query: &TradeListQuery,
+) -> Result<TradeListResponse, (StatusCode, String)> {
+    let limit = query.limit.unwrap_or(50).min(200);
+    let offset = query.offset.unwrap_or(0);
+
+    let result = trade_store::platform_trades(limit, offset)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(TradeListResponse {
+        trades: result.trades,
+        total: result.total,
+        limit,
+        offset,
+    })
 }
 
 pub fn resolve_platform_volume(
@@ -78,6 +97,12 @@ async fn get_platform_volume(
     Query(query): Query<PlatformVolumeQuery>,
 ) -> Result<Json<trade_store::PlatformVolumeResponse>, (StatusCode, String)> {
     resolve_platform_volume(&query).map(Json)
+}
+
+async fn get_platform_trades(
+    Query(query): Query<TradeListQuery>,
+) -> Result<Json<TradeListResponse>, (StatusCode, String)> {
+    resolve_platform_trades(&query).map(Json)
 }
 
 async fn list_trades(

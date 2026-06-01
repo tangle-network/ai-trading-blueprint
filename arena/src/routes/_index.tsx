@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
 import type { Address } from 'viem';
 import { useAccount } from 'wagmi';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
+import { usePlatformVolumeSeries } from '~/lib/hooks/useBotApi';
 import { FilterBar } from '~/components/arena/FilterBar';
 import { LeaderboardTable } from '~/components/arena/LeaderboardTable';
 import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
@@ -18,7 +19,7 @@ import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
-import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
+import { botStatusBadgeVariant, botStatusLabel, formatNumber } from '~/lib/format';
 
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
@@ -95,6 +96,23 @@ function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
   );
 }
 
+function formatCompactUsd(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '—';
+  if (value >= 1_000_000) {
+    return `$${formatNumber(value / 1_000_000, {
+      maximumFractionDigits: 2,
+      minimumFractionDigits: value >= 10_000_000 ? 1 : 2,
+    })}M`;
+  }
+  if (value >= 1_000) {
+    return `$${formatNumber(value / 1_000, {
+      maximumFractionDigits: 1,
+      minimumFractionDigits: value >= 10_000 ? 0 : 1,
+    })}K`;
+  }
+  return `$${formatNumber(value, { maximumFractionDigits: 2 })}`;
+}
+
 export default function IndexPage() {
   const { isConnected } = useAccount();
   const [search, setSearch] = useState('');
@@ -105,7 +123,12 @@ export default function IndexPage() {
     routeKey: 'leaderboard',
   });
   const { bots: rawBots, isLoading, isOnChain, operatorDataState } = useBots();
-  const bots = useBotEnrichment(rawBots);
+  const [enrichmentEnabled, setEnrichmentEnabled] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setEnrichmentEnabled(true), 900);
+    return () => window.clearTimeout(timer);
+  }, []);
+  const bots = useBotEnrichment(rawBots, { enabled: enrichmentEnabled });
 
   // Leaderboard: only bots that are active or were previously active
   const leaderboardBots = bots.filter((b) => {
@@ -131,8 +154,9 @@ export default function IndexPage() {
 
   const sorted = [...filteredBots].sort((a, b) => b.pnlPercent - a.pnlPercent);
 
-  const totalTvl = leaderboardBots.reduce((sum, b) => sum + b.tvl, 0);
   const totalTrades = leaderboardBots.reduce((sum, b) => sum + b.totalTrades, 0);
+  const { series: homeVolumeSeries } = usePlatformVolumeSeries(leaderboardBots, '30d');
+  const platformTradeCount = homeVolumeSeries.summary.totalTradeCount || totalTrades;
   const avgScore = leaderboardBots.length > 0
     ? Math.round(leaderboardBots.reduce((sum, b) => sum + b.avgValidatorScore, 0) / leaderboardBots.length)
     : 0;
@@ -140,11 +164,11 @@ export default function IndexPage() {
   const cloudStats = [
     { label: 'Agents', value: leaderboardBots.length.toLocaleString(), sublabel: `${activeAgents} active` },
     {
-      label: 'Capital',
-      value: totalTvl > 0 ? `$${totalTvl >= 1000 ? `${(totalTvl / 1000).toFixed(0)}K` : totalTvl.toFixed(0)}` : '—',
-      sublabel: 'reported TVL',
+      label: '30D Volume',
+      value: formatCompactUsd(homeVolumeSeries.summary.totalUsd),
+      sublabel: 'operator aggregate',
     },
-    { label: 'Trades', value: totalTrades > 0 ? totalTrades.toLocaleString() : '—', sublabel: 'recorded' },
+    { label: 'Trades', value: platformTradeCount > 0 ? platformTradeCount.toLocaleString() : '—', sublabel: '30D aggregate' },
     { label: 'Validator', value: avgScore > 0 ? `${avgScore}` : '—', sublabel: 'avg score' },
   ];
 

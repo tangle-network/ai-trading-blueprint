@@ -583,7 +583,15 @@ export function useBotTrades(
 
 export interface LatestAgentTrade {
   trade: Trade;
-  bot: Bot;
+  bot?: Bot;
+  botId: string;
+  botName: string;
+  operatorApiUrl?: string | null;
+}
+
+function fallbackBotName(botId: string): string {
+  if (!botId) return 'Unknown Agent';
+  return `Agent ${botId.slice(0, 8)}`;
 }
 
 export function useLatestAgentTrades(
@@ -608,6 +616,40 @@ export function useLatestAgentTrades(
     bot.chainId ?? 'none',
   ].join(':')).join('|');
 
+  const botById = useMemo(() => new Map(bots.map((bot) => [bot.id, bot])), [botFingerprint, bots]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const operatorUrls = useMemo(() => {
+    const urls = new Set<string>();
+    ALL_TRADING_OPERATOR_API_URLS.forEach((url) => {
+      if (url) urls.add(url);
+    });
+    bots.forEach((bot) => {
+      if (bot.operatorApiUrl) urls.add(bot.operatorApiUrl);
+    });
+    return Array.from(urls);
+  }, [botFingerprint, bots]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const operatorResults = useQueries({
+    queries: operatorUrls.map((apiUrl) => ({
+      queryKey: ['latest-platform-trades', apiUrl, limit] as const,
+      queryFn: async (): Promise<ApiTrade[]> => {
+        const data = await fetchOperatorPublicJson<ApiTrade[] | ApiTradeListResponse>(
+          apiUrl,
+          `/api/platform/trades?limit=${Math.min(Math.max(limit * 2, 10), 200)}`,
+        );
+        return normalizeTrades(data);
+      },
+      staleTime: 10_000,
+      refetchOnMount: 'always' as const,
+      refetchInterval: 15_000,
+      retry: 1,
+      enabled: !!apiUrl,
+    })),
+  });
+
+  const fallbackAllOperators = operatorUrls.length === 0
+    || (operatorResults.length > 0 && operatorResults.every((result) => result.isError));
+
   const candidates = useMemo(() => {
     return bots
       .filter((bot) =>
@@ -617,13 +659,14 @@ export function useLatestAgentTrades(
         && bot.status !== 'unknown'
         && (bot.totalTrades > 0 || bot.status === 'active' || bot.tradingActive === true),
       )
+      .filter(() => fallbackAllOperators)
       .slice(0, maxBots)
       .map((bot) => ({
         bot,
         deploymentKind: getDeploymentKindForOperatorKind(bot.operatorKind),
         assetMetadata: tokenMetadataFromStrategyConfig(bot.strategyConfig),
       }));
-  }, [botFingerprint, bots, maxBots]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [botFingerprint, bots, fallbackAllOperators, maxBots]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const authByUrl = {
     cloud: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'cloud')?.operatorApiUrl ?? ''),
@@ -662,6 +705,9 @@ export function useLatestAgentTrades(
           return normalizeTrades(data).map((trade) => ({
             trade: mapApiTrade(trade, bot.name, bot.chainId, assetMetadata),
             bot,
+            botId: bot.id,
+            botName: bot.name,
+            operatorApiUrl: bot.operatorApiUrl,
           }));
         },
         staleTime: 10_000,
@@ -673,23 +719,63 @@ export function useLatestAgentTrades(
     }),
   });
 
+  const aggregateFingerprint = operatorResults.map((result) =>
+    result.data ? result.data.map((trade) => `${trade.bot_id}:${trade.id}:${trade.timestamp}`).join(',') : 'x',
+  ).join('|');
   const dataFingerprint = results.map((result) =>
     result.data ? result.data.map((item) => `${item.trade.id}:${item.trade.timestamp}`).join(',') : 'x',
   ).join('|');
 
+  const aggregateTrades = useMemo<LatestAgentTrade[]>(() => {
+    const seen = new Set<string>();
+    return operatorResults
+      .flatMap((result, index) => {
+        const apiUrl = operatorUrls[index];
+        return (result.data ?? []).flatMap((apiTrade) => {
+          const key = `${apiTrade.bot_id}:${apiTrade.id}`;
+          if (seen.has(key)) return [];
+          seen.add(key);
+
+          const bot = botById.get(apiTrade.bot_id);
+          const botName = bot?.name ?? fallbackBotName(apiTrade.bot_id);
+          return [{
+            trade: mapApiTrade(
+              apiTrade,
+              botName,
+              bot?.chainId,
+              tokenMetadataFromStrategyConfig(bot?.strategyConfig),
+            ),
+            bot,
+            botId: apiTrade.bot_id,
+            botName,
+            operatorApiUrl: apiUrl,
+          }];
+        });
+      })
+      .sort((a, b) => b.trade.timestamp - a.trade.timestamp)
+      .slice(0, limit);
+  }, [aggregateFingerprint, botById, limit, operatorResults, operatorUrls]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const trades = useMemo(() => {
-    return results
+    const fallbackTrades = results
       .flatMap((result) => result.data ?? [])
       .sort((a, b) => b.trade.timestamp - a.trade.timestamp)
       .slice(0, limit);
-  }, [dataFingerprint, limit]); // eslint-disable-line react-hooks/exhaustive-deps
+    return aggregateTrades.length > 0 ? aggregateTrades : fallbackTrades;
+  }, [aggregateTrades, dataFingerprint, limit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     trades,
-    isLoading: results.some((result) => result.isLoading) && trades.length === 0,
-    isFetching: results.some((result) => result.isFetching),
-    isError: results.length > 0 && results.every((result) => result.isError),
-    candidateCount: candidates.length,
+    isLoading: (
+      operatorResults.some((result) => result.isLoading)
+      || results.some((result) => result.isLoading)
+    ) && trades.length === 0,
+    isFetching: operatorResults.some((result) => result.isFetching)
+      || results.some((result) => result.isFetching),
+    isError: operatorResults.length > 0
+      && operatorResults.every((result) => result.isError)
+      && (results.length === 0 || results.every((result) => result.isError)),
+    candidateCount: operatorUrls.length > 0 ? operatorUrls.length : candidates.length,
   };
 }
 

@@ -389,6 +389,21 @@ pub fn trades_for_bot(
     })
 }
 
+pub fn platform_trades(limit: usize, offset: usize) -> Result<PaginatedTrades, String> {
+    let mut all: Vec<TradeRecord> = trades()?.values().map_err(|e| e.to_string())?;
+
+    // Sort by timestamp descending (newest first)
+    all.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+    let total = all.len();
+    let page = all.into_iter().skip(offset).take(limit).collect();
+
+    Ok(PaginatedTrades {
+        trades: page,
+        total,
+    })
+}
+
 fn floor_to_bucket(timestamp: DateTime<Utc>, bucket: PlatformVolumeBucketSize) -> DateTime<Utc> {
     let bucket_seconds = bucket.seconds();
     let floored = timestamp.timestamp().div_euclid(bucket_seconds) * bucket_seconds;

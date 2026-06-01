@@ -2193,6 +2193,81 @@ async fn test_platform_volume_aggregates_priced_trades_across_bots() {
     assert_eq!(active_buckets.len(), 2);
 }
 
+#[tokio::test]
+async fn test_platform_trades_returns_latest_trades_across_bots() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+    let base = chrono::Utc::now() + chrono::Duration::days(365);
+
+    let bot_a = format!("platform-trades-a-{}", uuid::Uuid::new_v4());
+    let bot_b = format!("platform-trades-b-{}", uuid::Uuid::new_v4());
+    let mut older = synthetic_paper_trade(
+        &bot_a,
+        "swap",
+        "USDC",
+        "WETH",
+        "50",
+        Some("0.02"),
+        "uniswap_v3",
+    );
+    older.id = format!("platform-older-{}", uuid::Uuid::new_v4());
+    older.timestamp = base;
+
+    let mut newer = synthetic_paper_trade(
+        &bot_b,
+        "swap",
+        "USDC",
+        "WBTC",
+        "75",
+        Some("0.001"),
+        "uniswap_v3",
+    );
+    newer.id = format!("platform-newer-{}", uuid::Uuid::new_v4());
+    newer.timestamp = base + chrono::Duration::minutes(1);
+
+    let older_id = older.id.clone();
+    let newer_id = newer.id.clone();
+    trading_http_api::trade_store::record_trade(older)
+        .await
+        .unwrap();
+    trading_http_api::trade_store::record_trade(newer)
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/platform/trades?limit=200")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let trades = json["trades"].as_array().unwrap();
+    let newer_position = trades
+        .iter()
+        .position(|trade| trade["id"].as_str() == Some(newer_id.as_str()))
+        .expect("newer platform trade present");
+    let older_position = trades
+        .iter()
+        .position(|trade| trade["id"].as_str() == Some(older_id.as_str()))
+        .expect("older platform trade present");
+
+    assert!(
+        newer_position < older_position,
+        "platform trades should be newest-first"
+    );
+    assert!(json["total"].as_u64().unwrap() >= 2);
+    assert_eq!(json["limit"], 200);
+    assert_eq!(json["offset"], 0);
+}
+
 // ── Metrics tests ───────────────────────────────────────────────────────────
 
 #[tokio::test]
