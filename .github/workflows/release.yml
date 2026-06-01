@@ -14,6 +14,10 @@ env:
   CARGO_TERM_COLOR: always
   # This repo ships multiple blueprints — build + host every operator binary.
   BINARIES: "trading-blueprint trading-instance-blueprint trading-tee-instance-blueprint trading-validator"
+  # Base Sepolia operators currently run x86_64 Linux. Keep the production
+  # publish path on that target so a secondary architecture cannot block the
+  # active binary rollout.
+  RELEASE_TARGETS: "x86_64-unknown-linux-gnu"
 
 jobs:
   release:
@@ -23,8 +27,6 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             runs-on: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            runs-on: ubuntu-24.04-arm
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
@@ -138,7 +140,7 @@ jobs:
 
           for b in $BINARIES; do
             entries=""
-            for triple in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            for triple in $RELEASE_TARGETS; do
               case "$triple" in *x86_64*) arch=x86_64;; *aarch64*) arch=aarch64;; esac
               asset="${b}-${triple}.tar.xz"
               gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "${asset}.sha256" --dir /tmp/m --clobber
