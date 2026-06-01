@@ -88,7 +88,14 @@ async function decide(ctx) {
   const protocol = (harness.execution && harness.execution.protocol)
     || (config.strategy_config && config.strategy_config.protocol)
     || 'aerodrome';
-  const targetBaseWeight = clamp(t.asNumber(mm.target_base_weight, 0.5), 0, 1);
+  const configuredTargetBaseWeight = t.clamp(t.asNumber(mm.target_base_weight, 0.5), 0, 1);
+  const targetBaseWeight = t.paperCycleWeight(
+    ctx,
+    mm.paper_target_cycle || harness.paper_target_cycle,
+    configuredTargetBaseWeight,
+    [0.2, 0.8],
+    'mm-target-base-weight',
+  );
   const paperTrade = config.strategy_config && config.strategy_config.paper_trade === true;
   const minBandPct = paperTrade ? 0.0001 : 0.01;
   const bandPct = Math.max(minBandPct, t.asNumber(mm.rebalance_band_pct, 0.1));
@@ -122,6 +129,7 @@ async function decide(ctx) {
     inventory_usd: inventoryUsd,
     weth_price: wethPrice ?? null,
     plan_source: useRecipe ? 'recipe' : 'imperative',
+    aggressive_paper_mode: t.isPaperShowcaseMode(config, harness),
   };
   const metrics = { portfolio_value_usd: t.asNumber(portfolio.total_value_usd, inventoryUsd) };
 
@@ -171,10 +179,6 @@ async function submit(ctx, { tokenIn, tokenOut, amountHuman, prices, protocol, r
     ? { action: 'trade', reason: rationale, intent }
     : { action: 'skip', reason: 'submission-rejected', intent };
   return { decision, checkedState, metrics, resultExtra: { trade_action: { attempted: true, ...submission } } };
-}
-
-function clamp(value, lo, hi) {
-  return Math.min(hi, Math.max(lo, value));
 }
 
 module.exports = {

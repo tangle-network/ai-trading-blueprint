@@ -8,7 +8,8 @@
 
 const t = require('/home/agent/tools/tick-common');
 
-function targetAssets(config, harness) {
+function targetAssets(ctx) {
+  const { config, harness } = ctx;
   const { weth, usdc } = t.pairTokens(config);
   const configured = (harness.portfolio && harness.portfolio.assets)
     || (config.strategy_config && config.strategy_config.portfolio && config.strategy_config.portfolio.assets);
@@ -25,12 +26,23 @@ function targetAssets(config, harness) {
   }
   const totalTarget = assets.reduce((sum, a) => sum + a.target, 0) || 1;
   for (const a of assets) a.target /= totalTarget;
+  if (assets.length === 2) {
+    const firstTarget = t.paperCycleWeight(
+      ctx,
+      (harness.portfolio || {}).paper_target_cycle || harness.paper_portfolio_target_cycle,
+      assets[0].target,
+      [0.1, 0.9],
+      'multi-first-asset-target',
+    );
+    assets[0].target = firstTarget;
+    assets[1].target = 1 - firstTarget;
+  }
   return assets;
 }
 
 async function decide(ctx) {
   const { api, config, harness } = ctx;
-  const assets = targetAssets(config, harness);
+  const assets = targetAssets(ctx);
   const paperTrade = config.strategy_config && config.strategy_config.paper_trade === true;
   const minBandPct = paperTrade ? 0.0005 : 0.02;
   const bandPct = Math.max(minBandPct, t.asNumber((harness.portfolio || {}).rebalance_band_pct, 0.05));
@@ -61,6 +73,7 @@ async function decide(ctx) {
     protocol,
     total_value_usd: total,
     assets: assets.map((a) => ({ symbol: a.symbol, weight: a.weight, target: a.target, value_usd: a.valueUsd, price: a.price ?? null })),
+    aggressive_paper_mode: t.isPaperShowcaseMode(config, harness),
   };
   const metrics = { portfolio_value_usd: t.asNumber(portfolio.total_value_usd, total) };
 

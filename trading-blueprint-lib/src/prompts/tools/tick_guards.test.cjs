@@ -40,6 +40,8 @@ const {
   LookaheadViolationError,
   spotPriceFromPortfolio,
   resolveUsdPrice,
+  isPaperShowcaseMode,
+  paperCycleWeight,
 } = loadCjs('tick_common.js')
 const { coverageFinding, insufficientCoverage, recordCoverageFinding } = loadCjs('tick_coverage.js')
 
@@ -131,6 +133,41 @@ test('resolveUsdPrice fills missing market-data prices from portfolio value', as
   }
   assert.equal(await resolveUsdPrice(api, portfolio, token, prices), 2000)
   assert.equal(prices.get(token.toLowerCase()), 2000)
+})
+
+test('paperCycleWeight is inert outside paper showcase mode', () => {
+  const ctx = {
+    runStartedAt: '2026-06-01T09:40:00.000Z',
+    config: { bot_id: 'bot-a', strategy_config: { paper_trade: true } },
+    harness: { aggressive_paper_mode: false },
+  }
+  assert.equal(isPaperShowcaseMode(ctx.config, ctx.harness), false)
+  assert.equal(paperCycleWeight(ctx, { values: [0.2, 0.8] }, 0.5, [0.2, 0.8], 'mm'), 0.5)
+})
+
+test('paperCycleWeight rotates paper-only targets on the tick cadence', () => {
+  const base = {
+    config: { bot_id: 'bot-a', strategy_config: { paper_trade: true } },
+    harness: { aggressive_paper_mode: true },
+  }
+  assert.equal(isPaperShowcaseMode(base.config, base.harness), true)
+  const first = paperCycleWeight(
+    { ...base, runStartedAt: '2026-06-01T09:40:00.000Z' },
+    { values: [0.2, 0.8], period_secs: 300 },
+    0.5,
+    [0.2, 0.8],
+    'mm',
+  )
+  const second = paperCycleWeight(
+    { ...base, runStartedAt: '2026-06-01T09:45:00.000Z' },
+    { values: [0.2, 0.8], period_secs: 300 },
+    0.5,
+    [0.2, 0.8],
+    'mm',
+  )
+  assert.ok([0.2, 0.8].includes(first))
+  assert.ok([0.2, 0.8].includes(second))
+  assert.notEqual(first, second)
 })
 
 test('coverageFinding has the stable machine-checkable shape', () => {

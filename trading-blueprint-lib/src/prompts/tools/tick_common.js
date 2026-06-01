@@ -105,6 +105,66 @@ function asNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function clamp(value, lo, hi) {
+  return Math.min(hi, Math.max(lo, value));
+}
+
+function stableHash(value) {
+  const text = String(value || '');
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function isPaperShowcaseMode(config, harness) {
+  return Boolean(
+    config
+      && config.strategy_config
+      && config.strategy_config.paper_trade === true
+      && harness
+      && harness.aggressive_paper_mode === true,
+  );
+}
+
+function normalizeCycleValues(settings, fallbackValues) {
+  const raw = Array.isArray(settings)
+    ? settings
+    : Array.isArray(settings?.values)
+      ? settings.values
+      : fallbackValues;
+  const values = (raw || [])
+    .map((value) => clamp(asNumber(value, NaN), 0, 1))
+    .filter((value) => Number.isFinite(value));
+  return values.length >= 2 ? values : [];
+}
+
+function cycleIndexForRun(runStartedAt, periodSecs, length, salt) {
+  if (length <= 0) return 0;
+  const startedMs = Date.parse(runStartedAt || '');
+  const ms = Number.isFinite(startedMs) ? startedMs : Date.now();
+  const period = Math.max(60, asNumber(periodSecs, 300));
+  const slot = Math.floor(ms / 1000 / period);
+  const offset = stableHash(salt) % length;
+  return (slot + offset) % length;
+}
+
+// Paper-only showcase mode makes live demos visibly active without bypassing the
+// real paper validation/execution/logging path. It is intentionally gated on
+// strategy_config.paper_trade=true so it cannot alter live-capital behavior.
+function paperCycleWeight(ctx, settings, fallback, fallbackValues, salt) {
+  if (!ctx || !isPaperShowcaseMode(ctx.config, ctx.harness)) return fallback;
+  const values = normalizeCycleValues(settings, fallbackValues);
+  if (values.length === 0) return fallback;
+  const periodSecs = Array.isArray(settings)
+    ? ctx.harness.paper_target_cycle_period_secs
+    : settings?.period_secs ?? ctx.harness.paper_target_cycle_period_secs;
+  const botSalt = `${ctx.config?.bot_id || ctx.config?.workflow_id || 'bot'}:${salt || ''}`;
+  return values[cycleIndexForRun(ctx.runStartedAt, periodSecs, values.length, botSalt)];
+}
+
 function loadHarness() {
   return readJson(CANONICAL_HARNESS_FILE, readJson(HARNESS_FILE, {}));
 }
@@ -526,6 +586,12 @@ module.exports = {
   body,
   snapshot,
   asNumber,
+  clamp,
+  stableHash,
+  isPaperShowcaseMode,
+  normalizeCycleValues,
+  cycleIndexForRun,
+  paperCycleWeight,
   loadHarness,
   chainId,
   pairTokens,
