@@ -598,7 +598,10 @@ fn synthetic_cash_balance(bot: &crate::BotContext, positions: &[PositionEntry]) 
 
     positions
         .iter()
-        .find(|position| normalize_token_key(&position.token) == normalize_token_key(token))
+        .find(|position| {
+            normalize_token_key(&position.token) == normalize_token_key(token)
+                && position.position_type.eq_ignore_ascii_case("spot")
+        })
         .map(|position| position.amount.clone())
         .or_else(|| bot.paper_trade.then(|| "0".to_string()))
 }
@@ -643,6 +646,9 @@ fn apply_trade_to_synthetic_positions(
         return;
     }
 
+    let amount_in = parse_decimal_maybe(&trade.amount_in)
+        .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_in, amount))
+        .unwrap_or(Decimal::ZERO);
     let is_prediction_trade = trade.prediction_metadata.is_some();
     let position_type = if is_prediction_trade {
         PositionType::ConditionalToken
@@ -663,6 +669,95 @@ fn apply_trade_to_synthetic_positions(
                 .map(|amount| normalize_trade_amount(Some(chain_id), &trade.token_in, amount))
                 .unwrap_or(Decimal::ZERO)
         });
+
+    if action == "supply" {
+        let supplied = amount_in.min(spot_amount(positions, &trade.token_in));
+        debit_spot_position(positions, &trade.token_in, &trade.target_protocol, supplied);
+        credit_position(
+            positions,
+            &trade.token_out,
+            &trade.target_protocol,
+            PositionType::Lending,
+            supplied,
+            trade
+                .entry_price_usd
+                .as_deref()
+                .and_then(parse_decimal_maybe),
+        );
+        return;
+    }
+
+    if action == "withdraw" {
+        let withdrawn = size.min(position_amount(
+            positions,
+            &trade.token_out,
+            &trade.target_protocol,
+            &PositionType::Lending,
+        ));
+        debit_position(
+            positions,
+            &trade.token_out,
+            &trade.target_protocol,
+            PositionType::Lending,
+            withdrawn,
+        );
+        credit_spot_position(
+            positions,
+            &trade.token_out,
+            &trade.target_protocol,
+            withdrawn,
+            trade
+                .entry_price_usd
+                .as_deref()
+                .and_then(parse_decimal_maybe),
+        );
+        return;
+    }
+
+    if action == "borrow" {
+        credit_position(
+            positions,
+            &trade.token_out,
+            &trade.target_protocol,
+            PositionType::Borrowing,
+            size,
+            trade
+                .entry_price_usd
+                .as_deref()
+                .and_then(parse_decimal_maybe),
+        );
+        credit_spot_position(
+            positions,
+            &trade.token_out,
+            &trade.target_protocol,
+            size,
+            trade
+                .entry_price_usd
+                .as_deref()
+                .and_then(parse_decimal_maybe),
+        );
+        return;
+    }
+
+    if action == "repay" {
+        let repaid = amount_in
+            .min(spot_amount(positions, &trade.token_in))
+            .min(position_amount(
+                positions,
+                &trade.token_in,
+                &trade.target_protocol,
+                &PositionType::Borrowing,
+            ));
+        debit_spot_position(positions, &trade.token_in, &trade.target_protocol, repaid);
+        debit_position(
+            positions,
+            &trade.token_in,
+            &trade.target_protocol,
+            PositionType::Borrowing,
+            repaid,
+        );
+        return;
+    }
 
     if is_prediction_trade && action == "buy" {
         credit_position(
@@ -705,6 +800,22 @@ fn apply_trade_to_synthetic_positions(
             size,
         );
     }
+}
+
+fn spot_amount(positions: &HashMap<String, SyntheticPositionAccumulator>, token: &str) -> Decimal {
+    position_amount(positions, token, "", &PositionType::Spot)
+}
+
+fn position_amount(
+    positions: &HashMap<String, SyntheticPositionAccumulator>,
+    token: &str,
+    protocol: &str,
+    position_type: &PositionType,
+) -> Decimal {
+    positions
+        .get(&synthetic_position_key(token, protocol, position_type))
+        .map(|position| position.amount)
+        .unwrap_or(Decimal::ZERO)
 }
 
 fn trade_represents_spot_swap(action: &str, protocol: &str) -> bool {

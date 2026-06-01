@@ -60,6 +60,64 @@ fn ensure_state_dir() {
     });
 }
 
+fn synthetic_paper_trade(
+    bot_id: &str,
+    action: &str,
+    token_in: &str,
+    token_out: &str,
+    amount_in: &str,
+    amount_out: Option<&str>,
+    protocol: &str,
+) -> trading_http_api::trade_store::TradeRecord {
+    trading_http_api::trade_store::TradeRecord {
+        id: format!("trade-{}-{}", action, uuid::Uuid::new_v4()),
+        bot_id: bot_id.to_string(),
+        timestamp: chrono::Utc::now(),
+        action: action.to_string(),
+        token_in: token_in.to_string(),
+        token_out: token_out.to_string(),
+        amount_in: amount_in.to_string(),
+        min_amount_out: "0".to_string(),
+        target_protocol: protocol.to_string(),
+        tx_hash: format!("0x{}", uuid::Uuid::new_v4().simple()),
+        block_number: None,
+        gas_used: None,
+        paper_trade: true,
+        execution_status: Some(trading_http_api::trade_store::TradeExecutionStatus::Paper),
+        clob_order_id: None,
+        amount_out: amount_out.map(str::to_string),
+        entry_price_usd: Some("1".to_string()),
+        notional_usd: Some(amount_in.to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: None,
+        hyperliquid_metadata: None,
+        valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
+        validation: trading_http_api::trade_store::StoredValidation {
+            approved: true,
+            aggregate_score: 100,
+            intent_hash: format!("0x{}", uuid::Uuid::new_v4().simple()),
+            responses: Vec::new(),
+            simulation: None,
+        },
+        signal_price: None,
+        fill_price: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        risk_budget_decision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
+    }
+}
+
 struct EnvVarGuard {
     saved: Vec<(&'static str, Option<String>)>,
 }
@@ -5647,6 +5705,56 @@ async fn test_multi_bot_portfolio_state_derives_cash_balance_from_synthetic_posi
     assert_eq!(json["cash_balance"], "9000");
     assert_eq!(json["has_value_only_positions"], true);
     assert_eq!(positions.len(), 2);
+}
+
+#[tokio::test]
+async fn test_multi_bot_portfolio_state_debits_spot_cash_for_paper_supply() {
+    ensure_state_dir();
+    let bot_id = format!("bot-yield-supply-{}", uuid::Uuid::new_v4());
+    for _ in 0..2 {
+        trading_http_api::trade_store::record_trade(synthetic_paper_trade(
+            &bot_id, "supply", "USDC", "USDC", "9500", None, "aave_v3",
+        ))
+        .await
+        .expect("record supply trade");
+    }
+
+    let state = multi_bot_state_with_strategy_config_and_bot(
+        "http://localhost:1234",
+        "bot-token-yield-supply",
+        &bot_id,
+        31337,
+        serde_json::json!({
+            "asset_token": "USDC",
+            "cash_token": "USDC",
+            "initial_capital_usd": "10000"
+        }),
+    );
+    let app = build_multi_bot_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portfolio/state")
+                .header("authorization", "Bearer bot-token-yield-supply")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let positions = json["positions"].as_array().unwrap();
+
+    assert_eq!(json["cash_balance"], "0");
+    assert_eq!(json["total_value_usd"], "10000");
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0]["protocol"], "aave_v3");
+    assert_eq!(positions[0]["position_type"], "lending");
+    assert_eq!(positions[0]["amount"], "10000");
 }
 
 #[tokio::test]
