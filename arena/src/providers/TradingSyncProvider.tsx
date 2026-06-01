@@ -91,6 +91,8 @@ type OperatorBotResponse = OperatorBotRecord & {
   operatorKind: Exclude<BotOperatorKind, null>;
 };
 
+type OperatorSourceReadState = Pick<OperatorSource, 'deploymentKind' | 'token' | 'isAuthenticating'>;
+
 const SERVICE_VAULTS: Record<string, Address[]> = (() => {
   try {
     const raw = import.meta.env.VITE_SERVICE_VAULTS;
@@ -131,9 +133,11 @@ function mapOperatorLifecycleToStatus(
   }
 }
 
-function getOperatorDataState(sources: OperatorSource[]): OperatorDataState {
+export function getOperatorDataStateForSources(sources: OperatorSourceReadState[]): OperatorDataState {
   if (sources.length === 0) return 'disabled';
-  const readyCount = sources.filter((source) => !!source.token).length;
+  const readyCount = sources.filter((source) =>
+    source.deploymentKind !== 'instance' || !!source.token,
+  ).length;
   if (readyCount === 0) {
     return sources.some((source) => source.isAuthenticating) ? 'authenticating' : 'locked';
   }
@@ -305,8 +309,17 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
 
   const operatorSources = useMemo<OperatorSource[]>(() => {
     const sources: OperatorSource[] = [];
+    const pushSource = (source: OperatorSource) => {
+      if (sources.some((existing) =>
+        existing.apiUrl === source.apiUrl && existing.deploymentKind === source.deploymentKind,
+      )) {
+        return;
+      }
+      sources.push(source);
+    };
+
     if (CLOUD_OPERATOR_API_URL && cloudMeta.data) {
-      sources.push({
+      pushSource({
         kind: 'cloud',
         apiUrl: CLOUD_OPERATOR_API_URL,
         deploymentKind: cloudMeta.data.deployment_kind,
@@ -317,7 +330,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
       });
     }
     if (INSTANCE_OPERATOR_API_URL && instanceMeta.data) {
-      sources.push({
+      pushSource({
         kind: 'instance',
         apiUrl: INSTANCE_OPERATOR_API_URL,
         deploymentKind: instanceMeta.data.deployment_kind,
@@ -328,7 +341,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
       });
     }
     if (TEE_OPERATOR_API_URL && teeMeta.data) {
-      sources.push({
+      pushSource({
         kind: 'tee',
         apiUrl: TEE_OPERATOR_API_URL,
         deploymentKind: teeMeta.data.deployment_kind,
@@ -370,7 +383,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
     setHydratedBotsState((current) => ({
       ...current,
       isLoading: true,
-      operatorDataState: getOperatorDataState(activeOperatorSources),
+      operatorDataState: getOperatorDataStateForSources(activeOperatorSources),
     }));
 
     try {
@@ -410,7 +423,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
           bots: nextBots,
           isLoading: false,
           isOnChain: nextBots.length > 0,
-          operatorDataState: getOperatorDataState(activeOperatorSources),
+          operatorDataState: getOperatorDataStateForSources(activeOperatorSources),
           lastSyncedAt: Date.now(),
         });
       }
@@ -784,7 +797,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
         bots: builtBots,
         isLoading: false,
         isOnChain: builtBots.length > 0,
-        operatorDataState: getOperatorDataState(activeOperatorSources),
+        operatorDataState: getOperatorDataStateForSources(activeOperatorSources),
         lastSyncedAt: Date.now(),
       };
 
@@ -796,7 +809,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
         setHydratedBotsState((current) => ({
           ...current,
           isLoading: false,
-          operatorDataState: getOperatorDataState(activeOperatorSources),
+          operatorDataState: getOperatorDataStateForSources(activeOperatorSources),
         }));
       }
     } finally {
