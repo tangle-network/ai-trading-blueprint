@@ -168,14 +168,16 @@ jobs:
           cat /tmp/m/dist-manifest.json
           upload_asset /tmp/m/dist-manifest.json
 
-  # After the manifest is published as a release asset, trigger the on-chain
-  # publish in tnt-core. binaryUri points at the multi-arch manifest, so one
-  # version serves every operator arch. Runs once.
+  # After the release assets are published, trigger the on-chain publish in
+  # tnt-core. The current blueprint-manager path falls back to blueprint sources
+  # when the active binary version points at a multi-arch manifest, so publish
+  # the concrete x86_64 archive as the active operator binary and update
+  # cold-start sources to the same tag.
   publish-onchain:
     needs: [release, manifest]
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger tnt-core binary publish (multi-arch manifest)
+      - name: Trigger tnt-core binary publish
         env:
           GH_TOKEN: ${{ secrets.TNT_CORE_PUBLISH_TOKEN }}
         run: |
@@ -188,5 +190,7 @@ jobs:
             -f blueprint_id=13 \
             -f binary_name=trading-blueprint \
             -f network=base-sepolia \
-            -f manifest=true \
-            -f set_active=true
+            -f target=x86_64-unknown-linux-gnu \
+            -f manifest=false \
+            -f set_active=true \
+            -f update_sources_version="$TAG"
