@@ -180,7 +180,16 @@ describe("RunsTab", () => {
     expect((await screen.findAllByText("Trading Run")).length).toBeGreaterThan(
       0,
     );
-    expect(screen.getByText("latest result")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          sessionId: "run-replay-run-new",
+          historyPath: "/runs/run-new/messages?limit=200",
+          streamEnabled: false,
+        }),
+      );
+    });
 
     await userEvent.click(screen.getByRole("button", { name: /load older/i }));
 
@@ -193,7 +202,7 @@ describe("RunsTab", () => {
       );
     });
     expect(await screen.findByText("Research Run")).toBeInTheDocument();
-    expect(screen.getByText("latest result")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
   });
 
   it("loads public fleet run summaries without wallet authentication", async () => {
@@ -242,7 +251,17 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByText("public result")).toBeInTheDocument();
+    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          token: null,
+          sessionId: "run-replay-run-public",
+          historyPath: "/runs/run-public/messages?limit=200",
+          streamEnabled: false,
+        }),
+      );
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:9201/api/bots/bot-1/runs?limit=100",
       expect.objectContaining({ headers: {} }),
@@ -295,7 +314,17 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByText("instance public result")).toBeInTheDocument();
+    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          token: null,
+          sessionId: "run-replay-run-instance-public",
+          historyPath: "/runs/run-instance-public/messages?limit=200",
+          streamEnabled: false,
+        }),
+      );
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:9301/api/bot/runs?limit=100",
       expect.objectContaining({ headers: {} }),
@@ -398,6 +427,66 @@ describe("RunsTab", () => {
     expect(screen.queryByText("api-wallet-approval-not-verified")).not.toBeInTheDocument();
     expect(screen.queryByText(/result_schema_version/)).not.toBeInTheDocument();
     expect(screen.queryByText("Transcript unavailable")).not.toBeInTheDocument();
+  });
+
+  it("loads public run replay through the transcript surface without owner auth", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    authState.token = null;
+    authState.isAuthenticated = false;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-public-replay",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_849_924,
+              completed_at: 1_775_850_048,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 128_000,
+              input_tokens: 0,
+              output_tokens: 0,
+              result: JSON.stringify({
+                checked_state: { nav_status: "fresh" },
+                decision: { action: "trade", reason: "rebalance" },
+              }),
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          token: null,
+          sessionId: "run-replay-run-public-replay",
+          historyPath: "/runs/run-public-replay/messages?limit=200",
+          streamEnabled: false,
+        }),
+      );
+    });
+    expect(screen.queryByText("Run history owner-only")).not.toBeInTheDocument();
   });
 
   it("uses stored ses run ids so the operator can recover archived transcripts", async () => {

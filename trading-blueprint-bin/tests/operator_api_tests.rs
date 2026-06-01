@@ -1606,6 +1606,158 @@ async fn test_run_transcript_fallback_replays_json_results_as_chat_parts() {
 }
 
 #[tokio::test]
+async fn test_public_run_messages_replay_json_result_without_auth() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow(
+        "runs-public-json-bot",
+        "hyperliquid_perp",
+        true,
+        Some(9_100_061),
+    );
+    let result = json!({
+        "result_schema_version": 1,
+        "checked_state": {
+            "nav_status": "fresh",
+            "total_nav_usdc": 12,
+            "perp_margin_usdc": 7,
+            "positions_count": 1
+        },
+        "decision": {
+            "action": "trade",
+            "reason": "mm-rebalance-buy-base"
+        },
+        "trade_action": {
+            "attempted": true,
+            "status": 200,
+            "response": { "tx_hash": "0xpaper_public" }
+        }
+    })
+    .to_string();
+
+    trading_blueprint_lib::workflow_compat::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "run-public-json".to_string(),
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
+                run_id: "run-public-json".to_string(),
+                workflow_id: bot.workflow_id.expect("workflow id"),
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
+                started_at: 1_775_824_100,
+                completed_at: Some(1_775_824_228),
+                session_id: None,
+                trace_id: None,
+                duration_ms: 128_000,
+                input_tokens: 0,
+                output_tokens: 0,
+                result: Some(result),
+                error: None,
+            },
+        )
+        .expect("insert JSON run");
+
+    let transcript_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/runs/run-public-json/messages?limit=200",
+                    bot.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(transcript_response.status(), StatusCode::OK);
+    let transcript_body = transcript_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let transcript_json: serde_json::Value = serde_json::from_slice(&transcript_body).unwrap();
+    let serialized = serde_json::to_string(&transcript_json).unwrap();
+    assert!(serialized.contains("mm-rebalance-buy-base"), "{serialized}");
+    assert!(serialized.contains("hyperliquid_trade"), "{serialized}");
+    assert!(serialized.contains("0xpaper_public"), "{serialized}");
+}
+
+#[tokio::test]
+async fn test_public_run_messages_redact_stored_transcript_secrets() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("runs-public-redact-bot", "dex", true, Some(9_100_062));
+
+    trading_blueprint_lib::workflow_compat::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            "run-public-redact".to_string(),
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
+                run_id: "run-public-redact".to_string(),
+                workflow_id: bot.workflow_id.expect("workflow id"),
+                status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
+                started_at: 1_775_824_100,
+                completed_at: Some(1_775_824_228),
+                session_id: Some("ses-secret-run".to_string()),
+                trace_id: None,
+                duration_ms: 128_000,
+                input_tokens: 0,
+                output_tokens: 0,
+                result: Some("summary".to_string()),
+                error: None,
+            },
+        )
+        .expect("insert transcript run");
+    trading_blueprint_lib::workflow_compat::insert_workflow_run_transcript_for_testing(
+        trading_blueprint_lib::workflow_compat::WorkflowRunTranscriptRecord {
+            run_id: "run-public-redact".to_string(),
+            session_id: "ses-secret-run".to_string(),
+            captured_at: 1_775_824_228,
+            messages: json!([
+                {
+                    "info": { "id": "msg-secret", "role": "assistant", "timestamp": "2026-04-24T07:10:00.000Z" },
+                    "parts": [{
+                        "type": "tool",
+                        "id": "tool-secret",
+                        "tool": "trade_executor",
+                        "state": {
+                            "status": "completed",
+                            "input": { "api_key": "sk-live-secret", "tx_hash": "0xbeef" },
+                            "output": { "nested": { "private_key": "0xdeadbeef" } }
+                        }
+                    }]
+                }
+            ]),
+        },
+    )
+    .expect("insert transcript snapshot");
+
+    let transcript_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/runs/run-public-redact/messages?limit=200",
+                    bot.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(transcript_response.status(), StatusCode::OK);
+    let transcript_body = transcript_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let transcript_json: serde_json::Value = serde_json::from_slice(&transcript_body).unwrap();
+    let serialized = serde_json::to_string(&transcript_json).unwrap();
+    assert!(!serialized.contains("sk-live-secret"), "{serialized}");
+    assert!(!serialized.contains("0xdeadbeef"), "{serialized}");
+    assert!(serialized.contains("[redacted]"), "{serialized}");
+    assert!(serialized.contains("0xbeef"), "{serialized}");
+}
+
+#[tokio::test]
 async fn test_running_autonomous_sessions_preserve_live_message_errors() {
     let _ = init_test_env();
     let bot = seed_bot_with_workflow("runs-live-error-bot", "dex", true, Some(9_100_101));

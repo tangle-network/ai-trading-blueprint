@@ -628,6 +628,10 @@ pub fn build_operator_router() -> Router {
         .route("/api/bots/{bot_id}/runs", get(list_bot_runs))
         .route("/api/bots/{bot_id}/runs/{run_id}", get(get_bot_run))
         .route(
+            "/api/bots/{bot_id}/runs/{run_id}/messages",
+            get(list_bot_run_messages),
+        )
+        .route(
             "/api/bots/{bot_id}/evolution/self-improve/runs",
             get(list_self_improvement_runs),
         )
@@ -1538,6 +1542,69 @@ fn replay_transcript_messages_response(
     }
 }
 
+fn is_sensitive_public_transcript_key(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+
+    [
+        "apikey",
+        "authorization",
+        "bearer",
+        "mnemonic",
+        "password",
+        "privatekey",
+        "refreshtoken",
+        "secret",
+        "seedphrase",
+        "sessiontoken",
+        "signature",
+        "tradingapitoken",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn redact_public_transcript_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .into_iter()
+                .map(redact_public_transcript_value)
+                .collect(),
+        ),
+        serde_json::Value::Object(values) => serde_json::Value::Object(
+            values
+                .into_iter()
+                .map(|(key, value)| {
+                    if is_sensitive_public_transcript_key(&key) {
+                        (key, serde_json::Value::String("[redacted]".to_string()))
+                    } else {
+                        (key, redact_public_transcript_value(value))
+                    }
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn run_public_transcript_response(
+    run: &WorkflowRunRecord,
+    query: &TranscriptMessageQuery,
+) -> Result<Response, (StatusCode, String)> {
+    let transcript =
+        trading_blueprint_lib::workflow_compat::get_workflow_run_transcript(&run.run_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let messages = transcript
+        .map(|record| redact_public_transcript_value(record.messages))
+        .unwrap_or_else(|| synthesize_run_transcript_messages(run));
+
+    Ok(replay_transcript_messages_response(messages, query))
+}
+
 async fn run_transcript_fallback_response(
     target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
     run: &WorkflowRunRecord,
@@ -1808,10 +1875,19 @@ async fn get_bot_run(
     Path((bot_id, run_id)): Path<(String, String)>,
 ) -> Result<Json<BotRunResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let workflow_ids = workflow_ids_for_bot(&bot)
+    let run = resolve_bot_workflow_run(&bot, &run_id)?;
+
+    Ok(Json(map_bot_run(&bot, run)))
+}
+
+fn resolve_bot_workflow_run(
+    bot: &TradingBotRecord,
+    run_id: &str,
+) -> Result<WorkflowRunRecord, (StatusCode, String)> {
+    let workflow_ids = workflow_ids_for_bot(bot)
         .into_iter()
         .collect::<HashSet<_>>();
-    let run = trading_blueprint_lib::workflow_compat::get_workflow_run(&run_id)
+    let run = trading_blueprint_lib::workflow_compat::get_workflow_run(run_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .or_else(|| {
             workflow_ids
@@ -1831,7 +1907,17 @@ async fn get_bot_run(
         return Err((StatusCode::NOT_FOUND, "Run not found".to_string()));
     }
 
-    Ok(Json(map_bot_run(&bot, run)))
+    Ok(run)
+}
+
+async fn list_bot_run_messages(
+    Path((bot_id, run_id)): Path<(String, String)>,
+    RawQuery(query): RawQuery,
+) -> Result<Response, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    let run = resolve_bot_workflow_run(&bot, &run_id)?;
+    let transcript_query = parse_transcript_message_query(query.as_deref());
+    run_public_transcript_response(&run, &transcript_query)
 }
 
 // ── Secrets handlers ─────────────────────────────────────────────────────

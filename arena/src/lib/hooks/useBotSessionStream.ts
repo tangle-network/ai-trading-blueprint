@@ -25,6 +25,8 @@ interface UseBotSessionStreamOptions {
   sessionId: string;
   enabled?: boolean;
   cacheKey?: string;
+  historyPath?: string;
+  streamEnabled?: boolean;
 }
 
 interface UseBotSessionStreamResult {
@@ -465,6 +467,8 @@ export function useBotSessionStream({
   sessionId,
   enabled = true,
   cacheKey,
+  historyPath,
+  streamEnabled = true,
 }: UseBotSessionStreamOptions): UseBotSessionStreamResult {
   const [messages, setMessages] = useState<AppSessionMessage[]>([]);
   const [partMap, setPartMap] = useState<Record<string, SessionPart[]>>({});
@@ -511,7 +515,7 @@ export function useBotSessionStream({
   }, [cacheKey, sessionId]);
 
   const refetch = useCallback(async () => {
-    if (!apiUrl || !token || !sessionId) {
+    if (!apiUrl || !sessionId || (!token && !historyPath)) {
       return;
     }
 
@@ -519,13 +523,17 @@ export function useBotSessionStream({
     const controller = new AbortController();
     historyAbortRef.current = controller;
     try {
+      const headers: HeadersInit = token
+        ? { Authorization: `Bearer ${token}` }
+        : {};
+      const path =
+        historyPath ??
+        `/session/sessions/${encodeURIComponent(sessionId)}/messages?limit=200`;
       const response = await fetch(
-        `${apiUrl}/session/sessions/${encodeURIComponent(sessionId)}/messages?limit=200`,
+        `${apiUrl}${path}`,
         {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          credentials: "include",
+          headers,
+          credentials: token ? "include" : "omit",
           signal: controller.signal,
         },
       );
@@ -580,7 +588,7 @@ export function useBotSessionStream({
           : "Failed to load session history",
       );
     }
-  }, [apiUrl, applyState, sessionId, token]);
+  }, [apiUrl, applyState, historyPath, sessionId, token]);
 
   const applyMessageUpdate = useCallback(
     (payload: Record<string, unknown>) => {
@@ -840,7 +848,7 @@ export function useBotSessionStream({
   );
 
   const connectStream = useCallback(async () => {
-    if (!enabled || !apiUrl || !token || !sessionId) {
+    if (!enabled || !streamEnabled || !apiUrl || !token || !sessionId) {
       return;
     }
 
@@ -927,7 +935,7 @@ export function useBotSessionStream({
         void connectStream();
       }, RECONNECT_DELAY_MS);
     }
-  }, [apiUrl, clearReconnectTimer, enabled, handleEvent, sessionId, token]);
+  }, [apiUrl, clearReconnectTimer, enabled, handleEvent, sessionId, streamEnabled, token]);
 
   const send = useCallback(
     async (text: string) => {
@@ -1056,7 +1064,7 @@ export function useBotSessionStream({
   }, [loadCachedSnapshot]);
 
   useEffect(() => {
-    if (!enabled || !apiUrl || !token || !sessionId) {
+    if (!enabled || !apiUrl || !sessionId || (!token && !historyPath)) {
       streamAbortRef.current?.abort();
       historyAbortRef.current?.abort();
       clearReconnectTimer();
@@ -1066,7 +1074,9 @@ export function useBotSessionStream({
     }
 
     void refetch();
-    void connectStream();
+    if (streamEnabled && token) {
+      void connectStream();
+    }
 
     return () => {
       streamAbortRef.current?.abort();
@@ -1079,8 +1089,10 @@ export function useBotSessionStream({
     clearReconnectTimer,
     connectStream,
     enabled,
+    historyPath,
     refetch,
     sessionId,
+    streamEnabled,
     token,
   ]);
 

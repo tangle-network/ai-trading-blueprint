@@ -313,6 +313,10 @@ function resolveTranscriptSessionId(botId: string, run: BotRun | null): string {
   return "";
 }
 
+function hasReplayableRunTrace(run: BotRun | null): boolean {
+  return Boolean(run && (run.transcriptAvailable || run.result || run.error));
+}
+
 function RunsStatus({ status }: { status: "idle" | "running" | "error" }) {
   return (
     <div className="flex items-center gap-2">
@@ -843,8 +847,14 @@ function RunDetailPanel({ run }: { run: BotRun }) {
           <RunMetric label="Trace ID" value={run.traceId ?? "n/a"} />
           <RunMetric label="Run ID" value={run.runId} />
           <RunMetric
-            label="Full transcript"
-            value={run.transcriptAvailable ? "Available" : "Not captured"}
+            label="Trace Replay"
+            value={
+              run.transcriptAvailable
+                ? "Full transcript"
+                : run.result || run.error
+                  ? "Structured replay"
+                  : "Not captured"
+            }
           />
         </div>
       </div>
@@ -964,17 +974,28 @@ export function RunsTab({
 
   const activeRun =
     runs.find((run) => run.runId === activeRunId) ?? chooseDefaultRun(runs);
-  const transcriptSessionId = resolveTranscriptSessionId(botId, activeRun);
+  const rawTranscriptSessionId = resolveTranscriptSessionId(botId, activeRun);
   const canStreamTranscript = Boolean(
-    transcriptSessionId && isAuthenticated && token,
+    rawTranscriptSessionId && isAuthenticated && token,
   );
+  const canReplayRunTrace = hasReplayableRunTrace(activeRun);
+  const replaySessionId = activeRun ? `run-replay-${activeRun.runId}` : "";
+  const transcriptSessionId = canStreamTranscript
+    ? rawTranscriptSessionId
+    : replaySessionId;
+  const replayHistoryPath =
+    !canStreamTranscript && activeRun
+      ? `/runs/${encodeURIComponent(activeRun.runId)}/messages?limit=200`
+      : undefined;
 
   const stream = useBotSessionStream({
     apiUrl,
     token,
     sessionId: transcriptSessionId,
-    enabled: !!apiUrl && canStreamTranscript,
+    enabled: !!apiUrl && Boolean(activeRun) && (canStreamTranscript || canReplayRunTrace),
     cacheKey: runsCacheKey,
+    historyPath: replayHistoryPath,
+    streamEnabled: canStreamTranscript,
   });
 
   const runItems: RunItem[] = useMemo(
@@ -995,6 +1016,9 @@ export function RunsTab({
     && canStreamTranscript
     ? extractRunsErrorMessage(stream.error)
     : null;
+  const traceReplayFailed = canReplayRunTrace && !canStreamTranscript && Boolean(stream.error);
+  const shouldShowTraceReplay =
+    (canStreamTranscript || canReplayRunTrace) && !traceReplayFailed && !streamErrorMessage;
   const headerTitle = activeRun ? getRunTitle(activeRun) : "Autonomous Run";
   const headerSubtitle = activeRun
     ? `${getWorkflowKindDescription(activeRun.workflowKind)} • ${formatRunTimestamp(activeRun.startedAt)}`
@@ -1133,13 +1157,13 @@ export function RunsTab({
           </div>
 
           <div className="min-h-0 flex-1 bg-arena-elements-background-depth-1/15">
-            {canStreamTranscript && !streamErrorMessage ? (
+            {shouldShowTraceReplay ? (
               <ChatTranscript
                 messages={stream.messages}
                 partMap={stream.partMap}
                 isStreaming={stream.isStreaming}
                 branding={RUNS_BRANDING}
-                placeholder="This transcript is read only"
+                placeholder="This trace is read only"
               />
             ) : activeRun ? (
               <RunDetailPanel run={activeRun} />
