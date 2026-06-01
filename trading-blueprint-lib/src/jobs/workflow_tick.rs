@@ -2,6 +2,7 @@
 //! TTL wind-down conditions and swap the agent prompt accordingly.
 
 use serde_json::{Value, json};
+use std::time::Duration;
 
 use crate::JsonResponse;
 use crate::state::{bot_key, bots};
@@ -164,6 +165,15 @@ fn workflow_timeout_ms(workflow_json: &str, default_timeout_ms: u64) -> u64 {
         .ok()
         .and_then(|workflow| workflow.get("timeout_ms").and_then(Value::as_u64))
         .unwrap_or(default_timeout_ms)
+}
+
+fn inner_workflow_tick_timeout() -> Duration {
+    let timeout_ms = std::env::var("TRADING_INNER_WORKFLOW_TICK_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| (5_000..=300_000).contains(value))
+        .unwrap_or(30_000);
+    Duration::from_millis(timeout_ms)
 }
 
 fn workflow_is_due(
@@ -661,6 +671,10 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
 
     // 2. Run deterministic fast ticks (any family with a tick tool) before the
     //    generic LLM runner.
+    let mut direct_response = json!({
+        "count": 0,
+        "executed": [],
+    });
     let direct_executed = match run_due_fast_ticks(&all_bots).await {
         Ok(executed) => executed,
         Err(err) => {
@@ -668,19 +682,40 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
             Vec::new()
         }
     };
+    if !direct_executed.is_empty() {
+        direct_response = json!({
+            "count": direct_executed.len(),
+            "executed": direct_executed,
+        });
+        validate_fast_runs(&mut direct_response, &all_bots).await;
+        persist_executed_run_history(&direct_response);
+    }
 
     // 3. Run the normal workflow tick for everything else.
     tracing::info!("Running inner workflow_tick()...");
-    let mut response = match ai_agent_sandbox_blueprint_lib::workflows::workflow_tick().await {
-        Ok(v) => v,
-        Err(e) => {
+    let mut response = match tokio::time::timeout(
+        inner_workflow_tick_timeout(),
+        ai_agent_sandbox_blueprint_lib::workflows::workflow_tick(),
+    )
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => {
             tracing::error!("workflow_tick() failed (non-fatal): {e}");
             serde_json::json!({"error": e, "count": 0, "executed": []})
         }
+        Err(e) => {
+            tracing::error!("workflow_tick() timed out (non-fatal): {e}");
+            serde_json::json!({
+                "error": format!("workflow_tick timed out after {}ms", inner_workflow_tick_timeout().as_millis()),
+                "count": 0,
+                "executed": [],
+            })
+        }
     };
-    if !direct_executed.is_empty() {
+    if let Some(direct_executed) = direct_response.get("executed").and_then(Value::as_array) {
         if let Some(executed) = response.get_mut("executed").and_then(Value::as_array_mut) {
-            executed.extend(direct_executed);
+            executed.extend(direct_executed.iter().cloned());
             response["count"] = json!(executed.len());
         }
     }
