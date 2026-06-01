@@ -33,7 +33,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
 
   if (isLoading) {
     return (
-      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
+      <div className="glass-card rounded-xl text-center py-16 text-base text-arena-elements-textSecondary">
         <div className="i-ph:arrow-clockwise text-3xl mb-3 mx-auto text-arena-elements-textTertiary animate-spin" />
         Loading positions...
       </div>
@@ -56,7 +56,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
 
   if (!portfolio) {
     return (
-      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
+      <div className="glass-card rounded-xl text-center py-16 text-base text-arena-elements-textSecondary">
         <div className="i-ph:wallet text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
         No portfolio data available for this bot{isLive ? '.' : ` while it is ${botStatusLabel(status).toLowerCase()}.`}
       </div>
@@ -128,26 +128,27 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   const hasPricedPositionValue = portfolio.positions.some((pos) => pos.displayValueUsd != null);
 
   const renderStandardPositionsTable = (positions: Position[]) => (
-    <Table>
+    <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
+      <Table className="min-w-[780px]">
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="text-sm">Token</TableHead>
-          <TableHead className="text-right text-sm">Amount</TableHead>
-          <TableHead className="text-right text-sm">Value</TableHead>
-          <TableHead className="text-right text-sm">Current</TableHead>
-          <TableHead className="text-right text-sm">Weight</TableHead>
+          <TableHead className="py-4 text-base">Token</TableHead>
+          <TableHead className="py-4 text-right text-base">Amount</TableHead>
+          <TableHead className="py-4 text-right text-base">Value</TableHead>
+          <TableHead className="py-4 text-right text-base">Current</TableHead>
+          <TableHead className="py-4 text-right text-base">Weight</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {positions.map((pos) => (
           <TableRow key={pos.token}>
-            <TableCell className="font-display font-semibold">
+            <TableCell className="py-4 font-display text-lg font-semibold">
               <div className="flex items-center justify-between gap-2">
                 <AssetDisplay asset={pos.asset} />
                 {pos.valuationStatus !== 'priced' && (
                   <Badge
                     variant="amber"
-                    className="text-[10px]"
+                    className="text-xs"
                     title={pos.warnings.join(' ')}
                   >
                     {pos.valuationStatus === 'value_only' ? 'Value only' : 'Unpriced'}
@@ -155,84 +156,87 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
                 )}
               </div>
             </TableCell>
-            <TableCell className="text-right font-data text-base">{formatNumber(pos.amount)}</TableCell>
-            <TableCell className={`text-right font-data text-base ${pos.displayValueUsd == null ? 'text-arena-elements-textTertiary' : ''}`}>
+            <TableCell className="py-4 text-right font-data text-lg">{formatNumber(pos.amount)}</TableCell>
+            <TableCell className={`py-4 text-right font-data text-lg ${pos.displayValueUsd == null ? 'text-arena-elements-textTertiary' : ''}`}>
               {formatCurrency(pos.displayValueUsd)}
             </TableCell>
-            <TableCell className={`text-right font-data text-base ${pos.currentPrice == null ? 'text-arena-elements-textTertiary' : ''}`}>
+            <TableCell className={`py-4 text-right font-data text-lg ${pos.currentPrice == null ? 'text-arena-elements-textTertiary' : ''}`}>
               {formatCurrency(pos.currentPrice)}
             </TableCell>
-            <TableCell className={`text-right font-data text-base ${pos.displayWeight == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textSecondary'}`}>
+            <TableCell className={`py-4 text-right font-data text-lg ${pos.displayWeight == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textSecondary'}`}>
               {formatPercent(pos.displayWeight)}
             </TableCell>
           </TableRow>
         ))}
       </TableBody>
-    </Table>
+      </Table>
+    </div>
   );
 
   const renderPerpPositionsTable = (positions: Position[]) => (
-    <Table>
+    <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
+      <Table className="min-w-[1120px]">
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="text-sm">Position</TableHead>
-          <TableHead className="text-sm">Direction</TableHead>
-          <TableHead className="text-right text-sm">Size</TableHead>
-          <TableHead className="text-right text-sm">Notional</TableHead>
-          <TableHead className="text-right text-sm">Margin Used</TableHead>
-          <TableHead className="text-right text-sm">Margin Usage</TableHead>
-          <TableHead className="text-right text-sm">Leverage</TableHead>
-          <TableHead className="text-right text-sm">PnL</TableHead>
-          <TableHead className="text-right text-sm">Liquidation</TableHead>
+          <TableHead className="py-4 text-base">Position</TableHead>
+          <TableHead className="py-4 text-base">Direction</TableHead>
+          <TableHead className="py-4 text-right text-base">Size</TableHead>
+          <TableHead className="py-4 text-right text-base">Notional</TableHead>
+          <TableHead className="py-4 text-right text-base">Margin Used</TableHead>
+          <TableHead className="py-4 text-right text-base">Margin Usage</TableHead>
+          <TableHead className="py-4 text-right text-base">Leverage</TableHead>
+          <TableHead className="py-4 text-right text-base">PnL</TableHead>
+          <TableHead className="py-4 text-right text-base">Liquidation</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {positions.map((pos) => (
           <TableRow key={`${pos.protocol}-${pos.positionType}-${pos.token}`}>
-            <TableCell className="font-display font-semibold">
+            <TableCell className="py-4 font-display font-semibold">
               <div className="flex items-center gap-3 min-w-0">
                 <span
                   aria-hidden="true"
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-100 text-xs font-data font-semibold text-sky-700 ring-1 ring-black/5 dark:bg-sky-500/20 dark:text-sky-200 dark:ring-white/10"
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sm font-data font-semibold text-sky-700 ring-1 ring-black/5 dark:bg-sky-500/20 dark:text-sky-200 dark:ring-white/10"
                 >
                   {pos.token}
                 </span>
                 <div className="min-w-0">
-                  <div className="truncate text-base font-display font-semibold text-arena-elements-textPrimary">
+                  <div className="truncate text-lg font-display font-semibold text-arena-elements-textPrimary">
                     {perpAssetLabel(pos)}
                   </div>
-                  <div className="truncate text-sm font-data text-arena-elements-textTertiary">
+                  <div className="truncate text-base font-data text-arena-elements-textTertiary">
                     Hyperliquid
                   </div>
                 </div>
               </div>
             </TableCell>
-            <TableCell className="font-data text-base text-arena-elements-textSecondary">
+            <TableCell className="py-4 font-data text-lg text-arena-elements-textSecondary">
               {perpDirection(pos)}
             </TableCell>
-            <TableCell className="text-right font-data text-base">{formatSize(pos)}</TableCell>
-            <TableCell className={`text-right font-data text-base ${pos.notionalUsd == null ? 'text-arena-elements-textTertiary' : ''}`}>
+            <TableCell className="py-4 text-right font-data text-lg">{formatSize(pos)}</TableCell>
+            <TableCell className={`py-4 text-right font-data text-lg ${pos.notionalUsd == null ? 'text-arena-elements-textTertiary' : ''}`}>
               {formatCurrency(pos.notionalUsd ?? null)}
             </TableCell>
-            <TableCell className={`text-right font-data text-base ${marginUsedUsd(pos) == null ? 'text-arena-elements-textTertiary' : ''}`}>
+            <TableCell className={`py-4 text-right font-data text-lg ${marginUsedUsd(pos) == null ? 'text-arena-elements-textTertiary' : ''}`}>
               {formatCurrency(marginUsedUsd(pos))}
             </TableCell>
-            <TableCell className={`text-right font-data text-base ${marginUsage(pos) == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textSecondary'}`}>
+            <TableCell className={`py-4 text-right font-data text-lg ${marginUsage(pos) == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textSecondary'}`}>
               {formatPercent(marginUsage(pos))}
             </TableCell>
-            <TableCell className={`text-right font-data text-base ${pos.leverage == null ? 'text-arena-elements-textTertiary' : ''}`}>
+            <TableCell className={`py-4 text-right font-data text-lg ${pos.leverage == null ? 'text-arena-elements-textTertiary' : ''}`}>
               {formatLeverage(pos.leverage)}
             </TableCell>
-            <TableCell className={`text-right font-data text-base ${pos.unrealizedPnlUsd == null ? 'text-arena-elements-textTertiary' : pos.unrealizedPnlUsd < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+            <TableCell className={`py-4 text-right font-data text-lg ${pos.unrealizedPnlUsd == null ? 'text-arena-elements-textTertiary' : pos.unrealizedPnlUsd < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
               {formatCurrency(pos.unrealizedPnlUsd ?? null)}
             </TableCell>
-            <TableCell className={`text-right font-data text-base ${pos.liquidationPrice == null ? 'text-arena-elements-textTertiary' : ''}`}>
+            <TableCell className={`py-4 text-right font-data text-lg ${pos.liquidationPrice == null ? 'text-arena-elements-textTertiary' : ''}`}>
               {formatCurrency(pos.liquidationPrice ?? null)}
             </TableCell>
           </TableRow>
         ))}
       </TableBody>
-    </Table>
+      </Table>
+    </div>
   );
 
   return (
@@ -253,12 +257,12 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
         </div>
       )}
 
-      <div className="grid gap-3 mb-4 md:grid-cols-3">
+      <div className="grid gap-3 mb-4 md:grid-cols-3 xl:grid-cols-4">
         <div className="glass-card rounded-lg px-4 py-3">
-          <div className="text-sm font-data uppercase tracking-wider text-arena-elements-textTertiary">
+          <div className="text-base font-data uppercase tracking-wider text-arena-elements-textTertiary">
             {hasPerpPositions ? 'Bot Equity' : 'Account Total'}
           </div>
-          <div className="mt-1 font-display font-bold text-2xl">
+          <div className="mt-1 font-display font-bold text-3xl">
             {formatCurrency(portfolio.displayTotalValueUsd)}
           </div>
           {!hasPerpPositions && (
@@ -268,10 +272,10 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
           )}
         </div>
         <div className="glass-card rounded-lg px-4 py-3">
-          <div className="text-sm font-data uppercase tracking-wider text-arena-elements-textTertiary">
+          <div className="text-base font-data uppercase tracking-wider text-arena-elements-textTertiary">
             Positions Value
           </div>
-          <div className="mt-1 font-display font-bold text-2xl">
+          <div className="mt-1 font-display font-bold text-3xl">
             {hasPricedPositionValue ? formatCurrency(pricedPositionValue) : 'Unavailable'}
           </div>
           <p className="mt-1 text-sm text-arena-elements-textTertiary">
@@ -279,19 +283,19 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
           </p>
         </div>
         <div className="glass-card rounded-lg px-4 py-3">
-          <div className="text-sm font-data uppercase tracking-wider text-arena-elements-textTertiary">
+          <div className="text-base font-data uppercase tracking-wider text-arena-elements-textTertiary">
             Cash
           </div>
-          <div className="mt-1 font-display font-bold text-2xl">
+          <div className="mt-1 font-display font-bold text-3xl">
             {formatCurrency(portfolio.displayCashBalance)}
           </div>
         </div>
         {hasPerpPositions && (
           <div className="glass-card rounded-lg px-4 py-3">
-            <div className="text-sm font-data uppercase tracking-wider text-arena-elements-textTertiary">
+            <div className="text-base font-data uppercase tracking-wider text-arena-elements-textTertiary">
               Margin Usage
             </div>
-            <div className="mt-1 font-display font-bold text-2xl">
+            <div className="mt-1 font-display font-bold text-3xl">
               {formatPercent(totalMarginUsage)}
             </div>
           </div>

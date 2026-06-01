@@ -98,7 +98,7 @@ function renderTextWithBreaks(text: string) {
 
 function renderCodeBlock(code: string, language?: string) {
   return (
-    <pre className="overflow-x-auto rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-3 py-2 font-data text-[11px] leading-5 text-arena-elements-textPrimary">
+    <pre className="overflow-x-auto rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-3 py-2 font-data text-sm leading-6 text-arena-elements-textPrimary">
       <code className={language ? `language-${language}` : undefined}>{code}</code>
     </pre>
   );
@@ -126,14 +126,14 @@ function renderToolValue(value: unknown): ReactNode {
 
   if (typeof value === 'string') {
     return (
-      <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-arena-elements-background-depth-2 px-2.5 py-2 text-[11px] leading-5 text-arena-elements-textSecondary">
+      <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-arena-elements-background-depth-2 px-2.5 py-2 text-sm leading-6 text-arena-elements-textSecondary">
         {value}
       </pre>
     );
   }
 
   return (
-    <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-arena-elements-background-depth-2 px-2.5 py-2 text-[11px] leading-5 text-arena-elements-textSecondary">
+    <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-arena-elements-background-depth-2 px-2.5 py-2 text-sm leading-6 text-arena-elements-textSecondary">
       {JSON.stringify(value, null, 2)}
     </pre>
   );
@@ -314,9 +314,9 @@ export function UserBubble({ parts }: { parts: SessionPart[] }) {
   return (
     <div className="flex justify-end">
       <div className="ml-auto max-w-[85%] rounded-2xl rounded-br-md border border-violet-500/15 bg-violet-500/8 px-4 py-2.5 text-left shadow-[0_8px_24px_rgba(109,40,217,0.06)] dark:border-violet-500/20 dark:bg-violet-500/12">
-        <div className="mb-1 text-[11px] font-display font-semibold uppercase tracking-[0.14em] text-violet-700 dark:text-violet-300">
-          You
-        </div>
+      <div className="mb-1 text-xs font-display font-semibold uppercase tracking-[0.14em] text-violet-700 dark:text-violet-300">
+        You
+      </div>
         <AppMarkdown>{textContent}</AppMarkdown>
       </div>
     </div>
@@ -374,7 +374,7 @@ export function ToolRow({ part }: { part: ToolPart }) {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="truncate text-[13px] font-display font-medium text-arena-elements-textPrimary">
+              <span className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
                 {meta.title}
               </span>
               {isRunning && (
@@ -389,7 +389,7 @@ export function ToolRow({ part }: { part: ToolPart }) {
               )}
             </div>
             {meta.description && (
-              <div className="mt-0.5 truncate text-[11px] font-data text-arena-elements-textTertiary">
+              <div className="mt-0.5 truncate text-xs font-data text-arena-elements-textTertiary">
                 {meta.description}
               </div>
             )}
@@ -480,7 +480,7 @@ export function ReasoningRow({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="text-[13px] font-display font-medium text-arena-elements-textPrimary">
+              <span className="text-sm font-display font-medium text-arena-elements-textPrimary">
                 {isActive ? 'Thinking...' : 'Reasoning'}
               </span>
               {isActive && startTime ? <LiveDuration startTime={startTime} /> : null}
@@ -491,7 +491,7 @@ export function ReasoningRow({
               ) : null}
             </div>
             {preview && !open && (
-              <div className="mt-0.5 truncate text-[11px] text-arena-elements-textSecondary">{preview}</div>
+              <div className="mt-0.5 truncate text-xs text-arena-elements-textSecondary">{preview}</div>
             )}
           </div>
           <div className={cn('h-3.5 w-3.5 text-arena-elements-textTertiary', open ? 'i-ph:caret-down' : 'i-ph:caret-right')} />
@@ -501,9 +501,9 @@ export function ReasoningRow({
       {open && (
         <div className="border-t border-arena-elements-dividerColor/50 px-3 py-2">
           {text ? (
-            <AppMarkdown className="text-[13px] leading-6 text-arena-elements-textSecondary">{text}</AppMarkdown>
+            <AppMarkdown className="text-[15px] leading-7 text-arena-elements-textSecondary">{text}</AppMarkdown>
           ) : (
-            <div className="text-[13px] text-arena-elements-textTertiary">No reasoning text was provided.</div>
+            <div className="text-sm text-arena-elements-textTertiary">No reasoning text was provided.</div>
           )}
         </div>
       )}

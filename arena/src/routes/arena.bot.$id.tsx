@@ -8,11 +8,12 @@ import {
   AnimatedPage,
   Button,
   Tabs,
-  TabsList,
-  TabsTrigger,
   TabsContent,
 } from "@tangle-network/blueprint-ui/components";
-import { BotHeader } from "~/components/bot-detail/BotHeader";
+import {
+  BotHeader,
+  type BotHeaderNavItem,
+} from "~/components/bot-detail/BotHeader";
 import { PerformanceTab } from "~/components/bot-detail/PerformanceTab";
 import { PositionsTab } from "~/components/bot-detail/PositionsTab";
 import { TradeHistoryTab } from "~/components/bot-detail/TradeHistoryTab";
@@ -274,6 +275,52 @@ export default function BotDetailPage() {
     bot?.operatorApiUrl,
     bot?.operatorKind,
   );
+  const botNavItems = useMemo<BotHeaderNavItem[]>(() => {
+    const items: BotHeaderNavItem[] = [
+      { value: "performance", label: "Performance", icon: "i-ph:chart-line-up" },
+      { value: "positions", label: "Positions", icon: "i-ph:wallet" },
+      { value: "trades", label: "Trades", icon: "i-ph:swap" },
+    ];
+
+    if (operatorMeta?.features.chat) {
+      items.push(
+        { value: "runs", label: "Runs", icon: "i-ph:list-checks" },
+        { value: "chat", label: "Chat", icon: "i-ph:chat-circle-dots" },
+      );
+    }
+
+    items.push({
+      value: "reasoning",
+      label: "Validation",
+      icon: "i-ph:shield-check",
+      badge: pendingValidationCount > 0
+        ? <span className="h-2 w-2 rounded-full bg-violet-500 animate-pulse" />
+        : undefined,
+    });
+    items.push({ value: "arena", label: "Revision", icon: "i-ph:git-branch" });
+
+    if (isHyperliquidPerpBot) {
+      items.push({ value: "vault", label: "Vault", icon: "i-ph:bank" });
+    }
+
+    items.push(
+      { value: "envelope", label: "Envelope", icon: "i-ph:signature" },
+      { value: "controls", label: "Controls", icon: "i-ph:sliders-horizontal" },
+    );
+
+    if (operatorMeta?.features.terminal) {
+      items.push({ value: "terminal", label: "Terminal", icon: "i-ph:terminal-window" });
+    }
+
+    items.push({ value: "secrets", label: "Secrets", icon: "i-ph:key" });
+
+    return items;
+  }, [
+    isHyperliquidPerpBot,
+    operatorMeta?.features.chat,
+    operatorMeta?.features.terminal,
+    pendingValidationCount,
+  ]);
 
   const isRouteFallbackLoading =
     !storeBot &&
@@ -324,15 +371,13 @@ export default function BotDetailPage() {
 
   return (
     <AnimatedPage>
-      <div className="mx-auto max-w-[1800px] px-4 sm:px-6 lg:px-8 py-6">
-        <Link
-          to="/arena"
-          className="inline-flex items-center gap-1.5 text-sm text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 mb-6 transition-colors duration-200 font-display font-medium"
-        >
-          <span className="text-xs">&larr;</span> Back to Arena
-        </Link>
-
-        <BotHeader bot={bot} />
+      <div className="mx-auto max-w-[1800px] px-4 pb-8 sm:px-6 lg:px-8">
+        <BotHeader
+          bot={bot}
+          activeTab={activeTab}
+          navItems={botNavItems}
+          onTabChange={handleTabChange}
+        />
 
         <EnvelopeNeededBanner
           bot={bot}
@@ -340,41 +385,11 @@ export default function BotDetailPage() {
         />
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
-          <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
-            <TabsList className="w-max min-w-full gap-1">
-              <TabsTrigger value="performance" className="text-sm">Performance</TabsTrigger>
-              <TabsTrigger value="positions" className="text-sm">Positions</TabsTrigger>
-              <TabsTrigger value="trades" className="text-sm">Trade History</TabsTrigger>
-              <TabsTrigger value="reasoning" className="relative text-sm">
-                Validation
-                {pendingValidationCount > 0 && (
-                  <span className="ml-1.5 w-2 h-2 rounded-full bg-violet-500 animate-pulse inline-block" />
-                )}
-              </TabsTrigger>
-              {operatorMeta?.features.chat && (
-                <TabsTrigger value="runs" className="text-sm">Runs</TabsTrigger>
-              )}
-              <TabsTrigger value="arena" className="text-sm">Revision Arena</TabsTrigger>
-              {operatorMeta?.features.chat && (
-                <TabsTrigger value="chat" className="text-sm">Chat</TabsTrigger>
-              )}
-              {operatorMeta?.features.terminal && (
-                <TabsTrigger value="terminal" className="text-sm">Terminal</TabsTrigger>
-              )}
-              {isHyperliquidPerpBot && (
-                <TabsTrigger value="vault" className="text-sm">Vault</TabsTrigger>
-              )}
-              <TabsTrigger value="secrets" className="text-sm">Secrets</TabsTrigger>
-              <TabsTrigger value="envelope" className="text-sm">Envelope</TabsTrigger>
-              <TabsTrigger value="controls" className="text-sm">Controls</TabsTrigger>
-            </TabsList>
-          </div>
-
-          <TabsContent value="performance" className="mt-6">
+          <TabsContent value="performance" className="mt-0">
             <PerformanceTab bot={bot} isLive={botIsLive} />
           </TabsContent>
 
-          <TabsContent value="positions" className="mt-6">
+          <TabsContent value="positions" className="mt-0">
             <PositionsTab
               botId={bot.id}
               status={bot.status}
@@ -386,7 +401,7 @@ export default function BotDetailPage() {
             />
           </TabsContent>
 
-          <TabsContent value="trades" className="mt-6">
+          <TabsContent value="trades" className="mt-0">
             <TradeHistoryTab
               botId={bot.id}
               botName={displayBotName}
@@ -399,7 +414,7 @@ export default function BotDetailPage() {
             />
           </TabsContent>
 
-          <TabsContent value="reasoning" className="mt-6">
+          <TabsContent value="reasoning" className="mt-0">
             <ReasoningTab
               botId={bot.id}
               botName={displayBotName}
@@ -413,7 +428,7 @@ export default function BotDetailPage() {
           </TabsContent>
 
           {operatorMeta?.features.chat && (
-            <TabsContent value="runs" className="mt-6">
+            <TabsContent value="runs" className="mt-0">
               <ErrorBoundary>
                 <RunsTab
                   botId={bot.id}
@@ -426,7 +441,7 @@ export default function BotDetailPage() {
             </TabsContent>
           )}
 
-          <TabsContent value="arena" className="mt-6">
+          <TabsContent value="arena" className="mt-0">
             <ErrorBoundary>
               <RevisionArenaTab
                 botId={bot.id}
@@ -438,7 +453,7 @@ export default function BotDetailPage() {
           </TabsContent>
 
           {operatorMeta?.features.chat && (
-            <TabsContent value="chat" className="mt-6">
+            <TabsContent value="chat" className="mt-0">
               <ErrorBoundary>
                 <ChatTab
                   botId={bot.id}
@@ -470,7 +485,7 @@ export default function BotDetailPage() {
           )}
 
           {operatorMeta?.features.terminal && (
-            <TabsContent value="terminal" className="mt-6">
+            <TabsContent value="terminal" className="mt-0">
               <ErrorBoundary>
                 <TerminalTab
                   botId={bot.id}
@@ -484,26 +499,26 @@ export default function BotDetailPage() {
           )}
 
           {isHyperliquidPerpBot && (
-            <TabsContent value="vault" className="mt-6">
+            <TabsContent value="vault" className="mt-0">
               <ErrorBoundary>
                 <HyperliquidVaultTab bot={bot} />
               </ErrorBoundary>
             </TabsContent>
           )}
 
-          <TabsContent value="secrets" className="mt-6">
+          <TabsContent value="secrets" className="mt-0">
             <ErrorBoundary>
               <SecretsTab bot={bot} />
             </ErrorBoundary>
           </TabsContent>
 
-          <TabsContent value="envelope" className="mt-6">
+          <TabsContent value="envelope" className="mt-0">
             <ErrorBoundary>
               <EnvelopeTab bot={bot} />
             </ErrorBoundary>
           </TabsContent>
 
-          <TabsContent value="controls" className="mt-6">
+          <TabsContent value="controls" className="mt-0">
             <ControlsTab
               bot={bot}
               onConfigureSecrets={

@@ -57,6 +57,29 @@ function formatFreshnessTimestamp(timestamp?: string | null): string {
   return freshnessTimestampFormatter.format(new Date(parsed));
 }
 
+function formatChartCurrency(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `$${formatNumber(value, { maximumFractionDigits: value >= 1000 ? 0 : 2 })}`;
+}
+
+function formatSignedChartCurrency(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const formatted = formatChartCurrency(Math.abs(value));
+  return value < 0 ? `-${formatted}` : `+${formatted}`;
+}
+
+function formatSignedChartPercent(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `${value > 0 ? '+' : ''}${formatNumber(value, {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  })}%`;
+}
+
+function formatTradeTime(timestamp: number): string {
+  return freshnessTimestampFormatter.format(new Date(timestamp));
+}
+
 function isSellSideAction(action: Trade['action']): boolean {
   return action === 'sell' || action === 'close_long' || action === 'close_short';
 }
@@ -274,7 +297,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
               data: values,
               borderColor: lineColor,
               backgroundColor: gradient,
-              borderWidth: 2,
+              borderWidth: 2.5,
               fill: true,
               pointRadius: singlePoint ? 5 : 0,
               pointHoverRadius: singlePoint ? 6 : 5,
@@ -302,6 +325,9 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          layout: {
+            padding: { left: 4, right: 14, top: 10, bottom: 0 },
+          },
           interaction: {
             mode: 'index',
             intersect: false,
@@ -314,9 +340,9 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
               borderWidth: 1,
               titleColor: chartTheme.tooltipTitleColor,
               bodyColor: chartTheme.tooltipBodyColor,
-              titleFont: { family: CHART_TOOLTIP_FONT_FAMILY, size: 12, weight: 500 },
-              bodyFont: { family: CHART_TOOLTIP_FONT_FAMILY, size: 12, weight: 700 },
-              padding: 10,
+              titleFont: { family: CHART_TOOLTIP_FONT_FAMILY, size: 13, weight: 500 },
+              bodyFont: { family: CHART_TOOLTIP_FONT_FAMILY, size: 13, weight: 700 },
+              padding: 12,
               cornerRadius: 8,
               displayColors: false,
               callbacks: {
@@ -346,18 +372,23 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
               ticks: {
                 maxTicksLimit: 7,
                 color: chartTheme.tickColor,
-                font: { family: CHART_DATA_FONT_FAMILY, size: 10 },
+                padding: 10,
+                font: { family: CHART_DATA_FONT_FAMILY, size: 11 },
               },
             },
             y: {
+              position: 'right',
               display: true,
               grid: {
                 color: chartTheme.gridColor,
+                drawTicks: false,
               },
               border: { display: false },
               ticks: {
                 color: chartTheme.tickColor,
-                font: { family: CHART_DATA_FONT_FAMILY, size: 10 },
+                padding: 10,
+                font: { family: CHART_DATA_FONT_FAMILY, size: 11 },
+                callback: (value) => `$${formatNumber(Number(value), { maximumFractionDigits: 0 })}`,
               },
             },
           },
@@ -403,6 +434,50 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
       label: 'Active Since',
       value: new Date(bot.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       color: '',
+    },
+  ];
+  const firstChartPoint = chartPoints[0] ?? null;
+  const latestChartPoint = chartPoints[chartPoints.length - 1] ?? null;
+  const latestChartValue = latestChartPoint?.value ?? null;
+  const firstChartValue = firstChartPoint?.value ?? null;
+  const chartReturnValue = latestChartValue != null && firstChartValue != null
+    ? latestChartValue - firstChartValue
+    : null;
+  const chartReturnPercent = chartReturnValue != null && firstChartValue != null && firstChartValue > 0
+    ? (chartReturnValue / firstChartValue) * 100
+    : null;
+  const chartHighValue = chartPoints.length > 0
+    ? Math.max(...chartPoints.map((point) => point.value))
+    : null;
+  const chartLowValue = chartPoints.length > 0
+    ? Math.min(...chartPoints.map((point) => point.value))
+    : null;
+  const recentTradeTape = (trades ?? []).slice(0, 6);
+  const chartReturnTone = chartReturnValue == null
+    ? 'text-arena-elements-textPrimary'
+    : chartReturnValue >= 0
+      ? 'text-arena-elements-icon-success'
+      : 'text-arena-elements-icon-error';
+  const chartStats = [
+    {
+      label: 'NAV',
+      value: formatChartCurrency(latestChartValue),
+      tone: 'text-arena-elements-textPrimary',
+    },
+    {
+      label: `${selectedRange.label} Return`,
+      value: formatSignedChartPercent(chartReturnPercent),
+      tone: chartReturnTone,
+    },
+    {
+      label: 'High',
+      value: formatChartCurrency(chartHighValue),
+      tone: 'text-arena-elements-textPrimary',
+    },
+    {
+      label: 'Low',
+      value: formatChartCurrency(chartLowValue),
+      tone: 'text-arena-elements-textPrimary',
     },
   ];
 
@@ -455,24 +530,26 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+    <div className="space-y-5">
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="glass-card-strong rounded-xl p-4 shadow-[0_24px_90px_rgba(0,0,0,0.22)]">
+          <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
-              <CardTitle>{PERFORMANCE_SECTION_COPY.title}</CardTitle>
-              <p className="text-base text-arena-elements-textSecondary">
+              <h2 className="font-display text-2xl font-bold tracking-tight">
+                {PERFORMANCE_SECTION_COPY.title}
+              </h2>
+              <p className="mt-1 max-w-3xl text-base text-arena-elements-textSecondary">
                 {PERFORMANCE_SECTION_COPY.description}
               </p>
               {(lastCheckpointLabel || liveNavLabel) && (
-                <p className="mt-1 text-sm font-data text-arena-elements-textTertiary">
+                <p className="mt-2 text-sm font-data text-arena-elements-textTertiary">
                   {lastCheckpointLabel ? `Last checkpoint: ${lastCheckpointLabel}` : 'Last checkpoint: unavailable'}
                   {liveNavLabel ? ` · Live NAV: ${liveNavLabel}` : ''}
                 </p>
               )}
             </div>
             <div
-              className="inline-flex w-fit rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/40 p-1"
+              className="inline-flex w-fit rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/60 p-1"
               role="group"
               aria-label="Performance date range"
             >
@@ -480,9 +557,9 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
                 <button
                   key={item.value}
                   type="button"
-                  className={`rounded-md px-3 py-1.5 text-sm font-data transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                  className={`h-9 rounded-md px-4 text-sm font-data transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
                     range === item.value
-                      ? 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
+                      ? 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
                       : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
                   }`}
                   aria-pressed={range === item.value}
@@ -493,24 +570,120 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
               ))}
             </div>
           </div>
-        </CardHeader>
-        <CardContent>
-          {chartPoints.length > 0 ? (
-            <div className="h-[420px]">
-              <canvas ref={canvasRef} />
-            </div>
-          ) : (
-            <div className="h-[420px] flex items-center justify-center">
-              <div className="text-center">
-                <div className="i-ph:chart-line text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
-                <p className="text-sm text-arena-elements-textSecondary">
-                  No performance snapshots available yet.
-                </p>
+
+          <div className="mb-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {chartStats.map((stat) => (
+              <div
+                key={stat.label}
+                className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/54 px-3 py-2"
+              >
+                <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                  {stat.label}
+                </div>
+                <div className={`mt-1 font-data text-xl font-bold ${stat.tone}`}>
+                  {stat.value}
+                </div>
               </div>
+            ))}
+          </div>
+
+          <div
+            className="rounded-xl border border-arena-elements-dividerColor/70 p-3"
+            style={{
+              background: 'radial-gradient(circle at top left, rgba(0,255,136,0.08), transparent 30%), linear-gradient(180deg, rgba(10,10,15,0.88), rgba(10,10,15,0.68))',
+            }}
+          >
+            {chartPoints.length > 0 ? (
+              <div className="h-[520px]">
+                <canvas ref={canvasRef} />
+              </div>
+            ) : (
+              <div className="flex h-[520px] items-center justify-center">
+                <div className="text-center">
+                  <div className="i-ph:chart-line text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
+                  <p className="text-sm text-arena-elements-textSecondary">
+                    No performance snapshots available yet.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <aside className="space-y-4">
+          <div className="glass-card rounded-xl p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h3 className="font-display text-lg font-semibold">Trade Tape</h3>
+              <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
+                Last {Math.min(recentTradeTape.length, 6)}
+              </span>
             </div>
-          )}
-        </CardContent>
-      </Card>
+            {recentTradeTape.length > 0 ? (
+              <div className="space-y-2">
+                {recentTradeTape.map((trade) => {
+                  const buySide = isBuySideAction(trade.action);
+                  const sellSide = isSellSideAction(trade.action);
+                  const actionTone = buySide
+                    ? 'text-arena-elements-icon-success'
+                    : sellSide
+                      ? 'text-arena-elements-icon-error'
+                      : 'text-amber-600 dark:text-amber-300';
+
+                  return (
+                    <div
+                      key={trade.id}
+                      className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/40 px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className={`font-data text-sm font-bold ${actionTone}`}>
+                          {formatTradeAction(trade.action)}
+                        </div>
+                        <div className="font-data text-xs text-arena-elements-textTertiary">
+                          {formatTradeTime(trade.timestamp)}
+                        </div>
+                      </div>
+                      <div className="mt-1 truncate font-display text-base font-medium text-arena-elements-textPrimary">
+                        {getTradePairLabel(trade)}
+                      </div>
+                      <div className="mt-1 font-data text-sm text-arena-elements-textSecondary">
+                        {trade.notionalUsd != null && trade.notionalUsd > 0
+                          ? formatChartCurrency(trade.notionalUsd)
+                          : 'Notional unavailable'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-arena-elements-dividerColor/70 px-3 py-8 text-center text-sm text-arena-elements-textTertiary">
+                No recent trade markers in this range.
+              </div>
+            )}
+          </div>
+
+          <div className="glass-card rounded-xl p-4">
+            <h3 className="font-display text-lg font-semibold">Checkpoint Readout</h3>
+            <dl className="mt-3 space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-arena-elements-textTertiary">First point</dt>
+                <dd className="font-data text-arena-elements-textPrimary">{firstChartPoint?.tooltipLabel ?? 'Unavailable'}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-arena-elements-textTertiary">Latest point</dt>
+                <dd className="font-data text-arena-elements-textPrimary">{latestChartPoint?.tooltipLabel ?? 'Unavailable'}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-arena-elements-textTertiary">Range PnL</dt>
+                <dd className={`font-data ${chartReturnTone}`}>{formatSignedChartCurrency(chartReturnValue)}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-arena-elements-textTertiary">Snapshots</dt>
+                <dd className="font-data text-arena-elements-textPrimary">{chartPoints.length}</dd>
+              </div>
+            </dl>
+          </div>
+        </aside>
+      </section>
 
       <div className="grid sm:grid-cols-3 gap-4">
         {summaryCards.map((card, i) => (

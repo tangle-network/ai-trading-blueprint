@@ -633,10 +633,13 @@ export function ChatTab({
       data-sandbox-ui="true"
       data-sandbox-theme="vault"
       className="arena-chat-shell glass-card rounded-xl overflow-hidden"
-      style={{ minHeight: "760px" }}
+      style={{
+        height: "calc(100vh - var(--header-height) - 12rem)",
+        minHeight: "720px",
+      }}
     >
       <div
-        className={`flex h-[min(1040px,calc(100vh-8rem))] min-h-[760px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
+        className={`flex h-full min-h-0 min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
       >
         <SessionWorkspaceSidebar
           sessions={sessionItems}
@@ -660,11 +663,11 @@ export function ChatTab({
         />
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 px-4 py-3 bg-arena-elements-background-depth-1/25">
+          <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 px-5 py-3 bg-arena-elements-background-depth-1/25">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <span className="i-ph:chat-circle-dots text-base text-violet-700 dark:text-violet-400" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-base font-display font-medium text-arena-elements-textPrimary">
+                <div className="truncate text-lg font-display font-medium text-arena-elements-textPrimary">
                   {activeSession
                     ? getSessionDisplayTitle(
                         {
@@ -681,7 +684,7 @@ export function ChatTab({
                     : "Trading Agent"}
                 </div>
                 {activeSession && (
-                  <div className="truncate text-sm font-data text-arena-elements-textTertiary">
+                  <div className="truncate text-base font-data text-arena-elements-textTertiary">
                     {truncateMiddle(activeSession.id, 20, 8)}
                   </div>
                 )}

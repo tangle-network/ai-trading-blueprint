@@ -97,7 +97,7 @@ function AgentRunGroup({
         )}
       >
         <div className={cn('w-4 h-4 shrink-0', branding.iconClass, branding.accentClass)} />
-        <span className={cn('text-xs font-medium shrink-0', branding.textClass)}>
+        <span className={cn('text-sm font-medium shrink-0', branding.textClass)}>
           {branding.label}
         </span>
         <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -107,7 +107,7 @@ function AgentRunGroup({
             </span>
           )}
           {run.stats.toolCount > 0 && (
-            <span className="text-xs text-arena-elements-textTertiary">
+            <span className="text-sm text-arena-elements-textTertiary">
               {run.stats.toolCount} tool{run.stats.toolCount !== 1 ? 's' : ''}
             </span>
           )}
@@ -133,7 +133,7 @@ function AgentRunGroup({
               }
               return (
                 <div key={key} className="px-2.5 py-1.5">
-                  <AppMarkdown className="text-[14px] leading-6">{text}</AppMarkdown>
+                  <AppMarkdown className="text-base leading-7">{text}</AppMarkdown>
                 </div>
               );
             }
@@ -211,16 +211,16 @@ export function ChatTranscript({
     <div className="flex flex-col h-full flex-1 min-h-0">
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-3 py-3"
+        className="flex-1 overflow-y-auto px-4 py-4"
         tabIndex={0}
         aria-label="Conversation transcript"
       >
         {messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-sm text-arena-elements-textTertiary">
+          <div className="flex items-center justify-center h-full text-base text-arena-elements-textTertiary">
             No messages yet
           </div>
         ) : (
-          <div className="space-y-2.5">
+          <div className="space-y-3">
             {groups.map((group, groupIndex) => {
               if (group.type === 'user') {
                 return (
@@ -278,13 +278,13 @@ export function ChatTranscript({
               placeholder={placeholder}
               rows={1}
               disabled={isStreaming}
-              className="flex-1 resize-none rounded-lg px-3 py-2 bg-arena-elements-background-depth-2/70 border border-arena-elements-dividerColor/70 text-sm text-arena-elements-textPrimary placeholder:text-arena-elements-textTertiary focus:outline-none focus:border-violet-500/40 disabled:opacity-50 disabled:cursor-not-allowed max-h-32"
-              style={{ minHeight: '2.5rem' }}
+              className="flex-1 resize-none rounded-lg px-4 py-3 bg-arena-elements-background-depth-2/70 border border-arena-elements-dividerColor/70 text-base text-arena-elements-textPrimary placeholder:text-arena-elements-textTertiary focus:outline-none focus:border-violet-500/40 disabled:opacity-50 disabled:cursor-not-allowed max-h-36"
+              style={{ minHeight: '3rem' }}
             />
             <button
               type="submit"
               disabled={isStreaming || !inputValue.trim()}
-              className="flex items-center justify-center w-9 h-9 rounded-lg bg-violet-600 hover:bg-violet-500 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              className="flex h-12 w-12 items-center justify-center rounded-lg bg-violet-600 transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-30"
             >
               <div className="i-ph:paper-plane-tilt w-4 h-4 text-white" />
             </button>
