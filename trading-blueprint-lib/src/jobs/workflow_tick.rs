@@ -2,6 +2,7 @@
 //! TTL wind-down conditions and swap the agent prompt accordingly.
 
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::JsonResponse;
@@ -12,6 +13,7 @@ use crate::prompts::tick_tool_for_strategy;
 use ai_agent_sandbox_blueprint_lib::workflows::{workflow_key, workflows};
 use ai_agent_sandbox_blueprint_lib::{SandboxExecRequest, run_exec_request};
 use blueprint_sdk::tangle::extract::TangleResult;
+use futures_util::{StreamExt, stream};
 
 fn workflow_group_ids(workflow_id: u64) -> [u64; 3] {
     [
@@ -30,6 +32,69 @@ fn workflow_name_belongs_to_bot(name: &str, bot_id: &str) -> bool {
     ]
     .iter()
     .any(|expected| name == expected)
+}
+
+fn workflow_bot_id(name: &str) -> Option<&str> {
+    [
+        "fast-tick-",
+        "research-tick-",
+        "conversation-tick-",
+        "trading-loop-",
+    ]
+    .into_iter()
+    .find_map(|prefix| name.strip_prefix(prefix))
+}
+
+fn workflow_is_current_for_bot(
+    workflow: &ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry,
+    bot: &crate::state::TradingBotRecord,
+) -> bool {
+    bot.workflow_id
+        .map(workflow_group_ids)
+        .is_some_and(|ids| ids.contains(&workflow.id))
+}
+
+fn disable_stale_bot_workflows(all_bots: &[crate::state::TradingBotRecord]) -> Result<(), String> {
+    let store = workflows()?;
+    let all_workflows = store.values().map_err(|e| e.to_string())?;
+    let bots_by_id: HashMap<&str, &crate::state::TradingBotRecord> =
+        all_bots.iter().map(|bot| (bot.id.as_str(), bot)).collect();
+
+    for workflow in all_workflows {
+        let Some(bot_id) = workflow_bot_id(&workflow.name) else {
+            continue;
+        };
+        let Some(bot) = bots_by_id.get(bot_id).copied() else {
+            continue;
+        };
+        if !bot.trading_active || workflow_is_current_for_bot(&workflow, bot) {
+            continue;
+        }
+        if !workflow.active && workflow.next_run_at.is_none() {
+            continue;
+        }
+
+        let key = workflow_key(workflow.id);
+        store
+            .update(&key, |entry| {
+                entry.active = false;
+                entry.next_run_at = None;
+            })
+            .map_err(|e| {
+                format!(
+                    "Failed to disable stale workflow {} for bot {}: {e}",
+                    workflow.id, bot.id
+                )
+            })?;
+        tracing::info!(
+            workflow_id = workflow.id,
+            bot_id = %bot.id,
+            current_workflow_id = ?bot.workflow_id,
+            "Disabled stale duplicate workflow for active bot"
+        );
+    }
+
+    Ok(())
 }
 
 fn disable_stopped_bot_workflows(
@@ -176,6 +241,18 @@ fn inner_workflow_tick_timeout() -> Duration {
     Duration::from_millis(timeout_ms)
 }
 
+fn generic_workflow_tick_enabled() -> bool {
+    std::env::var("TRADING_RUN_GENERIC_WORKFLOW_TICK")
+        .ok()
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(true)
+}
+
 fn workflow_is_due(
     entry: &ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry,
     now: u64,
@@ -198,8 +275,24 @@ fn fast_tick_bot_and_tool_for_workflow<'a>(
         if !belongs {
             return None;
         }
+        if !workflow_is_current_for_bot(entry, bot) {
+            return None;
+        }
         tick_tool_for_strategy(&bot.strategy_type).map(|tool| (bot, tool))
     })
+}
+
+fn fast_tick_concurrency() -> usize {
+    std::env::var("TRADING_FAST_TICK_CONCURRENCY")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| (1..=128).contains(value))
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(8)
+                .clamp(4, 32)
+        })
 }
 
 fn fast_tick_task_result(
@@ -383,12 +476,11 @@ async fn run_due_fast_ticks(
         .filter(|entry| workflow_is_due(entry, now))
         .filter_map(|entry| {
             let (bot, tool) = fast_tick_bot_and_tool_for_workflow(&entry, all_bots)?;
-            Some((entry, bot.clone(), tool))
+            Some((entry, bot.clone(), tool.to_string()))
         })
         .collect();
 
-    let mut executed = Vec::new();
-    for (entry, bot, tool) in due {
+    for (entry, _, _) in &due {
         let workflow_id = entry.id;
         let key = workflow_key(workflow_id);
         let next_run_at = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
@@ -403,17 +495,40 @@ async fn run_due_fast_ticks(
                 workflow.next_run_at = next_run_at;
             })
             .map_err(|e| e.to_string())?;
+    }
 
-        let timeout_ms = workflow_timeout_ms(&entry.workflow_json, 180_000);
-        tracing::info!(
-            workflow_id,
-            bot_id = %bot.id,
-            strategy = %bot.strategy_type,
-            tool,
-            "Running deterministic fast tick directly"
-        );
-        let task = run_direct_fast_tick(&bot, tool, timeout_ms).await;
-        let executed_at = chrono::Utc::now().timestamp().max(0) as u64;
+    let concurrency = fast_tick_concurrency();
+    let mut executed = stream::iter(due)
+        .map(|(entry, bot, tool)| async move {
+            let workflow_id = entry.id;
+            let next_run_at = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
+                &entry.trigger_type,
+                &entry.trigger_config,
+                Some(now),
+            )
+            .ok()
+            .flatten();
+            let timeout_ms = workflow_timeout_ms(&entry.workflow_json, 180_000);
+            tracing::info!(
+                workflow_id,
+                bot_id = %bot.id,
+                strategy = %bot.strategy_type,
+                tool,
+                "Running deterministic fast tick directly"
+            );
+            let task = run_direct_fast_tick(&bot, &tool, timeout_ms).await;
+            let executed_at = chrono::Utc::now().timestamp().max(0) as u64;
+            (entry, next_run_at, executed_at, task)
+        })
+        .buffer_unordered(concurrency)
+        .collect::<Vec<_>>()
+        .await;
+    executed.sort_by_key(|(entry, _, _, _)| entry.id);
+
+    let mut response = Vec::new();
+    for (entry, next_run_at, executed_at, task) in executed {
+        let workflow_id = entry.id;
+        let key = workflow_key(workflow_id);
         workflows()?
             .update(&key, |workflow| {
                 workflow.last_run_at = Some(executed_at);
@@ -421,7 +536,7 @@ async fn run_due_fast_ticks(
             })
             .map_err(|e| e.to_string())?;
 
-        executed.push(json!({
+        response.push(json!({
             "workflowId": workflow_id,
             "name": entry.name,
             "executedAt": executed_at,
@@ -431,7 +546,7 @@ async fn run_due_fast_ticks(
         }));
     }
 
-    Ok(executed)
+    Ok(response)
 }
 
 /// Runtime anti-fabrication check, family-agnostic: confirms the tick actually
@@ -614,6 +729,7 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
     tracing::info!("Found {} bots", all_bots.len());
 
     disable_stopped_bot_workflows(&all_bots)?;
+    disable_stale_bot_workflows(&all_bots)?;
     backfill_active_bot_run_history(&all_bots);
 
     for bot in &all_bots {
@@ -691,27 +807,37 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
         persist_executed_run_history(&direct_response);
     }
 
-    // 3. Run the normal workflow tick for everything else.
-    tracing::info!("Running inner workflow_tick()...");
-    let mut response = match tokio::time::timeout(
-        inner_workflow_tick_timeout(),
-        ai_agent_sandbox_blueprint_lib::workflows::workflow_tick(),
-    )
-    .await
-    {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => {
-            tracing::error!("workflow_tick() failed (non-fatal): {e}");
-            serde_json::json!({"error": e, "count": 0, "executed": []})
+    // 3. Run the generic LLM workflow runner only when explicitly enabled for
+    // the operator. The deterministic fast-tick path above is the trading
+    // liveness path; the generic runner is useful for background research but
+    // can starve fresh trading ticks when a backlog accumulates.
+    let mut response = if generic_workflow_tick_enabled() {
+        tracing::info!("Running inner workflow_tick()...");
+        match tokio::time::timeout(
+            inner_workflow_tick_timeout(),
+            ai_agent_sandbox_blueprint_lib::workflows::workflow_tick(),
+        )
+        .await
+        {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => {
+                tracing::error!("workflow_tick() failed (non-fatal): {e}");
+                serde_json::json!({"error": e, "count": 0, "executed": []})
+            }
+            Err(e) => {
+                tracing::error!("workflow_tick() timed out (non-fatal): {e}");
+                serde_json::json!({
+                    "error": format!("workflow_tick timed out after {}ms", inner_workflow_tick_timeout().as_millis()),
+                    "count": 0,
+                    "executed": [],
+                })
+            }
         }
-        Err(e) => {
-            tracing::error!("workflow_tick() timed out (non-fatal): {e}");
-            serde_json::json!({
-                "error": format!("workflow_tick timed out after {}ms", inner_workflow_tick_timeout().as_millis()),
-                "count": 0,
-                "executed": [],
-            })
-        }
+    } else {
+        tracing::info!(
+            "Skipping generic workflow_tick(); deterministic fast ticks and self-improvement cadence remain active"
+        );
+        serde_json::json!({"count": 0, "executed": []})
     };
     if let Some(direct_executed) = direct_response.get("executed").and_then(Value::as_array) {
         if let Some(executed) = response.get_mut("executed").and_then(Value::as_array_mut) {

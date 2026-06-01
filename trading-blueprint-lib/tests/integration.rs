@@ -714,6 +714,69 @@ async fn test_workflow_tick_disables_stopped_bot_workflows() {
 }
 
 #[tokio::test]
+async fn test_workflow_tick_disables_stale_duplicate_workflows_for_active_bot() {
+    let _dir = common::init_test_env();
+
+    let sandbox_id = "sb-stale-active-tick-1";
+    let bot_id = "trading-stale-active-tick-1";
+    let wf_id = 88880u64;
+    let stale_wf_id = 99990u64;
+
+    fixtures::seed_bot_record(bot_id, sandbox_id, "dex", "0xAA", Some(wf_id));
+    bots()
+        .unwrap()
+        .update(&bot_key(bot_id), |b| b.paper_trade = false)
+        .unwrap();
+    for (id, name) in [
+        (wf_id, format!("fast-tick-{bot_id}")),
+        (wf_id + 1, format!("research-tick-{bot_id}")),
+        (wf_id + 2, format!("conversation-tick-{bot_id}")),
+        (stale_wf_id, format!("fast-tick-{bot_id}")),
+        (stale_wf_id + 1, format!("research-tick-{bot_id}")),
+        (stale_wf_id + 2, format!("conversation-tick-{bot_id}")),
+    ] {
+        fixtures::seed_workflow(id, "http://127.0.0.1:8080", "tok", "0 */5 * * * *");
+        ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .update(
+                &ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id),
+                |workflow| {
+                    workflow.name = name;
+                    workflow.next_run_at = Some(u64::MAX);
+                },
+            )
+            .unwrap();
+    }
+
+    workflow_tick().await.unwrap();
+
+    for id in [wf_id, wf_id + 1, wf_id + 2] {
+        let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .get(&ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id))
+            .unwrap()
+            .unwrap();
+        assert!(wf.active, "current workflow {id} should stay active");
+        assert!(
+            wf.next_run_at.is_some(),
+            "current workflow {id} stays scheduled"
+        );
+    }
+    for id in [stale_wf_id, stale_wf_id + 1, stale_wf_id + 2] {
+        let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+            .unwrap()
+            .get(&ai_agent_sandbox_blueprint_lib::workflows::workflow_key(id))
+            .unwrap()
+            .unwrap();
+        assert!(!wf.active, "stale workflow {id} should be disabled");
+        assert!(
+            wf.next_run_at.is_none(),
+            "stale workflow {id} should be unscheduled"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_promotion_conductor_activates_queued_backtest_pass_candidate() {
     let _dir = common::init_test_env();
 
