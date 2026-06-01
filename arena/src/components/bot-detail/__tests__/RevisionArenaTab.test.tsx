@@ -182,6 +182,33 @@ describe("RevisionArenaTab", () => {
     authState.getCachedToken = () => "test-token";
   });
 
+  it("hides raw authorization errors when public revision reads are denied", async () => {
+    authState.isAuthenticated = false;
+    authState.token = "";
+    authState.authCacheKey = "anonymous";
+    authState.getCachedToken = () => null;
+    const { RevisionArenaTab } = await import("../RevisionArenaTab");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response("Missing Authorization header", { status: 401 }),
+      ),
+    );
+
+    render(
+      <RevisionArenaTab
+        botId="bot-1"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByText("Revision arena owner-only")).toBeInTheDocument();
+    expect(screen.queryByText("Missing Authorization header")).not.toBeInTheDocument();
+  });
+
   it("lets the user approve or reject candidate revisions", async () => {
     const { RevisionArenaTab } = await import("../RevisionArenaTab");
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

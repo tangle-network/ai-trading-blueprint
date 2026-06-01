@@ -90,6 +90,12 @@ function shortRevisionId(value?: string | null): string {
   return value.length > 16 ? `${value.slice(0, 16)}...` : value;
 }
 
+function isRevisionArenaAuthError(error: unknown): boolean {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  return /HTTP (401|403)/i.test(raw)
+    || /missing authorization|unauthorized|forbidden|authentication required/i.test(raw);
+}
+
 function RevisionRow({
   revision,
   onApprove,
@@ -330,6 +336,16 @@ export function RevisionArenaTab({
   }
 
   if (query.error || !query.data) {
+    if (!auth.isAuthenticated && isRevisionArenaAuthError(query.error)) {
+      return (
+        <OperatorAccessCard
+          title="Revision arena owner-only"
+          description="Sign with the owner wallet to view and approve revisions."
+          apiUrl={apiUrl}
+        />
+      );
+    }
+
     return (
       <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
         <div className="i-ph:warning-circle mx-auto mb-3 text-3xl text-crimson-500" />
