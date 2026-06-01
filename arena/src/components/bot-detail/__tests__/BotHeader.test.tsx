@@ -120,21 +120,26 @@ describe('BotHeader', () => {
 
     render(<BotHeader bot={makeBot({
       chainId: 1,
+      paperTrade: true,
       strategyConfig: {
         protocol_chain_id: 8453,
         initial_capital_usd: 10_000,
+        protocol: 'aerodrome',
       },
       riskParams: {
         max_drawdown_pct: 10,
       },
     })} />);
 
-    expect(screen.getByRole('heading', { name: 'MM ETH/USDC Aerodrome' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Market-making bot: ETH/USDC on Aerodrome' })).toBeInTheDocument();
     expect(screen.getByText('Base mainnet')).toBeInTheDocument();
     expect(screen.getByText('band 3% target 0.5')).toBeInTheDocument();
     expect(screen.getByText('Network: Base')).toBeInTheDocument();
     expect(screen.getByText('Capital: $10,000')).toBeInTheDocument();
     expect(screen.getByText('Max DD: 10%')).toBeInTheDocument();
+    expect(screen.getByText('Authoritative operator snapshot')).toBeInTheDocument();
+    expect(screen.getByText('Base / Aerodrome')).toBeInTheDocument();
+    expect(screen.getByText('Paper simulation; no wallet execution')).toBeInTheDocument();
   });
 
   it('links to the vault with the bot chain id', () => {

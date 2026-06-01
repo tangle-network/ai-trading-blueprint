@@ -57,6 +57,33 @@ function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number
   return value != null && value > 0 ? value : null;
 }
 
+function readStrategyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function titleCaseToken(value: string): string {
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function explicitStrategyTitle(identity: string, strategyType: Bot['strategyType']): string {
+  const mmMatch = identity.match(/^MM\s+([A-Z0-9./-]+)\s+(.+)$/i);
+  if (mmMatch?.[1] && mmMatch?.[2]) {
+    return `Market-making bot: ${mmMatch[1]} on ${mmMatch[2]}`;
+  }
+
+  if (/^MM\b/i.test(identity)) {
+    return identity.replace(/^MM\b/i, 'Market-making bot');
+  }
+
+  if (strategyType === 'mm' && !/market.?making/i.test(identity)) {
+    return `Market-making bot: ${identity}`;
+  }
+
+  return identity;
+}
+
 function cleanBotTitle(displayName: string) {
   const statusPattern = /\s*\((active|paused|stopped|unknown|winding down|archived|awaiting secrets)\)\s*$/i;
   const titleWithoutStatus = displayName.replace(statusPattern, '').trim();
@@ -80,6 +107,21 @@ function formatCapital(value: number | null): string {
   return `$${formatNumber(value, { maximumFractionDigits: value >= 1000 ? 0 : 2 })}`;
 }
 
+function formatCompactAddress(value: string): string {
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
+
+function formatCostModel(strategyConfig?: Record<string, unknown>): string {
+  const gasCostUsd = readStrategyNumber(strategyConfig?.paper_gas_cost_usd);
+  const referenceLiquidityUsd = readStrategyNumber(strategyConfig?.paper_reference_liquidity_usd);
+  const parts = [
+    gasCostUsd == null ? null : `paper gas ${formatCapital(gasCostUsd)}`,
+    referenceLiquidityUsd == null ? null : `liquidity ref ${formatCapital(referenceLiquidityUsd)}`,
+  ].filter((part): part is string => Boolean(part));
+
+  return parts.length > 0 ? parts.join(' · ') : 'fees/slippage tracked per trade when reported';
+}
+
 export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHeaderProps) {
   const { data: detail } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
   const hasVaultAddress = Boolean(
@@ -91,12 +133,34 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
     strategyType: detail?.strategy_type ?? bot.strategyType,
   });
   const titleParts = cleanBotTitle(displayName);
+  const explicitTitle = explicitStrategyTitle(titleParts.title, bot.strategyType);
   const initialCapitalUsd = readInitialCapitalUsd(bot.strategyConfig);
   const maxDrawdownLimit = readStrategyNumber(bot.riskParams?.max_drawdown_pct);
   const targetChainId = getBotStrategyChainId(bot);
   const targetNetwork = targetChainId != null
     ? networks[targetChainId]?.label ?? `Chain ${targetChainId}`
     : 'Unknown network';
+  const protocol = readStrategyString(bot.strategyConfig?.protocol);
+  const validatorCount = detail?.validator_endpoints?.length ?? 0;
+  const deploymentMode = bot.operatorKind === 'cloud'
+    ? 'Cloud operator'
+    : bot.operatorKind === 'instance'
+      ? 'Instance operator'
+      : bot.operatorKind === 'tee'
+        ? 'TEE operator'
+        : 'Operator';
+  const provenanceItems = [
+    { label: 'Provenance', value: bot.verificationState === 'unverified' ? 'Unverified operator snapshot' : 'Authoritative operator snapshot' },
+    { label: 'Operator', value: `${deploymentMode} ${formatCompactAddress(bot.operatorAddress)}` },
+    { label: 'Workflow', value: bot.workflowId ? `#${bot.workflowId}` : 'No workflow id published' },
+    { label: 'Validators', value: validatorCount > 0 ? `${validatorCount} live endpoint${validatorCount === 1 ? '' : 's'}` : 'No validators published' },
+  ];
+  const executionItems = [
+    { label: 'Venue', value: protocol ? `${targetNetwork} / ${titleCaseToken(protocol)}` : targetNetwork },
+    { label: 'Mode', value: bot.paperTrade ? 'Paper simulation; no wallet execution' : 'Live execution behind signed controls' },
+    { label: 'Costs', value: formatCostModel(bot.strategyConfig) },
+    { label: 'Wallet scope', value: 'Read-only until you connect; signing only in Envelope, Controls, or Deploy' },
+  ];
   const summary = useBotLiveSummary({
     botId: bot.id,
     botName: displayName,
@@ -104,7 +168,6 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
     operatorKind: bot.operatorKind,
     chainId: bot.chainId,
   });
-  const validatorCount = detail?.validator_endpoints?.length ?? 0;
 
   const formatSignedPercent = (value: number | null) => {
     if (value == null) return '—';
@@ -186,6 +249,12 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
     },
   ];
   const navGroups = groupNavItems(navItems);
+  const availableNavItems = new Set(navItems.map((item) => item.value));
+  const actionItems = [
+    { value: 'trades', label: 'Review Trades', icon: 'i-ph:swap', variant: 'default' as const },
+    { value: 'runs', label: 'Open Runs', icon: 'i-ph:list-checks', variant: 'outline' as const },
+    { value: 'controls', label: 'Manage Risk', icon: 'i-ph:sliders-horizontal', variant: 'outline' as const },
+  ].filter((item) => availableNavItems.has(item.value));
   const trustItems = [
     { label: 'Mode', value: bot.paperTrade ? 'Paper' : 'Live' },
     { label: 'Network', value: targetNetwork },
@@ -226,14 +295,14 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
 
             <div className="flex flex-col gap-2 md:flex-row md:items-end">
               <h1 className="min-w-0 max-w-[920px] break-words font-display text-2xl font-bold leading-tight tracking-tight md:text-3xl">
-                {titleParts.title}
+                {explicitTitle}
               </h1>
               <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 pb-0.5 text-sm text-arena-elements-textTertiary">
                 <span className="inline-flex min-w-0 items-center gap-1.5 font-data" title={bot.operatorAddress}>
                   <span className="text-arena-elements-textSecondary">Operator</span>
                   <Identicon address={bot.operatorAddress as Address} size={16} />
                   <code className="select-all rounded border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-1.5 py-0.5 text-xs text-arena-elements-textSecondary">
-                    {bot.operatorAddress.slice(0, 6)}...{bot.operatorAddress.slice(-4)}
+                    {formatCompactAddress(bot.operatorAddress)}
                   </code>
                 </span>
                 {validatorCount > 0 && (
@@ -255,6 +324,52 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                 </span>
               ))}
             </div>
+
+            <div className="mt-3 grid max-w-[1180px] gap-2 lg:grid-cols-2">
+              {[
+                { label: 'Verified Context', items: provenanceItems },
+                { label: 'Risk And Permissions', items: executionItems },
+              ].map((group) => (
+                <div
+                  key={group.label}
+                  className="rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 p-3"
+                >
+                  <div className="mb-2 flex items-center gap-2 font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
+                    <span className="i-ph:shield-check text-sm text-violet-500" aria-hidden="true" />
+                    {group.label}
+                  </div>
+                  <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
+                    {group.items.map((item) => (
+                      <div key={item.label} className="min-w-0">
+                        <dt className="font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
+                          {item.label}
+                        </dt>
+                        <dd className="mt-0.5 truncate font-display text-sm font-medium text-arena-elements-textPrimary" title={item.value}>
+                          {item.value}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ))}
+            </div>
+
+            {onTabChange && actionItems.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {actionItems.map((item) => (
+                  <Button
+                    key={item.value}
+                    size="sm"
+                    variant={item.variant}
+                    className="h-9 px-3"
+                    onClick={() => onTabChange(item.value)}
+                  >
+                    <span className={`${item.icon} text-sm`} aria-hidden="true" />
+                    {item.label}
+                  </Button>
+                ))}
+              </div>
+            )}
           </div>
 
           <Tooltip.Provider delayDuration={150}>
@@ -291,7 +406,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                       </Tooltip.Root>
                     )}
                   </div>
-                  <div className={`truncate font-data text-xl font-bold leading-tight ${stat.color}`}>
+                  <div className={`truncate font-data text-2xl font-bold leading-tight ${stat.color}`}>
                     {stat.value}
                   </div>
                 </div>

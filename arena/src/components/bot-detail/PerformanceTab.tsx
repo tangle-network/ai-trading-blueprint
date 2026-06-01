@@ -6,6 +6,7 @@ import { useChartTheme } from '~/lib/hooks/useChartTheme';
 import { useBotMetrics, useBotMetricsSummary, useBotPortfolio, useBotTrades } from '~/lib/hooks/useBotApi';
 import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
 import { formatNumber, normalizeDisplayNumber } from '~/lib/format';
+import { readStrategyNumber } from '~/lib/utils/botStrategy';
 import { buildPerformanceChartPoints, type PerformanceChartPoint } from './performanceChart';
 import { getTradePairLabel, type Trade } from '~/lib/types/trade';
 import { TradingPerformanceChart, type TradeChartMarker } from './TradingPerformanceChart';
@@ -38,8 +39,21 @@ function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number
   const raw = strategyConfig?.initial_capital_usd
     ?? strategyConfig?.initial_capital
     ?? strategyConfig?.cash_balance;
-  const value = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : null;
+  const value = readStrategyNumber(raw);
   return value != null && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function formatExecutionAssumptions(strategyConfig?: Record<string, unknown>): string {
+  const gasCostUsd = readStrategyNumber(strategyConfig?.paper_gas_cost_usd);
+  const referenceLiquidityUsd = readStrategyNumber(strategyConfig?.paper_reference_liquidity_usd);
+  const parts = [
+    gasCostUsd == null ? null : `paper gas ${formatChartCurrency(gasCostUsd)}`,
+    referenceLiquidityUsd == null ? null : `liquidity reference ${formatChartCurrency(referenceLiquidityUsd)}`,
+  ].filter((part): part is string => Boolean(part));
+
+  return parts.length > 0
+    ? parts.join(' · ')
+    : 'fees, slippage, and gas appear when the operator reports them per trade';
 }
 
 function parseTimestampMs(timestamp?: string | null): number | null {
@@ -395,6 +409,9 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
                   {liveNavLabel ? ` · Live NAV: ${liveNavLabel}` : ''}
                 </p>
               )}
+              <p className="mt-2 max-w-3xl text-sm text-arena-elements-textTertiary">
+                Past performance does not guarantee future results. Cost model: {formatExecutionAssumptions(bot.strategyConfig)}.
+              </p>
             </div>
             <div
               className="inline-flex w-fit rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/60 p-1"
