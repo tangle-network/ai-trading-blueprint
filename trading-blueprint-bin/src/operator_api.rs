@@ -55,6 +55,7 @@ pub struct BotListQuery {
     pub operator: Option<String>,
     pub strategy: Option<String>,
     pub status: Option<String>,
+    pub include_archived: Option<bool>,
     pub call_id: Option<u64>,
     pub service_id: Option<u64>,
     pub limit: Option<usize>,
@@ -1148,6 +1149,11 @@ async fn list_bots(
 ) -> ApiResult<BotListResponse> {
     let limit = query.limit.unwrap_or(50).min(200);
     let offset = query.offset.unwrap_or(0);
+    let status_filter = query.status.as_deref();
+    let include_archived = query.include_archived.unwrap_or(false);
+    let full_scan = status_filter.is_some() || !include_archived;
+    let fetch_limit = if full_scan { 10_000 } else { limit };
+    let fetch_offset = if full_scan { 0 } else { offset };
 
     // Optional auth: the fleet list is a PUBLIC leaderboard. Caller-scoping:
     //   - unauthenticated viewer  → `None` (public scope: the full roster, as
@@ -1203,11 +1209,11 @@ async fn list_bots(
     }
 
     let result = if let Some(ref operator) = query.operator {
-        state::bots_by_operator(operator, viewer, limit, offset)
+        state::bots_by_operator(operator, viewer, fetch_limit, fetch_offset)
     } else if let Some(ref strategy) = query.strategy {
-        state::bots_by_strategy(strategy, viewer, limit, offset)
+        state::bots_by_strategy(strategy, viewer, fetch_limit, fetch_offset)
     } else {
-        state::list_bots(viewer, limit, offset)
+        state::list_bots(viewer, fetch_limit, fetch_offset)
     };
 
     let paginated = result.map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -1218,14 +1224,27 @@ async fn list_bots(
         .map(BotSummary::from_record)
         .collect();
 
-    // Optional status filter (active/inactive)
-    if let Some(ref status) = query.status {
+    let mut total = paginated.total;
+
+    if !include_archived {
+        bots.retain(|b| !b.archived);
+        total = bots.len();
+    }
+
+    // Optional status filter (active/inactive). Apply before response pagination
+    // so `total` describes the filtered set instead of the raw roster.
+    if let Some(status) = status_filter {
         let active = status == "active";
         bots.retain(|b| (b.lifecycle_status == "active") == active);
+        total = bots.len();
+    }
+
+    if full_scan {
+        bots = bots.into_iter().skip(offset).take(limit).collect();
     }
 
     Ok(Json(BotListResponse {
-        total: paginated.total,
+        total,
         bots,
         limit,
         offset,

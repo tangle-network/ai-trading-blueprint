@@ -252,6 +252,111 @@ pub(crate) fn harness_for_strategy_config(
     Ok(harness)
 }
 
+pub(crate) fn harness_json_for_strategy_config(
+    strategy_config: &Map<String, Value>,
+) -> Result<Value, String> {
+    let harness = harness_for_strategy_config(strategy_config)?;
+    let mut harness_json = serde_json::to_value(harness)
+        .map_err(|e| format!("Failed to serialize harness config: {e}"))?;
+    let Some(harness_obj) = harness_json.as_object_mut() else {
+        return Err("Harness serialization did not produce a JSON object".to_string());
+    };
+
+    if let Some(min_order_usd) =
+        optional_f64_config(strategy_config, "min_order_usd", 0.0, f64::MAX)?
+    {
+        harness_obj.insert("min_order_usd".to_string(), Value::from(min_order_usd));
+    }
+
+    merge_mm_harness(strategy_config, harness_obj)?;
+    merge_json_object_harness(strategy_config, harness_obj, "portfolio");
+    merge_json_object_harness(strategy_config, harness_obj, "yield");
+
+    Ok(harness_json)
+}
+
+fn optional_f64_config(
+    config: &Map<String, Value>,
+    field: &str,
+    min: f64,
+    max: f64,
+) -> Result<Option<f64>, String> {
+    let Some(raw) = config.get(field) else {
+        return Ok(None);
+    };
+    let value = parse_f64_config(raw)
+        .ok_or_else(|| format!("strategy_config_json.{field} must be a number"))?;
+    if !value.is_finite() || value < min || value > max {
+        return Err(format!(
+            "strategy_config_json.{field} must be between {min} and {max}"
+        ));
+    }
+    Ok(Some(value))
+}
+
+fn optional_nested_f64_config(
+    config: &Map<String, Value>,
+    object_field: &str,
+    field: &str,
+    min: f64,
+    max: f64,
+) -> Result<Option<f64>, String> {
+    let Some(raw_object) = config.get(object_field) else {
+        return Ok(None);
+    };
+    let object = raw_object
+        .as_object()
+        .ok_or_else(|| format!("strategy_config_json.{object_field} must be a JSON object"))?;
+    let Some(raw) = object.get(field) else {
+        return Ok(None);
+    };
+    let value = parse_f64_config(raw)
+        .ok_or_else(|| format!("strategy_config_json.{object_field}.{field} must be a number"))?;
+    if !value.is_finite() || value < min || value > max {
+        return Err(format!(
+            "strategy_config_json.{object_field}.{field} must be between {min} and {max}"
+        ));
+    }
+    Ok(Some(value))
+}
+
+fn merge_mm_harness(
+    strategy_config: &Map<String, Value>,
+    harness_obj: &mut Map<String, Value>,
+) -> Result<(), String> {
+    let mut mm = strategy_config
+        .get("mm")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    if let Some(target) = optional_f64_config(strategy_config, "target_base_weight", 0.0, 1.0)?.or(
+        optional_nested_f64_config(strategy_config, "mm", "target_base_weight", 0.0, 1.0)?,
+    ) {
+        mm.insert("target_base_weight".to_string(), Value::from(target));
+    }
+    if let Some(band) = optional_f64_config(strategy_config, "rebalance_band_pct", 0.0, 1.0)?.or(
+        optional_nested_f64_config(strategy_config, "mm", "rebalance_band_pct", 0.0, 1.0)?,
+    ) {
+        mm.insert("rebalance_band_pct".to_string(), Value::from(band));
+    }
+
+    if !mm.is_empty() {
+        harness_obj.insert("mm".to_string(), Value::Object(mm));
+    }
+    Ok(())
+}
+
+fn merge_json_object_harness(
+    strategy_config: &Map<String, Value>,
+    harness_obj: &mut Map<String, Value>,
+    field: &str,
+) {
+    if let Some(object) = strategy_config.get(field).and_then(Value::as_object) {
+        harness_obj.insert(field.to_string(), Value::Object(object.clone()));
+    }
+}
+
 fn configured_protocol_chain_id(
     strategy_config: &Map<String, Value>,
     execution_chain_id: u64,
@@ -954,7 +1059,7 @@ pub async fn provision_core(
         .inspect_err(|e| mark_provision_failed(call_id, e))?;
     apply_strategy_defaults(strategy_config_obj, &request, paper_trade, &bot_id)
         .inspect_err(|e| mark_provision_failed(call_id, e))?;
-    let harness = harness_for_strategy_config(strategy_config_obj)
+    let harness_json = harness_json_for_strategy_config(strategy_config_obj)
         .inspect_err(|e| mark_provision_failed(call_id, e))?;
 
     // 2. Get operator context for shared config (if initialized)
@@ -1258,7 +1363,7 @@ pub async fn provision_core(
         trading_loop_cron: request.trading_loop_cron.clone(),
         call_id,
         service_id,
-        harness_json: serde_json::to_value(&harness).unwrap_or_default(),
+        harness_json,
         validation_trust: validation_trust.unwrap_or_default(),
         baseline_backtest: None,
         renewal_webhook_url,
@@ -1568,6 +1673,53 @@ mod tests {
             }
             _ => panic!("expected fixed-fraction position sizing"),
         }
+    }
+
+    #[test]
+    fn strategy_harness_json_preserves_mm_execution_knobs() {
+        let config = serde_json::json!({
+            "position_sizing": {
+                "method": "fixed_fraction",
+                "fraction": 0.25
+            },
+            "mm": {
+                "target_base_weight": 0.62,
+                "rebalance_band_pct": 0.01
+            },
+            "min_order_usd": 5
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let harness = harness_json_for_strategy_config(&config).unwrap();
+
+        assert_eq!(harness["position_sizing"]["fraction"], 0.25);
+        assert_eq!(harness["mm"]["target_base_weight"], 0.62);
+        assert_eq!(harness["mm"]["rebalance_band_pct"], 0.01);
+        assert_eq!(harness["min_order_usd"], 5.0);
+    }
+
+    #[test]
+    fn strategy_harness_json_preserves_portfolio_execution_knobs() {
+        let config = serde_json::json!({
+            "portfolio": {
+                "rebalance_band_pct": 0.02,
+                "assets": [
+                    { "symbol": "WETH", "target_weight": 0.78 },
+                    { "symbol": "USDC", "target_weight": 0.22 }
+                ]
+            }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let harness = harness_json_for_strategy_config(&config).unwrap();
+
+        assert_eq!(harness["portfolio"]["rebalance_band_pct"], 0.02);
+        assert_eq!(harness["portfolio"]["assets"][0]["target_weight"], 0.78);
+        assert_eq!(harness["portfolio"]["assets"][1]["target_weight"], 0.22);
     }
 
     #[test]

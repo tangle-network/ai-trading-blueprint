@@ -22,8 +22,7 @@ pub async fn configure_core(
     };
     let next_harness_json = if let Some(config) = parsed_strategy_config.as_ref() {
         if let Some(obj) = config.as_object() {
-            let harness = super::provision::harness_for_strategy_config(obj)?;
-            serde_json::to_value(harness).ok()
+            Some(super::provision::harness_json_for_strategy_config(obj)?)
         } else {
             None
         }

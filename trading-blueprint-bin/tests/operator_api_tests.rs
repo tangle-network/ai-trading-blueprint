@@ -3551,9 +3551,71 @@ async fn test_list_bots_filter_by_status() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     let bots = json["bots"].as_array().unwrap();
+    assert_eq!(json["total"], bots.len());
     for bot in bots {
         assert_eq!(bot["trading_active"], true);
     }
+}
+
+#[tokio::test]
+async fn test_list_bots_excludes_archived_by_default() {
+    let _dir = init_test_env();
+
+    let live_bot = seed_bot("archive-filter-live-1", "dex", true);
+    let archived_bot = seed_bot("archive-filter-archived-1", "dex", true);
+    let _ = sandbox_runtime::runtime::sandboxes()
+        .expect("sandbox store")
+        .remove(&archived_bot.sandbox_id);
+
+    let default_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bots?limit=200")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(default_response.status(), 200);
+    let default_body = default_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let default_json: serde_json::Value = serde_json::from_slice(&default_body).unwrap();
+    let default_bots = default_json["bots"].as_array().unwrap();
+    assert!(default_bots.iter().any(|b| b["id"] == live_bot.id));
+    assert!(!default_bots.iter().any(|b| b["id"] == archived_bot.id));
+
+    let include_archived_response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bots?include_archived=true&limit=200")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(include_archived_response.status(), 200);
+    let include_archived_body = include_archived_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let include_archived_json: serde_json::Value =
+        serde_json::from_slice(&include_archived_body).unwrap();
+    let include_archived_bots = include_archived_json["bots"].as_array().unwrap();
+    assert!(
+        include_archived_bots
+            .iter()
+            .any(|b| b["id"] == archived_bot.id && b["lifecycle_status"] == "archived")
+    );
 }
 
 // ---------------------------------------------------------------------------

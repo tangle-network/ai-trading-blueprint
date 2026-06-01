@@ -1496,6 +1496,7 @@ async fn test_fallback_portfolio_and_metrics_ignore_swap_trade_store_records() {
         filled_amount: None,
         execution_reason: None,
         prediction_metadata: None,
+        hyperliquid_metadata: None,
         valuation_status: trading_http_api::trade_store::TradeValuationStatus::Unpriced,
         validation: trading_http_api::trade_store::StoredValidation {
             approved: true,
