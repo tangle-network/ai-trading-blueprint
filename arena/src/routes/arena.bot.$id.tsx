@@ -105,23 +105,13 @@ export default function BotDetailPage() {
   const { id } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const initialTab: BotTabValue = isBotTabValue(tabParam)
+  const activeTab: BotTabValue = isBotTabValue(tabParam)
     ? tabParam
     : "performance";
-  const [activeTab, setActiveTab] = useState<BotTabValue>(initialTab);
-
-  // Keep tab state in sync with `?tab=` so navigations (e.g. post-provision
-  // redirect to the Envelope tab) work and tab clicks are shareable.
-  useEffect(() => {
-    if (isBotTabValue(tabParam) && tabParam !== activeTab) {
-      setActiveTab(tabParam);
-    }
-  }, [tabParam, activeTab]);
 
   const handleTabChange = useCallback(
     (next: string) => {
       if (!isBotTabValue(next)) return;
-      setActiveTab(next);
       setSearchParams(
         (prev) => {
           const updated = new URLSearchParams(prev);
@@ -447,19 +437,24 @@ export default function BotDetailPage() {
             </div>
 
             <div className="flex shrink-0 items-center gap-1 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60 p-1">
-              {(["runs", "chat"] as const).map((tab) => (
+              {([
+                { value: "performance", label: "Performance", icon: "i-ph:chart-line-up" },
+                { value: "runs", label: "Runs", icon: "i-ph:list-checks" },
+                { value: "chat", label: "Chat", icon: "i-ph:chat-circle-dots" },
+              ] as const).map((tab) => (
                 <button
-                  key={tab}
+                  key={tab.value}
                   type="button"
-                  onClick={() => handleTabChange(tab)}
-                  className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
-                    activeTab === tab
+                  onClick={() => handleTabChange(tab.value)}
+                  aria-label={tab.label}
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 sm:px-3 ${
+                    activeTab === tab.value
                       ? "bg-violet-500/14 text-arena-elements-textPrimary"
                       : "text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary"
                   }`}
                 >
-                  <span className={tab === "runs" ? "i-ph:list-checks text-sm" : "i-ph:chat-circle-dots text-sm"} aria-hidden="true" />
-                  <span className="hidden sm:inline">{tab === "runs" ? "Runs" : "Chat"}</span>
+                  <span className={`${tab.icon} text-sm`} aria-hidden="true" />
+                  <span className="hidden sm:inline">{tab.label}</span>
                 </button>
               ))}
             </div>
