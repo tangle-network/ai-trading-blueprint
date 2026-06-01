@@ -268,6 +268,54 @@ describe("RunsTab", () => {
     );
   });
 
+  it("keeps public run history visible when operator verification is pending", async () => {
+    authState.token = null;
+    authState.isAuthenticated = false;
+
+    const { RunsTab } = await import("../RunsTab");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-public-unverified",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_824_500,
+              completed_at: 1_775_824_560,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 60_000,
+              input_tokens: 10,
+              output_tokens: 6,
+              result: "public result",
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="unverified"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByText("Operator verification pending")).toBeInTheDocument();
+    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect(screen.queryByText("Runs unavailable")).not.toBeInTheDocument();
+  });
+
   it("tries public instance run summaries before asking for owner auth", async () => {
     authState.token = null;
     authState.isAuthenticated = false;

@@ -76,6 +76,22 @@ describe('PositionsTab', () => {
     expect(screen.queryByText('Balance')).not.toBeInTheDocument();
   });
 
+  it('keeps read-only positions visible when operator verification is pending', () => {
+    render(
+      <PositionsTab
+        botId="bot-1"
+        status="active"
+        operatorApiUrl="/operator-api"
+        operatorKind="cloud"
+        verificationState="unverified"
+      />,
+    );
+
+    expect(screen.getByText('Operator verification pending')).toBeInTheDocument();
+    expect(screen.getByText('$10,000')).toBeInTheDocument();
+    expect(screen.getByText('WETH')).toBeInTheDocument();
+  });
+
   it('warns and masks unpriced portfolio values', () => {
     mockPortfolio = makePortfolio({
       totalValueUsd: null,

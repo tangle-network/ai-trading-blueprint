@@ -5,10 +5,9 @@ import type { Trade } from '~/lib/types/trade';
 import { CopyButton, ScoreRing, ValidatorCard, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
 import { AssetPairDisplay } from './shared/AssetDisplay';
 import { SkeletonCard } from '~/components/ui/Skeleton';
-import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
-import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
+import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 import {
   countUsableValidatorSignatures,
   getTradeValidationDisplay,
@@ -289,7 +288,6 @@ export function ReasoningTab({
   verificationState,
   assetMetadata,
 }: ReasoningTabProps) {
-  const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const { data: allTrades, isLoading, isError, error } = useBotTrades(botId, botName, 50, {
     chainId,
     operatorApiUrl,
@@ -329,35 +327,30 @@ export function ReasoningTab({
     );
   }
 
-  if (verificationState === 'unverified') {
-    return (
-      <OperatorAccessCard
-        title="Validation details unavailable"
-        description="Validation details are hidden until this bot has been verified against the operator and live trade data is fresh."
-        apiUrl={operatorApiUrl ?? ''}
-      />
-    );
-  }
-
-  if (!operatorAuth.isAuthenticated) {
-    return <OperatorAccessCard apiUrl={operatorApiUrl ?? ''} />;
-  }
-
   if (isError) {
     return <ValidationDataUnavailableCard error={error} />;
   }
 
   if (pendingTrades.length === 0 && filteredHistory.length === 0) {
     return (
-      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
-        <div className="i-ph:brain text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
-        No validation details available for this bot's trades.
+      <div className="space-y-4">
+        {verificationState === 'unverified' && (
+          <UnverifiedDataNotice subject="validation details" />
+        )}
+        <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
+          <div className="i-ph:brain text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
+          No validation details available for this bot's trades.
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
+      {verificationState === 'unverified' && (
+        <UnverifiedDataNotice subject="validation details" />
+      )}
+
       {/* Live validations section */}
       <AnimatePresence mode="popLayout">
         {pendingTrades.map((trade, i) => (

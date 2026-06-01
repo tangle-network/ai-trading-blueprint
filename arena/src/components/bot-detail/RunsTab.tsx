@@ -14,6 +14,7 @@ import {
   UnsupportedFeatureCard,
 } from "~/components/operator/OperatorAccessCard";
 import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
+import { UnverifiedDataNotice } from "./shared/DataAccessNotices";
 
 interface RunsTabProps {
   botId: string;
@@ -1043,21 +1044,16 @@ export function RunsTab({
     );
   }
 
-  if (verificationState === "unverified") {
-    return (
-      <OperatorAccessCard
-        title="Runs unavailable"
-        description="Run history stays disabled until this bot has been freshly verified against the operator."
-        apiUrl={baseApiUrl}
-      />
-    );
-  }
-
   if (runsQuery.isLoading) {
     return (
-      <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
-        <div className="i-ph:arrow-clockwise mx-auto mb-3 animate-spin text-3xl text-arena-elements-textTertiary" />
-        Loading autonomous runs…
+      <div className="space-y-4">
+        {verificationState === "unverified" && (
+          <UnverifiedDataNotice subject="autonomous run history" />
+        )}
+        <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
+          <div className="i-ph:arrow-clockwise mx-auto mb-3 animate-spin text-3xl text-arena-elements-textTertiary" />
+          Loading autonomous runs…
+        </div>
       </div>
     );
   }
@@ -1085,93 +1081,104 @@ export function RunsTab({
 
   if (runs.length === 0) {
     return (
-      <div className="glass-card rounded-xl border border-arena-elements-dividerColor p-6 text-center sm:p-8">
-        <div className="i-ph:robot mx-auto mb-3 text-3xl text-amber-500" />
-        <h3 className="mb-2 text-lg font-display font-semibold text-arena-elements-textPrimary">
-          No runs yet
-        </h3>
-        <p className="mx-auto max-w-xl text-sm text-arena-elements-textSecondary">
-          Autonomous activity will appear here once {botName} starts gathering
-          data, reasoning through a cycle, and making decisions on its own.
-        </p>
+      <div className="space-y-4">
+        {verificationState === "unverified" && (
+          <UnverifiedDataNotice subject="autonomous run history" />
+        )}
+        <div className="glass-card rounded-xl border border-arena-elements-dividerColor p-6 text-center sm:p-8">
+          <div className="i-ph:robot mx-auto mb-3 text-3xl text-amber-500" />
+          <h3 className="mb-2 text-lg font-display font-semibold text-arena-elements-textPrimary">
+            No runs yet
+          </h3>
+          <p className="mx-auto max-w-xl text-sm text-arena-elements-textSecondary">
+            Autonomous activity will appear here once {botName} starts gathering
+            data, reasoning through a cycle, and making decisions on its own.
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div
-      data-sandbox-ui="true"
-      data-sandbox-theme="vault"
-      className="arena-chat-shell glass-card overflow-hidden rounded-xl"
-      style={{ minHeight: "760px" }}
-    >
+    <div className="space-y-4">
+      {verificationState === "unverified" && (
+        <UnverifiedDataNotice subject="autonomous run history" />
+      )}
+
       <div
-        className={`flex h-[min(1040px,calc(100vh-8rem))] min-h-[760px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
+        data-sandbox-ui="true"
+        data-sandbox-theme="vault"
+        className="arena-chat-shell glass-card overflow-hidden rounded-xl"
+        style={{ minHeight: "760px" }}
       >
-        <RunsSidebar
-          runs={runItems}
-          activeRunId={activeRun?.runId ?? ""}
-          stacked={isStackedLayout}
-          hasOlderRuns={runsQuery.hasNextPage}
-          isLoadingOlderRuns={runsQuery.isFetchingNextPage}
-          onSelect={setActiveRunId}
-          onLoadOlder={() => {
-            void runsQuery.fetchNextPage();
-          }}
-        />
-
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 px-4 py-3">
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-              <span className="i-ph:robot text-base text-amber-700 dark:text-amber-300" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-base font-display font-medium text-arena-elements-textPrimary">
-                  {headerTitle}
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="truncate text-sm font-data text-arena-elements-textTertiary">
-                    {headerSubtitle}
-                  </div>
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-xs font-data ${getStatusBadgeClass(activeRun?.status ?? "failed")}`}
-                  >
-                    {getStatusLabel(activeRun?.status ?? "failed")}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <span className="hidden rounded-full border border-amber-500/15 bg-amber-500/8 px-3 py-1.5 text-sm font-data text-amber-700 dark:text-amber-300 sm:inline-flex">
-              Operator relay
-            </span>
-          </div>
-
-          <RunsBanner
-            run={activeRun}
-            isStreaming={stream.isStreaming}
-            error={streamErrorMessage}
+        <div
+          className={`flex h-[min(1040px,calc(100vh-8rem))] min-h-[760px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
+        >
+          <RunsSidebar
+            runs={runItems}
+            activeRunId={activeRun?.runId ?? ""}
+            stacked={isStackedLayout}
+            hasOlderRuns={runsQuery.hasNextPage}
+            isLoadingOlderRuns={runsQuery.isFetchingNextPage}
+            onSelect={setActiveRunId}
+            onLoadOlder={() => {
+              void runsQuery.fetchNextPage();
+            }}
           />
 
-          <div className="border-b border-amber-500/15 bg-amber-500/5 px-4 py-2.5 text-sm text-amber-800 dark:text-amber-200">
-            This view shows autonomous bot activity only. Use the Chat tab for
-            manual conversations with the bot.
-          </div>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 px-4 py-3">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <span className="i-ph:robot text-base text-amber-700 dark:text-amber-300" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-base font-display font-medium text-arena-elements-textPrimary">
+                    {headerTitle}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="truncate text-sm font-data text-arena-elements-textTertiary">
+                      {headerSubtitle}
+                    </div>
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-xs font-data ${getStatusBadgeClass(activeRun?.status ?? "failed")}`}
+                    >
+                      {getStatusLabel(activeRun?.status ?? "failed")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <span className="hidden rounded-full border border-amber-500/15 bg-amber-500/8 px-3 py-1.5 text-sm font-data text-amber-700 dark:text-amber-300 sm:inline-flex">
+                Operator relay
+              </span>
+            </div>
 
-          <div className="min-h-0 flex-1 bg-arena-elements-background-depth-1/15">
-            {shouldShowTraceReplay ? (
-              <ChatTranscript
-                messages={stream.messages}
-                partMap={stream.partMap}
-                isStreaming={stream.isStreaming}
-                branding={RUNS_BRANDING}
-                placeholder="This trace is read only"
-              />
-            ) : activeRun ? (
-              <RunDetailPanel run={activeRun} />
-            ) : null}
-          </div>
+            <RunsBanner
+              run={activeRun}
+              isStreaming={stream.isStreaming}
+              error={streamErrorMessage}
+            />
 
-          <div className="border-t border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-4 py-3">
-            <RunsStatus status={runStatus} />
+            <div className="border-b border-amber-500/15 bg-amber-500/5 px-4 py-2.5 text-sm text-amber-800 dark:text-amber-200">
+              This view shows autonomous bot activity only. Use the Chat tab for
+              manual conversations with the bot.
+            </div>
+
+            <div className="min-h-0 flex-1 bg-arena-elements-background-depth-1/15">
+              {shouldShowTraceReplay ? (
+                <ChatTranscript
+                  messages={stream.messages}
+                  partMap={stream.partMap}
+                  isStreaming={stream.isStreaming}
+                  branding={RUNS_BRANDING}
+                  placeholder="This trace is read only"
+                />
+              ) : activeRun ? (
+                <RunDetailPanel run={activeRun} />
+              ) : null}
+            </div>
+
+            <div className="border-t border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-4 py-3">
+              <RunsStatus status={runStatus} />
+            </div>
           </div>
         </div>
       </div>

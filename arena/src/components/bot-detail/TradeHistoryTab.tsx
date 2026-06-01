@@ -7,12 +7,11 @@ import { AssetDisplay, AssetPairDisplay } from './shared/AssetDisplay';
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
 import { getTradePairLabel } from '~/lib/types/trade';
 import type { Trade, TradeStatus } from '~/lib/types/trade';
-import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
-import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import { countUsableValidatorSignatures, getTradeValidationDisplay } from '~/lib/tradeValidation';
 import { formatNumber } from '~/lib/format';
+import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 
 interface TradeHistoryTabProps {
   botId: string;
@@ -255,7 +254,6 @@ export function TradeHistoryTab({
   verificationState,
   assetMetadata,
 }: TradeHistoryTabProps) {
-  const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const { data: trades, isLoading, isError, error } = useBotTrades(botId, botName, 50, {
     chainId,
     operatorApiUrl,
@@ -280,35 +278,30 @@ export function TradeHistoryTab({
     );
   }
 
-  if (verificationState === 'unverified') {
-    return (
-      <OperatorAccessCard
-        title="Trade history unavailable"
-        description="Trade history only appears for bots that have been freshly verified against their operator."
-        apiUrl={operatorApiUrl ?? ''}
-      />
-    );
-  }
-
-  if (!operatorAuth.isAuthenticated) {
-    return <OperatorAccessCard apiUrl={operatorApiUrl ?? ''} />;
-  }
-
   if (isError) {
     return <TradeDataUnavailableCard error={error} />;
   }
 
   if (!trades || trades.length === 0) {
     return (
-      <div className="glass-card rounded-xl text-center py-16 text-base text-arena-elements-textSecondary">
-        <div className="i-ph:swap text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
-        No trades recorded for this bot.
+      <div className="space-y-4">
+        {verificationState === 'unverified' && (
+          <UnverifiedDataNotice subject="trade history" />
+        )}
+        <div className="glass-card rounded-xl text-center py-16 text-base text-arena-elements-textSecondary">
+          <div className="i-ph:swap text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
+          No trades recorded for this bot.
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
+      {verificationState === 'unverified' && (
+        <UnverifiedDataNotice subject="trade history" />
+      )}
+
       <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
       <Table className="min-w-[1120px]">
         <TradeTableHead />

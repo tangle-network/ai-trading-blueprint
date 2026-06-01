@@ -25,6 +25,27 @@ export interface BotHeaderNavItem {
   badge?: ReactNode;
 }
 
+const NAV_GROUPS: Array<{ label: string; values: string[] }> = [
+  { label: 'Trading', values: ['performance', 'positions', 'trades'] },
+  { label: 'Workflow', values: ['runs', 'chat', 'reasoning', 'arena'] },
+  { label: 'Ops', values: ['vault', 'envelope', 'controls', 'terminal', 'secrets'] },
+];
+
+function groupNavItems(items: BotHeaderNavItem[]) {
+  const groupedValues = new Set(NAV_GROUPS.flatMap((group) => group.values));
+  const groups = NAV_GROUPS.map((group) => ({
+    label: group.label,
+    items: items.filter((item) => group.values.includes(item.value)),
+  })).filter((group) => group.items.length > 0);
+  const otherItems = items.filter((item) => !groupedValues.has(item.value));
+
+  if (otherItems.length > 0) {
+    groups.push({ label: 'More', items: otherItems });
+  }
+
+  return groups;
+}
+
 export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHeaderProps) {
   const { data: detail } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
   const hasVaultAddress = Boolean(
@@ -123,11 +144,12 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
             : 'text-arena-elements-icon-error',
     },
   ];
+  const navGroups = groupNavItems(navItems);
 
   return (
     <div className="sticky top-[var(--header-height)] z-30 mb-5 -mx-4 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1 px-4 py-3 shadow-[0_8px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.22)] sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
       <div className="mx-auto max-w-[1800px]">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
           <div className="min-w-0">
             <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
               <Link
@@ -155,14 +177,16 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
             </div>
 
             <div className="flex flex-col gap-2 md:flex-row md:items-end">
-              <h1 className="min-w-0 truncate font-display text-2xl font-bold tracking-tight md:text-3xl">
+              <h1 className="min-w-0 max-w-[920px] break-words font-display text-2xl font-bold leading-tight tracking-tight md:text-3xl">
                 {displayName}
               </h1>
               <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 pb-0.5 text-sm text-arena-elements-textTertiary">
-                <span className="inline-flex min-w-0 items-center gap-1.5 font-data">
+                <span className="inline-flex min-w-0 items-center gap-1.5 font-data" title={bot.operatorAddress}>
                   <span className="text-arena-elements-textSecondary">Operator</span>
                   <Identicon address={bot.operatorAddress as Address} size={16} />
-                  <span className="truncate">{bot.operatorAddress.slice(0, 6)}...{bot.operatorAddress.slice(-4)}</span>
+                  <code className="select-all rounded border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-1.5 py-0.5 text-xs text-arena-elements-textSecondary">
+                    {bot.operatorAddress.slice(0, 6)}...{bot.operatorAddress.slice(-4)}
+                  </code>
                 </span>
                 {validatorCount > 0 && (
                   <span className="inline-flex items-center gap-1.5">
@@ -175,14 +199,14 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
           </div>
 
           <Tooltip.Provider delayDuration={150}>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:min-w-[720px] xl:grid-cols-6">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:min-w-[860px] xl:grid-cols-6">
               {metrics.map((stat) => (
                 <div
                   key={stat.label}
-                  className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+                  className="min-h-[76px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-3.5 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
                 >
-                  <div className="mb-0.5 flex items-center gap-1.5 text-[11px] font-data font-medium uppercase tracking-wider text-arena-elements-textTertiary">
-                    <span className="truncate">{stat.label}</span>
+                  <div className="mb-1 flex min-h-[28px] items-start gap-1.5 text-[11px] font-data font-medium uppercase leading-tight tracking-wider text-arena-elements-textTertiary">
+                    <span className="break-words">{stat.label}</span>
                     {stat.title && (
                       <Tooltip.Root>
                         <Tooltip.Trigger asChild>
@@ -208,7 +232,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                       </Tooltip.Root>
                     )}
                   </div>
-                  <div className={`truncate font-data text-lg font-bold leading-tight ${stat.color}`}>
+                  <div className={`truncate font-data text-xl font-bold leading-tight ${stat.color}`}>
                     {stat.value}
                   </div>
                 </div>
@@ -220,29 +244,39 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
         <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           {navItems.length > 0 && onTabChange && (
             <nav
-              className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1"
+              className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1"
               aria-label="Agent workspace sections"
             >
-              {navItems.map((item) => {
-                const selected = item.value === activeTab;
-                return (
-                  <button
-                    key={item.value}
-                    type="button"
-                    onClick={() => onTabChange(item.value)}
-                    aria-current={selected ? 'page' : undefined}
-                    className={`group inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
-                      selected
-                        ? 'border-violet-500/35 bg-violet-500/14 text-arena-elements-textPrimary shadow-[0_0_0_1px_rgba(142,89,255,0.08)]'
-                        : 'border-transparent text-arena-elements-textSecondary hover:border-arena-elements-dividerColor/70 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
-                    }`}
-                  >
-                    <span className={`${item.icon} text-base ${selected ? 'text-violet-600 dark:text-violet-300' : 'text-arena-elements-textTertiary group-hover:text-arena-elements-textSecondary'}`} aria-hidden="true" />
-                    <span>{item.label}</span>
-                    {item.badge}
-                  </button>
-                );
-              })}
+              {navGroups.map((group) => (
+                <div
+                  key={group.label}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/50 p-1"
+                >
+                  <span className="px-2 text-[10px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                    {group.label}
+                  </span>
+                  {group.items.map((item) => {
+                    const selected = item.value === activeTab;
+                    return (
+                      <button
+                        key={item.value}
+                        type="button"
+                        onClick={() => onTabChange(item.value)}
+                        aria-current={selected ? 'page' : undefined}
+                        className={`group inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                          selected
+                            ? 'border-violet-500/35 bg-violet-500/14 text-arena-elements-textPrimary shadow-[0_0_0_1px_rgba(142,89,255,0.08)]'
+                            : 'border-transparent text-arena-elements-textSecondary hover:border-arena-elements-dividerColor/70 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
+                        }`}
+                      >
+                        <span className={`${item.icon} text-base ${selected ? 'text-violet-600 dark:text-violet-300' : 'text-arena-elements-textTertiary group-hover:text-arena-elements-textSecondary'}`} aria-hidden="true" />
+                        <span>{item.label}</span>
+                        {item.badge}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
             </nav>
           )}
 

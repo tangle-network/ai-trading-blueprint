@@ -38,6 +38,7 @@
     "events": "^3.3.0",
     "framer-motion": "^12.23.26",
     "isbot": "^5",
+    "lightweight-charts": "^5.2.0",
     "lucide-react": "0.553.0",
     "nanostores": "^0.10.3",
     "react": "19.0.0",

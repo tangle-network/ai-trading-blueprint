@@ -35,6 +35,7 @@ import {
 } from "~/components/home/SecretsModal";
 import { ErrorBoundary } from "~/components/ErrorBoundary";
 import { EnvelopeNeededBanner } from "~/components/bot-detail/EnvelopeNeededBanner";
+import { TradingRiskDisclosure } from "~/components/bot-detail/shared/DataAccessNotices";
 import { useAccount } from "wagmi";
 import { useBotDetail } from "~/lib/hooks/useBotDetail";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
@@ -154,7 +155,6 @@ export default function BotDetailPage() {
   const scopedOperatorApiUrl =
     storeBot?.operatorApiUrl ?? fallbackOperatorApiUrl;
   const routeOperatorApiUrl = scopedOperatorApiUrl ?? OPERATOR_API_URL;
-  const routeAuth = useOperatorAuth(routeOperatorApiUrl);
   const storeBotDetail = useBotDetail(
     storeBot?.id,
     storeBot?.operatorApiUrl ?? routeOperatorApiUrl,
@@ -266,7 +266,6 @@ export default function BotDetailPage() {
 
   // Must call hooks before early returns (React rules of hooks)
   const botIsLive = bot ? isLiveBotStatus(bot.status) : false;
-  const routeAuthToken = routeAuth.getCachedToken();
   const pendingValidationCount = usePendingValidationCount(
     bot?.id ?? "",
     displayBotName,
@@ -329,13 +328,8 @@ export default function BotDetailPage() {
       fallbackDetail.isLoading ||
       fallbackDetail.isFetching ||
       (routeDetailLookupEnabled &&
-        isConnected &&
-        !routeAuth.error &&
         !routeDetail.isError &&
-        (!routeAuthToken ||
-          routeAuth.isAuthenticating ||
-          routeDetail.isLoading ||
-          routeDetail.isFetching)));
+        (routeDetail.isLoading || routeDetail.isFetching)));
 
   if (!bot && (isLoading || isRouteFallbackLoading)) {
     return (
@@ -383,6 +377,8 @@ export default function BotDetailPage() {
           bot={bot}
           onSignEnvelope={() => handleTabChange("envelope")}
         />
+
+        <TradingRiskDisclosure />
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsContent value="performance" className="mt-0">

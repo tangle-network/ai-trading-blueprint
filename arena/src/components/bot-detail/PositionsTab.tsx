@@ -1,11 +1,10 @@
 import { useBotPortfolio } from '~/lib/hooks/useBotApi';
 import type { BotStatus } from '~/lib/types/bot';
 import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
-import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
-import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 import { botStatusLabel, formatNumber, isLiveBotStatus } from '~/lib/format';
 import { AssetDisplay } from './shared/AssetDisplay';
+import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import type { Position } from '~/lib/types/portfolio';
 
@@ -20,7 +19,6 @@ interface PositionsTabProps {
 }
 
 export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorKind, verificationState, assetMetadata }: PositionsTabProps) {
-  const operatorAuth = useOperatorAuth(operatorApiUrl ?? '');
   const isLive = isLiveBotStatus(status);
   const { data: portfolio, isLoading } = useBotPortfolio(botId, {
     chainId,
@@ -40,25 +38,16 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
     );
   }
 
-  if (verificationState === 'unverified') {
-    return (
-      <OperatorAccessCard
-        title="Live portfolio unavailable"
-        description="This bot is still using unverified fallback data, so portfolio positions are hidden until the operator confirms the runtime state."
-        apiUrl={operatorApiUrl ?? ''}
-      />
-    );
-  }
-
-  if (!operatorAuth.isAuthenticated) {
-    return <OperatorAccessCard apiUrl={operatorApiUrl ?? ''} />;
-  }
-
   if (!portfolio) {
     return (
-      <div className="glass-card rounded-xl text-center py-16 text-base text-arena-elements-textSecondary">
-        <div className="i-ph:wallet text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
-        No portfolio data available for this bot{isLive ? '.' : ` while it is ${botStatusLabel(status).toLowerCase()}.`}
+      <div className="space-y-4">
+        {verificationState === 'unverified' && (
+          <UnverifiedDataNotice subject="portfolio state" />
+        )}
+        <div className="glass-card rounded-xl text-center py-16 text-base text-arena-elements-textSecondary">
+          <div className="i-ph:wallet text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
+          No portfolio data available for this bot{isLive ? '.' : ` while it is ${botStatusLabel(status).toLowerCase()}.`}
+        </div>
       </div>
     );
   }
@@ -241,6 +230,10 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
 
   return (
     <div className="space-y-4">
+      {verificationState === 'unverified' && (
+        <UnverifiedDataNotice subject="portfolio state" />
+      )}
+
       {displayWarnings.length > 0 && (
         <div className="glass-card rounded-xl px-4 py-3 flex items-start gap-3 text-sm text-amber-700 dark:text-amber-400">
           <div className="i-ph:warning-circle text-lg shrink-0 mt-0.5" />

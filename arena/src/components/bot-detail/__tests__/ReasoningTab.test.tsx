@@ -127,6 +127,40 @@ describe('ReasoningTab', () => {
     expect(screen.getByText('APPROVED')).toBeInTheDocument();
   });
 
+  it('keeps read-only validation history visible when operator verification is pending', () => {
+    allTrades = [
+      makeTrade({
+        id: 'trade-1',
+        validatorScore: 85,
+        validation: {
+          approved: true,
+          aggregateScore: 85,
+          intentHash: '0xabc',
+          responses: [
+            {
+              validator: '0x1234567890abcdef1234567890abcdef12345678',
+              score: 85,
+              reasoning: 'Good trade',
+              signature: '0x' + 'ab'.repeat(65),
+            },
+          ],
+        },
+      }),
+    ];
+
+    render(
+      <ReasoningTab
+        botId="bot-1"
+        botName="Test Bot"
+        verificationState="unverified"
+      />,
+    );
+
+    expect(screen.getByText('Operator verification pending')).toBeInTheDocument();
+    expect(screen.getByText('BUY')).toBeInTheDocument();
+    expect(screen.getByText('APPROVED')).toBeInTheDocument();
+  });
+
   it('renders explicit paper bypasses as bypassed with explanatory copy', () => {
     allTrades = [
       makeTrade({

@@ -105,7 +105,7 @@ export function AssetDisplay({
     return (
       <span className={joinClasses('inline-flex items-center gap-2 min-w-0', className)} title={assetTitle(asset)}>
         <AssetIcon asset={asset} size="sm" />
-        <span className="truncate text-sm font-medium text-arena-elements-textPrimary">
+        <span className="max-w-[11rem] truncate text-base font-medium text-arena-elements-textPrimary">
           {primaryLabel}
         </span>
       </span>

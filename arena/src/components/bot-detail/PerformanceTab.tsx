@@ -1,24 +1,21 @@
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { m } from 'framer-motion';
-import type { Chart as ChartType } from 'chart.js';
 import type { Bot } from '~/lib/types/bot';
 import { Card, CardHeader, CardTitle, CardContent } from '@tangle-network/blueprint-ui/components';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
 import { useBotMetrics, useBotMetricsSummary, useBotPortfolio, useBotTrades } from '~/lib/hooks/useBotApi';
 import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
-import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
-import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { formatNumber, normalizeDisplayNumber } from '~/lib/format';
 import { buildPerformanceChartPoints, type PerformanceChartPoint } from './performanceChart';
 import { getTradePairLabel, type Trade } from '~/lib/types/trade';
+import { TradingPerformanceChart, type TradeChartMarker } from './TradingPerformanceChart';
+import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 import {
   PERFORMANCE_RETURN_FALLBACK_COPY,
   PERFORMANCE_RETURN_WINDOW_COPY,
   PERFORMANCE_SECTION_COPY,
 } from './metricCopy';
 
-const CHART_TOOLTIP_FONT_FAMILY = "'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-const CHART_DATA_FONT_FAMILY = "'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
 const TRADE_MARKER_LOOKBACK_LIMIT = 100;
 
@@ -94,14 +91,26 @@ function tradeMarkerColor(trade: Trade, chartTheme: ReturnType<typeof useChartTh
   return '#f59e0b';
 }
 
-function tradeMarkerRotation(trade: Trade): number {
-  if (isSellSideAction(trade.action)) return 180;
-  if (trade.action === 'swap') return 90;
-  return 0;
+function tradeMarkerShape(trade: Trade): TradeChartMarker['shape'] {
+  if (isSellSideAction(trade.action)) return 'arrowDown';
+  if (isBuySideAction(trade.action)) return 'arrowUp';
+  return 'circle';
+}
+
+function tradeMarkerPosition(trade: Trade): TradeChartMarker['position'] {
+  if (isSellSideAction(trade.action)) return 'aboveBar';
+  if (isBuySideAction(trade.action)) return 'belowBar';
+  return 'inBar';
 }
 
 function formatTradeAction(action: Trade['action']): string {
   return action.replace(/_/g, ' ').toUpperCase();
+}
+
+function formatTradeMarkerText(trade: Trade): string {
+  if (isSellSideAction(trade.action)) return 'SELL';
+  if (isBuySideAction(trade.action)) return 'BUY';
+  return formatTradeAction(trade.action);
 }
 
 function formatTradeMarkerTooltip(trade: Trade, duplicateCount: number): string {
@@ -111,13 +120,6 @@ function formatTradeMarkerTooltip(trade: Trade, duplicateCount: number): string 
     : '';
   const extras = duplicateCount > 1 ? ` · ${duplicateCount} trades near this checkpoint` : '';
   return `${formatTradeAction(trade.action)} ${pair}${notional}${extras}`;
-}
-
-interface TradeChartMarker {
-  value: number;
-  tooltip: string;
-  color: string;
-  rotation: number;
 }
 
 function nearestChartPointIndex(points: PerformanceChartPoint[], timestampMs: number): number | null {
@@ -152,10 +154,11 @@ function buildTradeMarkers(
     const count = (counts.get(index) ?? 0) + 1;
     counts.set(index, count);
     markers[index] = {
-      value: points[index].value,
       tooltip: formatTradeMarkerTooltip(trade, count),
       color: tradeMarkerColor(trade, chartTheme),
-      rotation: tradeMarkerRotation(trade),
+      shape: tradeMarkerShape(trade),
+      position: tradeMarkerPosition(trade),
+      text: formatTradeMarkerText(trade),
     };
   }
 
@@ -168,9 +171,6 @@ interface PerformanceTabProps {
 }
 
 export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
-  const operatorAuth = useOperatorAuth(bot.operatorApiUrl ?? '');
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const chartRef = useRef<ChartType | null>(null);
   const chartTheme = useChartTheme();
   const isHyperliquidPerpBot = bot.strategyType === 'hyperliquid_perp';
   const [range, setRange] = useState<PerformanceRange>('30d');
@@ -259,148 +259,6 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     () => buildTradeMarkers(chartPoints, trades, chartTheme),
     [chartPoints, chartTheme, trades],
   );
-
-  useEffect(() => {
-    if (!canvasRef.current || chartPoints.length === 0) return;
-
-    let cancelled = false;
-
-    import('chart.js').then(({ Chart, registerables }) => {
-      if (cancelled || !canvasRef.current) return;
-      Chart.register(...registerables);
-
-      if (chartRef.current) {
-        chartRef.current.destroy();
-      }
-
-      const ctx = canvasRef.current.getContext('2d')!;
-      const labels = chartPoints.map((point) => point.label);
-      const values = chartPoints.map((point) => point.value);
-      const tradeMarkerValues = tradeMarkers.map((marker) => marker?.value ?? null);
-      const latestPoint = values[values.length - 1] ?? 0;
-      const firstPoint = values[0] ?? latestPoint;
-      const positive = latestPoint >= firstPoint;
-      const lineColor = positive ? chartTheme.positive : chartTheme.negative;
-      const singlePoint = values.length === 1;
-
-      const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-      gradient.addColorStop(0, positive ? chartTheme.positiveGradientStart : chartTheme.negativeGradientStart);
-      gradient.addColorStop(1, chartTheme.gradientEnd);
-
-      chartRef.current = new Chart(canvasRef.current, {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [
-            {
-              label: 'Portfolio Value',
-              data: values,
-              borderColor: lineColor,
-              backgroundColor: gradient,
-              borderWidth: 2.5,
-              fill: true,
-              pointRadius: singlePoint ? 5 : 0,
-              pointHoverRadius: singlePoint ? 6 : 5,
-              pointBackgroundColor: lineColor,
-              pointHoverBackgroundColor: lineColor,
-              pointHoverBorderColor: chartTheme.hoverBorderColor,
-              pointHoverBorderWidth: 2,
-              tension: 0.4,
-            },
-            {
-              label: 'Trades',
-              data: tradeMarkerValues,
-              showLine: false,
-              borderWidth: 0,
-              pointStyle: 'triangle',
-              pointRadius: tradeMarkers.map((marker) => marker ? 6 : 0),
-              pointHoverRadius: tradeMarkers.map((marker) => marker ? 8 : 0),
-              pointRotation: tradeMarkers.map((marker) => marker?.rotation ?? 0),
-              pointBackgroundColor: tradeMarkers.map((marker) => marker?.color ?? 'transparent'),
-              pointBorderColor: tradeMarkers.map((marker) => marker ? chartTheme.hoverBorderColor : 'transparent'),
-              pointBorderWidth: tradeMarkers.map((marker) => marker ? 1.5 : 0),
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          layout: {
-            padding: { left: 4, right: 14, top: 10, bottom: 0 },
-          },
-          interaction: {
-            mode: 'index',
-            intersect: false,
-          },
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              backgroundColor: chartTheme.tooltipBg,
-              borderColor: chartTheme.tooltipBorder,
-              borderWidth: 1,
-              titleColor: chartTheme.tooltipTitleColor,
-              bodyColor: chartTheme.tooltipBodyColor,
-              titleFont: { family: CHART_TOOLTIP_FONT_FAMILY, size: 13, weight: 500 },
-              bodyFont: { family: CHART_TOOLTIP_FONT_FAMILY, size: 13, weight: 700 },
-              padding: 12,
-              cornerRadius: 8,
-              displayColors: false,
-              callbacks: {
-                title: (tooltipItems) => {
-                  const dataIndex = tooltipItems[0]?.dataIndex ?? 0;
-                  return chartPoints[dataIndex]?.tooltipLabel ?? tooltipItems[0]?.label ?? '';
-                },
-                label: (tooltipItem) => {
-                  if (tooltipItem.datasetIndex === 1) {
-                    return tradeMarkers[tooltipItem.dataIndex]?.tooltip ?? '';
-                  }
-                  const value = typeof tooltipItem.parsed.y === 'number'
-                    ? tooltipItem.parsed.y
-                    : Number(tooltipItem.raw);
-                  return Number.isFinite(value)
-                    ? `Portfolio Value: $${formatNumber(value)}`
-                    : 'Portfolio Value';
-                },
-              },
-            },
-          },
-          scales: {
-            x: {
-              display: true,
-              grid: { display: false },
-              border: { display: false },
-              ticks: {
-                maxTicksLimit: 7,
-                color: chartTheme.tickColor,
-                padding: 10,
-                font: { family: CHART_DATA_FONT_FAMILY, size: 11 },
-              },
-            },
-            y: {
-              position: 'right',
-              display: true,
-              grid: {
-                color: chartTheme.gridColor,
-                drawTicks: false,
-              },
-              border: { display: false },
-              ticks: {
-                color: chartTheme.tickColor,
-                padding: 10,
-                font: { family: CHART_DATA_FONT_FAMILY, size: 11 },
-                callback: (value) => `$${formatNumber(Number(value), { maximumFractionDigits: 0 })}`,
-              },
-            },
-          },
-        },
-      });
-    });
-
-    return () => {
-      cancelled = true;
-      chartRef.current?.destroy();
-    };
-  }, [chartPoints, chartTheme, tradeMarkers]);
 
   const hasWindowedReturn = latestRenderableMetric != null
     && firstRenderableMetric != null
@@ -501,20 +359,6 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     );
   }
 
-  if (bot.verificationState === 'unverified') {
-    return (
-      <OperatorAccessCard
-        title="Live performance unavailable"
-        description="This bot has not been verified against the operator yet, so performance data is hidden until a fresh sync succeeds."
-        apiUrl={bot.operatorApiUrl ?? ''}
-      />
-    );
-  }
-
-  if (!operatorAuth.isAuthenticated) {
-    return <OperatorAccessCard apiUrl={bot.operatorApiUrl ?? ''} />;
-  }
-
   if (hasMetricsError) {
     return (
       <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
@@ -531,6 +375,10 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
 
   return (
     <div className="space-y-5">
+      {bot.verificationState === 'unverified' && (
+        <UnverifiedDataNotice subject="performance snapshots" />
+      )}
+
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="glass-card-strong rounded-xl p-4 shadow-[0_24px_90px_rgba(0,0,0,0.22)]">
           <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -595,7 +443,11 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
           >
             {chartPoints.length > 0 ? (
               <div className="h-[520px]">
-                <canvas ref={canvasRef} />
+                <TradingPerformanceChart
+                  points={chartPoints}
+                  tradeMarkers={tradeMarkers}
+                  chartTheme={chartTheme}
+                />
               </div>
             ) : (
               <div className="flex h-[520px] items-center justify-center">

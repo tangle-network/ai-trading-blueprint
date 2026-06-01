@@ -113,6 +113,30 @@ describe('TradeHistoryTab', () => {
     expect(screen.queryByText('$2,000')).not.toBeInTheDocument();
   });
 
+  it('keeps read-only trades visible when operator verification is pending', () => {
+    setTrades([
+      makeTrade({
+        id: 'trade-1',
+        action: 'buy',
+        tokenIn: 'USDC',
+        tokenOut: 'WETH',
+        status: 'executed',
+      }),
+    ]);
+
+    render(
+      <TradeHistoryTab
+        botId="bot-1"
+        botName="Test Bot"
+        verificationState="unverified"
+      />,
+    );
+
+    expect(screen.getByText('Operator verification pending')).toBeInTheDocument();
+    expect(screen.getByText('BUY')).toBeInTheDocument();
+    expect(screen.getByText('USDC/WETH')).toBeInTheDocument();
+  });
+
   it('does not show simulation in the compact table', () => {
     setTrades([
       makeTrade({
