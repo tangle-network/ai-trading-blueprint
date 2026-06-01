@@ -405,9 +405,9 @@ export default function BotDetailPage() {
 
   if (immersiveTab) {
     return (
-      <AnimatedPage>
-        <div className="flex h-screen flex-col overflow-hidden px-3 pb-3 sm:px-4">
-          <div className="mx-auto flex h-12 w-full max-w-[1800px] shrink-0 items-center justify-between gap-3 border-b border-arena-elements-dividerColor/70">
+      <AnimatedPage className="h-full min-h-0 overflow-hidden">
+        <div className="flex h-full min-h-0 flex-col overflow-hidden px-2 pb-2 sm:px-3">
+          <div className="mx-auto flex h-11 w-full max-w-[1800px] shrink-0 items-center justify-between gap-3 border-b border-arena-elements-dividerColor/70">
             <div className="flex min-w-0 items-center gap-3">
               <button
                 type="button"
@@ -465,7 +465,7 @@ export default function BotDetailPage() {
             </div>
           </div>
 
-          <div className="mx-auto min-h-0 w-full max-w-[1800px] flex-1 pt-3">
+          <div className="mx-auto flex min-h-0 w-full max-w-[1800px] flex-1 flex-col pt-2">
             {activeTab === "runs" && operatorMeta?.features.chat && (
               <ErrorBoundary>
                 <RunsTab

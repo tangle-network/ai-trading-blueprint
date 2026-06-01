@@ -46,7 +46,11 @@ export default function App() {
       <MotionProvider>
         <ClientWeb3Provider>
           <TradingSyncProvider>
-            <div className="bp-tone-arena flex flex-col min-h-screen bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
+            <div
+              className={`bp-tone-arena flex flex-col bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise ${
+                immersiveBotWorkspace ? 'h-[100dvh] overflow-hidden' : 'min-h-screen'
+              }`}
+            >
               <a
                 href="#main-content"
                 className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:rounded-lg focus:bg-violet-600 focus:text-white focus:text-sm focus:font-display focus:font-medium"
@@ -56,7 +60,9 @@ export default function App() {
               {!immersiveBotWorkspace && <Header />}
               <main
                 id="main-content"
-                className={`flex-1 relative z-1 ${immersiveBotWorkspace ? 'min-h-0' : 'pt-[var(--header-height)]'}`}
+                className={`relative z-1 flex-1 ${
+                  immersiveBotWorkspace ? 'h-full min-h-0 overflow-hidden' : 'pt-[var(--header-height)]'
+                }`}
               >
                 <Outlet />
               </main>

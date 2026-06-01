@@ -207,6 +207,7 @@ function SessionWorkspaceSidebar({
   primarySessionId,
   isStreaming,
   stacked,
+  compactStacked,
   canWrite,
   onSelect,
   onDelete,
@@ -218,6 +219,7 @@ function SessionWorkspaceSidebar({
   primarySessionId: string;
   isStreaming: boolean;
   stacked: boolean;
+  compactStacked: boolean;
   canWrite: boolean;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
@@ -255,7 +257,7 @@ function SessionWorkspaceSidebar({
       <div
         className={
           stacked
-            ? "max-h-56 overflow-y-auto py-1"
+            ? `${compactStacked ? "max-h-36" : "max-h-56"} overflow-y-auto py-1`
             : "min-h-0 flex-1 overflow-y-auto py-1"
         }
       >
@@ -397,7 +399,9 @@ export function ChatTab({
   const [isAborting, setIsAborting] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [isStackedLayout, setIsStackedLayout] = useState(() =>
-    typeof window === "undefined" ? false : window.innerWidth < 1100,
+    typeof window === "undefined"
+      ? false
+      : window.innerWidth < (immersive ? 860 : 1100),
   );
   const chatCacheKey = `${baseApiUrl}::${botId}`;
 
@@ -432,7 +436,9 @@ export function ChatTab({
       return undefined;
     }
 
-    const mediaQuery = window.matchMedia("(max-width: 1099px)");
+    const mediaQuery = window.matchMedia(
+      immersive ? "(max-width: 859px)" : "(max-width: 1099px)",
+    );
     const syncLayout = () => setIsStackedLayout(mediaQuery.matches);
 
     syncLayout();
@@ -440,7 +446,7 @@ export function ChatTab({
     return () => {
       mediaQuery.removeEventListener("change", syncLayout);
     };
-  }, []);
+  }, [immersive]);
 
   const stream = useBotSessionStream({
     apiUrl,
@@ -659,6 +665,7 @@ export function ChatTab({
           primarySessionId={primarySessionId}
           isStreaming={stream.isStreaming}
           stacked={isStackedLayout}
+          compactStacked={immersive}
           onSelect={setActiveSessionId}
           onDelete={(id) => {
             if (!canWrite) return;

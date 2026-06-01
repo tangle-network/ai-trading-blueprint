@@ -433,6 +433,7 @@ function RunsSidebar({
   summary,
   activeRunId,
   stacked,
+  compactStacked,
   hasOlderRuns,
   isLoadingOlderRuns,
   onSelect,
@@ -442,6 +443,7 @@ function RunsSidebar({
   summary: RunsSummary;
   activeRunId: string;
   stacked: boolean;
+  compactStacked: boolean;
   hasOlderRuns: boolean;
   isLoadingOlderRuns: boolean;
   onSelect: (id: string) => void;
@@ -488,7 +490,7 @@ function RunsSidebar({
       <div
         className={
           stacked
-            ? "max-h-72 overflow-y-auto py-1"
+            ? `${compactStacked ? "max-h-40" : "max-h-72"} overflow-y-auto py-1`
             : "min-h-0 flex-1 overflow-y-auto py-1"
         }
         tabIndex={0}
@@ -883,7 +885,7 @@ function RunDetailPanel({ run }: { run: BotRun }) {
       </div>
 
       <div
-        className="overflow-y-auto px-4 py-4"
+        className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
         tabIndex={0}
         aria-label="Run details"
       >
@@ -966,7 +968,9 @@ export function RunsTab({
 
   const [activeRunId, setActiveRunId] = useState("");
   const [isStackedLayout, setIsStackedLayout] = useState(() =>
-    typeof window === "undefined" ? false : window.innerWidth < 1100,
+    typeof window === "undefined"
+      ? false
+      : window.innerWidth < (immersive ? 860 : 1100),
   );
   const runsCacheKey = `${baseApiUrl}::${botId}::runs`;
   const authKey = token ?? "anonymous";
@@ -976,7 +980,9 @@ export function RunsTab({
       return undefined;
     }
 
-    const mediaQuery = window.matchMedia("(max-width: 1099px)");
+    const mediaQuery = window.matchMedia(
+      immersive ? "(max-width: 859px)" : "(max-width: 1099px)",
+    );
     const syncLayout = () => setIsStackedLayout(mediaQuery.matches);
 
     syncLayout();
@@ -984,7 +990,7 @@ export function RunsTab({
     return () => {
       mediaQuery.removeEventListener("change", syncLayout);
     };
-  }, []);
+  }, [immersive]);
 
   const runsQuery = useInfiniteQuery({
     queryKey: ["bot-runs", apiUrl, authKey, botId],
@@ -1213,6 +1219,7 @@ export function RunsTab({
             summary={runSummary}
             activeRunId={activeRun?.runId ?? ""}
             stacked={isStackedLayout}
+            compactStacked={immersive}
             hasOlderRuns={runsQuery.hasNextPage}
             isLoadingOlderRuns={runsQuery.isFetchingNextPage}
             onSelect={setActiveRunId}
