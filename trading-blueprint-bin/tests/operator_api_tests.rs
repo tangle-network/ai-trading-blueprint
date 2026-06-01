@@ -448,6 +448,106 @@ async fn spawn_mock_stale_metric_trading_api() -> String {
     format!("http://{addr}")
 }
 
+async fn spawn_mock_metrics_only_stale_trading_api() -> String {
+    let app = Router::new()
+        .route(
+            "/metrics/history",
+            get(|| async {
+                Json(json!({
+                    "snapshots": [{
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "bot_id": "remote-bot",
+                        "account_value_usd": 10001.0,
+                        "unrealized_pnl": 0.0,
+                        "realized_pnl": 1.0,
+                        "high_water_mark": 10001.0,
+                        "drawdown_pct": 0.0,
+                        "positions_count": 1,
+                        "trade_count": 1
+                    }],
+                    "total": 1
+                }))
+            }),
+        )
+        .route(
+            "/portfolio/state",
+            post(|| async {
+                Json(json!({
+                    "positions": [],
+                    "total_value_usd": "10001",
+                    "cash_balance": "10001",
+                    "warnings": [],
+                    "has_unpriced_positions": false
+                }))
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind stale metrics-only mock trading api");
+    let addr = listener
+        .local_addr()
+        .expect("stale metrics-only mock trading api addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve stale metrics-only mock trading api");
+    });
+    format!("http://{addr}")
+}
+
+async fn record_operator_trade(bot_id: &str, id: &str) {
+    trading_http_api::trade_store::record_trade(trading_http_api::trade_store::TradeRecord {
+        id: id.to_string(),
+        bot_id: bot_id.to_string(),
+        timestamp: chrono::Utc::now(),
+        action: "swap".to_string(),
+        token_in: "USDC".to_string(),
+        token_out: "WETH".to_string(),
+        amount_in: "100".to_string(),
+        min_amount_out: "0.05".to_string(),
+        target_protocol: "uniswap_v3".to_string(),
+        tx_hash: format!("0x{id}"),
+        block_number: Some(1),
+        gas_used: Some("21000".to_string()),
+        paper_trade: true,
+        execution_status: None,
+        clob_order_id: None,
+        amount_out: Some("0.05".to_string()),
+        entry_price_usd: Some("2000".to_string()),
+        notional_usd: Some("100".to_string()),
+        requested_price_usd: None,
+        filled_price_usd: None,
+        filled_amount: None,
+        slippage_bps: None,
+        execution_reason: None,
+        prediction_metadata: None,
+        hyperliquid_metadata: None,
+        valuation_status: trading_http_api::trade_store::TradeValuationStatus::Priced,
+        validation: trading_http_api::trade_store::StoredValidation {
+            approved: true,
+            aggregate_score: 100,
+            intent_hash: format!("0xintent-{id}"),
+            responses: Vec::new(),
+            simulation: None,
+        },
+        signal_price: None,
+        fill_price: None,
+        signal_to_fill_ms: None,
+        decision_source: None,
+        runner_signal: None,
+        agent_reasoning: None,
+        harness_version: None,
+        candidate_hash: None,
+        revision_id: None,
+        risk_budget_decision_id: None,
+        paper_pnl_pct: None,
+        paper_equity_after: None,
+    })
+    .await
+    .expect("record operator trade");
+}
+
 async fn spawn_mock_trading_api_value_only() -> String {
     let app = Router::new().route(
         "/portfolio/state",
@@ -2891,6 +2991,68 @@ async fn test_get_bot_metrics_trade_count_uses_trade_history_total_when_snapshot
         .to_bytes();
     let history_json: serde_json::Value = serde_json::from_slice(&history_body).unwrap();
     assert_eq!(history_json[0]["trade_count"], 12);
+}
+
+#[tokio::test]
+async fn test_get_bot_metrics_trade_count_uses_local_trade_history_when_remote_trades_unavailable()
+{
+    let _dir = init_test_env();
+
+    let bot = seed_bot("metrics-bot-local-count", "dex", true);
+    record_operator_trade(&bot.id, "local-count-1").await;
+    record_operator_trade(&bot.id, "local-count-2").await;
+    record_operator_trade(&bot.id, "local-count-3").await;
+
+    let trading_api_url = spawn_mock_metrics_only_stale_trading_api().await;
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.trading_api_url = trading_api_url.clone();
+            record.trading_api_token = "remote-token".to_string();
+        })
+        .expect("update bot");
+
+    let metrics_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/metrics", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(metrics_response.status(), 200);
+    let metrics_body = metrics_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let metrics_json: serde_json::Value = serde_json::from_slice(&metrics_body).unwrap();
+    assert_eq!(metrics_json["trade_count"], 3);
+
+    let history_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}/metrics/history", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(history_response.status(), 200);
+    let history_body = history_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let history_json: serde_json::Value = serde_json::from_slice(&history_body).unwrap();
+    assert_eq!(history_json[0]["trade_count"], 3);
 }
 
 #[tokio::test]

@@ -4422,6 +4422,18 @@ async fn fetch_remote_trade_count(bot: &TradingBotRecord) -> Option<u32> {
     }
 }
 
+fn fallback_trade_count(bot: &TradingBotRecord) -> u32 {
+    u32::try_from(fallback_trade_dataset(bot).len()).unwrap_or(u32::MAX)
+}
+
+async fn fetch_visible_trade_count(bot: &TradingBotRecord) -> Option<u32> {
+    let count = fetch_remote_trade_count(bot)
+        .await
+        .unwrap_or(0)
+        .max(fallback_trade_count(bot));
+    (count > 0).then_some(count)
+}
+
 fn fallback_metrics_history(
     bot: &TradingBotRecord,
     query: &MetricsHistoryQuery,
@@ -4508,7 +4520,7 @@ async fn resolve_metrics_history_for_bot(
             match extract_json_array(payload, "snapshots").and_then(parse_metrics_snapshots) {
                 Ok(mut snapshots) if !snapshots.is_empty() => {
                     if query.to.is_none()
-                        && let Some(trade_count) = fetch_remote_trade_count(bot).await
+                        && let Some(trade_count) = fetch_visible_trade_count(bot).await
                     {
                         patch_latest_snapshot_trade_count(&mut snapshots, trade_count);
                     }
@@ -4926,6 +4938,7 @@ async fn get_bot_metrics(
                 (trades, trade_count)
             }
         };
+    let trade_count = trade_count.max(fallback_trade_count(&bot));
 
     let total_pnl: f64 = trades
         .iter()
