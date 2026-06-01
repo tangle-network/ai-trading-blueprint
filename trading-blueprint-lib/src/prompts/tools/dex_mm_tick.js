@@ -102,8 +102,8 @@ async function decide(ctx) {
   ]);
   const portfolio = t.body(portfolioRes);
   const prices = t.priceMap(t.body(pricesRes));
-  const wethPrice = prices.get(weth.toLowerCase());
-  const usdcPrice = prices.get(usdc.toLowerCase()) ?? 1;
+  const wethPrice = await t.resolveUsdPrice(api, portfolio, weth, prices);
+  const usdcPrice = await t.resolveUsdPrice(api, portfolio, usdc, prices, 1);
 
   const wethHeld = t.vaultSpotAmount(portfolio, weth);
   const usdcHeld = t.vaultSpotAmount(portfolio, usdc);

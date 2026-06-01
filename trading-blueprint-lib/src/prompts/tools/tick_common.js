@@ -190,6 +190,54 @@ function vaultSpotAmount(portfolio, tokenAddress) {
   return match ? asNumber(match.amount, 0) : 0;
 }
 
+// Synthetic paper portfolios sometimes carry value_usd but not price_usd. When
+// the market-data endpoint misses a token, derive a conservative spot price
+// from the portfolio's own amount/value pair before falling back to candles.
+function spotPriceFromPortfolio(portfolio, tokenAddress) {
+  const addr = String(tokenAddress || '').toLowerCase();
+  const match = positionsOf(portfolio).find(
+    (p) => isVaultSpot(p) && String(p.token || '').toLowerCase() === addr,
+  );
+  if (!match) return null;
+  const explicit = asNumber(match.price_usd ?? match.price ?? null, null);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const amount = asNumber(match.amount, 0);
+  const valueUsd = asNumber(match.value_usd ?? match.valueUsd ?? null, null);
+  if (amount > 0 && Number.isFinite(valueUsd) && valueUsd > 0) {
+    return valueUsd / amount;
+  }
+  return null;
+}
+
+async function resolveUsdPrice(api, portfolio, tokenAddress, prices, fallback = null) {
+  const key = String(tokenAddress || '').toLowerCase();
+  const quoted = prices && prices.get(key);
+  if (Number.isFinite(quoted) && quoted > 0) return quoted;
+
+  const portfolioPrice = spotPriceFromPortfolio(portfolio, tokenAddress);
+  if (Number.isFinite(portfolioPrice) && portfolioPrice > 0) {
+    if (prices) prices.set(key, portfolioPrice);
+    return portfolioPrice;
+  }
+
+  try {
+    const candles = await fetchCandles(api, tokenAddress);
+    const candlePrice = candles[candles.length - 1];
+    if (Number.isFinite(candlePrice) && candlePrice > 0) {
+      if (prices) prices.set(key, candlePrice);
+      return candlePrice;
+    }
+  } catch {
+    // Preserve the original skip behavior on fetch/lookahead failures.
+  }
+
+  if (Number.isFinite(fallback) && fallback > 0) {
+    if (prices) prices.set(key, fallback);
+    return fallback;
+  }
+  return null;
+}
+
 function ema(values, period) {
   if (values.length < period) return null;
   const alpha = 2 / (period + 1);
@@ -488,6 +536,8 @@ module.exports = {
   positionsOf,
   isVaultSpot,
   vaultSpotAmount,
+  spotPriceFromPortfolio,
+  resolveUsdPrice,
   ema,
   rsi,
   fetchCandles,

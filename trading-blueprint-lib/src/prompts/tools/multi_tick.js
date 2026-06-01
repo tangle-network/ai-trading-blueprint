@@ -48,8 +48,8 @@ async function decide(ctx) {
   let total = 0;
   for (const a of assets) {
     const price = a.address.toLowerCase() === t.pairTokens(config).usdc.toLowerCase()
-      ? (prices.get(a.address.toLowerCase()) ?? 1)
-      : prices.get(a.address.toLowerCase());
+      ? await t.resolveUsdPrice(api, portfolio, a.address, prices, 1)
+      : await t.resolveUsdPrice(api, portfolio, a.address, prices);
     a.price = price;
     a.held = t.vaultSpotAmount(portfolio, a.address);
     a.valueUsd = Number.isFinite(price) ? a.held * price : 0;

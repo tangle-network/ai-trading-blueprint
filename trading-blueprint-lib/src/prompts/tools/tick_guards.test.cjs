@@ -34,7 +34,13 @@ function loadCjs(file) {
   return mod.exports
 }
 
-const { assertNoLookahead, candleOpenMs, LookaheadViolationError } = loadCjs('tick_common.js')
+const {
+  assertNoLookahead,
+  candleOpenMs,
+  LookaheadViolationError,
+  spotPriceFromPortfolio,
+  resolveUsdPrice,
+} = loadCjs('tick_common.js')
 const { coverageFinding, insufficientCoverage, recordCoverageFinding } = loadCjs('tick_coverage.js')
 
 const HOUR = 3_600_000
@@ -88,6 +94,43 @@ test('candleOpenMs normalizes seconds and ms and positional arrays', () => {
   assert.equal(candleOpenMs({ timestamp: 1_700_000_000_000 }), 1_700_000_000_000)
   assert.equal(candleOpenMs([1_700_000_000, 1, 2, 3, 4]), 1_700_000_000_000)
   assert.equal(candleOpenMs({ close: 5 }), null)
+})
+
+test('spotPriceFromPortfolio derives paper prices from spot amount and value', () => {
+  const token = '0x4200000000000000000000000000000000000006'
+  const portfolio = {
+    positions: [
+      {
+        token,
+        amount: 2,
+        value_usd: 4000,
+        position_type: 'spot',
+      },
+    ],
+  }
+  assert.equal(spotPriceFromPortfolio(portfolio, token), 2000)
+})
+
+test('resolveUsdPrice fills missing market-data prices from portfolio value', async () => {
+  const token = '0x4200000000000000000000000000000000000006'
+  const prices = new Map()
+  const portfolio = {
+    positions: [
+      {
+        token,
+        amount: 4,
+        value_usd: 8000,
+        position_type: 'spot',
+      },
+    ],
+  }
+  const api = {
+    apiCall: async () => {
+      throw new Error('candles should not be fetched when portfolio price exists')
+    },
+  }
+  assert.equal(await resolveUsdPrice(api, portfolio, token, prices), 2000)
+  assert.equal(prices.get(token.toLowerCase()), 2000)
 })
 
 test('coverageFinding has the stable machine-checkable shape', () => {
