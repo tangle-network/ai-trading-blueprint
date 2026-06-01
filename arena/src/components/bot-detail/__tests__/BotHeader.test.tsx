@@ -137,9 +137,6 @@ describe('BotHeader', () => {
     expect(screen.getByText('Network: Base')).toBeInTheDocument();
     expect(screen.getByText('Capital: $10,000')).toBeInTheDocument();
     expect(screen.getByText('Max DD: 10%')).toBeInTheDocument();
-    expect(screen.getByText('Authoritative operator snapshot')).toBeInTheDocument();
-    expect(screen.getByText('Base / Aerodrome')).toBeInTheDocument();
-    expect(screen.getByText('Paper simulation; no wallet execution')).toBeInTheDocument();
   });
 
   it('links to the vault with the bot chain id', () => {

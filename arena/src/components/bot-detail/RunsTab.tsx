@@ -22,6 +22,7 @@ interface RunsTabProps {
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
+  immersive?: boolean;
 }
 
 type RunStatus = "running" | "completed" | "failed" | "interrupted";
@@ -869,6 +870,7 @@ export function RunsTab({
   operatorApiUrl,
   operatorKind,
   verificationState,
+  immersive = false,
 }: RunsTabProps) {
   const baseApiUrl = operatorApiUrl ?? "";
   const { data: operatorMeta } = useOperatorMeta(baseApiUrl);
@@ -1081,11 +1083,11 @@ export function RunsTab({
 
   if (runs.length === 0) {
     return (
-      <div className="space-y-4">
+      <div className={immersive ? "h-full min-h-0" : "space-y-4"}>
         {verificationState === "unverified" && (
           <UnverifiedDataNotice subject="autonomous run history" />
         )}
-        <div className="glass-card rounded-xl border border-arena-elements-dividerColor p-6 text-center sm:p-8">
+        <div className="flex h-full min-h-[360px] flex-col items-center justify-center rounded-xl border border-arena-elements-dividerColor bg-arena-elements-background-depth-1/45 p-6 text-center sm:p-8">
           <div className="i-ph:robot mx-auto mb-3 text-3xl text-amber-500" />
           <h3 className="mb-2 text-lg font-display font-semibold text-arena-elements-textPrimary">
             No runs yet
@@ -1100,7 +1102,7 @@ export function RunsTab({
   }
 
   return (
-    <div className="space-y-4">
+    <div className={immersive ? "h-full min-h-0" : "space-y-4"}>
       {verificationState === "unverified" && (
         <UnverifiedDataNotice subject="autonomous run history" />
       )}
@@ -1109,10 +1111,14 @@ export function RunsTab({
         data-sandbox-ui="true"
         data-sandbox-theme="vault"
         className="arena-chat-shell glass-card overflow-hidden rounded-xl"
-        style={{ minHeight: "760px" }}
+        style={
+          immersive
+            ? { height: "100%", minHeight: 0 }
+            : { minHeight: "760px" }
+        }
       >
         <div
-          className={`flex h-[min(1040px,calc(100vh-8rem))] min-h-[760px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
+          className={`flex min-w-0 ${immersive ? "h-full min-h-0" : "h-[min(1040px,calc(100vh-8rem))] min-h-[760px]"} ${isStackedLayout ? "flex-col" : "flex-row"}`}
         >
           <RunsSidebar
             runs={runItems}
@@ -1146,9 +1152,6 @@ export function RunsTab({
                   </div>
                 </div>
               </div>
-              <span className="hidden rounded-full border border-amber-500/15 bg-amber-500/8 px-3 py-1.5 text-sm font-data text-amber-700 dark:text-amber-300 sm:inline-flex">
-                Operator relay
-              </span>
             </div>
 
             <RunsBanner
@@ -1156,11 +1159,6 @@ export function RunsTab({
               isStreaming={stream.isStreaming}
               error={streamErrorMessage}
             />
-
-            <div className="border-b border-amber-500/15 bg-amber-500/5 px-4 py-2.5 text-sm text-amber-800 dark:text-amber-200">
-              This view shows autonomous bot activity only. Use the Chat tab for
-              manual conversations with the bot.
-            </div>
 
             <div className="min-h-0 flex-1 bg-arena-elements-background-depth-1/15">
               {shouldShowTraceReplay ? (

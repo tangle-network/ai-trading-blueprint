@@ -7,7 +7,6 @@ import {
 } from "@tangle-network/sandbox-ui/hooks";
 import type { AgentBranding, Session } from "@tangle-network/sandbox-ui/types";
 import { Button } from "@tangle-network/blueprint-ui/components";
-import { AuthBanner } from "~/components/bot-detail/AuthBanner";
 import { ChatTranscript } from "~/components/bot-detail/chat/ChatTranscript";
 import { useBotSessionStream } from "~/lib/hooks/useBotSessionStream";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
@@ -31,6 +30,7 @@ interface ChatTabProps {
   verificationState?: BotVerificationState;
   requiresSecrets?: boolean;
   onConfigureSecrets?: () => void;
+  immersive?: boolean;
 }
 
 function extractChatErrorMessage(error: unknown): string | null {
@@ -207,6 +207,7 @@ function SessionWorkspaceSidebar({
   primarySessionId,
   isStreaming,
   stacked,
+  canWrite,
   onSelect,
   onDelete,
   onRename,
@@ -217,6 +218,7 @@ function SessionWorkspaceSidebar({
   primarySessionId: string;
   isStreaming: boolean;
   stacked: boolean;
+  canWrite: boolean;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
@@ -237,15 +239,17 @@ function SessionWorkspaceSidebar({
         <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
           Sessions
         </span>
-        <button
-          type="button"
-          onClick={onCreate}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 hover:bg-arena-elements-item-backgroundHover transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-          title="New chat"
-          aria-label="New chat"
-        >
-          <span className="i-ph:plus text-base" />
-        </button>
+        {canWrite && (
+          <button
+            type="button"
+            onClick={onCreate}
+            className="flex items-center justify-center w-8 h-8 rounded-md text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 hover:bg-arena-elements-item-backgroundHover transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+            title="New chat"
+            aria-label="New chat"
+          >
+            <span className="i-ph:plus text-base" />
+          </button>
+        )}
       </div>
 
       <div
@@ -327,7 +331,7 @@ function SessionWorkspaceSidebar({
                 </div>
               </div>
 
-              {!isPrimary && editingId !== session.id && (
+              {canWrite && !isPrimary && editingId !== session.id && (
                 <div className="flex shrink-0 items-center gap-1 opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100">
                   <button
                     type="button"
@@ -369,6 +373,7 @@ export function ChatTab({
   verificationState,
   requiresSecrets = false,
   onConfigureSecrets,
+  immersive = false,
 }: ChatTabProps) {
   const baseApiUrl = operatorApiUrl ?? "";
   const { data: operatorMeta } = useOperatorMeta(baseApiUrl);
@@ -382,8 +387,8 @@ export function ChatTab({
     isAuthenticated,
     isAuthenticating,
     authenticate,
-    error: authError,
   } = useOperatorAuth(baseApiUrl);
+  const canWrite = isAuthenticated && Boolean(token);
 
   const primarySessionId = `trading-${botId}`;
   const [activeSessionId, setActiveSessionId] = useState(
@@ -396,18 +401,24 @@ export function ChatTab({
   );
   const chatCacheKey = `${baseApiUrl}::${botId}`;
 
-  const { data: sessions = [] } = useSessions(apiUrl, token);
-  const deleteMutation = useDeleteSession(apiUrl, token);
-  const renameMutation = useRenameSession(apiUrl, token);
-  const createMutation = useCreateSession(apiUrl, token);
+  const sessionToken = canWrite ? token : null;
+  const { data: sessions = [] } = useSessions(apiUrl, sessionToken);
+  const deleteMutation = useDeleteSession(apiUrl, sessionToken);
+  const renameMutation = useRenameSession(apiUrl, sessionToken);
+  const createMutation = useCreateSession(apiUrl, sessionToken);
   const hasKnownActiveSession = sessions.some(
     (session) => session.id === activeSessionId,
   );
   const streamSessionId = hasKnownActiveSession
     ? activeSessionId
     : activeSessionId === primarySessionId
-      ? (sessions[0]?.id ?? null)
-      : activeSessionId || sessions[0]?.id || null;
+      ? (sessions[0]?.id ?? (canWrite ? null : primarySessionId))
+      : activeSessionId ||
+        sessions[0]?.id ||
+        (canWrite ? null : primarySessionId);
+  const readOnlyHistoryPath = !canWrite && streamSessionId
+    ? `/session/sessions/${encodeURIComponent(streamSessionId)}/messages?limit=200`
+    : undefined;
 
   useEffect(() => {
     if (hasKnownActiveSession || sessions.length === 0) return;
@@ -433,10 +444,15 @@ export function ChatTab({
 
   const stream = useBotSessionStream({
     apiUrl,
-    token,
+    token: sessionToken,
     sessionId: streamSessionId ?? "",
-    enabled: isAuthenticated && !!apiUrl && !!streamSessionId,
+    enabled:
+      !!apiUrl &&
+      !!streamSessionId &&
+      (canWrite || Boolean(readOnlyHistoryPath)),
     cacheKey: chatCacheKey,
+    historyPath: readOnlyHistoryPath,
+    streamEnabled: canWrite,
   });
   const chatErrorMessage = extractChatErrorMessage(sendError ?? stream.error);
   const activeSession =
@@ -598,17 +614,7 @@ export function ChatTab({
     );
   }
 
-  if (!isAuthenticated) {
-    return (
-      <AuthBanner
-        onAuth={authenticate}
-        isAuthenticating={isAuthenticating}
-        error={authError}
-      />
-    );
-  }
-
-  if (requiresSecrets) {
+  if (requiresSecrets && canWrite) {
     return (
       <div className="glass-card rounded-xl border border-arena-elements-dividerColor p-6 sm:p-8 text-center">
         <div className="i-ph:key text-3xl mb-3 mx-auto text-amber-400" />
@@ -633,10 +639,12 @@ export function ChatTab({
       data-sandbox-ui="true"
       data-sandbox-theme="vault"
       className="arena-chat-shell glass-card rounded-xl overflow-hidden"
-      style={{
-        height: "calc(100vh - var(--header-height) - 12rem)",
-        minHeight: "720px",
-      }}
+      style={immersive
+        ? { height: "100%", minHeight: 0 }
+        : {
+            height: "calc(100vh - var(--header-height) - 12rem)",
+            minHeight: "720px",
+          }}
     >
       <div
         className={`flex h-full min-h-0 min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
@@ -649,17 +657,20 @@ export function ChatTab({
           stacked={isStackedLayout}
           onSelect={setActiveSessionId}
           onDelete={(id) => {
+            if (!canWrite) return;
             if (confirm("Delete this session?")) {
               deleteMutation.mutate(id);
               if (id === activeSessionId) setActiveSessionId(primarySessionId);
             }
           }}
           onRename={(id, title) =>
-            renameMutation.mutate({ sessionId: id, title })
+            canWrite ? renameMutation.mutate({ sessionId: id, title }) : undefined
           }
           onCreate={() => {
+            if (!canWrite) return;
             void createSession("New Chat");
           }}
+          canWrite={canWrite}
         />
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -690,9 +701,11 @@ export function ChatTab({
                 )}
               </div>
             </div>
-            <span className="hidden rounded-full border border-violet-500/15 bg-violet-500/8 px-3 py-1.5 text-sm font-data text-violet-700 dark:text-violet-300 sm:inline-flex">
-              Operator relay
-            </span>
+            {canWrite && (
+              <span className="hidden rounded-full border border-violet-500/15 bg-violet-500/8 px-3 py-1.5 text-sm font-data text-violet-700 dark:text-violet-300 sm:inline-flex">
+                Operator relay
+              </span>
+            )}
           </div>
 
           <ChatRunBanner
@@ -707,7 +720,7 @@ export function ChatTab({
               messages={stream.messages}
               partMap={stream.partMap}
               isStreaming={stream.isStreaming}
-              onSend={handleSend}
+              onSend={canWrite ? handleSend : undefined}
               branding={TRADING_BRANDING}
               placeholder={
                 stream.isStreaming
@@ -717,12 +730,25 @@ export function ChatTab({
             />
           </div>
 
-          <div className="border-t border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-4 py-3">
-            <AgentStatus
-              status={agentStatus}
-              onAbort={handleAbort}
-              isAborting={isAborting}
-            />
+          <div className="flex items-center gap-3 border-t border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-4 py-3">
+            {canWrite ? (
+              <AgentStatus
+                status={agentStatus}
+                onAbort={handleAbort}
+                isAborting={isAborting}
+              />
+            ) : null}
+            {!canWrite && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto h-8"
+                onClick={authenticate}
+                disabled={isAuthenticating}
+              >
+                {isAuthenticating ? "Connecting…" : "Owner Sign In"}
+              </Button>
+            )}
           </div>
         </div>
       </div>

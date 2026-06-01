@@ -2,7 +2,7 @@ import 'virtual:uno.css';
 import '@tangle-network/sandbox-ui/styles';
 import './styles/global.scss';
 
-import { Outlet } from 'react-router';
+import { Outlet, useLocation } from 'react-router';
 import { AppToaster } from '@tangle-network/blueprint-ui/components';
 import { ArenaDocument } from '~/components/layout/ArenaDocument';
 import { Header } from '~/components/layout/Header';
@@ -34,6 +34,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const botWorkspaceTab = searchParams.get('tab');
+  const immersiveBotWorkspace = location.pathname.startsWith('/arena/bot/')
+    && (botWorkspaceTab === 'runs' || botWorkspaceTab === 'chat');
+
   return (
     <>
       <AppToaster tone="arena" />
@@ -47,11 +53,14 @@ export default function App() {
               >
                 Skip to content
               </a>
-              <Header />
-              <main id="main-content" className="flex-1 pt-[var(--header-height)] relative z-1">
+              {!immersiveBotWorkspace && <Header />}
+              <main
+                id="main-content"
+                className={`flex-1 relative z-1 ${immersiveBotWorkspace ? 'min-h-0' : 'pt-[var(--header-height)]'}`}
+              >
                 <Outlet />
               </main>
-              <Footer />
+              {!immersiveBotWorkspace && <Footer />}
             </div>
           </TradingSyncProvider>
         </ClientWeb3Provider>

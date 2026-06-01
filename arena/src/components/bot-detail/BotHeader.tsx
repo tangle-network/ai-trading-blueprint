@@ -57,16 +57,6 @@ function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number
   return value != null && value > 0 ? value : null;
 }
 
-function readStrategyString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function titleCaseToken(value: string): string {
-  return value
-    .replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
 function explicitStrategyTitle(identity: string, strategyType: Bot['strategyType']): string {
   const mmMatch = identity.match(/^MM\s+([A-Z0-9./-]+)\s+(.+)$/i);
   if (mmMatch?.[1] && mmMatch?.[2]) {
@@ -111,17 +101,6 @@ function formatCompactAddress(value: string): string {
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
-function formatCostModel(strategyConfig?: Record<string, unknown>): string {
-  const gasCostUsd = readStrategyNumber(strategyConfig?.paper_gas_cost_usd);
-  const referenceLiquidityUsd = readStrategyNumber(strategyConfig?.paper_reference_liquidity_usd);
-  const parts = [
-    gasCostUsd == null ? null : `paper gas ${formatCapital(gasCostUsd)}`,
-    referenceLiquidityUsd == null ? null : `liquidity ref ${formatCapital(referenceLiquidityUsd)}`,
-  ].filter((part): part is string => Boolean(part));
-
-  return parts.length > 0 ? parts.join(' · ') : 'fees/slippage tracked per trade when reported';
-}
-
 export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHeaderProps) {
   const { data: detail } = useBotDetail(bot.id, bot.operatorApiUrl, bot.operatorKind);
   const hasVaultAddress = Boolean(
@@ -140,27 +119,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
   const targetNetwork = targetChainId != null
     ? networks[targetChainId]?.label ?? `Chain ${targetChainId}`
     : 'Unknown network';
-  const protocol = readStrategyString(bot.strategyConfig?.protocol);
   const validatorCount = detail?.validator_endpoints?.length ?? 0;
-  const deploymentMode = bot.operatorKind === 'cloud'
-    ? 'Cloud operator'
-    : bot.operatorKind === 'instance'
-      ? 'Instance operator'
-      : bot.operatorKind === 'tee'
-        ? 'TEE operator'
-        : 'Operator';
-  const provenanceItems = [
-    { label: 'Provenance', value: bot.verificationState === 'unverified' ? 'Unverified operator snapshot' : 'Authoritative operator snapshot' },
-    { label: 'Operator', value: `${deploymentMode} ${formatCompactAddress(bot.operatorAddress)}` },
-    { label: 'Workflow', value: bot.workflowId ? `#${bot.workflowId}` : 'No workflow id published' },
-    { label: 'Validators', value: validatorCount > 0 ? `${validatorCount} live endpoint${validatorCount === 1 ? '' : 's'}` : 'No validators published' },
-  ];
-  const executionItems = [
-    { label: 'Venue', value: protocol ? `${targetNetwork} / ${titleCaseToken(protocol)}` : targetNetwork },
-    { label: 'Mode', value: bot.paperTrade ? 'Paper simulation; no wallet execution' : 'Live execution behind signed controls' },
-    { label: 'Costs', value: formatCostModel(bot.strategyConfig) },
-    { label: 'Wallet scope', value: 'Read-only until you connect; signing only in Envelope, Controls, or Deploy' },
-  ];
   const summary = useBotLiveSummary({
     botId: bot.id,
     botName: displayName,
@@ -249,12 +208,6 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
     },
   ];
   const navGroups = groupNavItems(navItems);
-  const availableNavItems = new Set(navItems.map((item) => item.value));
-  const actionItems = [
-    { value: 'trades', label: 'Review Trades', icon: 'i-ph:swap', variant: 'default' as const },
-    { value: 'runs', label: 'Open Runs', icon: 'i-ph:list-checks', variant: 'outline' as const },
-    { value: 'controls', label: 'Manage Risk', icon: 'i-ph:sliders-horizontal', variant: 'outline' as const },
-  ].filter((item) => availableNavItems.has(item.value));
   const trustItems = [
     { label: 'Mode', value: bot.paperTrade ? 'Paper' : 'Live' },
     { label: 'Network', value: targetNetwork },
@@ -264,11 +217,11 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
   ];
 
   return (
-    <div className="sticky top-[var(--header-height)] z-30 mb-5 -mx-4 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1 px-4 py-3 shadow-[0_8px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.22)] sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-      <div className="mx-auto max-w-[1800px]">
-        <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
+    <div className="sticky top-[var(--header-height)] z-30 mb-4 -mx-4 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1 px-4 py-2.5 shadow-[0_8px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.22)] sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+      <div className="mx-auto max-w-[1320px]">
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+            <div className="mb-1.5 flex flex-wrap items-center gap-2 text-sm">
               <Link
                 to="/arena"
                 className="inline-flex items-center gap-1.5 font-display font-medium text-arena-elements-textTertiary transition-colors hover:text-violet-700 dark:hover:text-violet-400"
@@ -293,8 +246,8 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
               )}
             </div>
 
-            <div className="flex flex-col gap-2 md:flex-row md:items-end">
-              <h1 className="min-w-0 max-w-[920px] break-words font-display text-2xl font-bold leading-tight tracking-tight md:text-3xl">
+            <div className="flex flex-col gap-1.5 md:flex-row md:items-end">
+              <h1 className="min-w-0 max-w-[760px] break-words font-display text-2xl font-bold leading-tight tracking-tight">
                 {explicitTitle}
               </h1>
               <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 pb-0.5 text-sm text-arena-elements-textTertiary">
@@ -314,72 +267,26 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
               </div>
             </div>
 
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-2 flex flex-wrap gap-1.5">
               {[...titleParts.metadata, ...trustItems.map((item) => `${item.label}: ${item.value}`)].map((label) => (
                 <span
                   key={label}
-                  className="inline-flex min-h-7 items-center rounded-full border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 px-2.5 py-1 font-data text-[11px] uppercase tracking-wider text-arena-elements-textSecondary"
+                  className="inline-flex min-h-6 items-center rounded-full border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 px-2 py-0.5 font-data text-[10px] uppercase tracking-wider text-arena-elements-textSecondary"
                 >
                   {label}
                 </span>
               ))}
             </div>
-
-            <div className="mt-3 grid max-w-[1180px] gap-2 lg:grid-cols-2">
-              {[
-                { label: 'Verified Context', items: provenanceItems },
-                { label: 'Risk And Permissions', items: executionItems },
-              ].map((group) => (
-                <div
-                  key={group.label}
-                  className="rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 p-3"
-                >
-                  <div className="mb-2 flex items-center gap-2 font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
-                    <span className="i-ph:shield-check text-sm text-violet-500" aria-hidden="true" />
-                    {group.label}
-                  </div>
-                  <dl className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
-                    {group.items.map((item) => (
-                      <div key={item.label} className="min-w-0">
-                        <dt className="font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
-                          {item.label}
-                        </dt>
-                        <dd className="mt-0.5 break-words font-display text-sm font-medium leading-snug text-arena-elements-textPrimary" title={item.value}>
-                          {item.value}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
-              ))}
-            </div>
-
-            {onTabChange && actionItems.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {actionItems.map((item) => (
-                  <Button
-                    key={item.value}
-                    size="sm"
-                    variant={item.variant}
-                    className="h-9 px-3"
-                    onClick={() => onTabChange(item.value)}
-                  >
-                    <span className={`${item.icon} text-sm`} aria-hidden="true" />
-                    {item.label}
-                  </Button>
-                ))}
-              </div>
-            )}
           </div>
 
           <Tooltip.Provider delayDuration={150}>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:min-w-[860px] xl:grid-cols-6">
+            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6 xl:min-w-[640px]">
               {metrics.map((stat) => (
                 <div
                   key={stat.label}
-                  className="min-h-[76px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-3.5 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+                  className="min-h-[58px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
                 >
-                  <div className="mb-1 flex min-h-[28px] items-start gap-1.5 text-[11px] font-data font-medium uppercase leading-tight tracking-wider text-arena-elements-textTertiary">
+                  <div className="mb-1 flex min-h-[18px] items-start gap-1 text-[10px] font-data font-medium uppercase leading-tight tracking-wider text-arena-elements-textTertiary">
                     <span className="break-words">{stat.label}</span>
                     {stat.title && (
                       <Tooltip.Root>
@@ -387,9 +294,9 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                           <button
                             type="button"
                             aria-label={`About ${stat.label}: ${stat.title}`}
-                            className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-arena-elements-textTertiary transition-colors hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/70"
+                            className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full text-arena-elements-textTertiary transition-colors hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/70"
                           >
-                            <span className="i-ph:info text-[13px]" aria-hidden="true" />
+                            <span className="i-ph:info text-[11px]" aria-hidden="true" />
                           </button>
                         </Tooltip.Trigger>
                         <Tooltip.Portal>
@@ -406,7 +313,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                       </Tooltip.Root>
                     )}
                   </div>
-                  <div className={`truncate font-data text-2xl font-bold leading-tight ${stat.color}`}>
+                  <div className={`truncate font-data text-lg font-bold leading-tight ${stat.color}`}>
                     {stat.value}
                   </div>
                 </div>
@@ -415,7 +322,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
           </Tooltip.Provider>
         </div>
 
-        <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="mt-2 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           {navItems.length > 0 && onTabChange && (
             <nav
               className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1"
@@ -424,9 +331,9 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
               {navGroups.map((group) => (
                 <div
                   key={group.label}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/50 p-1"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/50 p-0.5"
                 >
-                  <span className="px-2 text-[10px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                  <span className="px-1.5 text-[10px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
                     {group.label}
                   </span>
                   {group.items.map((item) => {
@@ -437,7 +344,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                         type="button"
                         onClick={() => onTabChange(item.value)}
                         aria-current={selected ? 'page' : undefined}
-                        className={`group inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                        className={`group inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
                           selected
                             ? 'border-violet-500/35 bg-violet-500/14 text-arena-elements-textPrimary shadow-[0_0_0_1px_rgba(142,89,255,0.08)]'
                             : 'border-transparent text-arena-elements-textSecondary hover:border-arena-elements-dividerColor/70 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'

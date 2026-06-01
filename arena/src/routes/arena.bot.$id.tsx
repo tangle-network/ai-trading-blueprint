@@ -36,7 +36,6 @@ import {
 } from "~/components/home/SecretsModal";
 import { ErrorBoundary } from "~/components/ErrorBoundary";
 import { EnvelopeNeededBanner } from "~/components/bot-detail/EnvelopeNeededBanner";
-import { TradingRiskDisclosure } from "~/components/bot-detail/shared/DataAccessNotices";
 import { useAccount } from "wagmi";
 import { useBotDetail } from "~/lib/hooks/useBotDetail";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
@@ -279,6 +278,7 @@ export default function BotDetailPage() {
 
   // Must call hooks before early returns (React rules of hooks)
   const botIsLive = bot ? isLiveBotStatus(bot.status) : false;
+  const immersiveTab = activeTab === "runs" || activeTab === "chat";
   const pendingValidationCount = usePendingValidationCount(
     bot?.id ?? "",
     displayBotName,
@@ -376,9 +376,113 @@ export default function BotDetailPage() {
     );
   }
 
+  if (immersiveTab) {
+    return (
+      <AnimatedPage>
+        <div className="flex h-screen flex-col overflow-hidden px-3 pb-3 sm:px-4">
+          <div className="mx-auto flex h-12 w-full max-w-[1800px] shrink-0 items-center justify-between gap-3 border-b border-arena-elements-dividerColor/70">
+            <div className="flex min-w-0 items-center gap-3">
+              <button
+                type="button"
+                onClick={() => handleTabChange("performance")}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm font-display font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+              >
+                <span className="i-ph:arrow-left text-sm" aria-hidden="true" />
+                Agent
+              </button>
+              <div className="min-w-0">
+                <div className="truncate font-display text-base font-semibold text-arena-elements-textPrimary">
+                  {displayBotName}
+                </div>
+                <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
+                  {activeTab === "runs" ? "Trading Runs" : "Chat"}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-1 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60 p-1">
+              {(["runs", "chat"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => handleTabChange(tab)}
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                    activeTab === tab
+                      ? "bg-violet-500/14 text-arena-elements-textPrimary"
+                      : "text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary"
+                  }`}
+                >
+                  <span className={tab === "runs" ? "i-ph:list-checks text-sm" : "i-ph:chat-circle-dots text-sm"} aria-hidden="true" />
+                  <span className="hidden sm:inline">{tab === "runs" ? "Runs" : "Chat"}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mx-auto min-h-0 w-full max-w-[1800px] flex-1 pt-3">
+            {activeTab === "runs" && operatorMeta?.features.chat && (
+              <ErrorBoundary>
+                <RunsTab
+                  botId={bot.id}
+                  botName={displayBotName}
+                  operatorApiUrl={bot.operatorApiUrl}
+                  operatorKind={bot.operatorKind}
+                  verificationState={bot.verificationState}
+                  immersive
+                />
+              </ErrorBoundary>
+            )}
+
+            {activeTab === "chat" && operatorMeta?.features.chat && (
+              <ErrorBoundary>
+                <ChatTab
+                  botId={bot.id}
+                  botName={displayBotName}
+                  operatorAddress={bot.operatorAddress}
+                  operatorApiUrl={bot.operatorApiUrl}
+                  operatorKind={bot.operatorKind}
+                  verificationState={bot.verificationState}
+                  requiresSecrets={
+                    bot.status === "needs_config" ||
+                    bot.secretsConfigured === false
+                  }
+                  onConfigureSecrets={
+                    bot.status === "needs_config" ||
+                    bot.secretsConfigured === false
+                      ? () =>
+                          setSecretsTarget({
+                            apiUrl: bot.operatorApiUrl ?? undefined,
+                            botId: bot.id,
+                            sandboxId: bot.sandboxId,
+                            callId: bot.callId,
+                            serviceId: bot.serviceId,
+                          })
+                      : undefined
+                  }
+                  immersive
+                />
+              </ErrorBoundary>
+            )}
+
+            {operatorMeta && !operatorMeta.features.chat && (
+              <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
+                This operator does not expose this workspace.
+              </div>
+            )}
+          </div>
+
+          <SecretsModal
+            target={secretsTarget}
+            onClose={() => setSecretsTarget(null)}
+          />
+        </div>
+      </AnimatedPage>
+    );
+  }
+
   return (
     <AnimatedPage>
-      <div className="mx-auto max-w-[1800px] px-4 pb-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[1320px] px-4 pb-8 sm:px-6 lg:px-8">
         <BotHeader
           bot={bot}
           activeTab={activeTab}
@@ -390,9 +494,6 @@ export default function BotDetailPage() {
           bot={bot}
           onSignEnvelope={() => handleTabChange("envelope")}
         />
-
-        <TradingRiskDisclosure />
-
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsContent value="performance" className="mt-0">
             <PerformanceTab bot={bot} isLive={botIsLive} />
