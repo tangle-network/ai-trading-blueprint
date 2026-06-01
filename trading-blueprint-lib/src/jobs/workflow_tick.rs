@@ -278,6 +278,9 @@ fn fast_tick_bot_and_tool_for_workflow<'a>(
         if !workflow_is_current_for_bot(entry, bot) {
             return None;
         }
+        if !bot.trading_active || bot.wind_down_started_at.is_some() {
+            return None;
+        }
         tick_tool_for_strategy(&bot.strategy_type).map(|tool| (bot, tool))
     })
 }
@@ -663,6 +666,9 @@ async fn validate_fast_runs(response: &mut Value, all_bots: &[crate::state::Trad
         let Some(bot) = bot_for_executed_workflow(all_bots, workflow_id, workflow_name) else {
             continue;
         };
+        if !bot.trading_active || bot.wind_down_started_at.is_some() {
+            continue;
+        }
         if tick_tool_for_strategy(&bot.strategy_type).is_none() {
             continue;
         }
@@ -787,11 +793,12 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
 
     // 2. Run deterministic fast ticks (any family with a tick tool) before the
     //    generic LLM runner.
+    let runnable_bots = bots()?.values().map_err(|e| e.to_string())?;
     let mut direct_response = json!({
         "count": 0,
         "executed": [],
     });
-    let direct_executed = match run_due_fast_ticks(&all_bots).await {
+    let direct_executed = match run_due_fast_ticks(&runnable_bots).await {
         Ok(executed) => executed,
         Err(err) => {
             tracing::error!("direct fast tick failed (non-fatal): {err}");
@@ -803,7 +810,7 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
             "count": direct_executed.len(),
             "executed": direct_executed,
         });
-        validate_fast_runs(&mut direct_response, &all_bots).await;
+        validate_fast_runs(&mut direct_response, &runnable_bots).await;
         persist_executed_run_history(&direct_response);
     }
 
@@ -845,7 +852,7 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
             response["count"] = json!(executed.len());
         }
     }
-    validate_fast_runs(&mut response, &all_bots).await;
+    validate_fast_runs(&mut response, &runnable_bots).await;
     tracing::info!("workflow_tick() returned: {}", response);
     persist_executed_run_history(&response);
 
@@ -853,11 +860,11 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
     //      Activates queued backtest-passing candidates, accrues forward paper evidence
     //      under the candidate, and promotes/tables via the existing promotion gate.
     //      Runs after trades are persisted so this tick's evidence is counted.
-    crate::jobs::promotion_conductor::run_promotion_conductor(&all_bots).await;
+    crate::jobs::promotion_conductor::run_promotion_conductor(&runnable_bots).await;
 
     // 3.6. Self-improvement cadence: recover delegated MCP work and generate new
     //      backtest candidates through the sandbox TS tools when no trial is open.
-    crate::jobs::self_improvement_cadence::run_self_improvement_cadence(&all_bots).await;
+    crate::jobs::self_improvement_cadence::run_self_improvement_cadence(&runnable_bots).await;
 
     // 4. Run fee settlement for winding-down bots
     let winding_down: Vec<_> = bots()?
@@ -878,4 +885,95 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
     Ok(TangleResult(JsonResponse {
         json: response.to_string(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_bot(bot_id: &str, workflow_id: u64) -> crate::state::TradingBotRecord {
+        crate::state::TradingBotRecord {
+            id: bot_id.to_string(),
+            name: format!("Bot {bot_id}"),
+            sandbox_id: format!("sandbox-{bot_id}"),
+            vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+            share_token: String::new(),
+            strategy_type: "dex".to_string(),
+            strategy_config: json!({"paper_trade": true}),
+            risk_params: json!({}),
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            trading_api_url: "http://localhost:9100".to_string(),
+            trading_api_token: "test-token".to_string(),
+            workflow_id: Some(workflow_id),
+            trading_active: true,
+            created_at: 0,
+            operator_address: String::new(),
+            validator_service_ids: Vec::new(),
+            max_lifetime_days: 30,
+            paper_trade: true,
+            wind_down_started_at: None,
+            submitter_address: String::new(),
+            trading_loop_cron: String::new(),
+            call_id: 0,
+            service_id: 0,
+            harness_json: Value::Null,
+            validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
+            active_trial_run_id: None,
+            active_trial_candidate_hash: None,
+            pre_trial_harness_json: None,
+        }
+    }
+
+    fn fast_workflow(
+        bot_id: &str,
+        workflow_id: u64,
+    ) -> ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
+        ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry {
+            id: workflow_id,
+            name: format!("fast-tick-{bot_id}"),
+            workflow_json: json!({"timeout_ms": 120_000}).to_string(),
+            trigger_type: "cron".to_string(),
+            trigger_config: "0 */5 * * * *".to_string(),
+            sandbox_config_json: String::new(),
+            target_kind: 0,
+            target_sandbox_id: String::new(),
+            target_service_id: 0,
+            active: true,
+            next_run_at: Some(0),
+            last_run_at: None,
+            owner: String::new(),
+        }
+    }
+
+    #[test]
+    fn fast_tick_selection_includes_current_active_bot() {
+        let bot_id = "trading-active-fast";
+        let workflow_id = 42;
+        let workflow = fast_workflow(bot_id, workflow_id);
+        let bots = vec![test_bot(bot_id, workflow_id)];
+
+        let selected = fast_tick_bot_and_tool_for_workflow(&workflow, &bots);
+
+        assert!(selected.is_some(), "active bot should run direct fast tick");
+    }
+
+    #[test]
+    fn fast_tick_selection_skips_wind_down_bot() {
+        let bot_id = "trading-wind-down-fast";
+        let workflow_id = 43;
+        let workflow = fast_workflow(bot_id, workflow_id);
+        let mut bot = test_bot(bot_id, workflow_id);
+        bot.wind_down_started_at = Some(123);
+        let bots = vec![bot];
+
+        let selected = fast_tick_bot_and_tool_for_workflow(&workflow, &bots);
+
+        assert!(
+            selected.is_none(),
+            "wind-down bot should not run the normal deterministic fast tick"
+        );
+    }
 }

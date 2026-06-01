@@ -50,7 +50,8 @@ jobs:
             test -f "$BIN" || { echo "::error::missing $BIN"; exit 1; }
             strip "$BIN" 2>/dev/null || true
             A="${b}-${TARGET}.tar.xz"
-            tar -cJf "$A" -C target/release "$b"
+            tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+              -cJf "$A" -C target/release "$b"
             sha256sum "$A" > "${A}.sha256"; cat "${A}.sha256"
             # Hash of the EXTRACTED (stripped) binary. The blueprint-manager's
             # Remote/Github fetcher unpacks the archive and verifies the binary
@@ -65,10 +66,36 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TARGET: ${{ matrix.target }}
         run: |
+          set -euo pipefail
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "Operator binaries: $BINARIES"
-          gh release upload "$TAG" $FILES --repo "$GITHUB_REPOSITORY" --clobber
+
+          upload_asset() {
+            local file="$1"
+            local name
+            name="$(basename "$file")"
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq ".assets[] | select(.name == \"$name\") | .name" \
+              | grep -qx "$name"; then
+              mkdir -p /tmp/existing-release-assets
+              rm -f "/tmp/existing-release-assets/$name"
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+                --pattern "$name" --dir /tmp/existing-release-assets
+              if cmp -s "$file" "/tmp/existing-release-assets/$name"; then
+                echo "asset already exists unchanged: $name"
+              else
+                echo "::error::release asset already exists with different bytes: $name"
+                exit 1
+              fi
+            else
+              gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"
+            fi
+          }
+
+          for file in $FILES; do
+            upload_asset "$file"
+          done
 
   # Once both arch legs have uploaded their tarballs + .sha256 sidecars, emit a
   # per-binary multi-arch manifest (`tangle-binary-manifest/v1`) so the on-chain
@@ -86,6 +113,29 @@ jobs:
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           mkdir -p /tmp/m
+
+          upload_asset() {
+            local file="$1"
+            local name
+            name="$(basename "$file")"
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq ".assets[] | select(.name == \"$name\") | .name" \
+              | grep -qx "$name"; then
+              mkdir -p /tmp/existing-release-assets
+              rm -f "/tmp/existing-release-assets/$name"
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+                --pattern "$name" --dir /tmp/existing-release-assets
+              if cmp -s "$file" "/tmp/existing-release-assets/$name"; then
+                echo "asset already exists unchanged: $name"
+              else
+                echo "::error::release asset already exists with different bytes: $name"
+                exit 1
+              fi
+            else
+              gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"
+            fi
+          }
+
           for b in $BINARIES; do
             entries=""
             for triple in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
@@ -99,7 +149,7 @@ jobs:
             printf '{"schema":"tangle-binary-manifest/v1","blueprint":"%s","version":"%s","binaries":[%s]}\n' \
               "$b" "$TAG" "$entries" > "/tmp/m/${b}-manifest.json"
             cat "/tmp/m/${b}-manifest.json"
-            gh release upload "$TAG" "/tmp/m/${b}-manifest.json" --repo "$GITHUB_REPOSITORY" --clobber
+            upload_asset "/tmp/m/${b}-manifest.json"
           done
 
           # cargo-dist dist-manifest.json: the blueprint-manager's Remote/Github
@@ -116,7 +166,7 @@ jobs:
           arts="${arts%,}"
           printf '{"artifacts":{%s}}\n' "$arts" > /tmp/m/dist-manifest.json
           cat /tmp/m/dist-manifest.json
-          gh release upload "$TAG" /tmp/m/dist-manifest.json --repo "$GITHUB_REPOSITORY" --clobber
+          upload_asset /tmp/m/dist-manifest.json
 
   # After the manifest is published as a release asset, trigger the on-chain
   # publish in tnt-core. binaryUri points at the multi-arch manifest, so one
