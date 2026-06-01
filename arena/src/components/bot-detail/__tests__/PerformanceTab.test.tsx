@@ -26,6 +26,9 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
   useBotMetricsSummary: () => ({
     data: mockMetricsSummary,
   }),
+  useBotTrades: () => ({
+    data: [],
+  }),
   useBotPortfolio: () => ({
     data: mockPortfolio,
     isLoading: false,

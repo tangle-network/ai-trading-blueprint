@@ -54,7 +54,7 @@ export default function CreateAgent() {
   const handleCreate = useCallback(async () => {
     if (!prompt.trim() || isCreating) return
     setIsCreating(true)
-    setStatus('Parsing your strategy...')
+    setStatus('Parsing your strategy…')
     setError('')
 
     try {
@@ -69,7 +69,7 @@ export default function CreateAgent() {
         strategyType = 'perp'
       }
 
-      setStatus('Provisioning your trading agent...')
+      setStatus('Provisioning your trading agent…')
 
       // Call the operator API to provision a bot with the user's prompt
       if (!HAS_TRADING_OPERATOR_API || !ALL_TRADING_OPERATOR_API_URLS[0]) {
@@ -128,7 +128,7 @@ export default function CreateAgent() {
         throw new Error('Operator created a bot but did not return a bot id')
       }
       const activationError = typeof data.activation_error === 'string' ? data.activation_error : ''
-      setStatus(activationError ? 'Agent created; activation needs attention. Opening bot...' : 'Agent created! Opening chat...')
+      setStatus(activationError ? 'Agent created; activation needs attention. Opening bot…' : 'Agent created. Opening chat…')
 
       // Navigate to the bot's chat view
       setTimeout(() => {
@@ -169,12 +169,14 @@ export default function CreateAgent() {
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="I want an agent that..."
+            placeholder="I want an agent that…"
             rows={4}
             disabled={isCreating}
-            className="w-full px-5 py-4 rounded-xl bg-arena-elements-bg border border-arena-elements-border
-                       text-base placeholder:text-arena-elements-textTertiary
-                       focus:outline-none focus:ring-2 focus:ring-violet-500/40 focus:border-violet-500/40
+            name="agent-strategy-prompt"
+            aria-label="Trading agent strategy prompt"
+            className="w-full px-5 py-4 rounded-xl bg-arena-elements-background-depth-1/35 border border-arena-elements-dividerColor/70
+                       text-lg placeholder:text-arena-elements-textTertiary
+                       focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50
                        resize-none disabled:opacity-50 transition-all"
           />
           <div className="absolute bottom-3 right-3">
@@ -183,7 +185,7 @@ export default function CreateAgent() {
               disabled={!prompt.trim() || isCreating}
               className="px-4 py-2 text-sm"
             >
-              {isCreating ? status : 'Create Agent →'}
+              {isCreating ? status : 'Create Agent'}
             </Button>
           </div>
           {(status || error) && (
@@ -207,12 +209,12 @@ export default function CreateAgent() {
                 key={hint.label}
                 onClick={() => setPrompt(hint.prompt)}
                 disabled={isCreating}
-                className="text-left px-4 py-3 rounded-lg border border-arena-elements-border
+                className="text-left px-4 py-3 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/20
                            hover:border-violet-500/30 hover:bg-violet-500/5
-                           transition-all text-sm disabled:opacity-50"
+                           transition-all text-base disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
               >
                 <span className="font-semibold block mb-1">{hint.label}</span>
-                <span className="text-arena-elements-textTertiary text-xs line-clamp-2">
+                <span className="text-arena-elements-textTertiary text-sm line-clamp-2">
                   {hint.prompt}
                 </span>
               </button>

@@ -95,7 +95,7 @@ function EnvelopeStatusCard({
   if (!envelope) {
     return (
       <Card title="Current envelope">
-        <p className="text-sm text-muted-foreground">No envelope on file. Sign and submit one below to enable envelope-mode trading.</p>
+        <p className="text-base text-arena-elements-textSecondary">No envelope on file. Sign and submit one below to enable envelope-mode trading.</p>
       </Card>
     );
   }
@@ -124,16 +124,16 @@ function EnvelopeStatusCard({
         <Field label="Approval signers" value={envelope.approval_signers.length.toString()} />
       </dl>
       {envelope.enforcement && (
-        <div className="mt-4 border-t pt-3">
-          <div className="text-xs font-semibold uppercase text-muted-foreground mb-2">On-chain enforcement</div>
-          <pre className="text-xs bg-muted/30 rounded p-2 overflow-x-auto">
+        <div className="mt-4 border-t border-arena-elements-dividerColor/60 pt-3">
+          <div className="text-sm font-semibold uppercase text-arena-elements-textTertiary mb-2">On-chain enforcement</div>
+          <pre className="text-sm bg-arena-elements-background-depth-1/40 rounded p-3 overflow-x-auto">
 {JSON.stringify(envelope.enforcement, null, 2)}
           </pre>
         </div>
       )}
-      <div className="mt-4 border-t pt-3">
-        <div className="text-xs font-semibold uppercase text-muted-foreground mb-2">Policy</div>
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+      <div className="mt-4 border-t border-arena-elements-dividerColor/60 pt-3">
+        <div className="text-sm font-semibold uppercase text-arena-elements-textTertiary mb-2">Policy</div>
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
           <Field label="Max trade (USD)" value={envelope.policy.max_trade_size_usd} small />
           <Field label="Max exposure (USD)" value={envelope.policy.max_total_exposure_usd} small />
           <Field label="Max drawdown" value={`${envelope.policy.max_drawdown_pct}%`} small />
@@ -235,7 +235,7 @@ function SignAndSubmitCard({
 
       {mode === 'build' && (
         <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-arena-elements-textSecondary">
             Construct an envelope from typed inputs. Switching variants resets the binding fields to
             sensible defaults; addresses are checksummed via viem and amounts can be entered in
             human-readable units.
@@ -253,7 +253,7 @@ function SignAndSubmitCard({
             }}
           />
           {issues.length > 0 && (
-            <ul className="text-xs text-red-500 mt-2 list-disc pl-4">
+            <ul className="text-sm text-red-500 mt-2 list-disc pl-4">
               {issues.map((i, idx) => (
                 <li key={`${i.field}:${idx}`}>
                   <span className="font-mono">{i.field}</span> — {i.message}
@@ -262,10 +262,10 @@ function SignAndSubmitCard({
             </ul>
           )}
           {submitError && (
-            <p className="text-xs text-red-500">PUT /envelope: {submitError.message}</p>
+            <p className="text-sm text-red-500">PUT /envelope: {submitError.message}</p>
           )}
           {(signing || submitting) && (
-            <p className="text-xs text-arena-elements-textTertiary">
+            <p className="text-sm text-arena-elements-textTertiary">
               {signing ? 'Awaiting signature…' : 'Submitting…'}
             </p>
           )}
@@ -274,23 +274,25 @@ function SignAndSubmitCard({
 
       {mode === 'paste' && (
         <>
-          <p className="text-xs text-muted-foreground mb-2">
+          <p className="text-sm text-arena-elements-textSecondary mb-2">
             Paste an unsigned envelope JSON from your agent runtime. The structure is validated
             client-side against the same rules the server enforces. You'll be asked to sign EIP-712
             typed data via your wallet.
           </p>
           <textarea
-            className="w-full font-mono text-xs bg-muted/30 rounded p-2 min-h-[200px]"
-            placeholder='{"version":2,"bot_id":"...","protocol":"uniswap_v3",...}'
+            className="w-full font-mono text-sm bg-arena-elements-background-depth-1/40 rounded-lg border border-arena-elements-dividerColor/60 p-3 min-h-[240px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+            name="envelope-json"
+            aria-label="Unsigned envelope JSON"
+            placeholder='{"version":2,"bot_id":"…","protocol":"uniswap_v3",…}'
             value={draft}
             onChange={(e) => {
               setDraft(e.target.value);
               setIssues([]);
             }}
           />
-          {parseError && <p className="text-xs text-red-500 mt-1">JSON parse: {parseError}</p>}
+          {parseError && <p className="text-sm text-red-500 mt-1">JSON parse: {parseError}</p>}
           {issues.length > 0 && (
-            <ul className="text-xs text-red-500 mt-2 list-disc pl-4">
+            <ul className="text-sm text-red-500 mt-2 list-disc pl-4">
               {issues.map((i, idx) => (
                 <li key={`${i.field}:${idx}`}>
                   <span className="font-mono">{i.field}</span> — {i.message}
@@ -299,7 +301,7 @@ function SignAndSubmitCard({
             </ul>
           )}
           {submitError && (
-            <p className="text-xs text-red-500 mt-1">PUT /envelope: {submitError.message}</p>
+            <p className="text-sm text-red-500 mt-1">PUT /envelope: {submitError.message}</p>
           )}
           <div className="flex gap-2 mt-3">
             <Button variant="outline" onClick={onValidate} disabled={!parsedDraft}>
@@ -331,7 +333,7 @@ function ModeTabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
+      className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
         active
           ? 'border-violet-500 text-violet-400'
           : 'border-transparent text-arena-elements-textTertiary hover:text-arena-elements-textSecondary'
@@ -355,12 +357,12 @@ function RevokeCard({
 }) {
   return (
     <Card title="Revoke">
-      <p className="text-xs text-muted-foreground mb-2">
+      <p className="text-sm text-arena-elements-textSecondary mb-2">
         Clearing the stored envelope blocks new envelope-mode trades immediately. Already-confirmed
         on-chain trades cannot be reverted from here. To restore trading you must sign and submit a
         new envelope with a higher nonce.
       </p>
-      {error && <p className="text-xs text-red-500 mb-2">{error.message}</p>}
+      {error && <p className="text-sm text-red-500 mb-2">{error.message}</p>}
       <Button variant="destructive" onClick={onRevoke} disabled={revoking}>
         {revoking ? 'Revoking…' : 'Revoke envelope'}
       </Button>
@@ -372,8 +374,8 @@ function RevokeCard({
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border bg-card p-4">
-      <h3 className="text-sm font-semibold mb-3">{title}</h3>
+    <section className="glass-card rounded-xl border border-arena-elements-dividerColor/70 p-5">
+      <h3 className="text-lg font-display font-semibold mb-4 text-arena-elements-textPrimary">{title}</h3>
       {children}
     </section>
   );
@@ -392,8 +394,8 @@ function Field({
 }) {
   return (
     <div className={small ? 'flex justify-between' : 'flex flex-col'}>
-      <dt className="text-xs uppercase text-muted-foreground">{label}</dt>
-      <dd className={mono ? 'font-mono text-xs break-all' : 'text-sm'}>{value}</dd>
+      <dt className="text-sm uppercase text-arena-elements-textTertiary">{label}</dt>
+      <dd className={mono ? 'font-mono text-sm break-all text-arena-elements-textPrimary' : 'text-base text-arena-elements-textPrimary'}>{value}</dd>
     </div>
   );
 }

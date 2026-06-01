@@ -235,11 +235,11 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
       {!isOwner && detail.submitter_address && (
-        <div className="lg:col-span-2 flex items-start gap-3 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-4 py-3">
-          <div className="i-ph:eye text-lg mt-0.5 text-arena-elements-textTertiary" />
-          <div className="text-sm text-arena-elements-textSecondary">
+        <div className="xl:col-span-3 flex items-start gap-3 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/35 px-5 py-4">
+          <div className="i-ph:eye text-xl mt-0.5 text-arena-elements-textTertiary" />
+          <div className="text-base text-arena-elements-textSecondary">
             <span className="font-medium text-arena-elements-textPrimary">View-only.</span>{' '}
             This bot belongs to{' '}
             <span className="font-data text-arena-elements-textPrimary">
@@ -317,9 +317,9 @@ function StatusCard({
   const isRunning = detail.lifecycle_status === 'active' || bot.status === 'paused';
 
   return (
-    <div className="glass-card rounded-xl p-5">
+    <div className="glass-card rounded-xl p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-display font-bold text-lg">Status & Control</h3>
+        <h3 className="font-display font-bold text-xl">Status & Control</h3>
         <Badge variant={botStatusBadgeVariant(lifecycleStatus)}>
           <div className={`w-1.5 h-1.5 rounded-full ${
             (lifecycleStatus === 'active' || lifecycleStatus === 'paused') && !isWindingDown
@@ -331,20 +331,20 @@ function StatusCard({
       </div>
 
       {isArchived && (
-        <div className="mb-4 px-3 py-2 rounded-lg bg-arena-elements-background-depth-3 border border-arena-elements-borderColor/50 text-sm text-arena-elements-textSecondary">
+        <div className="mb-4 px-3 py-2 rounded-lg bg-arena-elements-background-depth-3 border border-arena-elements-borderColor/50 text-base text-arena-elements-textSecondary">
           This bot is archived. Historical data remains available, but runtime controls are disabled.
         </div>
       )}
 
       {isWindingDown && (
-        <div className="mb-4 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-200">
+        <div className="mb-4 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-base text-amber-800 dark:text-amber-200">
           <span className="i-ph:warning text-xs mr-1" />
           Wind-down started {formatTimestamp(detail.wind_down_started_at!)}. Bot is liquidating positions.
         </div>
       )}
 
       {isAwaitingSecrets && isOwner && (
-        <div className="mb-4 px-3 py-2.5 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-sm text-violet-800 dark:text-violet-200 flex items-center gap-2">
+        <div className="mb-4 px-3 py-2.5 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-base text-violet-800 dark:text-violet-200 flex items-center gap-2">
           <span className="i-ph:key text-xs shrink-0" />
           <span className="flex-1">Configure API secrets to activate this bot.</span>
           {onConfigureSecrets && (
@@ -355,7 +355,7 @@ function StatusCard({
         </div>
       )}
 
-      <div className="space-y-3 text-sm">
+      <div className="space-y-3 text-base">
         <div className="flex justify-between">
           <span className="text-arena-elements-textTertiary">Paper Trading</span>
           <span className="font-data">{detail.paper_trade ? 'Yes' : 'No'}</span>

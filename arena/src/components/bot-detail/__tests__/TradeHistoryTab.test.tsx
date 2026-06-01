@@ -168,9 +168,39 @@ describe('TradeHistoryTab', () => {
     await user.click(row);
 
     // Expanded view shows the APPROVED badge and validator details
-    expect(screen.getByText('APPROVED')).toBeInTheDocument();
+    expect(screen.getAllByText('APPROVED').length).toBeGreaterThanOrEqual(1);
     await user.click(screen.getByText('0x1234...5678').closest('button')!);
     expect(screen.getByText('Solid trade rationale')).toBeInTheDocument();
+  });
+
+  it('collapses an expanded trade when the expanded body is clicked', async () => {
+    const user = userEvent.setup();
+    setTrades([
+      makeTrade({
+        validatorScore: 85,
+        validation: {
+          approved: true,
+          aggregateScore: 85,
+          intentHash: '0xabcdef1234567890abcdef1234567890',
+          responses: [
+            {
+              validator: '0x1234567890abcdef1234567890abcdef12345678',
+              score: 85,
+              reasoning: 'Solid trade rationale',
+              signature: '0x' + 'ab'.repeat(65),
+            },
+          ],
+        },
+      }),
+    ]);
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    const row = screen.getByText('BUY').closest('tr')!;
+    await user.click(row);
+    expect(screen.getByText('Notional')).toBeInTheDocument();
+
+    await user.click(screen.getByText('Execution').closest('div')!);
+    expect(screen.queryByText('Notional')).not.toBeInTheDocument();
   });
 
   it('renders contradictory historical paper approvals as unsigned instead of approved', async () => {
@@ -207,7 +237,7 @@ describe('TradeHistoryTab', () => {
     const row = screen.getByText('BUY').closest('tr')!;
     await user.click(row);
 
-    expect(screen.getByText('UNSIGNED')).toBeInTheDocument();
+    expect(screen.getAllByText('UNSIGNED').length).toBeGreaterThanOrEqual(1);
     expect(
       screen.getByText('Validator scoring passed, but no usable signatures were produced.'),
     ).toBeInTheDocument();

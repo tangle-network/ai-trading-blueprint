@@ -1,15 +1,16 @@
-import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import { m } from 'framer-motion';
 import type { Chart as ChartType } from 'chart.js';
 import type { Bot } from '~/lib/types/bot';
 import { Card, CardHeader, CardTitle, CardContent } from '@tangle-network/blueprint-ui/components';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
-import { useBotMetrics, useBotMetricsSummary, useBotPortfolio } from '~/lib/hooks/useBotApi';
+import { useBotMetrics, useBotMetricsSummary, useBotPortfolio, useBotTrades } from '~/lib/hooks/useBotApi';
 import { Skeleton, SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { formatNumber, normalizeDisplayNumber } from '~/lib/format';
-import { buildPerformanceChartPoints } from './performanceChart';
+import { buildPerformanceChartPoints, type PerformanceChartPoint } from './performanceChart';
+import { getTradePairLabel, type Trade } from '~/lib/types/trade';
 import {
   PERFORMANCE_RETURN_FALLBACK_COPY,
   PERFORMANCE_RETURN_WINDOW_COPY,
@@ -19,6 +20,15 @@ import {
 const CHART_TOOLTIP_FONT_FAMILY = "'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 const CHART_DATA_FONT_FAMILY = "'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
+const TRADE_MARKER_LOOKBACK_LIMIT = 100;
+
+type PerformanceRange = '7d' | '30d' | '1y';
+
+const PERFORMANCE_RANGES: Array<{ value: PerformanceRange; label: string; days: number }> = [
+  { value: '7d', label: '7D', days: 7 },
+  { value: '30d', label: '30D', days: 30 },
+  { value: '1y', label: '1Y', days: 365 },
+];
 
 const freshnessTimestampFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
@@ -47,6 +57,88 @@ function formatFreshnessTimestamp(timestamp?: string | null): string {
   return freshnessTimestampFormatter.format(new Date(parsed));
 }
 
+function isSellSideAction(action: Trade['action']): boolean {
+  return action === 'sell' || action === 'close_long' || action === 'close_short';
+}
+
+function isBuySideAction(action: Trade['action']): boolean {
+  return action === 'buy' || action === 'open_long' || action === 'open_short';
+}
+
+function tradeMarkerColor(trade: Trade, chartTheme: ReturnType<typeof useChartTheme>): string {
+  if (isSellSideAction(trade.action)) return chartTheme.negative;
+  if (isBuySideAction(trade.action)) return chartTheme.positive;
+  return '#f59e0b';
+}
+
+function tradeMarkerRotation(trade: Trade): number {
+  if (isSellSideAction(trade.action)) return 180;
+  if (trade.action === 'swap') return 90;
+  return 0;
+}
+
+function formatTradeAction(action: Trade['action']): string {
+  return action.replace(/_/g, ' ').toUpperCase();
+}
+
+function formatTradeMarkerTooltip(trade: Trade, duplicateCount: number): string {
+  const pair = getTradePairLabel(trade);
+  const notional = trade.notionalUsd != null && trade.notionalUsd > 0
+    ? ` · $${formatNumber(trade.notionalUsd)}`
+    : '';
+  const extras = duplicateCount > 1 ? ` · ${duplicateCount} trades near this checkpoint` : '';
+  return `${formatTradeAction(trade.action)} ${pair}${notional}${extras}`;
+}
+
+interface TradeChartMarker {
+  value: number;
+  tooltip: string;
+  color: string;
+  rotation: number;
+}
+
+function nearestChartPointIndex(points: PerformanceChartPoint[], timestampMs: number): number | null {
+  let bestIndex = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  points.forEach((point, index) => {
+    if (point.timestampMs == null) return;
+    const distance = Math.abs(point.timestampMs - timestampMs);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+
+  return bestIndex >= 0 ? bestIndex : null;
+}
+
+function buildTradeMarkers(
+  points: PerformanceChartPoint[],
+  trades: Trade[] | undefined,
+  chartTheme: ReturnType<typeof useChartTheme>,
+): Array<TradeChartMarker | null> {
+  const markers: Array<TradeChartMarker | null> = Array.from({ length: points.length }, () => null);
+  const counts = new Map<number, number>();
+
+  for (const trade of trades ?? []) {
+    if (!Number.isFinite(trade.timestamp)) continue;
+    const index = nearestChartPointIndex(points, trade.timestamp);
+    if (index == null) continue;
+
+    const count = (counts.get(index) ?? 0) + 1;
+    counts.set(index, count);
+    markers[index] = {
+      value: points[index].value,
+      tooltip: formatTradeMarkerTooltip(trade, count),
+      color: tradeMarkerColor(trade, chartTheme),
+      rotation: tradeMarkerRotation(trade),
+    };
+  }
+
+  return markers;
+}
+
 interface PerformanceTabProps {
   bot: Bot;
   isLive: boolean;
@@ -58,12 +150,20 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
   const chartRef = useRef<ChartType | null>(null);
   const chartTheme = useChartTheme();
   const isHyperliquidPerpBot = bot.strategyType === 'hyperliquid_perp';
+  const [range, setRange] = useState<PerformanceRange>('30d');
+  const selectedRange = PERFORMANCE_RANGES.find((item) => item.value === range) ?? PERFORMANCE_RANGES[1];
 
   const {
     data: apiMetrics,
     isError: hasMetricsError,
     isLoading,
-  } = useBotMetrics(bot.id, 30, {
+  } = useBotMetrics(bot.id, selectedRange.days, {
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+    refetchInterval: isLive ? 30_000 : false,
+  });
+  const { data: trades } = useBotTrades(bot.id, bot.name, TRADE_MARKER_LOOKBACK_LIMIT, {
+    chainId: bot.chainId,
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 30_000 : false,
@@ -132,6 +232,10 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     ),
     [apiMetrics, bot.createdAt, initialCapitalUsd, liveNavPoint],
   );
+  const tradeMarkers = useMemo(
+    () => buildTradeMarkers(chartPoints, trades, chartTheme),
+    [chartPoints, chartTheme, trades],
+  );
 
   useEffect(() => {
     if (!canvasRef.current || chartPoints.length === 0) return;
@@ -149,6 +253,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
       const ctx = canvasRef.current.getContext('2d')!;
       const labels = chartPoints.map((point) => point.label);
       const values = chartPoints.map((point) => point.value);
+      const tradeMarkerValues = tradeMarkers.map((marker) => marker?.value ?? null);
       const latestPoint = values[values.length - 1] ?? 0;
       const firstPoint = values[0] ?? latestPoint;
       const positive = latestPoint >= firstPoint;
@@ -179,6 +284,19 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
               pointHoverBorderWidth: 2,
               tension: 0.4,
             },
+            {
+              label: 'Trades',
+              data: tradeMarkerValues,
+              showLine: false,
+              borderWidth: 0,
+              pointStyle: 'triangle',
+              pointRadius: tradeMarkers.map((marker) => marker ? 6 : 0),
+              pointHoverRadius: tradeMarkers.map((marker) => marker ? 8 : 0),
+              pointRotation: tradeMarkers.map((marker) => marker?.rotation ?? 0),
+              pointBackgroundColor: tradeMarkers.map((marker) => marker?.color ?? 'transparent'),
+              pointBorderColor: tradeMarkers.map((marker) => marker ? chartTheme.hoverBorderColor : 'transparent'),
+              pointBorderWidth: tradeMarkers.map((marker) => marker ? 1.5 : 0),
+            },
           ],
         },
         options: {
@@ -205,6 +323,17 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
                 title: (tooltipItems) => {
                   const dataIndex = tooltipItems[0]?.dataIndex ?? 0;
                   return chartPoints[dataIndex]?.tooltipLabel ?? tooltipItems[0]?.label ?? '';
+                },
+                label: (tooltipItem) => {
+                  if (tooltipItem.datasetIndex === 1) {
+                    return tradeMarkers[tooltipItem.dataIndex]?.tooltip ?? '';
+                  }
+                  const value = typeof tooltipItem.parsed.y === 'number'
+                    ? tooltipItem.parsed.y
+                    : Number(tooltipItem.raw);
+                  return Number.isFinite(value)
+                    ? `Portfolio Value: $${formatNumber(value)}`
+                    : 'Portfolio Value';
                 },
               },
             },
@@ -240,7 +369,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
       cancelled = true;
       chartRef.current?.destroy();
     };
-  }, [chartPoints, chartTheme]);
+  }, [chartPoints, chartTheme, tradeMarkers]);
 
   const hasWindowedReturn = latestRenderableMetric != null
     && firstRenderableMetric != null
@@ -329,24 +458,49 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>{PERFORMANCE_SECTION_COPY.title}</CardTitle>
-          <p className="text-sm text-arena-elements-textSecondary">
-            {PERFORMANCE_SECTION_COPY.description}
-          </p>
-          {(lastCheckpointLabel || liveNavLabel) && (
-            <p className="text-xs font-data text-arena-elements-textTertiary">
-              {lastCheckpointLabel ? `Last checkpoint: ${lastCheckpointLabel}` : 'Last checkpoint: unavailable'}
-              {liveNavLabel ? ` · Live NAV: ${liveNavLabel}` : ''}
-            </p>
-          )}
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <CardTitle>{PERFORMANCE_SECTION_COPY.title}</CardTitle>
+              <p className="text-base text-arena-elements-textSecondary">
+                {PERFORMANCE_SECTION_COPY.description}
+              </p>
+              {(lastCheckpointLabel || liveNavLabel) && (
+                <p className="mt-1 text-sm font-data text-arena-elements-textTertiary">
+                  {lastCheckpointLabel ? `Last checkpoint: ${lastCheckpointLabel}` : 'Last checkpoint: unavailable'}
+                  {liveNavLabel ? ` · Live NAV: ${liveNavLabel}` : ''}
+                </p>
+              )}
+            </div>
+            <div
+              className="inline-flex w-fit rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/40 p-1"
+              role="group"
+              aria-label="Performance date range"
+            >
+              {PERFORMANCE_RANGES.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  className={`rounded-md px-3 py-1.5 text-sm font-data transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                    range === item.value
+                      ? 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
+                      : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
+                  }`}
+                  aria-pressed={range === item.value}
+                  onClick={() => setRange(item.value)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {chartPoints.length > 0 ? (
-            <div className="h-[320px]">
+            <div className="h-[420px]">
               <canvas ref={canvasRef} />
             </div>
           ) : (
-            <div className="h-[320px] flex items-center justify-center">
+            <div className="h-[420px] flex items-center justify-center">
               <div className="text-center">
                 <div className="i-ph:chart-line text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
                 <p className="text-sm text-arena-elements-textSecondary">

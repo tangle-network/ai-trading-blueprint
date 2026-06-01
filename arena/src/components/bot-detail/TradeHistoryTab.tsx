@@ -44,12 +44,12 @@ function TradeTableHead() {
   return (
     <TableHeader>
       <TableRow className="hover:bg-transparent">
-        <TableHead>Time</TableHead>
-        <TableHead>Action</TableHead>
-        <TableHead>Trade</TableHead>
-        <TableHead className="text-right hidden sm:table-cell">Validation</TableHead>
-        <TableHead>Ref</TableHead>
-        <TableHead>Status</TableHead>
+        <TableHead className="text-sm">Time</TableHead>
+        <TableHead className="text-sm">Action</TableHead>
+        <TableHead className="text-sm">Trade</TableHead>
+        <TableHead className="text-right hidden sm:table-cell text-sm">Validation</TableHead>
+        <TableHead className="text-sm">Ref</TableHead>
+        <TableHead className="text-sm">Status</TableHead>
       </TableRow>
     </TableHeader>
   );
@@ -62,6 +62,20 @@ function truncateHash(hash: string): string {
 
 function formatTradeAmount(amount: number): string {
   return formatNumber(amount, { maximumFractionDigits: 4 });
+}
+
+function formatTradeCurrency(value?: number | null): string {
+  if (value == null || !Number.isFinite(value)) return 'Unavailable';
+  return `$${formatNumber(value, { maximumFractionDigits: 2 })}`;
+}
+
+function formatTradeTimestamp(timestamp: number): string {
+  return new Date(timestamp).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function formatExecutionStatus(status: string): string {
@@ -99,6 +113,11 @@ function getErrorMessage(error: unknown): string | null {
   return error instanceof Error && error.message ? error.message : null;
 }
 
+function isInteractiveTradeTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && Boolean(target.closest('a,button,input,textarea,select'));
+}
+
 function TradeDataUnavailableCard({ error }: { error: unknown }) {
   const errorMessage = getErrorMessage(error);
 
@@ -130,7 +149,7 @@ function getActionVariant(action: Trade['action']): 'success' | 'destructive' | 
 
 function renderExecutionRef(trade: Trade) {
   if (!trade.txHash) {
-    return <span className="text-xs font-data text-arena-elements-textTertiary">—</span>;
+    return <span className="text-sm font-data text-arena-elements-textTertiary">—</span>;
   }
 
   if (isHyperliquidTrade(trade)) {
@@ -140,7 +159,7 @@ function renderExecutionRef(trade: Trade) {
         ? 'HL rejected'
         : trade.txHash;
     return (
-      <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
+      <span className="text-sm font-data text-arena-elements-textTertiary" title={trade.txHash}>
         {label}
       </span>
     );
@@ -148,7 +167,7 @@ function renderExecutionRef(trade: Trade) {
 
   if (trade.txHash.startsWith('0xpaper_')) {
     return (
-      <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
+      <span className="text-sm font-data text-arena-elements-textTertiary" title={trade.txHash}>
         {truncateHash(trade.txHash)}
       </span>
     );
@@ -157,7 +176,7 @@ function renderExecutionRef(trade: Trade) {
   const url = explorerUrl(trade.txHash, trade.chainId);
   if (!url) {
     return (
-      <span className="text-xs font-data text-arena-elements-textTertiary" title={trade.txHash}>
+      <span className="text-sm font-data text-arena-elements-textTertiary" title={trade.txHash}>
         {truncateHash(trade.txHash)}
       </span>
     );
@@ -168,7 +187,7 @@ function renderExecutionRef(trade: Trade) {
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-xs font-data text-arena-elements-textTertiary hover:text-arena-elements-textPrimary transition-colors inline-flex items-center gap-0.5"
+      className="text-sm font-data text-arena-elements-textTertiary hover:text-arena-elements-textPrimary transition-colors inline-flex items-center gap-0.5"
       title={trade.txHash}
       onClick={(e) => e.stopPropagation()}
     >
@@ -188,12 +207,39 @@ function renderHyperliquidTradeCell(trade: Trade) {
   return (
     <div className="space-y-1">
       {marketLabel && (
-        <div className="font-display font-semibold text-sm text-arena-elements-textPrimary">
+        <div className="font-display font-semibold text-base text-arena-elements-textPrimary">
           {marketLabel}
         </div>
       )}
-      <div className="text-xs font-data text-arena-elements-textSecondary">
+      <div className="text-sm font-data text-arena-elements-textSecondary">
         {details.join(' · ')}
+      </div>
+    </div>
+  );
+}
+
+function TradeDetailMetric({
+  label,
+  value,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: React.ReactNode;
+  tone?: 'neutral' | 'success' | 'danger';
+}) {
+  const toneClass = tone === 'success'
+    ? 'text-emerald-600 dark:text-emerald-300'
+    : tone === 'danger'
+      ? 'text-crimson-600 dark:text-crimson-300'
+      : 'text-arena-elements-textPrimary';
+
+  return (
+    <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3">
+      <div className="text-sm font-data font-medium uppercase tracking-wider text-arena-elements-textTertiary">
+        {label}
+      </div>
+      <div className={`mt-1 break-words text-base font-data ${toneClass}`}>
+        {value}
       </div>
     </div>
   );
@@ -278,7 +324,10 @@ export function TradeHistoryTab({
               <TableRow
               key={trade.id}
               className={hasValidation ? 'cursor-pointer' : ''}
-              onClick={() => hasValidation && setExpandedId(isExpanded ? null : trade.id)}
+              onClick={(event) => {
+                if (!hasValidation || isInteractiveTradeTarget(event.target)) return;
+                setExpandedId(isExpanded ? null : trade.id);
+              }}
               {...(hasValidation ? {
                 role: 'button' as const,
                 tabIndex: 0,
@@ -291,17 +340,19 @@ export function TradeHistoryTab({
                 },
               } : {})}
             >
-              <TableCell className="text-arena-elements-textTertiary text-xs font-data" colSpan={isExpanded ? 6 : undefined}>
+              <TableCell className="text-arena-elements-textTertiary text-sm font-data" colSpan={isExpanded ? 6 : undefined}>
                 {isExpanded ? (
                   /* Expanded view replaces the row */
-                  <div className="py-2" onClick={(e) => e.stopPropagation()}>
+                  <div className="py-3">
                     {/* Trade summary header */}
-                    <div className="flex items-center gap-3 mb-4">
+                    <div className="flex flex-wrap items-center gap-3 mb-4">
                       <button
+                        type="button"
                         onClick={() => setExpandedId(null)}
-                        className="text-arena-elements-textTertiary hover:text-arena-elements-textPrimary transition-colors cursor-pointer"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-arena-elements-textTertiary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                        aria-label="Collapse trade details"
                       >
-                        <div className="i-ph:caret-up text-sm" />
+                        <div className="i-ph:caret-up text-base" />
                       </button>
                       <Badge variant={getActionVariant(trade.action)} className="text-xs">
                         {getActionLabel(trade.action)}
@@ -320,10 +371,8 @@ export function TradeHistoryTab({
                       ) : (
                         <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
                       )}
-                      <span className="text-xs font-data text-arena-elements-textTertiary">
-                        {new Date(trade.timestamp).toLocaleString('en-US', {
-                          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                        })}
+                      <span className="text-sm font-data text-arena-elements-textTertiary">
+                        {formatTradeTimestamp(trade.timestamp)}
                       </span>
                       {validationDisplay && (
                         <Badge variant={validationDisplay.badgeVariant} className="text-xs">
@@ -332,12 +381,33 @@ export function TradeHistoryTab({
                       )}
                     </div>
 
+                    <div className="mb-4 grid gap-3 md:grid-cols-4">
+                      <TradeDetailMetric
+                        label="Notional"
+                        value={formatTradeCurrency(trade.notionalUsd)}
+                      />
+                      <TradeDetailMetric
+                        label="Route"
+                        value={trade.targetProtocol ?? trade.venue}
+                      />
+                      <TradeDetailMetric
+                        label="Execution"
+                        value={trade.execution?.status ? formatExecutionStatus(trade.execution.status) : getStatusLabel(trade.status)}
+                        tone={trade.status === 'failed' || trade.status === 'rejected' ? 'danger' : trade.status === 'executed' || trade.status === 'paper' ? 'success' : 'neutral'}
+                      />
+                      <TradeDetailMetric
+                        label="Validation"
+                        value={validationDisplay?.label ?? (hasValidation ? 'Pending detail' : 'Unavailable')}
+                        tone={validationDisplay?.badgeVariant === 'success' ? 'success' : validationDisplay?.badgeVariant === 'destructive' ? 'danger' : 'neutral'}
+                      />
+                    </div>
+
                     {isHyperliquidTrade(trade) ? (
                       <div className="mb-3 px-1">
                         {renderHyperliquidTradeCell(trade)}
                       </div>
                     ) : (
-                      <div className="mb-3 px-1 text-sm text-arena-elements-textSecondary">
+                      <div className="mb-4 rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-4 py-3 text-base text-arena-elements-textSecondary">
                         <span className="font-data">
                           {formatTradeAmount(trade.amountIn)}
                         </span>
@@ -353,8 +423,8 @@ export function TradeHistoryTab({
                     )}
 
                     {trade.txHash && (
-                      <div className="flex items-center gap-2 mb-3 px-1">
-                        <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                      <div className="flex items-center gap-2 mb-4 px-1">
+                        <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textTertiary">
                           {isHyperliquidTrade(trade) ? 'Exchange Ref' : 'Tx Hash'}
                         </span>
                         {renderExecutionRef(trade)}
@@ -362,17 +432,17 @@ export function TradeHistoryTab({
                     )}
 
                     {validationDisplay?.helperText && (
-                      <p className="mb-3 px-1 text-sm leading-relaxed text-arena-elements-textSecondary">
+                      <p className="mb-4 px-1 text-base leading-relaxed text-arena-elements-textSecondary">
                         {validationDisplay.helperText}
                       </p>
                     )}
 
                     {trade.execution && (
-                      <div className="mb-4 rounded-xl border border-arena-elements-border/60 bg-arena-elements-bg-surface/60 p-3">
-                        <div className="mb-2 text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                      <div className="mb-4 rounded-xl border border-arena-elements-border/60 bg-arena-elements-bg-surface/60 p-4">
+                        <div className="mb-3 text-sm font-data uppercase tracking-wider text-arena-elements-textTertiary">
                           Execution QA
                         </div>
-                        <div className="grid gap-2 text-sm text-arena-elements-textSecondary md:grid-cols-2">
+                        <div className="grid gap-3 text-base text-arena-elements-textSecondary md:grid-cols-2">
                           <div>
                             <span className="text-arena-elements-textTertiary">Status:</span>{' '}
                             {formatExecutionStatus(trade.execution.status)}
@@ -380,7 +450,7 @@ export function TradeHistoryTab({
                           {trade.execution.clobOrderId && (
                             <div>
                               <span className="text-arena-elements-textTertiary">CLOB order:</span>{' '}
-                              <code className="font-data text-xs">{trade.execution.clobOrderId}</code>
+                              <code className="font-data text-sm">{trade.execution.clobOrderId}</code>
                             </div>
                           )}
                           {trade.execution.requestedPriceUsd != null && (
@@ -409,7 +479,7 @@ export function TradeHistoryTab({
                           )}
                         </div>
                         {trade.execution.reason && (
-                          <p className="mt-2 text-sm leading-relaxed text-arena-elements-textSecondary">
+                          <p className="mt-3 text-base leading-relaxed text-arena-elements-textSecondary">
                             {trade.execution.reason}
                           </p>
                         )}
@@ -446,10 +516,10 @@ export function TradeHistoryTab({
                     {/* Reasoning fallback */}
                     {responses.length === 0 && trade.validatorReasoning && (
                       <div className="mt-2 px-1">
-                        <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1">
+                        <div className="text-sm font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1">
                           Reasoning
                         </div>
-                        <p className="text-sm text-arena-elements-textSecondary leading-relaxed">
+                        <p className="text-base text-arena-elements-textSecondary leading-relaxed">
                           {trade.validatorReasoning}
                         </p>
                       </div>
@@ -457,9 +527,7 @@ export function TradeHistoryTab({
                   </div>
                 ) : (
                   /* Normal compact row content */
-                  new Date(trade.timestamp).toLocaleString('en-US', {
-                    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                  })
+                  formatTradeTimestamp(trade.timestamp)
                 )}
               </TableCell>
               {!isExpanded && (
@@ -469,7 +537,7 @@ export function TradeHistoryTab({
                       {getActionLabel(trade.action)}
                     </Badge>
                   </TableCell>
-                  <TableCell className="font-display font-medium text-sm" title={pairLabel ?? undefined}>
+                  <TableCell className="font-display font-medium text-base" title={pairLabel ?? undefined}>
                     <div className="space-y-1">
                       {isHyperliquidTrade(trade) ? (
                         renderHyperliquidTradeCell(trade)
@@ -479,7 +547,7 @@ export function TradeHistoryTab({
                         <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
                       )}
                       {!isHyperliquidTrade(trade) && (
-                        <div className="text-xs font-data text-arena-elements-textSecondary">
+                        <div className="text-sm font-data text-arena-elements-textSecondary">
                           <span>{formatTradeAmount(trade.amountIn)}</span>
                           {' '}
                           <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />

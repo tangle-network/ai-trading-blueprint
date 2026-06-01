@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import type { AgentBranding } from "@tangle-network/sandbox-ui/types";
-import { AuthBanner } from "~/components/bot-detail/AuthBanner";
 import { ChatTranscript } from "~/components/bot-detail/chat/ChatTranscript";
 import { useBotSessionStream } from "~/lib/hooks/useBotSessionStream";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
@@ -87,6 +86,11 @@ function extractRunsErrorMessage(error: unknown): string | null {
   } catch {
     return raw;
   }
+}
+
+function isRunsAuthError(error: unknown): boolean {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  return /HTTP (401|403)/i.test(raw) || /unauthorized|forbidden/i.test(raw);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -257,7 +261,7 @@ function getRunTitle(run: BotRun): string {
 }
 
 function getRunSubtitle(run: BotRun): string {
-  return `${formatRunTimestamp(run.startedAt)} • ${getStatusLabel(run.status)}`;
+  return formatRunTimestamp(run.startedAt);
 }
 
 function isInformativeRun(run: BotRun): boolean {
@@ -323,7 +327,7 @@ function RunsStatus({ status }: { status: "idle" | "running" | "error" }) {
       />
       <span className="text-xs font-data text-arena-elements-textSecondary">
         {status === "running"
-          ? "A bot run is in progress..."
+          ? "A bot run is in progress…"
           : status === "error"
             ? "Run transcript error"
             : "Idle"}
@@ -423,11 +427,11 @@ function RunsSidebar({
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : "flex min-h-0 w-[320px] basis-[320px] shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
+          : "flex min-h-0 w-[360px] basis-[360px] shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
       }
     >
-      <div className="border-b border-arena-elements-dividerColor/50 px-3 py-2.5">
-        <span className="text-xs font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
+      <div className="border-b border-arena-elements-dividerColor/50 px-4 py-3">
+        <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
           Runs
         </span>
       </div>
@@ -435,14 +439,14 @@ function RunsSidebar({
       <div
         className={
           stacked
-            ? "max-h-56 overflow-y-auto py-1"
+            ? "max-h-72 overflow-y-auto py-1"
             : "min-h-0 flex-1 overflow-y-auto py-1"
         }
         tabIndex={0}
         aria-label="Autonomous runs"
       >
         {runs.length === 0 ? (
-          <div className="px-3 py-3 text-[11px] font-data text-arena-elements-textTertiary">
+          <div className="px-4 py-4 text-sm font-data text-arena-elements-textTertiary">
             No autonomous runs yet
           </div>
         ) : (
@@ -453,7 +457,7 @@ function RunsSidebar({
                 <button
                   key={run.id}
                   aria-pressed={isActive}
-                  className={`group flex w-full items-center gap-2 border-l-2 px-3 py-2.5 text-left transition-colors ${
+                  className={`group flex w-full items-center gap-3 border-l-2 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
                     isActive
                       ? "border-amber-500 bg-arena-elements-item-backgroundActive"
                       : "border-transparent hover:bg-arena-elements-item-backgroundHover"
@@ -475,12 +479,12 @@ function RunsSidebar({
                     <div className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
                       {run.title}
                     </div>
-                    <div className="mt-0.5 flex items-center gap-1.5">
-                      <div className="truncate text-[11px] font-data text-arena-elements-textTertiary">
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="truncate text-sm font-data text-arena-elements-textTertiary">
                         {run.subtitle}
                       </div>
                       <span
-                        className={`rounded-full border px-1.5 py-0.5 text-[10px] font-data ${getStatusBadgeClass(run.status)}`}
+                        className={`rounded-full border px-2 py-0.5 text-xs font-data ${getStatusBadgeClass(run.status)}`}
                       >
                         {getStatusLabel(run.status)}
                       </span>
@@ -493,7 +497,7 @@ function RunsSidebar({
               <div className="border-t border-arena-elements-dividerColor/40 px-3 py-2">
                 <button
                   type="button"
-                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/35 px-2 py-1.5 text-[11px] font-data text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/35 px-3 py-2 text-sm font-data text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={onLoadOlder}
                   disabled={isLoadingOlderRuns}
                 >
@@ -504,7 +508,7 @@ function RunsSidebar({
                         : "i-ph:clock-counter-clockwise text-sm"
                     }
                   />
-                  {isLoadingOlderRuns ? "Loading..." : "Load older"}
+                  {isLoadingOlderRuns ? "Loading…" : "Load Older"}
                 </button>
               </div>
             ) : null}
@@ -518,10 +522,10 @@ function RunsSidebar({
 function RunMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 p-3">
-      <div className="text-[12px] font-data font-medium text-arena-elements-textSecondary">
+      <div className="text-sm font-data font-medium text-arena-elements-textSecondary">
         {label}
       </div>
-      <div className="mt-1 text-sm font-data text-arena-elements-textPrimary">
+      <div className="mt-1 break-words text-base font-data text-arena-elements-textPrimary">
         {value}
       </div>
     </div>
@@ -866,9 +870,6 @@ export function RunsTab({
   const {
     token,
     isAuthenticated,
-    isAuthenticating,
-    authenticate,
-    error: authError,
   } = useOperatorAuth(baseApiUrl);
 
   const [activeRunId, setActiveRunId] = useState("");
@@ -876,7 +877,7 @@ export function RunsTab({
     typeof window === "undefined" ? false : window.innerWidth < 1100,
   );
   const runsCacheKey = `${baseApiUrl}::${botId}::runs`;
-  const authKey = needsAuth ? token : "public";
+  const authKey = token ?? "anonymous";
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -895,7 +896,7 @@ export function RunsTab({
 
   const runsQuery = useInfiniteQuery({
     queryKey: ["bot-runs", apiUrl, authKey, botId],
-    enabled: !!apiUrl && (!needsAuth || (isAuthenticated && !!token)),
+    enabled: !!apiUrl,
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) => {
       const cursor =
@@ -910,8 +911,9 @@ export function RunsTab({
       );
 
       if (!response.ok) {
+        const body = await response.text();
         throw new Error(
-          (await response.text()) || `Failed to load runs: ${response.status}`,
+          `HTTP ${response.status}: ${body || "Failed to load runs"}`,
         );
       }
 
@@ -1027,26 +1029,26 @@ export function RunsTab({
     );
   }
 
-  if (needsAuth && !isAuthenticated) {
-    return (
-      <AuthBanner
-        onAuth={authenticate}
-        isAuthenticating={isAuthenticating}
-        error={authError}
-      />
-    );
-  }
-
   if (runsQuery.isLoading) {
     return (
       <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
         <div className="i-ph:arrow-clockwise mx-auto mb-3 animate-spin text-3xl text-arena-elements-textTertiary" />
-        Loading autonomous runs...
+        Loading autonomous runs…
       </div>
     );
   }
 
   if (runsQuery.error) {
+    if (!isAuthenticated && isRunsAuthError(runsQuery.error)) {
+      return (
+        <OperatorAccessCard
+          title="Run history owner-only"
+          description="This operator does not expose public run summaries for this bot. Sign with the owner wallet to read the full run history."
+          apiUrl={baseApiUrl}
+        />
+      );
+    }
+
     return (
       <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
         <div className="i-ph:warning-circle mx-auto mb-3 text-3xl text-crimson-500" />
@@ -1077,10 +1079,10 @@ export function RunsTab({
       data-sandbox-ui="true"
       data-sandbox-theme="vault"
       className="arena-chat-shell glass-card overflow-hidden rounded-xl"
-      style={{ minHeight: "680px" }}
+      style={{ minHeight: "760px" }}
     >
       <div
-        className={`flex h-[min(920px,calc(100vh-12rem))] min-h-[680px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
+        className={`flex h-[min(1040px,calc(100vh-8rem))] min-h-[760px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
       >
         <RunsSidebar
           runs={runItems}
@@ -1095,26 +1097,26 @@ export function RunsTab({
         />
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex items-center gap-2 border-b border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 px-3 py-2">
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <span className="i-ph:robot text-sm text-amber-700 dark:text-amber-300" />
+          <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 px-4 py-3">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <span className="i-ph:robot text-base text-amber-700 dark:text-amber-300" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
+                <div className="truncate text-base font-display font-medium text-arena-elements-textPrimary">
                   {headerTitle}
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="truncate text-[11px] font-data text-arena-elements-textTertiary">
+                <div className="flex items-center gap-2">
+                  <div className="truncate text-sm font-data text-arena-elements-textTertiary">
                     {headerSubtitle}
                   </div>
                   <span
-                    className={`rounded-full border px-1.5 py-0.5 text-[10px] font-data ${getStatusBadgeClass(activeRun?.status ?? "failed")}`}
+                    className={`rounded-full border px-2 py-0.5 text-xs font-data ${getStatusBadgeClass(activeRun?.status ?? "failed")}`}
                   >
                     {getStatusLabel(activeRun?.status ?? "failed")}
                   </span>
                 </div>
               </div>
             </div>
-            <span className="hidden rounded-full border border-amber-500/15 bg-amber-500/8 px-2 py-1 text-[11px] font-data text-amber-700 dark:text-amber-300 sm:inline-flex">
+            <span className="hidden rounded-full border border-amber-500/15 bg-amber-500/8 px-3 py-1.5 text-sm font-data text-amber-700 dark:text-amber-300 sm:inline-flex">
               Operator relay
             </span>
           </div>
@@ -1125,7 +1127,7 @@ export function RunsTab({
             error={streamErrorMessage}
           />
 
-          <div className="border-b border-amber-500/15 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+          <div className="border-b border-amber-500/15 bg-amber-500/5 px-4 py-2.5 text-sm text-amber-800 dark:text-amber-200">
             This view shows autonomous bot activity only. Use the Chat tab for
             manual conversations with the bot.
           </div>
@@ -1144,7 +1146,7 @@ export function RunsTab({
             ) : null}
           </div>
 
-          <div className="border-t border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-3 py-2">
+          <div className="border-t border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-4 py-3">
             <RunsStatus status={runStatus} />
           </div>
         </div>

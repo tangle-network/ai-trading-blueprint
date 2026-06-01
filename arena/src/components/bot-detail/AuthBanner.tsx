@@ -11,10 +11,10 @@ export function AuthBanner({ onAuth, isAuthenticating, error }: AuthBannerProps)
   const { isConnected } = useAccount();
 
   return (
-    <div className="glass-card rounded-xl p-6 text-center">
-      <div className="i-ph:lock-key text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
-      <h3 className="font-display font-semibold text-lg mb-2">Authenticate to continue</h3>
-      <p className="text-sm text-arena-elements-textSecondary mb-4">
+    <div className="glass-card rounded-xl p-8 text-center">
+      <div className="i-ph:lock-key text-4xl text-arena-elements-textTertiary mb-4 mx-auto" />
+      <h3 className="font-display font-semibold text-xl mb-2">Authenticate to Continue</h3>
+      <p className="mx-auto max-w-2xl text-base text-arena-elements-textSecondary mb-5">
         {isConnected
           ? 'Sign a message to verify you own this bot.'
           : 'Connect your wallet to interact with this bot\'s agent.'}
@@ -30,7 +30,7 @@ export function AuthBanner({ onAuth, isAuthenticating, error }: AuthBannerProps)
         {isAuthenticating ? (
           <>
             <span className="i-ph:arrow-clockwise text-sm animate-spin mr-1.5" />
-            Signing...
+            Signing…
           </>
         ) : isConnected ? (
           <>

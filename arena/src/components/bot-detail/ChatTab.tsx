@@ -87,7 +87,7 @@ function AgentStatus({
       />
       <span className="text-xs font-data text-arena-elements-textSecondary">
         {status === "running"
-          ? "Agent working..."
+          ? "Agent working…"
           : status === "error"
             ? "Agent error"
             : "Agent idle"}
@@ -143,7 +143,7 @@ function ChatRunBanner({
           className="ml-auto text-xs h-6 px-2"
         >
           <span className="i-ph:stop-circle text-sm mr-1" />
-          {isAborting ? "Stopping..." : "Stop"}
+          {isAborting ? "Stopping…" : "Stop"}
         </Button>
       </div>
     </div>
@@ -162,7 +162,7 @@ function normalizeSessionTitle(value: unknown): string {
 }
 
 function buildAutoSessionTitle(text: string): string {
-  return text.length > 40 ? `${text.slice(0, 40)}...` : text;
+  return text.length > 40 ? `${text.slice(0, 40)}…` : text;
 }
 
 function shouldAutoTitleSession(
@@ -181,7 +181,7 @@ function truncateMiddle(value: string, start = 16, end = 8): string {
     return value;
   }
 
-  return `${value.slice(0, start)}...${value.slice(-end)}`;
+  return `${value.slice(0, start)}…${value.slice(-end)}`;
 }
 
 function getSessionDisplayTitle(
@@ -230,19 +230,21 @@ function SessionWorkspaceSidebar({
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : "flex min-h-0 w-[280px] basis-[280px] shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
+          : "flex min-h-0 w-[320px] basis-[320px] shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
       }
     >
-      <div className="flex items-center justify-between px-3 py-2.5 border-b border-arena-elements-dividerColor/50">
-        <span className="text-xs font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-arena-elements-dividerColor/50">
+        <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
           Sessions
         </span>
         <button
+          type="button"
           onClick={onCreate}
-          className="flex items-center justify-center w-7 h-7 rounded-md text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 hover:bg-arena-elements-item-backgroundHover transition-colors cursor-pointer"
+          className="flex items-center justify-center w-8 h-8 rounded-md text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 hover:bg-arena-elements-item-backgroundHover transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
           title="New chat"
+          aria-label="New chat"
         >
-          <span className="i-ph:plus text-sm" />
+          <span className="i-ph:plus text-base" />
         </button>
       </div>
 
@@ -266,7 +268,7 @@ function SessionWorkspaceSidebar({
           return (
             <div
               key={session.id}
-              className={`group flex items-center gap-2 px-3 py-2 transition-colors ${
+              className={`group flex items-center gap-2 px-4 py-3 transition-colors ${
                 isActive
                   ? "bg-arena-elements-item-backgroundActive"
                   : "hover:bg-arena-elements-item-backgroundHover"
@@ -311,7 +313,7 @@ function SessionWorkspaceSidebar({
                         {displayTitle}
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <div className="truncate text-[11px] font-data text-arena-elements-textTertiary">
+                        <div className="truncate text-sm font-data text-arena-elements-textTertiary">
                           {session.subtitle}
                         </div>
                         {showStreamingDot && (
@@ -328,21 +330,25 @@ function SessionWorkspaceSidebar({
               {!isPrimary && editingId !== session.id && (
                 <div className="flex shrink-0 items-center gap-1 opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100">
                   <button
+                    type="button"
                     onClick={() => {
                       setEditingId(session.id);
                       setEditTitle(displayTitle);
                     }}
-                    className="flex items-center justify-center w-6 h-6 rounded-md text-arena-elements-textTertiary hover:text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover cursor-pointer"
+                    className="flex items-center justify-center w-7 h-7 rounded-md text-arena-elements-textTertiary hover:text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
                     title="Rename"
+                    aria-label={`Rename ${displayTitle}`}
                   >
-                    <span className="i-ph:pencil-simple text-xs" />
+                    <span className="i-ph:pencil-simple text-sm" />
                   </button>
                   <button
+                    type="button"
                     onClick={() => onDelete(session.id)}
-                    className="flex items-center justify-center w-6 h-6 rounded-md text-arena-elements-textTertiary hover:text-crimson-400 hover:bg-crimson-500/10 cursor-pointer"
+                    className="flex items-center justify-center w-7 h-7 rounded-md text-arena-elements-textTertiary hover:text-crimson-400 hover:bg-crimson-500/10 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
                     title="Delete"
+                    aria-label={`Delete ${displayTitle}`}
                   >
-                    <span className="i-ph:x text-xs" />
+                    <span className="i-ph:x text-sm" />
                   </button>
                 </div>
               )}
@@ -627,10 +633,10 @@ export function ChatTab({
       data-sandbox-ui="true"
       data-sandbox-theme="vault"
       className="arena-chat-shell glass-card rounded-xl overflow-hidden"
-      style={{ minHeight: "680px" }}
+      style={{ minHeight: "760px" }}
     >
       <div
-        className={`flex h-[min(920px,calc(100vh-12rem))] min-h-[680px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
+        className={`flex h-[min(1040px,calc(100vh-8rem))] min-h-[760px] min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
       >
         <SessionWorkspaceSidebar
           sessions={sessionItems}
@@ -654,11 +660,11 @@ export function ChatTab({
         />
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex items-center gap-2 border-b border-arena-elements-dividerColor/50 px-3 py-2 bg-arena-elements-background-depth-1/25">
+          <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 px-4 py-3 bg-arena-elements-background-depth-1/25">
             <div className="flex items-center gap-2 min-w-0 flex-1">
-              <span className="i-ph:chat-circle-dots text-sm text-violet-700 dark:text-violet-400" />
+              <span className="i-ph:chat-circle-dots text-base text-violet-700 dark:text-violet-400" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
+                <div className="truncate text-base font-display font-medium text-arena-elements-textPrimary">
                   {activeSession
                     ? getSessionDisplayTitle(
                         {
@@ -675,13 +681,13 @@ export function ChatTab({
                     : "Trading Agent"}
                 </div>
                 {activeSession && (
-                  <div className="truncate text-[11px] font-data text-arena-elements-textTertiary">
+                  <div className="truncate text-sm font-data text-arena-elements-textTertiary">
                     {truncateMiddle(activeSession.id, 20, 8)}
                   </div>
                 )}
               </div>
             </div>
-            <span className="hidden rounded-full border border-violet-500/15 bg-violet-500/8 px-2 py-1 text-[11px] font-data text-violet-700 dark:text-violet-300 sm:inline-flex">
+            <span className="hidden rounded-full border border-violet-500/15 bg-violet-500/8 px-3 py-1.5 text-sm font-data text-violet-700 dark:text-violet-300 sm:inline-flex">
               Operator relay
             </span>
           </div>
@@ -702,13 +708,13 @@ export function ChatTab({
               branding={TRADING_BRANDING}
               placeholder={
                 stream.isStreaming
-                  ? "Agent is working..."
-                  : `Ask ${botName} anything...`
+                  ? "Agent is working…"
+                  : `Ask ${botName} anything…`
               }
             />
           </div>
 
-          <div className="border-t border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-3 py-2">
+          <div className="border-t border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-4 py-3">
             <AgentStatus
               status={agentStatus}
               onAbort={handleAbort}

@@ -37,7 +37,7 @@ describe('create agent route', () => {
     const { default: CreateAgent } = await import('../create')
     render(<CreateAgent />)
 
-    const textbox = screen.getByPlaceholderText('I want an agent that...')
+    const textbox = screen.getByLabelText('Trading agent strategy prompt')
     fireEvent.change(textbox, { target: { value: 'Create a paper ETH strategy' } })
     fireEvent.keyDown(textbox, { key: 'Enter' })
     fireEvent.keyDown(textbox, { key: 'Enter' })

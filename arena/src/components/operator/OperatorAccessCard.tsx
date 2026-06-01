@@ -82,20 +82,20 @@ export function OperatorAccessCard({
   };
 
   return (
-    <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
-      <div className="i-ph:wallet text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
-      <h3 className="font-display font-semibold text-base text-arena-elements-textPrimary mb-2">
+    <div className="glass-card rounded-xl text-center py-16 px-6 text-arena-elements-textSecondary">
+      <div className="i-ph:wallet text-4xl mb-4 mx-auto text-arena-elements-textTertiary" />
+      <h3 className="font-display font-semibold text-xl text-arena-elements-textPrimary mb-2">
         {title}
       </h3>
-      <p className="text-sm mb-4">{description}</p>
+      <p className="mx-auto max-w-2xl text-base mb-5">{description}</p>
       <Button
         onClick={() => { void authenticate(); }}
         disabled={isAuthenticating}
       >
-        {isAuthenticating ? 'Authenticating...' : 'Authenticate'}
+        {isAuthenticating ? 'Authenticating…' : 'Authenticate'}
       </Button>
       {error && (
-        <p className="mt-3 text-xs text-crimson-500">{error}</p>
+        <p className="mt-3 text-sm text-crimson-500">{error}</p>
       )}
     </div>
   );
@@ -107,12 +107,12 @@ export function UnsupportedFeatureCard({
   feature: string;
 }) {
   return (
-    <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
-      <div className="i-ph:warning-circle text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
-      <h3 className="font-display font-semibold text-base text-arena-elements-textPrimary mb-2">
+    <div className="glass-card rounded-xl text-center py-16 px-6 text-arena-elements-textSecondary">
+      <div className="i-ph:warning-circle text-4xl mb-4 mx-auto text-arena-elements-textTertiary" />
+      <h3 className="font-display font-semibold text-xl text-arena-elements-textPrimary mb-2">
         {feature} unavailable
       </h3>
-      <p className="text-sm">
+      <p className="mx-auto max-w-2xl text-base">
         This operator does not currently expose {feature.toLowerCase()} through the frontend contract.
       </p>
     </div>
@@ -178,7 +178,7 @@ export function OperatorSessionBanner() {
         disabled={isAuthenticating}
         size="sm"
       >
-        {isAuthenticating ? 'Connecting...' : 'Authenticate'}
+        {isAuthenticating ? 'Connecting…' : 'Authenticate'}
       </Button>
     </div>
   );

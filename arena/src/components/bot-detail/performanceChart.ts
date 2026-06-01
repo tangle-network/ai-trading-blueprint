@@ -25,6 +25,7 @@ export interface PerformanceChartPoint {
   label: string;
   tooltipLabel: string;
   value: number;
+  timestampMs?: number;
   kind?: 'snapshot' | 'live_nav';
 }
 
@@ -116,6 +117,7 @@ export function buildPerformanceChartPoints(
         label: liveChartMetric.label ?? 'Live',
         tooltipLabel: date ? `Live NAV: ${tooltipLabelFormatter.format(date)}` : 'Live NAV',
         value: liveChartMetric.account_value_usd,
+        timestampMs: date?.getTime(),
         kind: 'live_nav',
       },
     ];
@@ -153,6 +155,7 @@ export function buildPerformanceChartPoints(
         label: metric.label ?? 'Live',
         tooltipLabel: date ? `Live NAV: ${tooltipLabelFormatter.format(date)}` : 'Live NAV',
         value: metric.account_value_usd,
+        timestampMs: date?.getTime(),
         kind: 'live_nav',
       };
     }
@@ -170,6 +173,7 @@ export function buildPerformanceChartPoints(
       label: tickFormatter.format(date),
       tooltipLabel: tooltipLabelFormatter.format(date),
       value: metric.account_value_usd,
+      timestampMs: date.getTime(),
       kind: 'snapshot',
     };
   });

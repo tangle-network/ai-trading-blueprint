@@ -249,6 +249,59 @@ describe("RunsTab", () => {
     );
   });
 
+  it("tries public instance run summaries before asking for owner auth", async () => {
+    authState.token = null;
+    authState.isAuthenticated = false;
+
+    const { RunsTab } = await import("../RunsTab");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/bot/runs?limit=100")) {
+        return jsonResponse({
+          runs: [
+            {
+              run_id: "run-instance-public",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_824_500,
+              completed_at: 1_775_824_560,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 60_000,
+              input_tokens: 10,
+              output_tokens: 6,
+              result: "instance public result",
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9301"
+        operatorKind="instance"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByText("instance public result")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:9301/api/bot/runs?limit=100",
+      expect.objectContaining({ headers: {} }),
+    );
+  });
+
   it("replays saved trading run JSON through the chat transcript when no full transcript was captured", async () => {
     const { RunsTab } = await import("../RunsTab");
     const result = JSON.stringify({

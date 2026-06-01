@@ -78,7 +78,7 @@ describe('TerminalTab', () => {
     expect(screen.getByText(/freshly verified against the operator/i)).toBeInTheDocument();
   });
 
-  it('shows the auth banner before operator auth is established', () => {
+  it('shows the owner-only gate before operator auth is established', () => {
     authState.isAuthenticated = false;
     authState.token = null;
 
@@ -92,7 +92,8 @@ describe('TerminalTab', () => {
       />,
     );
 
-    expect(screen.getByText('Authenticate to continue')).toBeInTheDocument();
+    expect(screen.getByText('Owner-only terminal')).toBeInTheDocument();
+    expect(screen.getByText(/live shell is hidden/i)).toBeInTheDocument();
   });
 
   it('uses fleet bot-scoped terminal paths for cloud operators', () => {

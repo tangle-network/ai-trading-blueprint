@@ -1,4 +1,3 @@
-import { AuthBanner } from '~/components/bot-detail/AuthBanner';
 import { OperatorTerminalView } from '~/components/operator/OperatorTerminalView';
 import { OperatorAccessCard } from '~/components/operator/OperatorAccessCard';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
@@ -28,7 +27,7 @@ export function TerminalTab({
   const resourcePath = baseApiUrl
     ? buildBotScopedPathForDeploymentKind(deploymentKind, botId)
     : '';
-  const { token, isAuthenticated, isAuthenticating, authenticate, error: authError } = useOperatorAuth(baseApiUrl);
+  const { token, isAuthenticated } = useOperatorAuth(baseApiUrl);
 
   if (!baseApiUrl || !operatorKind) {
     return (
@@ -51,10 +50,10 @@ export function TerminalTab({
 
   if (!isAuthenticated || !token) {
     return (
-      <AuthBanner
-        onAuth={authenticate}
-        isAuthenticating={isAuthenticating}
-        error={authError}
+      <OperatorAccessCard
+        title="Owner-only terminal"
+        description="The live shell is hidden unless the connected wallet owns this bot. Sign with the owner wallet to inspect logs and processes."
+        apiUrl={baseApiUrl}
       />
     );
   }

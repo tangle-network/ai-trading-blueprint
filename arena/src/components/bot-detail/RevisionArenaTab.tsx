@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 import {
   type RevisionArenaEntry,
@@ -244,11 +244,22 @@ export function RevisionArenaTab({
     operatorApiUrl,
     operatorKind,
   });
+  const [slowLoad, setSlowLoad] = useState(false);
 
   const sortedRevisions = useMemo(
     () => query.data?.revisions ?? [],
     [query.data?.revisions],
   );
+
+  useEffect(() => {
+    if (!query.isLoading) {
+      setSlowLoad(false);
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => setSlowLoad(true), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [query.isLoading]);
 
   const approveRevision = (revisionId: string) => {
     decision.mutate({ revisionId, action: "approve", confirmLive: true });
@@ -286,7 +297,23 @@ export function RevisionArenaTab({
     return (
       <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
         <div className="i-ph:git-branch mx-auto mb-3 animate-pulse text-3xl text-arena-elements-textTertiary" />
-        Loading revision arena...
+        <h3 className="font-display text-lg font-semibold text-arena-elements-textPrimary">
+          {slowLoad ? "Revision arena is still loading" : "Loading revision arena…"}
+        </h3>
+        <p className="mx-auto mt-2 max-w-xl text-sm">
+          {slowLoad
+            ? "The operator has not returned revision state yet. You can keep this page open or retry the request."
+            : "Loading self-improvement revisions and promotion modes."}
+        </p>
+        {slowLoad && (
+          <Button
+            className="mt-4"
+            variant="outline"
+            onClick={() => { void query.refetch(); }}
+          >
+            Retry
+          </Button>
+        )}
       </div>
     );
   }
@@ -334,15 +361,27 @@ export function RevisionArenaTab({
       </section>
 
       <section className="glass-card overflow-hidden rounded-xl border border-arena-elements-dividerColor">
-        {sortedRevisions.map((revision) => (
-          <RevisionRow
-            key={revision.revision_id}
-            revision={revision}
-            onApprove={approveRevision}
-            onReject={rejectRevision}
-            decisionPending={decision.isPending}
-          />
-        ))}
+        {sortedRevisions.length > 0 ? (
+          sortedRevisions.map((revision) => (
+            <RevisionRow
+              key={revision.revision_id}
+              revision={revision}
+              onApprove={approveRevision}
+              onReject={rejectRevision}
+              decisionPending={decision.isPending}
+            />
+          ))
+        ) : (
+          <div className="px-6 py-12 text-center text-arena-elements-textSecondary">
+            <div className="i-ph:git-branch mx-auto mb-3 text-3xl text-arena-elements-textTertiary" />
+            <h3 className="font-display text-lg font-semibold text-arena-elements-textPrimary">
+              No revisions yet
+            </h3>
+            <p className="mx-auto mt-2 max-w-xl text-sm">
+              Self-improvement candidates will appear here after the agent generates and evaluates a revision.
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="grid gap-3 md:grid-cols-3">

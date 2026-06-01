@@ -69,7 +69,7 @@ describe('PositionsTab', () => {
     render(<PositionsTab botId="bot-1" status="active" operatorApiUrl="/operator-api" operatorKind="cloud" />);
 
     expect(screen.getByText('$10,000')).toBeInTheDocument();
-    expect(screen.getByText('$1,000')).toBeInTheDocument();
+    expect(screen.getAllByText('$1,000').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('10.0%')).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Entry' })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'PnL' })).not.toBeInTheDocument();
@@ -236,7 +236,7 @@ describe('PositionsTab', () => {
     expect(screen.getByText('Long')).toBeInTheDocument();
     expect(screen.getByText('0.026 ETH')).toBeInTheDocument();
     expect(screen.getByText('$51.41')).toBeInTheDocument();
-    expect(screen.getByText('$2.57')).toBeInTheDocument();
+    expect(screen.getAllByText('$2.57').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('31.4%').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('20x')).toBeInTheDocument();
     expect(screen.getByText('-$2.78')).toBeInTheDocument();

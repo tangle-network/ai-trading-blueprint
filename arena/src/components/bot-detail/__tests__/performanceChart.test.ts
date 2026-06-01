@@ -118,12 +118,12 @@ describe('buildPerformanceChartPoints', () => {
     );
 
     expect(points).toEqual([
-      {
+      expect.objectContaining({
         label: 'Live',
         tooltipLabel: expect.stringContaining('Live NAV'),
         value: 8.2,
         kind: 'live_nav',
-      },
+      }),
     ]);
   });
 });
