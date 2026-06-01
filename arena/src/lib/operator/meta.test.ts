@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('getOperatorApiUrlForBlueprint', () => {
   it('routes cloud blueprints to the cloud operator', async () => {
@@ -79,5 +83,22 @@ describe('HAS_TRADING_OPERATOR_API', () => {
     const { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } = await import('./meta');
     expect(HAS_TRADING_OPERATOR_API).toBe(true);
     expect(ALL_TRADING_OPERATOR_API_URLS).toEqual(['/shared-operator-api']);
+  });
+
+  it('includes extra configured operator endpoints for platform-wide reads', async () => {
+    vi.resetModules();
+    vi.stubEnv('VITE_OPERATOR_API_URL', '');
+    vi.stubEnv('VITE_CLOUD_OPERATOR_API_URL', '/operator-api/');
+    vi.stubEnv('VITE_INSTANCE_OPERATOR_API_URL', '');
+    vi.stubEnv('VITE_TEE_OPERATOR_API_URL', '');
+    vi.stubEnv('VITE_TRADING_OPERATOR_API_URLS', '/operator-api,/third-party-a/');
+    vi.stubEnv('VITE_ADDITIONAL_TRADING_OPERATOR_API_URLS', '["/third-party-b", "/third-party-a"]');
+    const { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } = await import('./meta');
+    expect(HAS_TRADING_OPERATOR_API).toBe(true);
+    expect(ALL_TRADING_OPERATOR_API_URLS).toEqual([
+      '/operator-api',
+      '/third-party-a',
+      '/third-party-b',
+    ]);
   });
 });

@@ -15,6 +15,7 @@ import type { Portfolio } from '~/lib/types/portfolio';
 import { mapApiPortfolioState, type RawPortfolioState } from '~/lib/portfolio';
 import { parseTradeDisplayAmount, resolveAssetDisplay, type TokenMetadata } from '~/lib/tradeTokenMetadata';
 import {
+  ALL_TRADING_OPERATOR_API_URLS,
   buildBotScopedPathForDeploymentKind,
   getDeploymentKindForOperatorKind,
 } from '~/lib/operator/meta';
@@ -22,6 +23,14 @@ import { useOperatorAuth } from './useOperatorAuth';
 import { operatorJsonWithAuth } from '~/lib/operator/fetch';
 import type { Bot, BotOperatorKind } from '~/lib/types/bot';
 import { tokenMetadataFromStrategyConfig } from '~/lib/assetUniverse';
+import {
+  buildPlatformVolumeSeries,
+  buildPlatformVolumeSeriesFromBuckets,
+  getPlatformVolumeRangeConfig,
+  type PlatformVolumeBucketInput,
+  type PlatformVolumeRange,
+  type PlatformVolumeSeries,
+} from '~/lib/platformVolume';
 
 interface ApiTrade {
   id: string;
@@ -118,6 +127,42 @@ interface ApiTradeListResponse {
   trades: ApiTrade[];
 }
 
+interface ApiCandle {
+  timestamp: number;
+  token: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+}
+
+interface ApiCandleListResponse {
+  candles: ApiCandle[];
+  total: number;
+}
+
+interface ApiPlatformVolumeResponse {
+  from: string;
+  to: string;
+  bucket: 'hour' | 'day';
+  buckets: Array<{
+    timestamp: string;
+    bucket_usd: number;
+    paper_usd: number;
+    live_usd: number;
+    priced_trade_count: number;
+    total_trade_count: number;
+  }>;
+  summary: {
+    total_usd: number;
+    paper_usd: number;
+    live_usd: number;
+    priced_trade_count: number;
+    total_trade_count: number;
+  };
+}
+
 interface ApiMetricsSnapshot {
   timestamp: string;
   bot_id: string;
@@ -193,6 +238,16 @@ export interface RevisionArena {
   modes: RevisionModeCapability[];
 }
 
+export interface MarketCandle {
+  timestamp: number;
+  token: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 type FetchOperatorBotApiOptions = {
   auth?: boolean;
 };
@@ -204,6 +259,17 @@ async function fetchOperatorBotApi<T>(
   options: FetchOperatorBotApiOptions = {},
 ): Promise<T> {
   return operatorJsonWithAuth<T>(apiUrl, path, auth, options);
+}
+
+async function fetchOperatorPublicJson<T>(apiUrl: string, path: string): Promise<T> {
+  const res = await fetch(`${apiUrl}${path}`, {
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) {
+    throw new Error(`Operator request failed: ${res.status}`);
+  }
+  return res.json() as Promise<T>;
 }
 
 function fleetReadRequiresAuth(
@@ -423,6 +489,43 @@ function normalizeTrades(data: ApiTrade[] | ApiTradeListResponse): ApiTrade[] {
   return Array.isArray(data) ? data : data.trades;
 }
 
+function normalizeCandles(data: ApiCandle[] | ApiCandleListResponse): MarketCandle[] {
+  const candles = Array.isArray(data) ? data : data.candles;
+  return candles
+    .map((candle) => ({
+      timestamp: Number(candle.timestamp) * 1000,
+      token: candle.token,
+      open: Number(candle.open),
+      high: Number(candle.high),
+      low: Number(candle.low),
+      close: Number(candle.close),
+      volume: Number(candle.volume),
+    }))
+    .filter((candle) =>
+      Number.isFinite(candle.timestamp)
+      && Number.isFinite(candle.open)
+      && Number.isFinite(candle.high)
+      && Number.isFinite(candle.low)
+      && Number.isFinite(candle.close)
+      && candle.open > 0
+      && candle.high > 0
+      && candle.low > 0
+      && candle.close > 0,
+    )
+    .sort((left, right) => left.timestamp - right.timestamp);
+}
+
+function normalizePlatformVolumeBuckets(data: ApiPlatformVolumeResponse): PlatformVolumeBucketInput[] {
+  return data.buckets.map((bucket) => ({
+    timestamp: new Date(bucket.timestamp).getTime(),
+    bucketUsd: Number(bucket.bucket_usd) || 0,
+    paperUsd: Number(bucket.paper_usd) || 0,
+    liveUsd: Number(bucket.live_usd) || 0,
+    pricedTradeCount: Number(bucket.priced_trade_count) || 0,
+    totalTradeCount: Number(bucket.total_trade_count) || 0,
+  }));
+}
+
 function normalizeMetrics(data: ApiMetricsSnapshot[] | ApiMetricsHistoryResponse): ApiMetricsSnapshot[] {
   const snapshots = Array.isArray(data) ? data : data.snapshots;
   return snapshots.map((snapshot) => ({
@@ -590,6 +693,259 @@ export function useLatestAgentTrades(
   };
 }
 
+export interface PlatformVolumeCoverage {
+  candidateBots: number;
+  fetchedBots: number;
+  candidateOperators: number;
+  fetchedOperators: number;
+  maxBots: number;
+}
+
+export function usePlatformVolumeSeries(
+  bots: Bot[],
+  range: PlatformVolumeRange,
+  {
+    maxBots = 48,
+    refetchInterval = 30_000,
+  }: {
+    maxBots?: number;
+    refetchInterval?: number | false;
+  } = {},
+) {
+  const config = getPlatformVolumeRangeConfig(range);
+  const rangeStartMs = Date.now() - config.days * 24 * 60 * 60 * 1000;
+  const botFingerprint = bots.map((bot) => [
+    bot.id,
+    bot.name,
+    bot.status,
+    bot.totalTrades,
+    bot.operatorKind ?? 'none',
+    bot.operatorApiUrl ?? 'none',
+    bot.chainId ?? 'none',
+  ].join(':')).join('|');
+
+  const operatorUrls = useMemo(() => {
+    const urls = new Set<string>();
+    ALL_TRADING_OPERATOR_API_URLS.forEach((url) => {
+      if (url) urls.add(url);
+    });
+    bots.forEach((bot) => {
+      if (bot.operatorApiUrl) urls.add(bot.operatorApiUrl);
+    });
+    return Array.from(urls);
+  }, [botFingerprint, bots]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const operatorResults = useQueries({
+    queries: operatorUrls.map((apiUrl) => ({
+      queryKey: ['platform-volume-aggregate', apiUrl, range] as const,
+      queryFn: async (): Promise<PlatformVolumeBucketInput[]> => {
+        const toMs = Date.now();
+        const fromMs = toMs - config.days * 24 * 60 * 60 * 1000;
+        const params = new URLSearchParams({
+          from: new Date(fromMs).toISOString(),
+          to: new Date(toMs).toISOString(),
+          bucket: config.bucketMs <= 60 * 60 * 1000 ? 'hour' : 'day',
+        });
+        const data = await fetchOperatorPublicJson<ApiPlatformVolumeResponse>(
+          apiUrl,
+          `/api/platform/volume?${params}`,
+        );
+        return normalizePlatformVolumeBuckets(data);
+      },
+      staleTime: 15_000,
+      refetchOnMount: 'always' as const,
+      refetchInterval,
+      retry: 1,
+      enabled: !!apiUrl,
+    })),
+  });
+
+  const operatorFingerprint = operatorUrls.join('|');
+  const failedAggregateFingerprint = operatorResults.map((result, index) =>
+    result.isError ? operatorUrls[index] : '',
+  ).join('|');
+  const failedAggregateUrls = new Set(
+    operatorResults.flatMap((result, index) =>
+      result.isError && operatorUrls[index] ? [operatorUrls[index]] : [],
+    ),
+  );
+  const fallbackAllOperators = operatorUrls.length === 0
+    || (operatorResults.length > 0 && operatorResults.every((result) => result.isError));
+
+  const candidates = useMemo(() => {
+    return bots
+      .filter((bot) =>
+        bot.verificationState === 'authoritative'
+        && !!bot.operatorApiUrl
+        && !bot.id.startsWith('provision:')
+        && bot.status !== 'archived'
+        && bot.status !== 'unknown'
+        && (bot.totalTrades > 0 || bot.status === 'active' || bot.tradingActive === true),
+      )
+      .filter((bot) =>
+        fallbackAllOperators || failedAggregateUrls.has(bot.operatorApiUrl ?? ''),
+      )
+      .sort((left, right) => {
+        if (right.totalTrades !== left.totalTrades) return right.totalTrades - left.totalTrades;
+        if (left.status === 'active' && right.status !== 'active') return -1;
+        if (right.status === 'active' && left.status !== 'active') return 1;
+        return right.createdAt - left.createdAt;
+      })
+      .slice(0, maxBots)
+      .map((bot) => ({
+        bot,
+        deploymentKind: getDeploymentKindForOperatorKind(bot.operatorKind),
+        assetMetadata: tokenMetadataFromStrategyConfig(bot.strategyConfig),
+      }));
+  }, [
+    botFingerprint,
+    bots,
+    failedAggregateFingerprint,
+    fallbackAllOperators,
+    maxBots,
+    operatorFingerprint,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const authByUrl = {
+    cloud: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'cloud')?.operatorApiUrl ?? ''),
+    instance: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'instance')?.operatorApiUrl ?? ''),
+    tee: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'tee')?.operatorApiUrl ?? ''),
+  } as const;
+
+  const results = useQueries({
+    queries: candidates.map(({ bot, deploymentKind, assetMetadata }) => {
+      const auth = authByUrl[bot.operatorKind ?? 'cloud'];
+      const needsAuth = fleetReadRequiresAuth(deploymentKind);
+      const authKey = needsAuth ? auth.authCacheKey : 'public';
+
+      return {
+        queryKey: [
+          'platform-volume-trades',
+          bot.operatorApiUrl,
+          bot.id,
+          range,
+          config.fetchPages,
+          deploymentKind,
+          bot.chainId,
+          authKey,
+        ] as const,
+        queryFn: async (): Promise<Trade[]> => {
+          const pageSize = 200;
+          const trades: ApiTrade[] = [];
+
+          for (let page = 0; page < config.fetchPages; page += 1) {
+            const offset = page * pageSize;
+            const path = `${buildBotScopedPathForDeploymentKind(
+              deploymentKind,
+              bot.id,
+              '/trades',
+            )}?limit=${pageSize}&offset=${offset}`;
+            const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(
+              bot.operatorApiUrl ?? '',
+              auth,
+              path,
+              { auth: needsAuth },
+            );
+            const pageTrades = normalizeTrades(data);
+            trades.push(...pageTrades);
+
+            if (pageTrades.length < pageSize) break;
+
+            const oldestTimestamp = pageTrades.reduce((oldest, trade) => {
+              const timestamp = new Date(trade.timestamp).getTime();
+              return Number.isFinite(timestamp) ? Math.min(oldest, timestamp) : oldest;
+            }, Number.POSITIVE_INFINITY);
+            if (oldestTimestamp <= rangeStartMs) break;
+          }
+
+          return trades.map((trade) => mapApiTrade(trade, bot.name, bot.chainId, assetMetadata));
+        },
+        staleTime: 15_000,
+        refetchOnMount: 'always' as const,
+        refetchInterval,
+        retry: 1,
+        enabled: !!bot.operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
+      };
+    }),
+  });
+
+  const dataFingerprint = results.map((result) =>
+    result.data ? result.data.map((trade) => `${trade.id}:${trade.timestamp}:${trade.notionalUsd ?? 'x'}`).join(',') : 'x',
+  ).join('|');
+  const aggregateDataFingerprint = operatorResults.map((result) =>
+    result.data ? result.data.map((bucket) =>
+      `${bucket.timestamp}:${bucket.bucketUsd}:${bucket.totalTradeCount}`,
+    ).join(',') : 'x',
+  ).join('|');
+
+  const fetchedTrades = useMemo(() => results.flatMap((result) => result.data ?? []), [dataFingerprint]); // eslint-disable-line react-hooks/exhaustive-deps
+  const series = useMemo<PlatformVolumeSeries>(() => {
+    const aggregateBuckets = operatorResults.flatMap((result) => result.data ?? []);
+    const fallbackSeries = buildPlatformVolumeSeries(
+      fetchedTrades.map((trade) => ({
+        timestamp: trade.timestamp,
+        notionalUsd: trade.notionalUsd,
+        paperTrade: trade.paperTrade,
+      })),
+      range,
+    );
+    const fallbackBuckets: PlatformVolumeBucketInput[] = fallbackSeries.buckets
+      .filter((bucket) => bucket.bucketUsd > 0 || bucket.totalTradeCount > 0)
+      .map((bucket) => ({
+        timestamp: bucket.timestamp,
+        bucketUsd: bucket.bucketUsd,
+        paperUsd: bucket.paperUsd,
+        liveUsd: bucket.liveUsd,
+        pricedTradeCount: bucket.tradeCount,
+        totalTradeCount: bucket.totalTradeCount,
+      }));
+    return buildPlatformVolumeSeriesFromBuckets(
+      [...aggregateBuckets, ...fallbackBuckets],
+      range,
+    );
+  }, [aggregateDataFingerprint, dataFingerprint, fetchedTrades, range]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const candidateOperators = new Set(operatorUrls);
+  const aggregateFetchedOperatorUrls = operatorResults.flatMap((result, index) => {
+    if (!result.data) return [];
+    return operatorUrls[index] ? [operatorUrls[index]] : [];
+  });
+  const fetchedOperatorUrls = results.flatMap((result, index) => {
+    if (!result.data) return [];
+    return candidates[index]?.bot.operatorApiUrl ? [candidates[index].bot.operatorApiUrl] : [];
+  });
+  const fetchedOperators = new Set([...aggregateFetchedOperatorUrls, ...fetchedOperatorUrls]);
+  const fetchedBotCount = results.filter((result) => result.data).length;
+  const coverage: PlatformVolumeCoverage = {
+    candidateBots: bots.filter((bot) =>
+      bot.verificationState === 'authoritative'
+      && !!bot.operatorApiUrl
+      && !bot.id.startsWith('provision:')
+      && bot.status !== 'archived'
+      && bot.status !== 'unknown'
+      && (bot.totalTrades > 0 || bot.status === 'active' || bot.tradingActive === true),
+    ).length,
+    fetchedBots: fetchedBotCount,
+    candidateOperators: candidateOperators.size,
+    fetchedOperators: fetchedOperators.size,
+    maxBots,
+  };
+
+  return {
+    series,
+    coverage,
+    isLoading: (
+      operatorResults.some((result) => result.isLoading)
+      || results.some((result) => result.isLoading)
+    ) && series.summary.totalTradeCount === 0,
+    isFetching: operatorResults.some((result) => result.isFetching)
+      || results.some((result) => result.isFetching),
+    isError: operatorResults.length > 0
+      && operatorResults.every((result) => result.isError)
+      && (results.length === 0 || results.every((result) => result.isError)),
+  };
+}
+
 export function useBotRecentValidations(
   botId: string,
   botName: string = '',
@@ -677,6 +1033,61 @@ export function useBotMetrics(botId: string, days = 30, options: BotApiQueryOpti
     refetchOnMount: false,
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
+  });
+}
+
+export function useBotMarketCandles(
+  botId: string,
+  token: string | null | undefined,
+  days = 30,
+  options: BotApiQueryOptions & { limit?: number } = {},
+) {
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
+  const enabled = options.enabled ?? true;
+  const needsAuth = fleetReadRequiresAuth(deploymentKind);
+  const authKey = needsAuth ? auth.authCacheKey : 'public';
+  const normalizedToken = token?.trim();
+
+  return useQuery<MarketCandle[]>({
+    queryKey: [
+      'bot-market-candles',
+      apiUrl,
+      botId,
+      normalizedToken,
+      days,
+      options.limit ?? 500,
+      deploymentKind,
+      authKey,
+    ],
+    queryFn: async () => {
+      if (!normalizedToken) return [];
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - days * 24 * 60 * 60;
+      const params = new URLSearchParams({
+        token: normalizedToken,
+        from: String(from),
+        to: String(to),
+        limit: String(options.limit ?? 500),
+      });
+      const path = `${buildBotScopedPathForDeploymentKind(
+        deploymentKind,
+        botId,
+        '/market-data/candles',
+      )}?${params}`;
+      const data = await fetchOperatorBotApi<ApiCandle[] | ApiCandleListResponse>(
+        apiUrl,
+        auth,
+        path,
+        { auth: needsAuth },
+      );
+      return normalizeCandles(data);
+    },
+    staleTime: 30_000,
+    refetchOnMount: false,
+    refetchInterval: options.refetchInterval,
+    enabled: enabled && !!apiUrl && !!normalizedToken && (!needsAuth || !!auth.getCachedToken()),
   });
 }
 

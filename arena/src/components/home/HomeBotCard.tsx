@@ -204,7 +204,7 @@ export function HomeBotCard({
           ) : (
             <>
               <Button variant="outline" size="sm" asChild className="text-xs">
-                <Link to={`/arena/bot/${bot.id}`}>
+                <Link to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}>
                   <div className="i-ph:chart-line-up text-xs mr-1" />
                   Details
                 </Link>

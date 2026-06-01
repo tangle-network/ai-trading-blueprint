@@ -132,7 +132,7 @@ export default function CreateAgent() {
 
       // Navigate to the bot's chat view
       setTimeout(() => {
-        navigate(`/arena/bot/${encodeURIComponent(botId)}`)
+        navigate(`/arena/bot/${encodeURIComponent(botId)}/performance`)
       }, 500)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'

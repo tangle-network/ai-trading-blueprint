@@ -253,6 +253,45 @@ function makeBaseBot(partial: Partial<Bot>, authoritative: boolean): Bot {
   };
 }
 
+function buildFastOperatorBot(operatorBot: OperatorBotResponse, lastVerifiedAt: number): Bot | null {
+  const vaultAddress = usableVaultAddress(operatorBot.vault_address) ?? zeroAddress;
+  const hasOperatorLifecycleState = operatorBot.lifecycle_status !== 'unknown'
+    || operatorBot.secrets_configured === true
+    || operatorBot.trading_active === true;
+
+  if (vaultAddress === zeroAddress && !hasOperatorLifecycleState) return null;
+
+  return makeBaseBot({
+    id: operatorBot.id,
+    serviceId: operatorBot.service_id || 0,
+    name: resolveBotDisplayName({
+      primaryName: operatorBot.name,
+      strategyType: operatorBot.strategy_type,
+    }),
+    operatorAddress: operatorBot.operator_address,
+    submitterAddress: operatorBot.submitter_address ?? undefined,
+    vaultAddress,
+    strategyType: (operatorBot.strategy_type || 'momentum') as StrategyType,
+    strategyConfig: operatorBot.strategy_config,
+    status: mapOperatorLifecycleToStatus(operatorBot.lifecycle_status, false),
+    createdAt: operatorBot.created_at * 1000,
+    chainId: operatorBot.chain_id,
+    sandboxId: operatorBot.sandbox_id,
+    sandboxState: operatorBot.sandbox_state ?? null,
+    lifecycleStatus: operatorBot.lifecycle_status,
+    archived: operatorBot.archived ?? operatorBot.lifecycle_status === 'archived',
+    controlAvailable: operatorBot.control_available ?? false,
+    tradingActive: operatorBot.trading_active,
+    secretsConfigured: operatorBot.secrets_configured,
+    paperTrade: operatorBot.paper_trade,
+    callId: operatorBot.call_id,
+    source: 'operator',
+    operatorKind: operatorBot.operatorKind,
+    operatorApiUrl: operatorBot.operatorApiUrl,
+    lastVerifiedAt,
+  }, true);
+}
+
 export function TradingSyncProvider({ children }: { children: ReactNode }) {
   const syncScope = useStore(operatorSyncScopeStore);
   const cloudMeta = useOperatorMeta(CLOUD_OPERATOR_API_URL);
@@ -352,6 +391,29 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
       const operatorBotGroups = await Promise.all(operatorFetches);
       if (signal.aborted || refreshSeqRef.current !== refreshSeq) return;
       const operatorBots = operatorBotGroups.flat();
+      const fastOperatorBots = operatorBots
+        .map((operatorBot) => buildFastOperatorBot(operatorBot, Date.now()))
+        .filter((bot): bot is Bot => Boolean(bot));
+      if (fastOperatorBots.length > 0) {
+        const current = hydratedBotsStore.get();
+        const nonOperatorBots = current.bots.filter((bot) => bot.source !== 'operator');
+        const seenIds = new Set(nonOperatorBots.map((bot) => bot.id));
+        const nextBots = [
+          ...nonOperatorBots,
+          ...fastOperatorBots.filter((bot) => {
+            if (seenIds.has(bot.id)) return false;
+            seenIds.add(bot.id);
+            return true;
+          }),
+        ];
+        hydratedBotsStore.set({
+          bots: nextBots,
+          isLoading: false,
+          isOnChain: nextBots.length > 0,
+          operatorDataState: getOperatorDataState(activeOperatorSources),
+          lastSyncedAt: Date.now(),
+        });
+      }
 
       let allLogs: unknown[][] = [];
       try {

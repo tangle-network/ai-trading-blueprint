@@ -47,6 +47,6 @@ describe('create agent route', () => {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     }))
-    await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledWith('/arena/bot/bot-1'))
+    await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledWith('/arena/bot/bot-1/performance'))
   })
 })

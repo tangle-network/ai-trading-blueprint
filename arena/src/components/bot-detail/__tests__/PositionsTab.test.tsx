@@ -260,4 +260,56 @@ describe('PositionsTab', () => {
     expect(screen.queryByText('Wrapped Ether')).not.toBeInTheDocument();
     expect(screen.queryByText('Value only')).not.toBeInTheDocument();
   });
+
+  it('renders Hyperliquid exposure cards in workspace mode instead of the wide perp table', () => {
+    mockPortfolio = makePortfolio({
+      totalValueUsd: 26842.55,
+      cashBalance: 21940.2,
+      displayTotalValueUsd: 26842.55,
+      displayCashBalance: 21940.2,
+      hasValueOnlyPositions: true,
+      positions: [
+        {
+          asset: resolveAssetDisplay('ETH'),
+          token: 'ETH',
+          symbol: 'ETH',
+          amount: 1.42,
+          valueUsd: 4986.64,
+          entryPrice: 3510,
+          currentPrice: 3521,
+          pnlPercent: null,
+          weight: 18.6,
+          protocol: 'hyperliquid',
+          positionType: 'long_perp',
+          marginUsedUsd: 4986.64,
+          notionalUsd: 99732.8,
+          unrealizedPnlUsd: 31.24,
+          leverage: 20,
+          liquidationPrice: 3100,
+          displayValueUsd: 4986.64,
+          displayPnlPercent: null,
+          displayWeight: 18.6,
+          warnings: [],
+          valuationStatus: 'priced',
+        },
+      ],
+    });
+
+    render(
+      <PositionsTab
+        botId="bot-1"
+        status="active"
+        operatorApiUrl="/operator-api"
+        operatorKind="cloud"
+        workspace
+      />,
+    );
+
+    expect(screen.getByText('ETH Perp')).toBeInTheDocument();
+    expect(screen.getByText('Hyperliquid · Long')).toBeInTheDocument();
+    expect(screen.getByText('1.42 ETH')).toBeInTheDocument();
+    expect(screen.getByText('$99,732.8')).toBeInTheDocument();
+    expect(screen.getByText('$31.24')).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Liquidation' })).not.toBeInTheDocument();
+  });
 });

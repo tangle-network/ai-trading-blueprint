@@ -16,10 +16,13 @@ interface PositionsTabProps {
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
   assetMetadata?: TokenMetadata[];
+  workspace?: boolean;
+  workspaceLayout?: 'wide' | 'rail';
 }
 
-export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorKind, verificationState, assetMetadata }: PositionsTabProps) {
+export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorKind, verificationState, assetMetadata, workspace = false, workspaceLayout = 'wide' }: PositionsTabProps) {
   const isLive = isLiveBotStatus(status);
+  const compactRail = workspace && workspaceLayout === 'rail';
   const { data: portfolio, isLoading } = useBotPortfolio(botId, {
     chainId,
     operatorApiUrl,
@@ -228,8 +231,174 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
     </div>
   );
 
+  const renderPerpPositionCards = (positions: Position[]) => (
+    <div className={`grid gap-2 ${compactRail ? 'grid-cols-1' : 'xl:grid-cols-2 2xl:grid-cols-3'}`}>
+      {positions.map((pos) => {
+        const pnl = pos.unrealizedPnlUsd ?? null;
+        const direction = perpDirection(pos);
+        return (
+          <div
+            key={`${pos.protocol}-${pos.positionType}-${pos.token}`}
+            className="rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/44 p-3"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <span
+                  aria-hidden="true"
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sm font-data font-semibold text-sky-700 ring-1 ring-black/5 dark:bg-sky-500/20 dark:text-sky-200 dark:ring-white/10"
+                >
+                  {pos.token}
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate font-display text-lg font-semibold text-arena-elements-textPrimary">
+                    {perpAssetLabel(pos)}
+                  </div>
+                  <div className="truncate text-sm font-data text-arena-elements-textTertiary">
+                    Hyperliquid · {direction}
+                  </div>
+                </div>
+              </div>
+              <Badge
+                variant={direction === 'Short' ? 'destructive' : 'success'}
+                className="shrink-0 text-xs"
+              >
+                {direction}
+              </Badge>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
+              <div>
+                <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                  Size
+                </div>
+                <div className="mt-0.5 font-data text-base font-semibold text-arena-elements-textPrimary">
+                  {formatSize(pos)}
+                </div>
+              </div>
+              <div>
+                <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                  Notional
+                </div>
+                <div className={`mt-0.5 font-data text-base font-semibold ${pos.notionalUsd == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textPrimary'}`}>
+                  {formatCurrency(pos.notionalUsd ?? null)}
+                </div>
+              </div>
+              <div>
+                <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                  Margin
+                </div>
+                <div className={`mt-0.5 font-data text-base font-semibold ${marginUsedUsd(pos) == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textPrimary'}`}>
+                  {formatCurrency(marginUsedUsd(pos))}
+                </div>
+              </div>
+              <div>
+                <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                  PnL
+                </div>
+                <div className={`mt-0.5 font-data text-base font-semibold ${
+                  pnl == null
+                    ? 'text-arena-elements-textTertiary'
+                    : pnl < 0
+                      ? 'text-red-600 dark:text-red-400'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                }`}>
+                  {formatCurrency(pnl)}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/42 px-3 py-2">
+              <div>
+                <div className="font-data text-[10px] uppercase tracking-wider text-arena-elements-textTertiary">
+                  Margin %
+                </div>
+                <div className="font-data text-sm font-semibold text-arena-elements-textPrimary">
+                  {formatPercent(marginUsage(pos))}
+                </div>
+              </div>
+              <div>
+                <div className="font-data text-[10px] uppercase tracking-wider text-arena-elements-textTertiary">
+                  Lev
+                </div>
+                <div className="font-data text-sm font-semibold text-arena-elements-textPrimary">
+                  {formatLeverage(pos.leverage)}
+                </div>
+              </div>
+              <div>
+                <div className="font-data text-[10px] uppercase tracking-wider text-arena-elements-textTertiary">
+                  Liq
+                </div>
+                <div className={`truncate font-data text-sm font-semibold ${pos.liquidationPrice == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textPrimary'}`}>
+                  {formatCurrency(pos.liquidationPrice ?? null)}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const renderStandardPositionCards = (positions: Position[]) => (
+    <div className={`grid gap-2 ${compactRail ? 'grid-cols-1' : 'xl:grid-cols-2 2xl:grid-cols-3'}`}>
+      {positions.map((pos) => (
+        <div
+          key={pos.token}
+          className="rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/44 p-3"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <AssetDisplay asset={pos.asset} />
+            {pos.valuationStatus !== 'priced' && (
+              <Badge
+                variant="amber"
+                className="text-xs"
+                title={pos.warnings.join(' ')}
+              >
+                {pos.valuationStatus === 'value_only' ? 'Value only' : 'Unpriced'}
+              </Badge>
+            )}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
+            <div>
+              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                Amount
+              </div>
+              <div className="mt-0.5 font-data text-base font-semibold text-arena-elements-textPrimary">
+                {formatNumber(pos.amount)}
+              </div>
+            </div>
+            <div>
+              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                Value
+              </div>
+              <div className={`mt-0.5 font-data text-base font-semibold ${pos.displayValueUsd == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textPrimary'}`}>
+                {formatCurrency(pos.displayValueUsd)}
+              </div>
+            </div>
+            <div>
+              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                Price
+              </div>
+              <div className={`mt-0.5 font-data text-base font-semibold ${pos.currentPrice == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textPrimary'}`}>
+                {formatCurrency(pos.currentPrice)}
+              </div>
+            </div>
+            <div>
+              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                Weight
+              </div>
+              <div className={`mt-0.5 font-data text-base font-semibold ${pos.displayWeight == null ? 'text-arena-elements-textTertiary' : 'text-arena-elements-textPrimary'}`}>
+                {formatPercent(pos.displayWeight)}
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
-    <div className="space-y-4">
+    <div className={workspace ? 'space-y-3' : 'space-y-4'}>
       {verificationState === 'unverified' && (
         <UnverifiedDataNotice subject="portfolio state" />
       )}
@@ -250,12 +419,12 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
         </div>
       )}
 
-      <div className="grid gap-3 mb-4 md:grid-cols-3 xl:grid-cols-4">
-        <div className="glass-card rounded-lg px-4 py-3">
-          <div className="text-base font-data uppercase tracking-wider text-arena-elements-textTertiary">
+      <div className={`${workspace ? compactRail ? 'mb-3 grid-cols-2' : 'mb-3 grid-cols-2 xl:grid-cols-4' : 'mb-4 sm:grid-cols-2'} grid gap-3`}>
+        <div className="glass-card min-w-0 rounded-lg px-4 py-3">
+          <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
             {hasPerpPositions ? 'Bot Equity' : 'Account Total'}
           </div>
-          <div className="mt-1 font-display font-bold text-3xl">
+          <div className="mt-1 min-w-0 break-words font-data text-2xl font-bold leading-tight tracking-tight text-arena-elements-textPrimary">
             {formatCurrency(portfolio.displayTotalValueUsd)}
           </div>
           {!hasPerpPositions && (
@@ -264,39 +433,48 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
             </p>
           )}
         </div>
-        <div className="glass-card rounded-lg px-4 py-3">
-          <div className="text-base font-data uppercase tracking-wider text-arena-elements-textTertiary">
+        <div className="glass-card min-w-0 rounded-lg px-4 py-3">
+          <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
             Positions Value
           </div>
-          <div className="mt-1 font-display font-bold text-3xl">
+          <div className="mt-1 min-w-0 break-words font-data text-2xl font-bold leading-tight tracking-tight text-arena-elements-textPrimary">
             {hasPricedPositionValue ? formatCurrency(pricedPositionValue) : 'Unavailable'}
           </div>
           <p className="mt-1 text-sm text-arena-elements-textTertiary">
             Sum of visible rows, excluding cash.
           </p>
         </div>
-        <div className="glass-card rounded-lg px-4 py-3">
-          <div className="text-base font-data uppercase tracking-wider text-arena-elements-textTertiary">
+        <div className="glass-card min-w-0 rounded-lg px-4 py-3">
+          <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
             Cash
           </div>
-          <div className="mt-1 font-display font-bold text-3xl">
+          <div className="mt-1 min-w-0 break-words font-data text-2xl font-bold leading-tight tracking-tight text-arena-elements-textPrimary">
             {formatCurrency(portfolio.displayCashBalance)}
           </div>
         </div>
         {hasPerpPositions && (
-          <div className="glass-card rounded-lg px-4 py-3">
-            <div className="text-base font-data uppercase tracking-wider text-arena-elements-textTertiary">
+          <div className="glass-card min-w-0 rounded-lg px-4 py-3">
+            <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
               Margin Usage
             </div>
-            <div className="mt-1 font-display font-bold text-3xl">
+            <div className="mt-1 min-w-0 break-words font-data text-2xl font-bold leading-tight tracking-tight text-arena-elements-textPrimary">
               {formatPercent(totalMarginUsage)}
             </div>
           </div>
         )}
       </div>
 
-      {hasPerpPositions && renderPerpPositionsTable(perpPositions)}
-      {standardPositions.length > 0 && renderStandardPositionsTable(standardPositions)}
+      {workspace ? (
+        <>
+          {hasPerpPositions && renderPerpPositionCards(perpPositions)}
+          {standardPositions.length > 0 && renderStandardPositionCards(standardPositions)}
+        </>
+      ) : (
+        <>
+          {hasPerpPositions && renderPerpPositionsTable(perpPositions)}
+          {standardPositions.length > 0 && renderStandardPositionsTable(standardPositions)}
+        </>
+      )}
     </div>
   );
 }

@@ -8,8 +8,51 @@ export const INSTANCE_OPERATOR_API_URL =
 export const TEE_OPERATOR_API_URL =
   import.meta.env.VITE_TEE_OPERATOR_API_URL ?? INSTANCE_OPERATOR_API_URL;
 export const OPERATOR_API_URL = CLOUD_OPERATOR_API_URL;
+
+function normalizeOperatorApiUrl(value: string): string {
+  return value.trim().replace(/\/+$/, '');
+}
+
+function parseOperatorApiUrls(value: string | undefined): string[] {
+  const trimmed = value?.trim();
+  if (!trimmed) return [];
+
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((item): item is string => typeof item === 'string')
+          .map(normalizeOperatorApiUrl)
+          .filter(Boolean);
+      }
+    } catch {
+      return [];
+    }
+  }
+
+  return trimmed
+    .split(/[,\n]/)
+    .map(normalizeOperatorApiUrl)
+    .filter(Boolean);
+}
+
+const EXTRA_OPERATOR_API_URLS = [
+  ...parseOperatorApiUrls(import.meta.env.VITE_TRADING_OPERATOR_API_URLS),
+  ...parseOperatorApiUrls(import.meta.env.VITE_ADDITIONAL_TRADING_OPERATOR_API_URLS),
+];
+
 export const ALL_TRADING_OPERATOR_API_URLS = Array.from(
-  new Set([CLOUD_OPERATOR_API_URL, INSTANCE_OPERATOR_API_URL, TEE_OPERATOR_API_URL].filter(Boolean)),
+  new Set(
+    [
+      CLOUD_OPERATOR_API_URL,
+      INSTANCE_OPERATOR_API_URL,
+      TEE_OPERATOR_API_URL,
+      ...EXTRA_OPERATOR_API_URLS,
+    ]
+      .map((url) => normalizeOperatorApiUrl(url))
+      .filter(Boolean),
+  ),
 );
 export const HAS_TRADING_OPERATOR_API = ALL_TRADING_OPERATOR_API_URLS.length > 0;
 

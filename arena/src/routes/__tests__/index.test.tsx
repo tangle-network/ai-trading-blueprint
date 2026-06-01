@@ -56,6 +56,10 @@ vi.mock('~/components/arena/LatestAgentTrades', () => ({
   LatestAgentTrades: () => <div>latest trades</div>,
 }));
 
+vi.mock('~/components/arena/PlatformVolumeChart', () => ({
+  PlatformVolumeChart: () => <div>platform volume</div>,
+}));
+
 vi.mock('~/components/arena/SparklineChart', () => ({
   SparklineChart: () => <div>sparkline</div>,
 }));

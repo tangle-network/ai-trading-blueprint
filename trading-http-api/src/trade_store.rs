@@ -1,7 +1,8 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use once_cell::sync::OnceCell;
 use sandbox_runtime::store::PersistentStore;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 static TRADES: OnceCell<PersistentStore<TradeRecord>> = OnceCell::new();
@@ -303,6 +304,66 @@ pub struct PaginatedTrades {
     pub total: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlatformVolumeBucketSize {
+    Hour,
+    Day,
+}
+
+impl PlatformVolumeBucketSize {
+    pub fn parse(raw: Option<&str>) -> Result<Self, String> {
+        match raw.unwrap_or("day").trim().to_ascii_lowercase().as_str() {
+            "hour" | "hourly" | "1h" => Ok(Self::Hour),
+            "day" | "daily" | "1d" => Ok(Self::Day),
+            other => Err(format!(
+                "unsupported volume bucket '{other}', expected hour or day"
+            )),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hour => "hour",
+            Self::Day => "day",
+        }
+    }
+
+    fn seconds(self) -> i64 {
+        match self {
+            Self::Hour => 60 * 60,
+            Self::Day => 24 * 60 * 60,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PlatformVolumeBucket {
+    pub timestamp: DateTime<Utc>,
+    pub bucket_usd: f64,
+    pub paper_usd: f64,
+    pub live_usd: f64,
+    pub priced_trade_count: usize,
+    pub total_trade_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct PlatformVolumeSummary {
+    pub total_usd: f64,
+    pub paper_usd: f64,
+    pub live_usd: f64,
+    pub priced_trade_count: usize,
+    pub total_trade_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PlatformVolumeResponse {
+    pub from: DateTime<Utc>,
+    pub to: DateTime<Utc>,
+    pub bucket: &'static str,
+    pub buckets: Vec<PlatformVolumeBucket>,
+    pub summary: PlatformVolumeSummary,
+}
+
 pub fn trades_for_bot(
     bot_id: &str,
     limit: usize,
@@ -325,6 +386,91 @@ pub fn trades_for_bot(
     Ok(PaginatedTrades {
         trades: page,
         total,
+    })
+}
+
+fn floor_to_bucket(timestamp: DateTime<Utc>, bucket: PlatformVolumeBucketSize) -> DateTime<Utc> {
+    let bucket_seconds = bucket.seconds();
+    let floored = timestamp.timestamp().div_euclid(bucket_seconds) * bucket_seconds;
+    Utc.timestamp_opt(floored, 0).single().unwrap_or(timestamp)
+}
+
+fn parse_positive_notional(value: Option<&str>) -> Option<f64> {
+    value?
+        .parse::<f64>()
+        .ok()
+        .filter(|amount| amount.is_finite() && *amount > 0.0)
+}
+
+pub fn platform_volume(
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    bucket: PlatformVolumeBucketSize,
+) -> Result<PlatformVolumeResponse, String> {
+    if from > to {
+        return Err("from must be before to".to_string());
+    }
+
+    let first_bucket = floor_to_bucket(from, bucket);
+    let last_bucket = floor_to_bucket(to, bucket);
+    let mut buckets = BTreeMap::<DateTime<Utc>, PlatformVolumeBucket>::new();
+    let mut cursor = first_bucket;
+    while cursor <= last_bucket {
+        buckets.insert(
+            cursor,
+            PlatformVolumeBucket {
+                timestamp: cursor,
+                bucket_usd: 0.0,
+                paper_usd: 0.0,
+                live_usd: 0.0,
+                priced_trade_count: 0,
+                total_trade_count: 0,
+            },
+        );
+        cursor += chrono::Duration::seconds(bucket.seconds());
+    }
+
+    for trade in trades()?.values().map_err(|e| e.to_string())? {
+        if trade.timestamp < from || trade.timestamp > to {
+            continue;
+        }
+
+        let bucket_timestamp = floor_to_bucket(trade.timestamp, bucket);
+        let Some(entry) = buckets.get_mut(&bucket_timestamp) else {
+            continue;
+        };
+        entry.total_trade_count += 1;
+
+        let Some(notional) = parse_positive_notional(trade.notional_usd.as_deref()) else {
+            continue;
+        };
+        entry.bucket_usd += notional;
+        entry.priced_trade_count += 1;
+        if trade.paper_trade {
+            entry.paper_usd += notional;
+        } else {
+            entry.live_usd += notional;
+        }
+    }
+
+    let buckets: Vec<PlatformVolumeBucket> = buckets.into_values().collect();
+    let summary = buckets
+        .iter()
+        .fold(PlatformVolumeSummary::default(), |mut acc, bucket| {
+            acc.total_usd += bucket.bucket_usd;
+            acc.paper_usd += bucket.paper_usd;
+            acc.live_usd += bucket.live_usd;
+            acc.priced_trade_count += bucket.priced_trade_count;
+            acc.total_trade_count += bucket.total_trade_count;
+            acc
+        });
+
+    Ok(PlatformVolumeResponse {
+        from,
+        to,
+        bucket: bucket.as_str(),
+        buckets,
+        summary,
     })
 }
 

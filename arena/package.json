@@ -7,6 +7,7 @@
     "dev": "react-router dev --host 0.0.0.0",
     "build": "react-router build",
     "preview": "vite preview --port 4173",
+    "smoke:agent-workspace": "node scripts/smoke-agent-workspace.mjs",
     "typecheck": "react-router typegen && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

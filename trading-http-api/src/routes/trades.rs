@@ -2,6 +2,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Extension, Json, Router};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -22,10 +23,18 @@ pub struct TradeListResponse {
     pub offset: usize,
 }
 
+#[derive(Deserialize)]
+pub struct PlatformVolumeQuery {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub bucket: Option<String>,
+}
+
 pub fn router() -> Router<Arc<TradingApiState>> {
     Router::new()
         .route("/trades", get(list_trades))
         .route("/trades/{trade_id}", get(get_trade))
+        .route("/platform/volume", get(get_platform_volume))
 }
 
 /// Router for multi-bot mode (state = MultiBotTradingState, bot resolved from extensions).
@@ -33,6 +42,42 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
     Router::new()
         .route("/trades", get(list_trades_multi_bot))
         .route("/trades/{trade_id}", get(get_trade))
+        .route("/platform/volume", get(get_platform_volume))
+}
+
+pub fn resolve_platform_volume(
+    query: &PlatformVolumeQuery,
+) -> Result<trade_store::PlatformVolumeResponse, (StatusCode, String)> {
+    let to = parse_optional_rfc3339(query.to.as_deref(), "to")?.unwrap_or_else(Utc::now);
+    let from = parse_optional_rfc3339(query.from.as_deref(), "from")?
+        .unwrap_or_else(|| to - chrono::Duration::days(30));
+    let bucket = trade_store::PlatformVolumeBucketSize::parse(query.bucket.as_deref())
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    trade_store::platform_volume(from, to, bucket).map_err(|e| (StatusCode::BAD_REQUEST, e))
+}
+
+fn parse_optional_rfc3339(
+    value: Option<&str>,
+    field: &str,
+) -> Result<Option<DateTime<Utc>>, (StatusCode, String)> {
+    match value {
+        Some(raw) => DateTime::parse_from_rfc3339(raw)
+            .map(|parsed| Some(parsed.with_timezone(&Utc)))
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("{field} must be an RFC3339 timestamp: {e}"),
+                )
+            }),
+        None => Ok(None),
+    }
+}
+
+async fn get_platform_volume(
+    Query(query): Query<PlatformVolumeQuery>,
+) -> Result<Json<trade_store::PlatformVolumeResponse>, (StatusCode, String)> {
+    resolve_platform_volume(&query).map(Json)
 }
 
 async fn list_trades(

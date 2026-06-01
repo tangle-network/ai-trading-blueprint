@@ -67,7 +67,7 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
             </TableCell>
             <TableCell>
               <Link
-                to={`/arena/bot/${bot.id}`}
+                to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
                 className="font-display font-semibold text-sm hover:text-violet-400 transition-colors duration-200"
               >
                 {bot.name}

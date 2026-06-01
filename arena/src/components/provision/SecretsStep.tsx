@@ -61,7 +61,7 @@ export function SecretsStep({
   const botRouteId = getProvisionBotRouteId(latestDeployment);
   const isEnvelopeMode = validationTrust === 'envelope';
   const botDetailHref = botRouteId
-    ? `/arena/bot/${encodeURIComponent(botRouteId)}${isEnvelopeMode ? '?tab=envelope' : ''}`
+    ? `/arena/bot/${encodeURIComponent(botRouteId)}${isEnvelopeMode ? '/operations?panel=envelope' : '/performance'}`
     : null;
   const viewBotLabel = isEnvelopeMode
     ? 'Sign Envelope to Enable Trading →'

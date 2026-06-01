@@ -1105,6 +1105,7 @@ export function RunsTab({
     completed: runs.filter((run) => run.status === "completed").length,
     failed: runs.filter((run) => run.status === "failed" || run.status === "interrupted").length,
   }), [runs]);
+  const showRunsSidebar = runs.length > 1 || Boolean(runsQuery.hasNextPage);
 
   const runsErrorMessage = extractRunsErrorMessage(
     runsQuery.error instanceof Error ? runsQuery.error.message : null,
@@ -1214,19 +1215,21 @@ export function RunsTab({
         <div
           className={`flex min-w-0 ${immersive ? "h-full min-h-0" : "h-[min(1040px,calc(100vh-8rem))] min-h-[760px]"} ${isStackedLayout ? "flex-col" : "flex-row"}`}
         >
-          <RunsSidebar
-            runs={runItems}
-            summary={runSummary}
-            activeRunId={activeRun?.runId ?? ""}
-            stacked={isStackedLayout}
-            compactStacked={immersive}
-            hasOlderRuns={runsQuery.hasNextPage}
-            isLoadingOlderRuns={runsQuery.isFetchingNextPage}
-            onSelect={setActiveRunId}
-            onLoadOlder={() => {
-              void runsQuery.fetchNextPage();
-            }}
-          />
+          {showRunsSidebar && (
+            <RunsSidebar
+              runs={runItems}
+              summary={runSummary}
+              activeRunId={activeRun?.runId ?? ""}
+              stacked={isStackedLayout}
+              compactStacked={immersive}
+              hasOlderRuns={runsQuery.hasNextPage}
+              isLoadingOlderRuns={runsQuery.isFetchingNextPage}
+              onSelect={setActiveRunId}
+              onLoadOlder={() => {
+                void runsQuery.fetchNextPage();
+              }}
+            />
+          )}
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 px-4 py-3">
@@ -1249,6 +1252,7 @@ export function RunsTab({
                   {activeRun && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       <RunMetricPill label="Signal" value={getRunSignalLabel(activeRun)} />
+                      <RunMetricPill label="Run ID" value={activeRun.runId} />
                       <RunMetricPill label="Duration" value={formatDuration(activeRun.durationMs)} />
                       <RunMetricPill label="Tokens" value={getRunTokenLabel(activeRun)} />
                       <RunMetricPill label="Trace" value={activeRun.traceId ? "captured" : "summary"} />

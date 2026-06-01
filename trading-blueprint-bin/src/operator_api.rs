@@ -561,6 +561,14 @@ struct TradeListQuery {
 }
 
 #[derive(Deserialize)]
+struct CandleListQuery {
+    token: Option<String>,
+    from: Option<i64>,
+    to: Option<i64>,
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
 struct RunListQuery {
     limit: Option<usize>,
     cursor: Option<String>,
@@ -653,6 +661,10 @@ pub fn build_operator_router() -> Router {
             "/api/bots/{bot_id}/metrics/history",
             get(get_bot_metrics_history),
         )
+        .route(
+            "/api/bots/{bot_id}/market-data/candles",
+            get(get_bot_market_candles),
+        )
         .route("/api/bots/{bot_id}/trades", get(get_bot_trades))
         .route(
             "/api/bots/{bot_id}/tick-artifacts",
@@ -718,6 +730,7 @@ pub fn build_operator_router() -> Router {
             post(abort_chat_session),
         )
         .route("/api/bots/{bot_id}/session/events", get(stream_chat_events))
+        .route("/api/platform/volume", get(get_platform_volume))
         // Provision progress
         .route("/api/provisions", get(list_provisions))
         .route("/api/provisions/{call_id}", get(get_provision))
@@ -5013,6 +5026,41 @@ async fn get_bot_trades(
     }
 }
 
+async fn get_bot_market_candles(
+    Path(bot_id): Path<String>,
+    Query(query): Query<CandleListQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    let mut remote_query = Vec::new();
+    if let Some(token) = query.token {
+        remote_query.push(("token", token));
+    }
+    if let Some(from) = query.from {
+        remote_query.push(("from", from.to_string()));
+    }
+    if let Some(to) = query.to {
+        remote_query.push(("to", to.to_string()));
+    }
+    if let Some(limit) = query.limit {
+        remote_query.push(("limit", limit.to_string()));
+    }
+
+    match fetch_trading_api_json(&bot, "/market-data/candles", &remote_query).await {
+        Ok(Some(payload)) => Ok(Json(payload)),
+        Ok(None) => Ok(Json(serde_json::json!({ "candles": [], "total": 0 }))),
+        Err(err) => {
+            tracing::warn!(bot_id = %bot.id, "trading api candle request failed: {err}");
+            Ok(Json(serde_json::json!({ "candles": [], "total": 0 })))
+        }
+    }
+}
+
+async fn get_platform_volume(
+    Query(query): Query<trading_http_api::routes::trades::PlatformVolumeQuery>,
+) -> Result<Json<trading_http_api::trade_store::PlatformVolumeResponse>, (StatusCode, String)> {
+    trading_http_api::routes::trades::resolve_platform_volume(&query).map(Json)
+}
+
 async fn get_bot_baseline_backtest(
     SessionAuth(_caller): SessionAuth,
     Path(bot_id): Path<String>,
@@ -5796,6 +5844,48 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), 404);
+    }
+
+    #[tokio::test]
+    async fn test_get_bot_market_candles_route_resolves_bot_context() {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/bots/nonexistent/market-data/candles?token=ETH")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_platform_volume_route_returns_aggregate_shape() {
+        ensure_state_dir();
+        let app = build_operator_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/platform/volume?bucket=day")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["buckets"].is_array());
+        assert!(json["summary"]["total_usd"].is_number());
     }
 
     #[tokio::test]

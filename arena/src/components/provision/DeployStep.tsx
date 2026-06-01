@@ -388,7 +388,7 @@ export function DeployStep({
                 </div>
                 {botRouteId ? (
                   <Link
-                    to={`/arena/bot/${encodeURIComponent(botRouteId)}`}
+                    to={`/arena/bot/${encodeURIComponent(botRouteId)}/performance`}
                     className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline mt-1"
                   >
                     View Bot &rarr;

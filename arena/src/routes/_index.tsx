@@ -8,6 +8,7 @@ import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { FilterBar } from '~/components/arena/FilterBar';
 import { LeaderboardTable } from '~/components/arena/LeaderboardTable';
 import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
+import { PlatformVolumeChart } from '~/components/arena/PlatformVolumeChart';
 import { Badge, Identicon } from '@tangle-network/blueprint-ui/components';
 import { SparklineChart } from '~/components/arena/SparklineChart';
 import { SkeletonCard } from '~/components/ui/Skeleton';
@@ -26,7 +27,7 @@ export const meta: MetaFunction = () => [
 function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
   return (
     <Link
-      to={`/arena/bot/${bot.id}`}
+      to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
       className="glass-card rounded-xl p-5 hover:border-violet-500/20 transition-all duration-200 block"
     >
       <div className="flex items-start justify-between gap-3 mb-4">
@@ -148,9 +149,9 @@ export default function IndexPage() {
   ];
 
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
-      <section className="glass-card-strong mb-6 overflow-hidden rounded-xl border border-arena-elements-dividerColor">
-        <div className="flex flex-col gap-5 p-5 lg:flex-row lg:items-center lg:justify-between">
+    <div className="mx-auto max-w-[1440px] px-4 py-4 sm:px-6">
+      <section className="mb-4 grid items-start gap-3 xl:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)]">
+        <div className="rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/48 p-4">
           <div className="min-w-0">
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <div className="inline-flex items-center gap-1.5 rounded border border-emerald-700/20 bg-emerald-700/10 px-2 py-1 dark:border-emerald-500/20 dark:bg-emerald-500/10">
@@ -166,43 +167,46 @@ export default function IndexPage() {
                 Validator gated
               </span>
             </div>
-            <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">
-              AI Trading Cloud
-            </h1>
-            <p className="mt-2 max-w-3xl text-base text-arena-elements-textSecondary">
-              Live agents, self-improving revisions, validation, and execution telemetry.
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Link
-              to="/provision"
-              className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-4 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
-            >
-              <span className="i-ph:plus-bold text-xs" />
-              Deploy
-            </Link>
-            <Link
-              to="/create"
-              className="inline-flex h-10 items-center gap-2 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60 px-4 text-sm font-display font-medium text-arena-elements-textPrimary transition-colors hover:bg-arena-elements-item-backgroundHover"
-            >
-              <span className="i-ph:chat-circle-dots text-sm" />
-              Create From Chat
-            </Link>
+            <div className="mt-3">
+              <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
+                AI Trading Cloud
+              </h1>
+              <p className="mt-1 max-w-2xl text-sm text-arena-elements-textSecondary sm:text-base">
+                Live agent capital, platform volume, and execution telemetry.
+              </p>
+            </div>
+            <div className="mt-4 flex shrink-0 flex-wrap items-center gap-2">
+              <Link
+                to="/provision"
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-3 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+              >
+                <span className="i-ph:plus-bold text-xs" />
+                Deploy
+              </Link>
+              <Link
+                to="/create"
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60 px-3 text-sm font-display font-medium text-arena-elements-textPrimary transition-colors hover:bg-arena-elements-item-backgroundHover"
+              >
+                <span className="i-ph:chat-circle-dots text-sm" />
+                Create From Chat
+              </Link>
+            </div>
           </div>
         </div>
-        <div className="grid border-t border-arena-elements-dividerColor/60 sm:grid-cols-2 lg:grid-cols-4">
+
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           {cloudStats.map((stat) => (
             <div
               key={stat.label}
-              className="border-b border-arena-elements-dividerColor/50 px-5 py-4 lg:border-b-0"
+              className="rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/48 px-4 py-3"
             >
               <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
                 {stat.label}
               </div>
-              <div className="mt-1 font-data text-2xl font-bold text-arena-elements-textPrimary">
+              <div className="mt-1 font-data text-2xl font-bold leading-none text-arena-elements-textPrimary">
                 {stat.value}
               </div>
-              <div className="mt-1 text-sm text-arena-elements-textSecondary">
+              <div className="mt-2 text-sm text-arena-elements-textSecondary">
                 {stat.sublabel}
               </div>
             </div>
@@ -210,7 +214,19 @@ export default function IndexPage() {
         </div>
       </section>
 
-      <LatestAgentTrades bots={leaderboardBots} />
+      <section className="mb-5 grid min-h-[440px] gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <PlatformVolumeChart
+          bots={leaderboardBots}
+          variant="command"
+          className="min-h-[440px]"
+        />
+        <LatestAgentTrades
+          bots={leaderboardBots}
+          variant="panel"
+          limit={8}
+          className="min-h-[440px]"
+        />
+      </section>
 
       <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>

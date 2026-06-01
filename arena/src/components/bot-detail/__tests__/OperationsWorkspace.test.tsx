@@ -1,0 +1,115 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+import { OperationsWorkspace } from '../OperationsWorkspace';
+import type { Bot } from '~/lib/types/bot';
+
+vi.mock('@tangle-network/blueprint-ui/components', () => ({
+  Badge: ({ children }: any) => <span>{children}</span>,
+}));
+
+vi.mock('../ReasoningTab', () => ({
+  ReasoningTab: () => <div>validation panel loaded</div>,
+}));
+
+vi.mock('../RevisionArenaTab', () => ({
+  RevisionArenaTab: () => <div>revisions panel loaded</div>,
+}));
+
+vi.mock('../ControlsTab', () => ({
+  ControlsTab: () => <div>controls panel loaded</div>,
+}));
+
+vi.mock('../EnvelopeTab', () => ({
+  EnvelopeTab: () => <div>envelope panel loaded</div>,
+}));
+
+vi.mock('../SecretsTab', () => ({
+  SecretsTab: () => <div>secrets panel loaded</div>,
+}));
+
+vi.mock('../TerminalTab', () => ({
+  TerminalTab: () => <div>terminal panel loaded</div>,
+}));
+
+vi.mock('../HyperliquidVaultTab', () => ({
+  HyperliquidVaultTab: () => <div>vault panel loaded</div>,
+}));
+
+function makeBot(overrides: Partial<Bot> = {}): Bot {
+  return {
+    id: 'bot-1',
+    serviceId: 42,
+    name: 'ETH Macro Scalper',
+    operatorAddress: '0x1111111111111111111111111111111111111111',
+    vaultAddress: '0x2222222222222222222222222222222222222222',
+    strategyType: 'hyperliquid_perp',
+    status: 'active',
+    createdAt: Date.parse('2026-06-01T12:00:00Z'),
+    chainId: 84532,
+    pnlPercent: 4.5,
+    pnlAbsolute: 1129,
+    sharpeRatio: 3.87,
+    maxDrawdown: 2.5,
+    winRate: 58,
+    totalTrades: 12,
+    tvl: 26_800,
+    avgValidatorScore: 91,
+    sparklineData: [],
+    sandboxId: 'sandbox-1',
+    sandboxState: 'Running',
+    lifecycleStatus: 'active',
+    controlAvailable: true,
+    tradingActive: true,
+    secretsConfigured: false,
+    submitterAddress: '0x3333333333333333333333333333333333333333',
+    paperTrade: true,
+    callId: 7,
+    source: 'operator',
+    verificationState: 'authoritative',
+    operatorKind: 'cloud',
+    operatorApiUrl: '/operator-api',
+    lastVerifiedAt: Date.parse('2026-06-01T12:34:00Z'),
+    validationTrust: 'envelope',
+    ...overrides,
+  };
+}
+
+describe('OperationsWorkspace', () => {
+  it('opens on an operations overview instead of a lazy validation spinner', () => {
+    render(
+      <OperationsWorkspace
+        bot={makeBot()}
+        botName="ETH Macro Scalper"
+        isLive
+        hasTerminal
+        isHyperliquidPerpBot
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Safety and runtime map' })).toBeInTheDocument();
+    expect(screen.getByText('Trading loop active')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Configure Secrets/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Review Envelope/i })).toBeInTheDocument();
+    expect(screen.queryByText('Loading Validation')).not.toBeInTheDocument();
+  });
+
+  it('lets overview action cards drill into existing operation panels', async () => {
+    const user = userEvent.setup();
+    render(
+      <OperationsWorkspace
+        bot={makeBot({ secretsConfigured: true })}
+        botName="ETH Macro Scalper"
+        isLive
+        hasTerminal
+        isHyperliquidPerpBot
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: /Inspect Validation/i }));
+
+    expect(await screen.findByRole('heading', { name: 'Validation' })).toBeInTheDocument();
+    expect(await screen.findByText('validation panel loaded')).toBeInTheDocument();
+  });
+});

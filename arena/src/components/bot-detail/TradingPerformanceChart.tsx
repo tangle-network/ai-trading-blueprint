@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AreaData, SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
+import type {
+  AreaData,
+  CandlestickData,
+  HistogramData,
+  SeriesMarker,
+  Time,
+  UTCTimestamp,
+} from 'lightweight-charts';
 import { formatNumber } from '~/lib/format';
 import type { useChartTheme } from '~/lib/hooks/useChartTheme';
+import type { MarketCandle } from '~/lib/hooks/useBotApi';
 import { loadLightweightCharts } from './lightweightChartRuntime';
 import type { PerformanceChartPoint } from './performanceChart';
 
 type ChartTheme = ReturnType<typeof useChartTheme>;
 
 export interface TradeChartMarker {
+  id: string;
+  timestampMs: number;
   tooltip: string;
   color: string;
   shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square';
@@ -17,8 +27,11 @@ export interface TradeChartMarker {
 
 interface TradingPerformanceChartProps {
   points: PerformanceChartPoint[];
-  tradeMarkers: Array<TradeChartMarker | null>;
+  tradeMarkers: TradeChartMarker[];
   chartTheme: ChartTheme;
+  mode?: 'nav' | 'market';
+  marketCandles?: MarketCandle[];
+  marketLabel?: string | null;
 }
 
 interface PreparedPoint {
@@ -29,9 +42,16 @@ interface PreparedPoint {
 interface HoverReadout {
   label: string;
   value: number;
+  detail?: string;
 }
 
 const SYNTHETIC_TIME_BASE_SECONDS = 1_700_000_000;
+const markerTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+});
 
 function formatAxisCurrency(value: number): string {
   return `$${formatNumber(value, { maximumFractionDigits: value >= 1000 ? 0 : 2 })}`;
@@ -43,7 +63,7 @@ function timeKey(time: Time): string {
   return `${time.year}-${time.month}-${time.day}`;
 }
 
-function prepareChartPoints(points: PerformanceChartPoint[]): PreparedPoint[] {
+function prepareBaseChartPoints(points: PerformanceChartPoint[]): PreparedPoint[] {
   let lastTimestamp = 0;
 
   return points.map((point, index) => {
@@ -60,6 +80,59 @@ function prepareChartPoints(points: PerformanceChartPoint[]): PreparedPoint[] {
   });
 }
 
+function estimateValueAtTimestamp(preparedPoints: PreparedPoint[], timestampMs: number): number {
+  if (preparedPoints.length === 0) return 0;
+  const timestampSeconds = timestampMs / 1000;
+  const sortedPoints = [...preparedPoints].sort((left, right) => left.time - right.time);
+  const firstPoint = sortedPoints[0];
+  const lastPoint = sortedPoints[sortedPoints.length - 1];
+
+  if (timestampSeconds <= firstPoint.time) return firstPoint.point.value;
+  if (timestampSeconds >= lastPoint.time) return lastPoint.point.value;
+
+  for (let index = 1; index < sortedPoints.length; index += 1) {
+    const previous = sortedPoints[index - 1];
+    const next = sortedPoints[index];
+    if (timestampSeconds > next.time) continue;
+
+    const span = next.time - previous.time;
+    if (span <= 0) return previous.point.value;
+
+    const progress = (timestampSeconds - previous.time) / span;
+    return previous.point.value + (next.point.value - previous.point.value) * progress;
+  }
+
+  return lastPoint.point.value;
+}
+
+function prepareChartPoints(
+  points: PerformanceChartPoint[],
+  tradeMarkers: TradeChartMarker[],
+): PreparedPoint[] {
+  const preparedPoints = prepareBaseChartPoints(points);
+  const existingTimes = new Set(preparedPoints.map((point) => point.time));
+
+  for (const marker of tradeMarkers) {
+    if (!Number.isFinite(marker.timestampMs)) continue;
+    const time = Math.floor(marker.timestampMs / 1000) as UTCTimestamp;
+    if (time <= 0 || existingTimes.has(time)) continue;
+
+    existingTimes.add(time);
+    preparedPoints.push({
+      time,
+      point: {
+        label: markerTimeFormatter.format(new Date(marker.timestampMs)),
+        tooltipLabel: marker.tooltip,
+        value: estimateValueAtTimestamp(preparedPoints, marker.timestampMs),
+        timestampMs: marker.timestampMs,
+        kind: 'snapshot',
+      },
+    });
+  }
+
+  return preparedPoints.sort((left, right) => left.time - right.time);
+}
+
 function toSeriesData(preparedPoints: PreparedPoint[]): AreaData<Time>[] {
   return preparedPoints.map(({ point, time }) => ({
     time,
@@ -67,46 +140,150 @@ function toSeriesData(preparedPoints: PreparedPoint[]): AreaData<Time>[] {
   }));
 }
 
-function toSeriesMarkers(
-  preparedPoints: PreparedPoint[],
-  tradeMarkers: Array<TradeChartMarker | null>,
-): Array<SeriesMarker<Time>> {
-  return tradeMarkers.flatMap((marker, index) => {
-    const preparedPoint = preparedPoints[index];
-    if (!marker || !preparedPoint) return [];
+function toMarketSeriesData(candles: MarketCandle[]): CandlestickData<Time>[] {
+  return candles.map((candle) => ({
+    time: Math.floor(candle.timestamp / 1000) as UTCTimestamp,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+  }));
+}
 
-    return [{
-      id: `${preparedPoint.time}-${index}-${marker.text}`,
-      time: preparedPoint.time,
+function toVolumeSeriesData(candles: MarketCandle[], chartTheme: ChartTheme): HistogramData<Time>[] {
+  return candles.map((candle) => ({
+    time: Math.floor(candle.timestamp / 1000) as UTCTimestamp,
+    value: candle.volume,
+    color: candle.close >= candle.open
+      ? `${chartTheme.positive}55`
+      : `${chartTheme.negative}55`,
+  }));
+}
+
+function nearestMarketTime(marketTimes: UTCTimestamp[], timestampMs: number): UTCTimestamp | null {
+  if (marketTimes.length === 0 || !Number.isFinite(timestampMs)) return null;
+  const target = Math.floor(timestampMs / 1000);
+  let nearest = marketTimes[0];
+  let bestDistance = Math.abs(nearest - target);
+
+  for (const time of marketTimes) {
+    const distance = Math.abs(time - target);
+    if (distance >= bestDistance) continue;
+    nearest = time;
+    bestDistance = distance;
+  }
+
+  return nearest;
+}
+
+function toSeriesMarkers(
+  tradeMarkers: TradeChartMarker[],
+): Array<SeriesMarker<Time>> {
+  const groups = new Map<string, { marker: TradeChartMarker; time: UTCTimestamp; count: number }>();
+
+  for (const marker of tradeMarkers) {
+    if (!Number.isFinite(marker.timestampMs)) continue;
+    const time = Math.floor(marker.timestampMs / 1000) as UTCTimestamp;
+    const key = `${time}:${marker.position}:${marker.shape}:${marker.color}:${marker.text}`;
+    const group = groups.get(key);
+    if (group) {
+      group.count += 1;
+      continue;
+    }
+    groups.set(key, { marker, time, count: 1 });
+  }
+
+  return Array.from(groups.values())
+    .sort((left, right) => left.time - right.time)
+    .map(({ marker, time, count }) => ({
+      id: `${marker.id}-${time}-${count}`,
+      time,
       position: marker.position,
       shape: marker.shape,
       color: marker.color,
-      text: marker.text,
-      size: 1.35,
-    }];
-  });
+      text: count > 1 ? `${marker.text} x${count}` : marker.text,
+      size: count > 1 ? 1.7 : 1.35,
+    }));
+}
+
+function toMarketSeriesMarkers(
+  tradeMarkers: TradeChartMarker[],
+  marketCandles: MarketCandle[],
+): Array<SeriesMarker<Time>> {
+  const marketTimes = marketCandles.map((candle) =>
+    Math.floor(candle.timestamp / 1000) as UTCTimestamp);
+  const groups = new Map<string, { marker: TradeChartMarker; time: UTCTimestamp; count: number }>();
+
+  for (const marker of tradeMarkers) {
+    const time = nearestMarketTime(marketTimes, marker.timestampMs);
+    if (time == null) continue;
+    const key = `${time}:${marker.position}:${marker.shape}:${marker.color}:${marker.text}`;
+    const group = groups.get(key);
+    if (group) {
+      group.count += 1;
+      continue;
+    }
+    groups.set(key, { marker, time, count: 1 });
+  }
+
+  return Array.from(groups.values())
+    .sort((left, right) => left.time - right.time)
+    .map(({ marker, time, count }) => ({
+      id: `${marker.id}-${time}-${count}`,
+      time,
+      position: marker.position,
+      shape: marker.shape,
+      color: marker.color,
+      text: count > 1 ? `${marker.text} x${count}` : marker.text,
+      size: count > 1 ? 1.8 : 1.45,
+    }));
+}
+
+function formatMarketReadout(candle: MarketCandle): string {
+  return `O ${formatAxisCurrency(candle.open)}  H ${formatAxisCurrency(candle.high)}  L ${formatAxisCurrency(candle.low)}`;
 }
 
 export function TradingPerformanceChart({
   points,
   tradeMarkers,
   chartTheme,
+  mode = 'nav',
+  marketCandles = [],
+  marketLabel,
 }: TradingPerformanceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverReadout, setHoverReadout] = useState<HoverReadout | null>(null);
-  const preparedPoints = useMemo(() => prepareChartPoints(points), [points]);
+  const activeMode = mode === 'market' && marketCandles.length > 0 ? 'market' : 'nav';
+  const preparedPoints = useMemo(
+    () => prepareChartPoints(points, tradeMarkers),
+    [points, tradeMarkers],
+  );
   const latestPoint = preparedPoints[preparedPoints.length - 1]?.point ?? null;
   const firstPoint = preparedPoints[0]?.point ?? null;
   const positive = latestPoint && firstPoint ? latestPoint.value >= firstPoint.value : true;
   const lineColor = positive ? chartTheme.positive : chartTheme.negative;
   const fillTopColor = positive ? chartTheme.positiveGradientStart : chartTheme.negativeGradientStart;
   const chartMarkers = useMemo(
-    () => toSeriesMarkers(preparedPoints, tradeMarkers),
-    [preparedPoints, tradeMarkers],
+    () => toSeriesMarkers(tradeMarkers),
+    [tradeMarkers],
+  );
+  const marketSeriesData = useMemo(
+    () => toMarketSeriesData(marketCandles),
+    [marketCandles],
+  );
+  const volumeSeriesData = useMemo(
+    () => toVolumeSeriesData(marketCandles, chartTheme),
+    [chartTheme, marketCandles],
+  );
+  const marketMarkers = useMemo(
+    () => toMarketSeriesMarkers(tradeMarkers, marketCandles),
+    [marketCandles, tradeMarkers],
   );
 
   useEffect(() => {
-    if (!containerRef.current || preparedPoints.length === 0) return;
+    if (!containerRef.current) return;
+    if (activeMode === 'nav' && preparedPoints.length === 0) return;
+    if (activeMode === 'market' && marketSeriesData.length === 0) return;
 
     let cancelled = false;
     let cleanup: (() => void) | null = null;
@@ -118,6 +295,10 @@ export function TradingPerformanceChart({
       const pointByTime = new Map(preparedPoints.map((preparedPoint) => [
         String(preparedPoint.time),
         preparedPoint.point,
+      ]));
+      const candleByTime = new Map(marketCandles.map((candle) => [
+        String(Math.floor(candle.timestamp / 1000)),
+        candle,
       ]));
       const chart = charts.createChart(containerRef.current, {
         autoSize: true,
@@ -139,10 +320,18 @@ export function TradingPerformanceChart({
         timeScale: {
           borderVisible: false,
           rightOffset: 6,
-          barSpacing: preparedPoints.length < 3 ? 80 : 12,
+          barSpacing: activeMode === 'market'
+            ? marketSeriesData.length < 20 ? 18 : 9
+            : preparedPoints.length < 3 ? 80 : 12,
           timeVisible: true,
           secondsVisible: false,
-          tickMarkFormatter: (time: Time) => pointByTime.get(timeKey(time))?.label ?? '',
+          tickMarkFormatter: (time: Time) => {
+            const key = timeKey(time);
+            const navPoint = pointByTime.get(key);
+            if (navPoint) return navPoint.label;
+            const candle = candleByTime.get(key);
+            return candle ? markerTimeFormatter.format(new Date(candle.timestamp)) : '';
+          },
         },
         crosshair: {
           mode: charts.CrosshairMode.Magnet,
@@ -173,37 +362,70 @@ export function TradingPerformanceChart({
         },
       });
 
-      const areaSeries = chart.addSeries(charts.AreaSeries, {
-        lineColor,
-        topColor: fillTopColor,
-        bottomColor: chartTheme.gradientEnd,
-        lineWidth: 2,
-        crosshairMarkerVisible: true,
-        crosshairMarkerRadius: 5,
-        crosshairMarkerBorderColor: chartTheme.hoverBorderColor,
-        crosshairMarkerBackgroundColor: lineColor,
-        lastPriceAnimation: charts.LastPriceAnimationMode.OnDataUpdate,
-        lastValueVisible: true,
-        priceLineVisible: true,
-        priceLineColor: lineColor,
-        priceLineWidth: 1,
-        priceLineStyle: charts.LineStyle.Dashed,
-      });
-
-      areaSeries.setData(data);
-      charts.createSeriesMarkers(areaSeries, chartMarkers, {
-        autoScale: true,
-      });
-
-      if (data.length > 1) {
-        areaSeries.createPriceLine({
-          price: data[0].value,
-          color: chartTheme.tickColor,
-          lineWidth: 1,
-          lineStyle: charts.LineStyle.Dashed,
-          axisLabelVisible: false,
-          title: 'Start NAV',
+      if (activeMode === 'market') {
+        const candleSeries = chart.addSeries(charts.CandlestickSeries, {
+          upColor: chartTheme.positive,
+          downColor: chartTheme.negative,
+          borderUpColor: chartTheme.positive,
+          borderDownColor: chartTheme.negative,
+          wickUpColor: chartTheme.positive,
+          wickDownColor: chartTheme.negative,
+          lastValueVisible: true,
+          priceLineVisible: true,
+          priceLineColor: marketSeriesData[marketSeriesData.length - 1].close >= marketSeriesData[0].open
+            ? chartTheme.positive
+            : chartTheme.negative,
+          priceLineWidth: 1,
+          priceLineStyle: charts.LineStyle.Dashed,
         });
+        const volumeSeries = chart.addSeries(charts.HistogramSeries, {
+          priceFormat: { type: 'volume' },
+          priceScaleId: 'volume',
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+        chart.priceScale('volume').applyOptions({
+          scaleMargins: { top: 0.82, bottom: 0 },
+          borderVisible: false,
+        });
+        candleSeries.setData(marketSeriesData);
+        volumeSeries.setData(volumeSeriesData);
+        charts.createSeriesMarkers(candleSeries, marketMarkers, {
+          autoScale: true,
+        });
+      } else {
+        const areaSeries = chart.addSeries(charts.AreaSeries, {
+          lineColor,
+          topColor: fillTopColor,
+          bottomColor: chartTheme.gradientEnd,
+          lineWidth: 2,
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: 5,
+          crosshairMarkerBorderColor: chartTheme.hoverBorderColor,
+          crosshairMarkerBackgroundColor: lineColor,
+          lastPriceAnimation: charts.LastPriceAnimationMode.OnDataUpdate,
+          lastValueVisible: true,
+          priceLineVisible: true,
+          priceLineColor: lineColor,
+          priceLineWidth: 1,
+          priceLineStyle: charts.LineStyle.Dashed,
+        });
+
+        areaSeries.setData(data);
+        charts.createSeriesMarkers(areaSeries, chartMarkers, {
+          autoScale: true,
+        });
+
+        if (data.length > 1) {
+          areaSeries.createPriceLine({
+            price: data[0].value,
+            color: chartTheme.tickColor,
+            lineWidth: 1,
+            lineStyle: charts.LineStyle.Dashed,
+            axisLabelVisible: false,
+            title: 'Start NAV',
+          });
+        }
       }
 
       chart.timeScale().fitContent();
@@ -214,7 +436,22 @@ export function TradingPerformanceChart({
           return;
         }
 
-        const point = pointByTime.get(timeKey(param.time));
+        const key = timeKey(param.time);
+        if (activeMode === 'market') {
+          const candle = candleByTime.get(key);
+          if (!candle) {
+            setHoverReadout(null);
+            return;
+          }
+          setHoverReadout({
+            label: marketLabel ?? candle.token,
+            value: candle.close,
+            detail: formatMarketReadout(candle),
+          });
+          return;
+        }
+
+        const point = pointByTime.get(key);
         if (!point) {
           setHoverReadout(null);
           return;
@@ -239,6 +476,7 @@ export function TradingPerformanceChart({
       cleanup?.();
     };
   }, [
+    activeMode,
     chartMarkers,
     chartTheme.gradientEnd,
     chartTheme.gridColor,
@@ -247,18 +485,30 @@ export function TradingPerformanceChart({
     chartTheme.tooltipBg,
     fillTopColor,
     lineColor,
+    marketCandles,
+    marketLabel,
+    marketMarkers,
+    marketSeriesData,
     preparedPoints,
+    volumeSeriesData,
   ]);
 
-  const readout = hoverReadout ?? (latestPoint
+  const latestMarketCandle = marketCandles[marketCandles.length - 1] ?? null;
+  const readout = hoverReadout ?? (activeMode === 'market' && latestMarketCandle
     ? {
-        label: latestPoint.tooltipLabel,
-        value: latestPoint.value,
+        label: marketLabel ?? latestMarketCandle.token,
+        value: latestMarketCandle.close,
+        detail: formatMarketReadout(latestMarketCandle),
       }
-    : null);
+    : latestPoint
+      ? {
+          label: latestPoint.tooltipLabel,
+          value: latestPoint.value,
+        }
+      : null);
 
   return (
-    <div className="relative h-full min-h-[520px] w-full overflow-hidden rounded-lg" data-testid="tradingview-performance-chart">
+    <div className="relative h-full min-h-[320px] w-full overflow-hidden rounded-lg" data-testid="tradingview-performance-chart">
       <div ref={containerRef} className="absolute inset-0" />
       {readout && (
         <div className="pointer-events-none absolute left-4 top-4 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/88 px-3 py-2 shadow-[0_12px_34px_rgba(0,0,0,0.22)] backdrop-blur">
@@ -268,6 +518,11 @@ export function TradingPerformanceChart({
           <div className="mt-1 font-data text-xl font-bold text-arena-elements-textPrimary">
             {formatAxisCurrency(readout.value)}
           </div>
+          {readout.detail && (
+            <div className="mt-1 font-data text-[11px] text-arena-elements-textSecondary">
+              {readout.detail}
+            </div>
+          )}
         </div>
       )}
       <a

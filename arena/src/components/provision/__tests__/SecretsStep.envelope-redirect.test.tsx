@@ -3,7 +3,7 @@
  *
  * The provision wizard's SecretsStep renders a "View Bot" link once a bot
  * activates. When the operator chose `validationTrust=envelope` during the
- * Configure step, that link must include `?tab=envelope` so the bot detail
+ * Configure step, that link must open the operations envelope panel so the bot detail
  * page opens directly on the Envelope tab — the operator still needs to sign
  * and submit the first envelope before trading is enabled.
  */
@@ -89,14 +89,14 @@ describe('SecretsStep post-provision redirect', () => {
       name: /Sign Envelope to Enable Trading/i,
     });
     expect(link).toBeInTheDocument();
-    expect(link).toHaveAttribute('href', '/arena/bot/bot-abc?tab=envelope');
+    expect(link).toHaveAttribute('href', '/arena/bot/bot-abc/operations?panel=envelope');
   });
 
   it('routes to the default bot detail when validationTrust is per_trade', () => {
     render(<SecretsStep {...defaultProps({ validationTrust: 'per_trade' })} />);
 
     const link = screen.getByRole('link', { name: /View Bot/i });
-    expect(link).toHaveAttribute('href', '/arena/bot/bot-abc');
+    expect(link).toHaveAttribute('href', '/arena/bot/bot-abc/performance');
     expect(link).not.toHaveAttribute('href', expect.stringContaining('tab='));
   });
 
@@ -104,7 +104,7 @@ describe('SecretsStep post-provision redirect', () => {
     render(<SecretsStep {...defaultProps()} />);
 
     const link = screen.getByRole('link', { name: /View Bot/i });
-    expect(link).toHaveAttribute('href', '/arena/bot/bot-abc');
+    expect(link).toHaveAttribute('href', '/arena/bot/bot-abc/performance');
   });
 
   it('shows the envelope reminder copy only in envelope mode', () => {

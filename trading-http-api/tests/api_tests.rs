@@ -2100,6 +2100,99 @@ async fn test_trades_pagination() {
     assert_eq!(trades2.len(), 1);
 }
 
+#[tokio::test]
+async fn test_platform_volume_aggregates_priced_trades_across_bots() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+    let base = chrono::Utc::now() + chrono::Duration::days(90);
+    let from = base - chrono::Duration::minutes(5);
+    let to = base + chrono::Duration::hours(2);
+
+    let bot_a = format!("volume-a-{}", uuid::Uuid::new_v4());
+    let bot_b = format!("volume-b-{}", uuid::Uuid::new_v4());
+    let mut paper = synthetic_paper_trade(
+        &bot_a,
+        "swap",
+        "USDC",
+        "WETH",
+        "125.50",
+        Some("0.05"),
+        "uniswap_v3",
+    );
+    paper.timestamp = base;
+    paper.notional_usd = Some("125.50".to_string());
+    paper.paper_trade = true;
+
+    let mut live = synthetic_paper_trade(
+        &bot_b,
+        "swap",
+        "USDC",
+        "WETH",
+        "75",
+        Some("0.03"),
+        "uniswap_v3",
+    );
+    live.timestamp = base + chrono::Duration::minutes(30);
+    live.notional_usd = Some("75".to_string());
+    live.paper_trade = false;
+
+    let mut unpriced = synthetic_paper_trade(
+        &bot_b,
+        "swap",
+        "USDC",
+        "WETH",
+        "10",
+        Some("0.004"),
+        "uniswap_v3",
+    );
+    unpriced.timestamp = base + chrono::Duration::hours(1);
+    unpriced.notional_usd = None;
+
+    trading_http_api::trade_store::record_trade(paper)
+        .await
+        .unwrap();
+    trading_http_api::trade_store::record_trade(live)
+        .await
+        .unwrap();
+    trading_http_api::trade_store::record_trade(unpriced)
+        .await
+        .unwrap();
+
+    let uri = format!(
+        "/platform/volume?from={}&to={}&bucket=hour",
+        from.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        to.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["bucket"], "hour");
+    assert_eq!(json["summary"]["total_usd"].as_f64().unwrap(), 200.5);
+    assert_eq!(json["summary"]["paper_usd"].as_f64().unwrap(), 125.5);
+    assert_eq!(json["summary"]["live_usd"].as_f64().unwrap(), 75.0);
+    assert_eq!(json["summary"]["priced_trade_count"], 2);
+    assert_eq!(json["summary"]["total_trade_count"], 3);
+
+    let buckets = json["buckets"].as_array().unwrap();
+    let active_buckets: Vec<_> = buckets
+        .iter()
+        .filter(|bucket| bucket["total_trade_count"].as_u64().unwrap_or(0) > 0)
+        .collect();
+    assert_eq!(active_buckets.len(), 2);
+}
+
 // ── Metrics tests ───────────────────────────────────────────────────────────
 
 #[tokio::test]

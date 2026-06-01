@@ -10,6 +10,7 @@ import { Button } from "@tangle-network/blueprint-ui/components";
 import { ChatTranscript } from "~/components/bot-detail/chat/ChatTranscript";
 import { useBotSessionStream } from "~/lib/hooks/useBotSessionStream";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
+import { normalizeSessionList } from "~/lib/sandboxSessions";
 import {
   buildBotScopedPathForDeploymentKind,
   getDeploymentKindForOperatorKind,
@@ -406,7 +407,8 @@ export function ChatTab({
   const chatCacheKey = `${baseApiUrl}::${botId}`;
 
   const sessionToken = canWrite ? token : null;
-  const { data: sessions = [] } = useSessions(apiUrl, sessionToken);
+  const { data: rawSessions } = useSessions(apiUrl, sessionToken);
+  const sessions = useMemo(() => normalizeSessionList(rawSessions), [rawSessions]);
   const deleteMutation = useDeleteSession(apiUrl, sessionToken);
   const renameMutation = useRenameSession(apiUrl, sessionToken);
   const createMutation = useCreateSession(apiUrl, sessionToken);
@@ -598,6 +600,7 @@ export function ChatTab({
           ],
     [primarySessionId, sessions],
   );
+  const showSessionSidebar = canWrite || sessionItems.length > 1;
 
   void operatorAddress;
 
@@ -659,30 +662,32 @@ export function ChatTab({
       <div
         className={`flex h-full min-h-0 min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
       >
-        <SessionWorkspaceSidebar
-          sessions={sessionItems}
-          activeSessionId={activeSessionId}
-          primarySessionId={primarySessionId}
-          isStreaming={stream.isStreaming}
-          stacked={isStackedLayout}
-          compactStacked={immersive}
-          onSelect={setActiveSessionId}
-          onDelete={(id) => {
-            if (!canWrite) return;
-            if (confirm("Delete this session?")) {
-              deleteMutation.mutate(id);
-              if (id === activeSessionId) setActiveSessionId(primarySessionId);
+        {showSessionSidebar && (
+          <SessionWorkspaceSidebar
+            sessions={sessionItems}
+            activeSessionId={activeSessionId}
+            primarySessionId={primarySessionId}
+            isStreaming={stream.isStreaming}
+            stacked={isStackedLayout}
+            compactStacked={immersive}
+            onSelect={setActiveSessionId}
+            onDelete={(id) => {
+              if (!canWrite) return;
+              if (confirm("Delete this session?")) {
+                deleteMutation.mutate(id);
+                if (id === activeSessionId) setActiveSessionId(primarySessionId);
+              }
+            }}
+            onRename={(id, title) =>
+              canWrite ? renameMutation.mutate({ sessionId: id, title }) : undefined
             }
-          }}
-          onRename={(id, title) =>
-            canWrite ? renameMutation.mutate({ sessionId: id, title }) : undefined
-          }
-          onCreate={() => {
-            if (!canWrite) return;
-            void createSession("New Chat");
-          }}
-          canWrite={canWrite}
-        />
+            onCreate={() => {
+              if (!canWrite) return;
+              void createSession("New Chat");
+            }}
+            canWrite={canWrite}
+          />
+        )}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 px-5 py-3 bg-arena-elements-background-depth-1/25">

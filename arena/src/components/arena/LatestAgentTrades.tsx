@@ -9,6 +9,9 @@ import { getTradePairLabel, VENUE_CONFIG, type Trade } from '~/lib/types/trade';
 
 interface LatestAgentTradesProps {
   bots: Bot[];
+  className?: string;
+  limit?: number;
+  variant?: 'standard' | 'panel';
 }
 
 function formatAge(timestamp: number): string {
@@ -52,63 +55,77 @@ function marketLabel(trade: Trade): string | null {
   return null;
 }
 
-export function LatestAgentTrades({ bots }: LatestAgentTradesProps) {
+export function LatestAgentTrades({
+  bots,
+  className = '',
+  limit,
+  variant = 'standard',
+}: LatestAgentTradesProps) {
   const { trades, isLoading, candidateCount } = useLatestAgentTrades(bots);
+  const isPanel = variant === 'panel';
+  const visibleTrades = limit ? trades.slice(0, limit) : trades;
 
   return (
-    <section className="mb-6 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/42">
+    <section className={`${isPanel ? 'flex h-full min-h-0 flex-col' : 'mb-6'} rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/42 ${className}`}>
       <div className="flex items-center justify-between gap-4 border-b border-arena-elements-dividerColor/60 px-4 py-3 sm:px-5">
         <div>
           <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-            Latest Trades
+            {isPanel ? 'Execution Tape' : 'Latest Trades'}
           </h2>
           <p className="mt-0.5 text-sm text-arena-elements-textSecondary">
             Agent execution feed
           </p>
         </div>
         <Badge variant="outline" className="font-data text-xs">
-          {trades.length > 0 ? `${trades.length} recent` : `${candidateCount} agents`}
+          {trades.length > 0 ? `${visibleTrades.length} recent` : `${candidateCount} agents`}
         </Badge>
       </div>
 
       {isLoading ? (
-        <div className="divide-y divide-arena-elements-dividerColor/50">
+        <div className={`${isPanel ? 'min-h-0 flex-1 overflow-hidden' : ''} divide-y divide-arena-elements-dividerColor/50`}>
           {Array.from({ length: 6 }).map((_, index) => (
-            <div key={index} className="grid grid-cols-[1fr_auto] gap-4 px-4 py-3 sm:px-5 lg:grid-cols-[7rem_1.3fr_1.4fr_6rem_5rem]">
+            <div key={index} className={`grid grid-cols-[1fr_auto] gap-4 px-4 py-3 sm:px-5 ${isPanel ? '' : 'lg:grid-cols-[7rem_1.3fr_1.4fr_6rem_5rem]'}`}>
               <Skeleton className="h-7 w-20" />
               <Skeleton className="h-7 w-full" />
-              <Skeleton className="hidden h-7 w-full lg:block" />
-              <Skeleton className="hidden h-7 w-16 lg:block" />
+              {!isPanel && <Skeleton className="hidden h-7 w-full lg:block" />}
+              {!isPanel && <Skeleton className="hidden h-7 w-16 lg:block" />}
               <Skeleton className="h-7 w-12" />
             </div>
           ))}
         </div>
-      ) : trades.length === 0 ? (
-        <div className="px-5 py-10 text-center text-sm text-arena-elements-textSecondary">
+      ) : visibleTrades.length === 0 ? (
+        <div className={`${isPanel ? 'flex min-h-0 flex-1 items-center justify-center' : 'px-5 py-10'} text-center text-sm text-arena-elements-textSecondary`}>
           No recent trades reported by active agents.
         </div>
       ) : (
-        <div className="divide-y divide-arena-elements-dividerColor/50">
-          {trades.map(({ trade, bot }) => {
+        <div className={`${isPanel ? 'min-h-0 flex-1 overflow-y-auto' : ''} divide-y divide-arena-elements-dividerColor/50`}>
+          {visibleTrades.map(({ trade, bot }) => {
             const venue = VENUE_CONFIG[trade.venue];
             const label = marketLabel(trade);
             const showStatus = trade.status.toLowerCase() !== venue.label.toLowerCase();
             return (
               <Link
                 key={`${bot.id}:${trade.id}`}
-                to={`/arena/bot/${encodeURIComponent(bot.id)}?tab=trades`}
-                className="group grid grid-cols-[1fr_auto] gap-3 px-4 py-3 transition-colors hover:bg-arena-elements-item-backgroundHover sm:px-5 lg:grid-cols-[7rem_1.3fr_1.4fr_6rem_5rem]"
+                to={`/arena/bot/${encodeURIComponent(bot.id)}/portfolio`}
+                className={`group grid grid-cols-[1fr_auto] gap-3 px-4 py-3 transition-colors hover:bg-arena-elements-item-backgroundHover sm:px-5 ${isPanel ? '' : 'lg:grid-cols-[7rem_1.3fr_1.4fr_6rem_5rem]'}`}
               >
-                <div className="flex items-center gap-2">
+                <div className={isPanel ? 'col-span-2 flex items-center justify-between gap-2' : 'flex items-center gap-2'}>
                   <span className={`inline-flex h-7 min-w-[3.75rem] items-center justify-center rounded-md px-2 font-data text-xs font-bold ${actionTone(trade.action)}`}>
                     {actionLabel(trade.action)}
                   </span>
-                  <span className="font-data text-xs text-arena-elements-textTertiary lg:hidden">
-                    {formatAge(trade.timestamp)}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {isPanel && (
+                      <span className="font-data text-sm font-semibold text-arena-elements-textPrimary">
+                        {formatNotional(trade.notionalUsd)}
+                      </span>
+                    )}
+                    <span className="font-data text-xs text-arena-elements-textTertiary lg:hidden">
+                      {formatAge(trade.timestamp)}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="min-w-0">
+                <div className={isPanel ? 'col-span-2 min-w-0' : 'min-w-0'}>
                   <div className="flex min-w-0 items-center gap-2">
                     <Identicon address={bot.operatorAddress as Address} size={20} />
                     <span className="truncate font-display text-base font-semibold text-arena-elements-textPrimary group-hover:text-violet-700 dark:group-hover:text-violet-300">
@@ -120,7 +137,7 @@ export function LatestAgentTrades({ bots }: LatestAgentTradesProps) {
                   </div>
                 </div>
 
-                <div className="col-span-2 min-w-0 lg:col-span-1">
+                <div className={`col-span-2 min-w-0 ${isPanel ? '' : 'lg:col-span-1'}`}>
                   {label ? (
                     <div className="truncate font-display text-base font-medium text-arena-elements-textPrimary" title={label}>
                       {label}
@@ -137,11 +154,11 @@ export function LatestAgentTrades({ bots }: LatestAgentTradesProps) {
                   </div>
                 </div>
 
-                <div className="hidden items-center justify-end font-data text-base font-semibold text-arena-elements-textPrimary lg:flex">
+                <div className={`${isPanel ? 'hidden' : 'hidden lg:flex'} items-center justify-end font-data text-base font-semibold text-arena-elements-textPrimary`}>
                   {formatNotional(trade.notionalUsd)}
                 </div>
 
-                <div className="hidden items-center justify-end font-data text-sm text-arena-elements-textTertiary lg:flex">
+                <div className={`${isPanel ? 'hidden' : 'hidden lg:flex'} items-center justify-end font-data text-sm text-arena-elements-textTertiary`}>
                   {formatAge(trade.timestamp)}
                 </div>
               </Link>

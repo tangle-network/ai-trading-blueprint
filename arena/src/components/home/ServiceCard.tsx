@@ -199,7 +199,7 @@ export function ServiceCard({
                       ) : (
                         <Link
                           key={bot.id}
-                          to={`/arena/bot/${bot.id}`}
+                          to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
                           className="flex items-center gap-2 px-2 py-1 rounded bg-arena-elements-background-depth-3/50 hover:bg-arena-elements-background-depth-3 transition-colors"
                         >
                           {inner}

@@ -14,9 +14,23 @@ const lightweightChartMock = vi.hoisted(() => {
     createPriceLine: vi.fn(),
     setData: vi.fn(),
   };
+  const candleSeries = {
+    setData: vi.fn(),
+  };
+  const volumeSeries = {
+    setData: vi.fn(),
+  };
+  const priceScale = {
+    applyOptions: vi.fn(),
+  };
   const chart = {
-    addSeries: vi.fn(() => areaSeries),
+    addSeries: vi.fn((seriesType: string) => {
+      if (seriesType === 'CandlestickSeries') return candleSeries;
+      if (seriesType === 'HistogramSeries') return volumeSeries;
+      return areaSeries;
+    }),
     remove: vi.fn(),
+    priceScale: vi.fn(() => priceScale),
     subscribeCrosshairMove: vi.fn(),
     timeScale: vi.fn(() => ({ fitContent })),
     unsubscribeCrosshairMove: vi.fn(),
@@ -24,20 +38,33 @@ const lightweightChartMock = vi.hoisted(() => {
 
   return {
     AreaSeries: 'AreaSeries',
+    CandlestickSeries: 'CandlestickSeries',
     ColorType: { Solid: 'solid' },
     CrosshairMode: { Magnet: 1 },
+    HistogramSeries: 'HistogramSeries',
     LastPriceAnimationMode: { OnDataUpdate: 2 },
     LineStyle: { Dashed: 2, Dotted: 1 },
     areaSeries,
+    candleSeries,
     chart,
     createChart: vi.fn(() => chart),
     createSeriesMarkers: vi.fn(),
     fitContent,
+    priceScale,
+    volumeSeries,
   };
 });
+const operatorAuthMock = vi.hoisted(() => ({
+  isAuthenticated: false,
+  token: null as string | null,
+}));
 
 vi.mock('../lightweightChartRuntime', () => ({
   loadLightweightCharts: vi.fn(async () => lightweightChartMock),
+}));
+
+vi.mock('../PerformanceCopilotPanel', () => ({
+  PerformanceCopilotPanel: () => <div>Owner chart copilot</div>,
 }));
 
 let mockMetrics: Array<Record<string, unknown>> | undefined = [];
@@ -48,6 +75,15 @@ let mockMetricsSummary: Record<string, number> | undefined = {
 };
 let mockPortfolio: Record<string, unknown> | undefined;
 let mockTrades: Trade[] = [];
+let mockMarketCandles: Array<{
+  timestamp: number;
+  token: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}> = [];
 let metricsIsLoading = false;
 let metricsIsError = false;
 
@@ -62,6 +98,9 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
   }),
   useBotTrades: () => ({
     data: mockTrades,
+  }),
+  useBotMarketCandles: () => ({
+    data: mockMarketCandles,
   }),
   useBotPortfolio: () => ({
     data: mockPortfolio,
@@ -109,14 +148,14 @@ function makeTrade(overrides: Partial<Trade>): Trade {
 
 vi.mock('~/lib/hooks/useOperatorAuth', () => ({
   useOperatorAuth: () => ({
-    token: 'test-token',
-    isAuthenticated: true,
+    token: operatorAuthMock.token,
+    isAuthenticated: operatorAuthMock.isAuthenticated,
     isAuthenticating: false,
     authenticate: vi.fn(),
     clearCachedToken: vi.fn(),
     error: null,
-    getCachedToken: vi.fn(() => 'test-token'),
-    getToken: vi.fn(async () => 'test-token'),
+    getCachedToken: vi.fn(() => operatorAuthMock.token),
+    getToken: vi.fn(async () => operatorAuthMock.token),
   }),
 }));
 
@@ -175,16 +214,23 @@ describe('PerformanceTab', () => {
     metricsIsError = false;
     mockPortfolio = undefined;
     mockTrades = [];
+    mockMarketCandles = [];
+    operatorAuthMock.isAuthenticated = false;
+    operatorAuthMock.token = null;
     lightweightChartMock.areaSeries.createPriceLine.mockClear();
     lightweightChartMock.areaSeries.setData.mockClear();
+    lightweightChartMock.candleSeries.setData.mockClear();
     lightweightChartMock.chart.addSeries.mockClear();
     lightweightChartMock.chart.remove.mockClear();
+    lightweightChartMock.chart.priceScale.mockClear();
     lightweightChartMock.chart.subscribeCrosshairMove.mockClear();
     lightweightChartMock.chart.timeScale.mockClear();
     lightweightChartMock.chart.unsubscribeCrosshairMove.mockClear();
     lightweightChartMock.createChart.mockClear();
     lightweightChartMock.createSeriesMarkers.mockClear();
     lightweightChartMock.fitContent.mockClear();
+    lightweightChartMock.priceScale.applyOptions.mockClear();
+    lightweightChartMock.volumeSeries.setData.mockClear();
   });
 
   it('shows an unavailable state when verified metrics fail to load', () => {
@@ -242,7 +288,7 @@ describe('PerformanceTab', () => {
       />,
     );
 
-    expect(screen.getByText('$-7.87')).toBeInTheDocument();
+    expect(screen.getAllByText('$-7.87').length).toBeGreaterThan(0);
   });
 
   it('renders the TradingView performance chart with buy and sell trade markers', async () => {
@@ -295,6 +341,143 @@ describe('PerformanceTab', () => {
       ]),
       { autoScale: true },
     );
+  });
+
+  it('does not collapse dense trade history onto sparse metric checkpoints', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+      {
+        timestamp: '2026-04-23T11:00:00.000Z',
+        account_value_usd: 10080,
+        realized_pnl: 80,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 49,
+      },
+    ];
+    mockTrades = Array.from({ length: 49 }, (_, index) => makeTrade({
+      id: `trade-${index + 1}`,
+      action: index % 2 === 0 ? 'buy' : 'sell',
+      timestamp: Date.parse(`2026-04-23T10:${String(index + 5).padStart(2, '0')}:00.000Z`),
+    }));
+
+    render(<PerformanceTab bot={makeBot({ totalTrades: 49 })} isLive />);
+
+    await waitFor(() => expect(lightweightChartMock.createSeriesMarkers).toHaveBeenCalled());
+    const markerCall = lightweightChartMock.createSeriesMarkers.mock.calls[0];
+    const markers = markerCall[1] as Array<{ text?: string; time: number }>;
+    expect(markers).toHaveLength(49);
+    expect(new Set(markers.map((marker) => marker.time)).size).toBe(49);
+
+    const seriesData = lightweightChartMock.areaSeries.setData.mock.calls[0][0] as Array<{ time: number; value: number }>;
+    expect(seriesData.length).toBeGreaterThan(2);
+  });
+
+  it('renders real market candles and volume when OHLCV exists for the traded venue', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockTrades = [
+      makeTrade({
+        id: 'open-eth',
+        action: 'open_long',
+        timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
+        hyperliquidMetadata: {
+          asset: 'ETH',
+          assetSize: '0.03',
+          orderType: 'market',
+          reduceOnly: false,
+        },
+        venue: 'perp',
+      }),
+    ];
+    mockMarketCandles = [
+      {
+        timestamp: Date.parse('2026-04-23T10:00:00.000Z'),
+        token: 'ETH',
+        open: 3300,
+        high: 3320,
+        low: 3294,
+        close: 3315,
+        volume: 120,
+      },
+      {
+        timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
+        token: 'ETH',
+        open: 3315,
+        high: 3332,
+        low: 3310,
+        close: 3324,
+        volume: 165,
+      },
+    ];
+
+    render(
+      <PerformanceTab
+        bot={makeBot({
+          strategyType: 'hyperliquid_perp',
+          strategyConfig: { asset: 'ETH' },
+        })}
+        isLive
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'ETH' })).toBeInTheDocument();
+    expect(screen.getByText('Market')).toBeInTheDocument();
+    await waitFor(() => expect(lightweightChartMock.candleSeries.setData).toHaveBeenCalled());
+    expect(lightweightChartMock.candleSeries.setData).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ open: 3300, high: 3320, low: 3294, close: 3315 }),
+        expect.objectContaining({ open: 3315, high: 3332, low: 3310, close: 3324 }),
+      ]),
+    );
+    expect(lightweightChartMock.volumeSeries.setData).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ value: 120 }),
+        expect.objectContaining({ value: 165 }),
+      ]),
+    );
+    expect(lightweightChartMock.createSeriesMarkers).toHaveBeenCalledWith(
+      lightweightChartMock.candleSeries,
+      expect.arrayContaining([
+        expect.objectContaining({ text: 'BUY', shape: 'arrowUp', position: 'belowBar' }),
+      ]),
+      { autoScale: true },
+    );
+  });
+
+  it('shows the owner copilot instead of the public trade tape when operator auth is active', async () => {
+    operatorAuthMock.isAuthenticated = true;
+    operatorAuthMock.token = 'test-token';
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+
+    render(<PerformanceTab bot={makeBot()} isLive />);
+
+    expect(await screen.findByText('Owner chart copilot')).toBeInTheDocument();
+    expect(screen.queryByText('Trade Tape')).not.toBeInTheDocument();
   });
 
   it('labels live NAV separately when it is newer than the latest checkpoint', () => {

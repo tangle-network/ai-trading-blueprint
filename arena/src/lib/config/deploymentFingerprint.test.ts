@@ -39,12 +39,14 @@ describe('deployment fingerprint helpers', () => {
       VITE_CLOUD_OPERATOR_API_URL: 'https://cloud.test',
       VITE_INSTANCE_OPERATOR_API_URL: 'https://instance.test',
       VITE_TEE_OPERATOR_API_URL: 'https://tee.test',
+      VITE_TRADING_OPERATOR_API_URLS: 'https://third-party-a.test,https://third-party-b.test',
       VITE_TRADING_BLUEPRINT: '0xdef',
     });
 
     expect(fingerprint).toContain('31337');
     expect(fingerprint).toContain('0xabc');
     expect(fingerprint).toContain('https://operator.test');
+    expect(fingerprint).toContain('https://third-party-a.test');
   });
 
   it('prefers an explicit deployment fingerprint when present', () => {

@@ -22,6 +22,7 @@ interface TradeHistoryTabProps {
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
   assetMetadata?: TokenMetadata[];
+  compact?: boolean;
 }
 
 const EXPLORER_URLS: Record<number, { name: string; base: string }> = {
@@ -39,16 +40,20 @@ function explorerUrl(txHash: string, chainId?: number): string | null {
   return explorer ? `${explorer.base}${txHash}` : null;
 }
 
-function TradeTableHead() {
+function TradeTableHead({ compact = false }: { compact?: boolean }) {
   return (
     <TableHeader>
       <TableRow className="hover:bg-transparent">
-        <TableHead className="w-44 py-4 text-base">Time</TableHead>
-        <TableHead className="w-40 py-4 text-base">Action</TableHead>
-        <TableHead className="min-w-[420px] py-4 text-base">Trade</TableHead>
-        <TableHead className="hidden py-4 text-right text-base sm:table-cell">Validation</TableHead>
-        <TableHead className="py-4 text-base">Ref</TableHead>
-        <TableHead className="py-4 text-base">Status</TableHead>
+        <TableHead className={compact ? 'w-32 py-4 text-base' : 'w-44 py-4 text-base'}>Time</TableHead>
+        <TableHead className={compact ? 'w-40 py-4 text-base' : 'w-40 py-4 text-base'}>Action</TableHead>
+        <TableHead className={compact ? 'py-4 text-base' : 'min-w-[420px] py-4 text-base'}>Trade</TableHead>
+        {!compact && (
+          <>
+            <TableHead className="hidden py-4 text-right text-base sm:table-cell">Validation</TableHead>
+            <TableHead className="py-4 text-base">Ref</TableHead>
+            <TableHead className="py-4 text-base">Status</TableHead>
+          </>
+        )}
       </TableRow>
     </TableHeader>
   );
@@ -94,7 +99,7 @@ function hyperliquidSizeLabel(trade: Trade): string | null {
   const asset = trade.hyperliquidMetadata?.asset?.trim();
   const size = trade.hyperliquidMetadata?.assetSize?.trim();
   if (!asset || !size) return null;
-  return `Size: ${size} ${asset.toUpperCase()}`;
+  return `${size} ${asset.toUpperCase()}`;
 }
 
 function getStatusLabel(status: TradeStatus): string {
@@ -198,20 +203,36 @@ function renderExecutionRef(trade: Trade) {
 
 function renderHyperliquidTradeCell(trade: Trade) {
   const marketLabel = hyperliquidMarketLabel(trade);
+  const assetLabel = trade.hyperliquidMetadata?.asset?.trim().toUpperCase()
+    || trade.tokenIn.trim().toUpperCase()
+    || 'HL';
+  const sizeLabel = hyperliquidSizeLabel(trade);
   const details = [
-    `Order: ${formatTradeAmount(trade.amountIn)} ${trade.tokenIn}`,
-    hyperliquidSizeLabel(trade),
-  ].filter((value): value is string => Boolean(value));
+    { label: 'Order', value: `${formatTradeAmount(trade.amountIn)} ${trade.tokenIn}` },
+    sizeLabel ? { label: 'Size', value: sizeLabel } : null,
+  ].filter((value): value is { label: string; value: string } => Boolean(value));
 
   return (
-    <div className="space-y-1">
-      {marketLabel && (
-        <div className="font-display text-lg font-semibold text-arena-elements-textPrimary">
-          {marketLabel}
+    <div className="flex min-w-0 items-start gap-3">
+      <span
+        aria-hidden="true"
+        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-100 text-xs font-data font-semibold text-sky-700 ring-1 ring-black/5 dark:bg-sky-500/20 dark:text-sky-200 dark:ring-white/10"
+      >
+        {assetLabel.slice(0, 3)}
+      </span>
+      <div className="min-w-0 space-y-1">
+        {marketLabel && (
+          <div className="break-words font-display text-lg font-semibold leading-tight text-arena-elements-textPrimary">
+            {marketLabel}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-x-2 gap-y-1 text-base font-data leading-snug text-arena-elements-textSecondary">
+          {details.map((detail) => (
+            <span key={`${detail.label}:${detail.value}`} className="break-words">
+              {detail.label}: {detail.value}
+            </span>
+          ))}
         </div>
-      )}
-      <div className="text-base font-data text-arena-elements-textSecondary">
-        {details.join(' · ')}
       </div>
     </div>
   );
@@ -253,6 +274,7 @@ export function TradeHistoryTab({
   operatorKind,
   verificationState,
   assetMetadata,
+  compact = false,
 }: TradeHistoryTabProps) {
   const { data: trades, isLoading, isError, error } = useBotTrades(botId, botName, 50, {
     chainId,
@@ -266,11 +288,11 @@ export function TradeHistoryTab({
   if (isLoading) {
     return (
       <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
-        <Table className="min-w-[1120px]">
-          <TradeTableHead />
+        <Table className={compact ? 'min-w-full table-fixed' : 'min-w-[1120px]'}>
+          <TradeTableHead compact={compact} />
           <TableBody>
             {Array.from({ length: 5 }).map((_, i) => (
-              <SkeletonTableRow key={i} cols={6} />
+              <SkeletonTableRow key={i} cols={compact ? 3 : 6} />
             ))}
           </TableBody>
         </Table>
@@ -303,8 +325,8 @@ export function TradeHistoryTab({
       )}
 
       <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
-      <Table className="min-w-[1120px]">
-        <TradeTableHead />
+      <Table className={compact ? 'min-w-full table-fixed' : 'min-w-[1120px]'}>
+        <TradeTableHead compact={compact} />
         <TableBody>
           {trades.map((trade) => {
             const responses = trade.validation?.responses ?? [];
@@ -336,7 +358,7 @@ export function TradeHistoryTab({
                 },
               } : {})}
             >
-              <TableCell className="py-4 text-base font-data text-arena-elements-textTertiary" colSpan={isExpanded ? 6 : undefined}>
+              <TableCell className="py-4 align-top text-base font-data text-arena-elements-textTertiary" colSpan={isExpanded ? (compact ? 3 : 6) : undefined}>
                 {isExpanded ? (
                   /* Expanded view replaces the row */
                   <div className="py-3">
@@ -528,12 +550,12 @@ export function TradeHistoryTab({
               </TableCell>
               {!isExpanded && (
                 <>
-                  <TableCell className="py-4">
+                  <TableCell className="py-4 align-top">
                     <Badge variant={getActionVariant(trade.action)} className="h-8 px-3 text-base">
                       {getActionLabel(trade.action)}
                     </Badge>
                   </TableCell>
-                  <TableCell className="min-w-[420px] py-4 font-display text-lg font-medium" title={pairLabel ?? undefined}>
+                  <TableCell className={compact ? 'py-4 align-top font-display text-lg font-medium' : 'min-w-[420px] py-4 align-top font-display text-lg font-medium'} title={pairLabel ?? undefined}>
                     <div className="space-y-2">
                       {isHyperliquidTrade(trade) ? (
                         renderHyperliquidTradeCell(trade)
@@ -542,7 +564,7 @@ export function TradeHistoryTab({
                           {pairLabel}
                         </div>
                       ) : (
-                        <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} size="lg" />
+                        <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} size={compact ? 'md' : 'lg'} />
                       )}
                       {!isHyperliquidTrade(trade) && (
                         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base font-data text-arena-elements-textSecondary">
@@ -555,56 +577,60 @@ export function TradeHistoryTab({
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="hidden py-4 text-right sm:table-cell">
-                    <div className="flex items-center justify-end gap-1.5">
-                      {/* Aggregate score */}
-                      {trade.validatorScore != null && (
-                        <span className={`font-data text-base font-bold ${
-                          trade.validatorScore >= 80 ? 'text-arena-elements-icon-success' :
-                          trade.validatorScore >= 50 ? 'text-amber-700 dark:text-amber-400' : 'text-arena-elements-icon-error'
-                        }`}>
-                          {trade.validatorScore}
-                        </span>
-                      )}
-                      {/* Validator count */}
-                      {responses.length > 0 && (
-                        <Badge
-                          variant={signedCount === responses.length ? 'success' : 'amber'}
-                          className="py-0 text-sm"
-                        >
-                          {signedCount}/{responses.length}
-                        </Badge>
-                      )}
-                      {/* Expand hint */}
-                      {hasValidation && (
-                        <div className="i-ph:caret-down text-sm text-arena-elements-textTertiary" />
-                      )}
-                      {/* No score */}
-                      {trade.validatorScore == null && responses.length === 0 && (
-                        <span className="font-data text-base text-arena-elements-textTertiary">-</span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="py-4">
-                    {renderExecutionRef(trade)}
-                  </TableCell>
-                  <TableCell className="py-4">
-                    <div className="flex items-center gap-1.5">
-                      <Badge
-                        variant={getStatusVariant(trade.status)}
-                        className="text-sm"
-                      >
-                        {trade.status === 'pending' ? (
-                          <span className="inline-flex items-center gap-1">
-                            <span className="i-ph:arrow-clockwise text-xs animate-spin" />
-                            pending
-                          </span>
-                        ) : (
-                          getStatusLabel(trade.status)
-                        )}
-                      </Badge>
-                    </div>
-                  </TableCell>
+                  {!compact && (
+                    <>
+                      <TableCell className="hidden py-4 text-right sm:table-cell">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Aggregate score */}
+                          {trade.validatorScore != null && (
+                            <span className={`font-data text-base font-bold ${
+                              trade.validatorScore >= 80 ? 'text-arena-elements-icon-success' :
+                              trade.validatorScore >= 50 ? 'text-amber-700 dark:text-amber-400' : 'text-arena-elements-icon-error'
+                            }`}>
+                              {trade.validatorScore}
+                            </span>
+                          )}
+                          {/* Validator count */}
+                          {responses.length > 0 && (
+                            <Badge
+                              variant={signedCount === responses.length ? 'success' : 'amber'}
+                              className="py-0 text-sm"
+                            >
+                              {signedCount}/{responses.length}
+                            </Badge>
+                          )}
+                          {/* Expand hint */}
+                          {hasValidation && (
+                            <div className="i-ph:caret-down text-sm text-arena-elements-textTertiary" />
+                          )}
+                          {/* No score */}
+                          {trade.validatorScore == null && responses.length === 0 && (
+                            <span className="font-data text-base text-arena-elements-textTertiary">-</span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-4">
+                        {renderExecutionRef(trade)}
+                      </TableCell>
+                      <TableCell className="py-4">
+                        <div className="flex items-center gap-1.5">
+                          <Badge
+                            variant={getStatusVariant(trade.status)}
+                            className="text-sm"
+                          >
+                            {trade.status === 'pending' ? (
+                              <span className="inline-flex items-center gap-1">
+                                <span className="i-ph:arrow-clockwise text-xs animate-spin" />
+                                pending
+                              </span>
+                            ) : (
+                              getStatusLabel(trade.status)
+                            )}
+                          </Badge>
+                        </div>
+                      </TableCell>
+                    </>
+                  )}
                 </>
               )}
               </TableRow>
