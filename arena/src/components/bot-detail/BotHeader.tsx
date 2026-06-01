@@ -344,7 +344,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                         <dt className="font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
                           {item.label}
                         </dt>
-                        <dd className="mt-0.5 truncate font-display text-sm font-medium text-arena-elements-textPrimary" title={item.value}>
+                        <dd className="mt-0.5 break-words font-display text-sm font-medium leading-snug text-arena-elements-textPrimary" title={item.value}>
                           {item.value}
                         </dd>
                       </div>
