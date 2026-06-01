@@ -157,6 +157,81 @@ async fn spawn_mock_trading_api() -> String {
     format!("http://{addr}")
 }
 
+async fn spawn_mock_stale_metric_trading_api() -> String {
+    let app = Router::new()
+        .route(
+            "/trades",
+            get(|| async {
+                Json(json!({
+                    "trades": [{
+                        "id": "remote-trade-1",
+                        "bot_id": "remote-bot",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "action": "buy",
+                        "token_in": "USDC",
+                        "token_out": "ETH",
+                        "amount_in": "100",
+                        "min_amount_out": "0.05",
+                        "target_protocol": "uniswap",
+                        "tx_hash": "0xremote1",
+                        "paper_trade": true,
+                        "validation": {
+                            "approved": true,
+                            "aggregate_score": 91,
+                            "intent_hash": "0xintent1",
+                            "responses": []
+                        }
+                    }],
+                    "total": 12,
+                    "limit": 1,
+                    "offset": 0
+                }))
+            }),
+        )
+        .route(
+            "/metrics/history",
+            get(|| async {
+                Json(json!({
+                    "snapshots": [{
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "bot_id": "remote-bot",
+                        "account_value_usd": 10123.45,
+                        "unrealized_pnl": 12.0,
+                        "realized_pnl": 34.0,
+                        "high_water_mark": 10123.45,
+                        "drawdown_pct": 0.0,
+                        "positions_count": 1,
+                        "trade_count": 1
+                    }],
+                    "total": 1
+                }))
+            }),
+        )
+        .route(
+            "/portfolio/state",
+            post(|| async {
+                Json(json!({
+                    "positions": [],
+                    "total_value_usd": "10123.45",
+                    "cash_balance": null,
+                    "warnings": [],
+                    "has_unpriced_positions": false
+                }))
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock trading api");
+    let addr = listener.local_addr().expect("mock trading api addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock trading api");
+    });
+    format!("http://{addr}")
+}
+
 async fn spawn_mock_terminal_sidecar() -> String {
     let app = Router::new()
         .route(
@@ -1413,6 +1488,56 @@ async fn test_metrics_and_trades_prefer_remote_trading_api_payload() {
     assert_eq!(json["portfolio_value_usd"], 1050.0);
     assert_eq!(json["total_pnl"], 46.0);
     assert_eq!(json["trade_count"], 1);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_metrics_trade_count_uses_trade_history_total_when_snapshots_lag() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, sandbox_id) = seed_singleton("prediction");
+    mark_sandbox_secrets_configured(&sandbox_id);
+    let trading_api_url = spawn_mock_stale_metric_trading_api().await;
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.trading_api_url = trading_api_url.clone();
+            b.trading_api_token = "remote-token".to_string();
+        })
+        .unwrap();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/metrics")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["trade_count"], 12);
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot/metrics/history")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json[0]["trade_count"], 12);
 
     let _ = clear_instance_bot_id();
 }

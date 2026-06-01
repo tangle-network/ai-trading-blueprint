@@ -1,5 +1,4 @@
 import { Link } from 'react-router';
-import { m } from 'framer-motion';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ReactNode } from 'react';
 import type { Address } from 'viem';
@@ -91,35 +90,27 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
         : summary.pnlPercent >= 0
           ? 'text-arena-elements-icon-success'
           : 'text-arena-elements-icon-error',
-      glow: summary.pnlPercent == null
-        ? ''
-        : summary.pnlPercent >= 0
-          ? 'glow-emerald'
-          : 'glow-crimson',
       title: HEADER_RETURN_PERCENT_COPY.title,
     },
     {
       label: 'Sharpe',
       value: formatDecimal(summary.sharpeRatio),
       color: '',
-      glow: '',
       title: 'Risk-adjusted return based on snapshot-to-snapshot portfolio returns and their variability over the sampled history.',
     },
     {
       label: 'Max DD',
       value: formatPercent(summary.maxDrawdown),
       color: summary.maxDrawdown == null ? '' : 'text-crimson-400',
-      glow: '',
       title: 'Maximum drawdown: the largest peak-to-trough drop in portfolio value over the sampled history.',
     },
     {
       label: 'Win Rate',
       value: formatPercent(summary.winRate),
       color: '',
-      glow: '',
       title: 'Estimated win rate: share of new trades between metrics snapshots where portfolio value increased by the next snapshot.',
     },
-    { label: 'Portfolio Value', value: formatPortfolioValue(summary.portfolioValue), color: '', glow: '' },
+    { label: 'Portfolio Value', value: formatPortfolioValue(summary.portfolioValue), color: '' },
     {
       label: 'Avg Score',
       value: summary.avgValidatorScore == null ? '—' : `${summary.avgValidatorScore}`,
@@ -130,12 +121,11 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
           : summary.avgValidatorScore >= 70
             ? 'text-amber-700 dark:text-amber-400'
             : 'text-arena-elements-icon-error',
-      glow: '',
     },
   ];
 
   return (
-    <div className="sticky top-[var(--header-height)] z-30 mb-5 -mx-4 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/92 px-4 py-3 backdrop-blur-xl sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+    <div className="sticky top-[var(--header-height)] z-30 mb-5 -mx-4 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1 px-4 py-3 shadow-[0_8px_20px_rgba(15,23,42,0.06)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.22)] sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
       <div className="mx-auto max-w-[1800px]">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
@@ -186,13 +176,10 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
 
           <Tooltip.Provider delayDuration={150}>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:min-w-[720px] xl:grid-cols-6">
-              {metrics.map((stat, i) => (
-                <m.div
+              {metrics.map((stat) => (
+                <div
                   key={stat.label}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.025, duration: 0.25 }}
-                  className={`rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/58 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] ${stat.glow}`}
+                  className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
                 >
                   <div className="mb-0.5 flex items-center gap-1.5 text-[11px] font-data font-medium uppercase tracking-wider text-arena-elements-textTertiary">
                     <span className="truncate">{stat.label}</span>
@@ -224,7 +211,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                   <div className={`truncate font-data text-lg font-bold leading-tight ${stat.color}`}>
                     {stat.value}
                   </div>
-                </m.div>
+                </div>
               ))}
             </div>
           </Tooltip.Provider>

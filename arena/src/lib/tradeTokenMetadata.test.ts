@@ -9,6 +9,7 @@ describe('tradeTokenMetadata', () => {
     expect(asset.name).toBe('USD Coin');
     expect(asset.primaryLabel).toBe('USD Coin');
     expect(asset.secondaryLabel).toBe('USDC');
+    expect(asset.logoUri).toBe('/token-icons/usdc.svg');
     expect(asset.isKnown).toBe(true);
   });
 

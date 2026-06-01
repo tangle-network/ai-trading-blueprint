@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { ResolvedAssetDisplay } from '~/lib/tradeTokenMetadata';
 
 interface AssetDisplayProps {
@@ -12,6 +13,7 @@ interface AssetPairDisplayProps {
   left: ResolvedAssetDisplay;
   right: ResolvedAssetDisplay;
   className?: string;
+  size?: 'sm' | 'md' | 'lg';
 }
 
 function joinClasses(...classes: Array<string | false | null | undefined>): string {
@@ -37,13 +39,50 @@ function assetSecondaryLabel(
   return asset.secondaryLabel;
 }
 
-function AssetIcon({ asset, size = 'md' }: { asset: ResolvedAssetDisplay; size?: 'sm' | 'md' }) {
+function AssetIcon({
+  asset,
+  size = 'md',
+}: {
+  asset: ResolvedAssetDisplay;
+  size?: 'sm' | 'md' | 'lg';
+}) {
+  const [logoFailed, setLogoFailed] = useState(false);
+  const sizeClass = size === 'sm'
+    ? 'h-5 w-5 text-[10px]'
+    : size === 'lg'
+      ? 'h-10 w-10 text-sm'
+      : 'h-8 w-8 text-xs';
+  const shellClassName = joinClasses(
+    'inline-flex shrink-0 items-center justify-center rounded-full font-data font-semibold ring-1 ring-black/5 dark:ring-white/10',
+    sizeClass,
+  );
+
+  if (asset.logoUri && !logoFailed) {
+    return (
+      <span
+        aria-hidden="true"
+        className={joinClasses(
+          shellClassName,
+          'overflow-hidden bg-white shadow-[0_1px_6px_rgba(15,23,42,0.14)] dark:bg-arena-elements-background-depth-2',
+        )}
+      >
+        <img
+          src={asset.logoUri}
+          alt=""
+          className="h-full w-full rounded-full object-cover"
+          loading="lazy"
+          decoding="async"
+          onError={() => setLogoFailed(true)}
+        />
+      </span>
+    );
+  }
+
   return (
     <span
       aria-hidden="true"
       className={joinClasses(
-        'inline-flex shrink-0 items-center justify-center rounded-full font-data font-semibold ring-1 ring-black/5 dark:ring-white/10',
-        size === 'sm' ? 'h-5 w-5 text-[10px]' : 'h-8 w-8 text-xs',
+        shellClassName,
         asset.accentClassName,
       )}
     >
@@ -90,18 +129,25 @@ export function AssetDisplay({
   );
 }
 
-export function AssetPairDisplay({ left, right, className }: AssetPairDisplayProps) {
+export function AssetPairDisplay({ left, right, className, size = 'md' }: AssetPairDisplayProps) {
+  const iconSize = size === 'lg' ? 'lg' : 'sm';
+  const labelClassName = size === 'lg'
+    ? 'whitespace-nowrap text-lg font-semibold'
+    : size === 'md'
+      ? 'whitespace-nowrap text-base font-medium'
+      : 'truncate text-sm font-medium';
+
   return (
     <div
       className={joinClasses('inline-flex min-w-0 items-center gap-2', className)}
       title={`${assetTitle(left)} / ${assetTitle(right)}`}
       aria-label={`${left.symbol}/${right.symbol}`}
     >
-      <div className="flex -space-x-1.5">
-        <AssetIcon asset={left} size="sm" />
-        <AssetIcon asset={right} size="sm" />
+      <div className={joinClasses('flex shrink-0', size === 'lg' ? '-space-x-2' : '-space-x-1.5')}>
+        <AssetIcon asset={left} size={iconSize} />
+        <AssetIcon asset={right} size={iconSize} />
       </div>
-      <span className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
+      <span className={joinClasses('font-display text-arena-elements-textPrimary', labelClassName)}>
         {left.symbol}/{right.symbol}
       </span>
     </div>

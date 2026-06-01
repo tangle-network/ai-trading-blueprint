@@ -44,9 +44,9 @@ function TradeTableHead() {
   return (
     <TableHeader>
       <TableRow className="hover:bg-transparent">
-        <TableHead className="py-4 text-base">Time</TableHead>
-        <TableHead className="py-4 text-base">Action</TableHead>
-        <TableHead className="py-4 text-base">Trade</TableHead>
+        <TableHead className="w-44 py-4 text-base">Time</TableHead>
+        <TableHead className="w-40 py-4 text-base">Action</TableHead>
+        <TableHead className="min-w-[420px] py-4 text-base">Trade</TableHead>
         <TableHead className="hidden py-4 text-right text-base sm:table-cell">Validation</TableHead>
         <TableHead className="py-4 text-base">Ref</TableHead>
         <TableHead className="py-4 text-base">Status</TableHead>
@@ -268,7 +268,7 @@ export function TradeHistoryTab({
   if (isLoading) {
     return (
       <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
-        <Table className="min-w-[980px]">
+        <Table className="min-w-[1120px]">
           <TradeTableHead />
           <TableBody>
             {Array.from({ length: 5 }).map((_, i) => (
@@ -310,7 +310,7 @@ export function TradeHistoryTab({
   return (
     <div className="space-y-3">
       <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
-      <Table className="min-w-[980px]">
+      <Table className="min-w-[1120px]">
         <TradeTableHead />
         <TableBody>
           {trades.map((trade) => {
@@ -357,7 +357,7 @@ export function TradeHistoryTab({
                       >
                         <div className="i-ph:caret-up text-base" />
                       </button>
-                      <Badge variant={getActionVariant(trade.action)} className="text-sm">
+                      <Badge variant={getActionVariant(trade.action)} className="h-8 px-3 text-base">
                         {getActionLabel(trade.action)}
                       </Badge>
                       {isHyperliquidTrade(trade) && hyperliquidMarketLabel(trade) ? (
@@ -372,13 +372,13 @@ export function TradeHistoryTab({
                           {pairLabel}
                         </span>
                       ) : (
-                        <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
+                        <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} size="lg" />
                       )}
                       <span className="text-base font-data text-arena-elements-textTertiary">
                         {formatTradeTimestamp(trade.timestamp)}
                       </span>
                       {validationDisplay && (
-                        <Badge variant={validationDisplay.badgeVariant} className="text-sm">
+                        <Badge variant={validationDisplay.badgeVariant} className="h-8 px-3 text-base">
                           {validationDisplay.label}
                         </Badge>
                       )}
@@ -536,27 +536,27 @@ export function TradeHistoryTab({
               {!isExpanded && (
                 <>
                   <TableCell className="py-4">
-                    <Badge variant={getActionVariant(trade.action)} className="text-sm">
+                    <Badge variant={getActionVariant(trade.action)} className="h-8 px-3 text-base">
                       {getActionLabel(trade.action)}
                     </Badge>
                   </TableCell>
-                  <TableCell className="py-4 font-display text-lg font-medium" title={pairLabel ?? undefined}>
-                    <div className="space-y-1">
+                  <TableCell className="min-w-[420px] py-4 font-display text-lg font-medium" title={pairLabel ?? undefined}>
+                    <div className="space-y-2">
                       {isHyperliquidTrade(trade) ? (
                         renderHyperliquidTradeCell(trade)
                       ) : trade.targetProtocol === 'polymarket_clob' ? (
-                        <div className="max-w-80 truncate">{pairLabel}</div>
+                        <div className="max-w-[520px] whitespace-normal text-lg font-semibold leading-snug text-arena-elements-textPrimary">
+                          {pairLabel}
+                        </div>
                       ) : (
-                        <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} />
+                        <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} size="lg" />
                       )}
                       {!isHyperliquidTrade(trade) && (
-                        <div className="text-base font-data text-arena-elements-textSecondary">
+                        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base font-data text-arena-elements-textSecondary">
                           <span>{formatTradeAmount(trade.amountIn)}</span>
-                          {' '}
                           <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
                           <span className="mx-1.5 text-arena-elements-textTertiary">→</span>
                           <span>{formatTradeAmount(trade.amountOut)}</span>
-                          {' '}
                           <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
                         </div>
                       )}

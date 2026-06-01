@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Wrapped Ether">
+  <defs>
+    <linearGradient id="weth-bg" x1="10" x2="54" y1="8" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#DDEBFF"/>
+      <stop offset="1" stop-color="#627EEA"/>
+    </linearGradient>
+    <linearGradient id="weth-diamond" x1="32" x2="32" y1="11" y2="53" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset=".48" stop-color="#D4D9FF"/>
+      <stop offset="1" stop-color="#8EA0FF"/>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="31" fill="url(#weth-bg)"/>
+  <path fill="url(#weth-diamond)" d="M32 10 19 32l13-7 13 7L32 10Z"/>
+  <path fill="#FFFFFF" fill-opacity=".72" d="m19 35 13 18 13-18-13 8-13-8Z"/>
+  <path fill="#627EEA" fill-opacity=".42" d="M32 25v18l13-8-13-10Z"/>
+  <path fill="#293B8F" fill-opacity=".35" d="M32 10v15l13 7-13-22Z"/>
+</svg>

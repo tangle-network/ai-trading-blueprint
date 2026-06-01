@@ -965,6 +965,47 @@ fn parse_metrics_snapshots(
         .map_err(|e| format!("invalid metrics snapshot array: {e}"))
 }
 
+fn payload_trade_total(payload: &serde_json::Value) -> Option<u32> {
+    ["total", "total_count", "count"].iter().find_map(|key| {
+        payload
+            .get(key)
+            .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
+            .and_then(|value| u32::try_from(value).ok())
+    })
+}
+
+fn patch_latest_snapshot_trade_count(snapshots: &mut [serde_json::Value], trade_count: u32) {
+    let Some(latest) = snapshots.last_mut() else {
+        return;
+    };
+    let current = latest
+        .get("trade_count")
+        .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(0);
+    if trade_count > current {
+        latest["trade_count"] = serde_json::json!(trade_count);
+    }
+}
+
+async fn fetch_remote_trade_count(bot: &TradingBotRecord) -> Option<u32> {
+    match fetch_trading_api_json(bot, "/trades", &[("limit", "1".to_string())]).await {
+        Ok(Some(payload)) => {
+            let remote_total = payload_trade_total(&payload);
+            let visible_count = extract_json_array(payload, "trades")
+                .ok()
+                .map(|trades| trades.len() as u32);
+            match (remote_total, visible_count) {
+                (Some(total), Some(visible)) => Some(total.max(visible)),
+                (Some(total), None) => Some(total),
+                (None, Some(visible)) => Some(visible),
+                (None, None) => None,
+            }
+        }
+        Ok(None) | Err(_) => None,
+    }
+}
+
 fn map_trading_api_portfolio(payload: serde_json::Value) -> Result<PortfolioStateResponse, String> {
     let portfolio: TradingApiPortfolioResponse =
         serde_json::from_value(payload).map_err(|e| format!("invalid portfolio payload: {e}"))?;
@@ -2729,11 +2770,20 @@ async fn get_bot_metrics(
         }
     };
     let latest_snapshot = metrics_history.last();
-    let trades =
+    let (trades, trade_count) =
         match fetch_trading_api_json(&bot, "/trades", &[("limit", "500".to_string())]).await {
-            Ok(Some(payload)) => extract_json_array(payload, "trades")
-                .unwrap_or_else(|_| fallback_trade_dataset(&bot)),
-            Ok(None) | Err(_) => fallback_trade_dataset(&bot),
+            Ok(Some(payload)) => {
+                let remote_total = payload_trade_total(&payload);
+                let trades = extract_json_array(payload, "trades")
+                    .unwrap_or_else(|_| fallback_trade_dataset(&bot));
+                let trade_count = remote_total.unwrap_or(0).max(trades.len() as u32);
+                (trades, trade_count)
+            }
+            Ok(None) | Err(_) => {
+                let trades = fallback_trade_dataset(&bot);
+                let trade_count = trades.len() as u32;
+                (trades, trade_count)
+            }
         };
 
     let total_pnl: f64 = trades
@@ -2777,7 +2827,8 @@ async fn get_bot_metrics(
             .unwrap_or(total_pnl),
         trade_count: latest_snapshot
             .map(|snapshot| snapshot.trade_count)
-            .unwrap_or(trades.len() as u32),
+            .unwrap_or(0)
+            .max(trade_count),
     }))
 }
 
@@ -2787,7 +2838,12 @@ async fn get_bot_metrics_history(
     let bot = resolve_singleton()?;
     match fetch_trading_api_json(&bot, "/metrics/history", &[]).await {
         Ok(Some(payload)) => match extract_json_array(payload, "snapshots") {
-            Ok(snapshots) if !snapshots.is_empty() => Ok(Json(snapshots)),
+            Ok(mut snapshots) if !snapshots.is_empty() => {
+                if let Some(trade_count) = fetch_remote_trade_count(&bot).await {
+                    patch_latest_snapshot_trade_count(&mut snapshots, trade_count);
+                }
+                Ok(Json(snapshots))
+            }
             Ok(_) => Ok(Json(fallback_metrics_history(&bot))),
             Err(err) => {
                 tracing::warn!(bot_id = %bot.id, "invalid trading api metrics payload: {err}");

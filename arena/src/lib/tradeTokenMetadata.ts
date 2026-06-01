@@ -9,6 +9,7 @@ export interface TokenMetadata {
   chainIds: number[];
   aliases?: string[];
   accentClassName: string;
+  logoUri?: string;
 }
 
 export interface ResolvedAssetDisplay {
@@ -21,6 +22,7 @@ export interface ResolvedAssetDisplay {
   isKnown: boolean;
   accentClassName: string;
   iconText: string;
+  logoUri?: string;
 }
 
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
@@ -34,6 +36,7 @@ const KNOWN_TOKENS: TokenMetadata[] = [
     chainIds: [1, 31337, 31338, 31339],
     aliases: ['ETH'],
     accentClassName: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-200',
+    logoUri: '/token-icons/weth.svg',
   },
   {
     symbol: 'USDC',
@@ -42,6 +45,7 @@ const KNOWN_TOKENS: TokenMetadata[] = [
     address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     chainIds: [1, 31337, 31338, 31339],
     accentClassName: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200',
+    logoUri: '/token-icons/usdc.svg',
   },
   {
     symbol: 'USDT',
@@ -50,6 +54,7 @@ const KNOWN_TOKENS: TokenMetadata[] = [
     address: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
     chainIds: [1, 31337, 31338, 31339],
     accentClassName: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200',
+    logoUri: '/token-icons/usdt.svg',
   },
   {
     symbol: 'DAI',
@@ -58,6 +63,7 @@ const KNOWN_TOKENS: TokenMetadata[] = [
     address: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
     chainIds: [1, 31337, 31338, 31339],
     accentClassName: 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200',
+    logoUri: '/token-icons/dai.svg',
   },
   {
     symbol: 'WBTC',
@@ -67,6 +73,7 @@ const KNOWN_TOKENS: TokenMetadata[] = [
     chainIds: [1, 31337, 31338, 31339],
     aliases: ['BTC'],
     accentClassName: 'bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200',
+    logoUri: '/token-icons/btc.svg',
   },
   {
     symbol: 'WETH',
@@ -76,6 +83,7 @@ const KNOWN_TOKENS: TokenMetadata[] = [
     chainIds: [8453, 84532],
     aliases: ['ETH'],
     accentClassName: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-200',
+    logoUri: '/token-icons/weth.svg',
   },
   {
     symbol: 'USDC',
@@ -84,6 +92,7 @@ const KNOWN_TOKENS: TokenMetadata[] = [
     address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     chainIds: [8453],
     accentClassName: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200',
+    logoUri: '/token-icons/usdc.svg',
   },
   {
     symbol: 'USDC',
@@ -92,6 +101,7 @@ const KNOWN_TOKENS: TokenMetadata[] = [
     address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
     chainIds: [84532],
     accentClassName: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200',
+    logoUri: '/token-icons/usdc.svg',
   },
   {
     symbol: 'USDC',
@@ -100,6 +110,7 @@ const KNOWN_TOKENS: TokenMetadata[] = [
     address: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
     chainIds: [137],
     accentClassName: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200',
+    logoUri: '/token-icons/usdc.svg',
   },
   {
     symbol: 'cbBTC',
@@ -109,6 +120,7 @@ const KNOWN_TOKENS: TokenMetadata[] = [
     chainIds: [8453],
     aliases: ['BTC', 'WBTC'],
     accentClassName: 'bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200',
+    logoUri: '/token-icons/btc.svg',
   },
 ];
 
@@ -210,6 +222,7 @@ export function resolveAssetDisplay(
       isKnown: true,
       accentClassName: metadata.accentClassName,
       iconText: iconTextForLabel(metadata.symbol),
+      logoUri: metadata.logoUri,
     };
   }
 

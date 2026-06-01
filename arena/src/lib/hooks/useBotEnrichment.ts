@@ -29,6 +29,13 @@ interface PortfolioStateResponse {
   has_unpriced_positions?: boolean;
 }
 
+interface TradeCountResponse {
+  trades?: unknown[];
+  total?: number | string | null;
+  count?: number | string | null;
+  total_count?: number | string | null;
+}
+
 function normalizeSnapshots(data: MetricsSnapshot[] | MetricsHistoryResponse): MetricsSnapshot[] {
   return Array.isArray(data) ? data : data.snapshots;
 }
@@ -43,6 +50,26 @@ export function portfolioTvlUsd(data: PortfolioStateResponse | null | undefined)
   if (!data || data.has_unpriced_positions) return null;
   const value = toFiniteNumber(data.total_value_usd);
   return value != null && value >= 0 ? value : null;
+}
+
+function toNonNegativeCount(value: number | string | null | undefined): number | null {
+  const parsed = toFiniteNumber(value);
+  if (parsed == null || parsed < 0) return null;
+  return Math.floor(parsed);
+}
+
+export function normalizeTradeHistoryCount(data: unknown): number | null {
+  if (Array.isArray(data)) return data.length;
+  if (!data || typeof data !== 'object') return null;
+
+  const response = data as TradeCountResponse;
+  const explicitCount = toNonNegativeCount(response.total)
+    ?? toNonNegativeCount(response.total_count)
+    ?? toNonNegativeCount(response.count);
+  const visibleCount = Array.isArray(response.trades) ? response.trades.length : null;
+
+  if (explicitCount != null && visibleCount != null) return Math.max(explicitCount, visibleCount);
+  return explicitCount ?? visibleCount;
 }
 
 export function useBotEnrichment(bots: Bot[]): Bot[] {
@@ -145,6 +172,43 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
     }),
   });
 
+  const tradeCountResults = useQueries({
+    queries: enrichable.entries.map(({ botId, operatorApiUrl, operatorKind }) => {
+      const deploymentKind = getDeploymentKindForOperatorKind(operatorKind);
+      const auth = authByUrl[operatorKind ?? 'cloud'];
+      const needsAuth = deploymentKind !== 'fleet';
+      const authKey = needsAuth ? auth.authCacheKey : 'public';
+
+      return {
+        queryKey: [
+          'bot-enrichment-trade-count',
+          operatorApiUrl,
+          botId,
+          deploymentKind,
+          authKey,
+        ] as const,
+        queryFn: async (): Promise<number | null> => {
+          const path = `${buildBotScopedPathForDeploymentKind(
+            deploymentKind,
+            botId,
+            '/trades',
+          )}?limit=200`;
+          const data = await operatorJsonWithAuth<unknown>(
+            operatorApiUrl,
+            path,
+            auth,
+            { auth: needsAuth },
+          );
+          return normalizeTradeHistoryCount(data);
+        },
+        staleTime: 30_000,
+        refetchInterval: 60_000,
+        retry: 1,
+        enabled: !!operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
+      };
+    }),
+  });
+
   const prevRef = useRef<Bot[]>(bots);
   const dataFingerprint = results.map((r) =>
     r.data ? `${r.data.length}:${r.data[r.data.length - 1]?.trade_count}` : 'x',
@@ -153,6 +217,9 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
     const tvl = portfolioTvlUsd(r.data);
     return tvl == null ? 'x' : String(tvl);
   }).join(',');
+  const tradeCountFingerprint = tradeCountResults.map((r) =>
+    r.data == null ? 'x' : String(r.data),
+  ).join(',');
 
   return useMemo(() => {
     if (enrichable.entries.length === 0) return bots;
@@ -179,8 +246,18 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
         pnlPercent: Math.round(pnlPercent * 10) / 10,
         pnlAbsolute: Math.round(pnlAbsolute),
         maxDrawdown: Math.round(maxDrawdown * 10) / 10,
-        totalTrades: latest.trade_count,
+        totalTrades: Math.max(latest.trade_count, tradeCountResults[qi]?.data ?? 0),
         sparklineData,
+      };
+    }
+    for (let qi = 0; qi < tradeCountResults.length; qi++) {
+      const tradeCount = tradeCountResults[qi].data;
+      if (tradeCount == null) continue;
+
+      const botIndex = enrichable.indices[qi];
+      enrichedBots[botIndex] = {
+        ...enrichedBots[botIndex],
+        totalTrades: Math.max(enrichedBots[botIndex].totalTrades, tradeCount),
       };
     }
     for (let qi = 0; qi < portfolioResults.length; qi++) {
@@ -195,5 +272,5 @@ export function useBotEnrichment(bots: Bot[]): Bot[] {
     }
     prevRef.current = enrichedBots;
     return enrichedBots;
-  }, [botIds, bots, dataFingerprint, portfolioFingerprint, enrichable.entries.length, enrichable.indices, results, portfolioResults]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [botIds, bots, dataFingerprint, portfolioFingerprint, tradeCountFingerprint, enrichable.entries.length, enrichable.indices, results, portfolioResults, tradeCountResults]); // eslint-disable-line react-hooks/exhaustive-deps
 }

@@ -101,9 +101,11 @@ describe('TradeHistoryTab', () => {
         status: 'executed',
       }),
     ]);
-    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+    const { container } = render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
     expect(screen.getByText('BUY')).toBeInTheDocument();
     expect(screen.getByText('USDC/WETH')).toBeInTheDocument();
+    expect(container.querySelector('img[src="/token-icons/usdc.svg"]')).toBeInTheDocument();
+    expect(container.querySelector('img[src="/token-icons/weth.svg"]')).toBeInTheDocument();
     expect(screen.getByText('executed')).toBeInTheDocument();
     expect(screen.getByText('1,000')).toBeInTheDocument();
     expect(screen.getAllByText('USDC').length).toBeGreaterThan(0);
