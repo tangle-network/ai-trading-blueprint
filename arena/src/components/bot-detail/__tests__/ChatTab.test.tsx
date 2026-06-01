@@ -15,7 +15,7 @@ const useBotSessionStreamMock = vi.hoisted(() =>
     partMap: {},
     isStreaming: false,
     connected: false,
-    error: null,
+    error: null as string | null,
     refetch: vi.fn(),
     send: vi.fn(),
     abort: vi.fn(),
@@ -121,5 +121,35 @@ describe("ChatTab", () => {
         }),
       );
     });
+  });
+
+  it("does not show auth-only history errors to public readers", async () => {
+    useBotSessionStreamMock.mockReturnValueOnce({
+      messages: [],
+      partMap: {},
+      isStreaming: false,
+      connected: false,
+      error: "HTTP 401:",
+      refetch: vi.fn(),
+      send: vi.fn(),
+      abort: vi.fn(),
+    });
+    const { ChatTab } = await import("../ChatTab");
+
+    render(
+      <ChatTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorAddress="0x0000000000000000000000000000000000000001"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("HTTP 401:")).not.toBeInTheDocument();
   });
 });

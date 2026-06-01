@@ -454,7 +454,11 @@ export function ChatTab({
     historyPath: readOnlyHistoryPath,
     streamEnabled: canWrite,
   });
-  const chatErrorMessage = extractChatErrorMessage(sendError ?? stream.error);
+  const rawChatErrorMessage = extractChatErrorMessage(sendError ?? stream.error);
+  const chatErrorMessage =
+    !canWrite && rawChatErrorMessage && /HTTP (401|403)/i.test(rawChatErrorMessage)
+      ? null
+      : rawChatErrorMessage;
   const activeSession =
     sessions.find((session) => session.id === streamSessionId) ?? null;
 
