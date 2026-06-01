@@ -6,10 +6,10 @@ import {
   useRevisionDecision,
   useRevisionArena,
 } from "~/lib/hooks/useBotApi";
-import { AuthBanner } from "~/components/bot-detail/AuthBanner";
 import { OperatorAccessCard } from "~/components/operator/OperatorAccessCard";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
 import { Button } from "@tangle-network/blueprint-ui/components";
+import { getDeploymentKindForOperatorKind } from "~/lib/operator/meta";
 
 interface RevisionArenaTabProps {
   botId: string;
@@ -85,44 +85,53 @@ function shortHash(value?: string | null): string {
   return value.length > 18 ? `${value.slice(0, 18)}...` : value;
 }
 
+function shortRevisionId(value?: string | null): string {
+  if (!value) return "none";
+  return value.length > 16 ? `${value.slice(0, 16)}...` : value;
+}
+
 function RevisionRow({
   revision,
   onApprove,
   onReject,
   decisionPending,
+  canSubmitDecision,
 }: {
   revision: RevisionArenaEntry;
   onApprove: (revisionId: string) => void;
   onReject: (revisionId: string) => void;
   decisionPending: boolean;
+  canSubmitDecision: boolean;
 }) {
   const blockerCount = revision.promotion_blockers.length;
   const changedFiles = revision.files_changed.slice(0, 4);
-  const canDecide = revision.source === "self-improvement-mcp" && revision.status === "candidate";
+  const canDecide = canSubmitDecision
+    && revision.source === "self-improvement-mcp"
+    && revision.status === "candidate";
 
   return (
-    <div className="border-b border-arena-elements-dividerColor/50 px-4 py-4 last:border-b-0">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <article className="border-b border-arena-elements-dividerColor/50 px-5 py-5 last:border-b-0">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${statusClass(revision.status)}`} />
-            <h3 className="text-sm font-display font-semibold text-arena-elements-textPrimary">
+            <h3 className="text-lg font-display font-semibold leading-tight text-arena-elements-textPrimary">
               {revision.display_name}
             </h3>
             <span
-              className={`rounded-full border px-2 py-0.5 text-[11px] font-data ${modeClass(revision.run_mode)}`}
+              className={`rounded-full border px-2.5 py-1 text-xs font-data ${modeClass(revision.run_mode)}`}
             >
               {modeLabel(revision.run_mode)}
             </span>
-            <span className="rounded-full border border-arena-elements-dividerColor/60 px-2 py-0.5 text-[11px] font-data text-arena-elements-textSecondary">
+            <span className="rounded-full border border-arena-elements-dividerColor/60 px-2.5 py-1 text-xs font-data text-arena-elements-textSecondary">
               {revision.status}
             </span>
           </div>
-          <p className="mt-2 text-sm text-arena-elements-textSecondary">
+          <p className="mt-2 max-w-4xl text-base leading-relaxed text-arena-elements-textSecondary">
             {revision.user_intent}
           </p>
         </div>
-        <div className="text-right text-[11px] font-data text-arena-elements-textTertiary">
+        <div className="text-right text-xs font-data text-arena-elements-textTertiary">
           <div>{formatTime(revision.created_at)}</div>
           <div className="mt-1">{shortHash(revision.patch_sha256)}</div>
           {canDecide && (
@@ -149,16 +158,16 @@ function RevisionRow({
         </div>
       </div>
 
-      <div className="mt-3 grid gap-2 text-[11px] font-data text-arena-elements-textSecondary sm:grid-cols-3">
-        <div>
+      <div className="mt-4 grid gap-2 text-sm font-data text-arena-elements-textSecondary sm:grid-cols-3">
+        <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3">
           <span className="text-arena-elements-textTertiary">Parent</span>{" "}
           {revision.parent_revision_id ?? "none"}
         </div>
-        <div>
+        <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3">
           <span className="text-arena-elements-textTertiary">Run</span>{" "}
           {revision.run_id ?? "none"}
         </div>
-        <div>
+        <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3">
           <span className="text-arena-elements-textTertiary">Live execution</span>{" "}
           {revision.can_execute_live ? "enabled" : "blocked"}
         </div>
@@ -207,22 +216,22 @@ function RevisionRow({
       )}
 
       {revision.paper_evidence && (
-        <div className="mt-3 grid gap-2 text-[11px] font-data text-arena-elements-textSecondary sm:grid-cols-3">
-          <div>
+        <div className="mt-3 grid gap-2 text-sm font-data text-arena-elements-textSecondary sm:grid-cols-3">
+          <div className="rounded-lg border border-emerald-500/15 bg-emerald-500/5 p-3">
             <span className="text-arena-elements-textTertiary">Paper trades</span>{" "}
             {revision.paper_evidence.trades ?? 0}
           </div>
-          <div>
+          <div className="rounded-lg border border-emerald-500/15 bg-emerald-500/5 p-3">
             <span className="text-arena-elements-textTertiary">Paper return</span>{" "}
             {revision.paper_evidence.total_return_pct ?? 0}%
           </div>
-          <div>
+          <div className="rounded-lg border border-emerald-500/15 bg-emerald-500/5 p-3">
             <span className="text-arena-elements-textTertiary">Max drawdown</span>{" "}
             {revision.paper_evidence.max_drawdown_pct ?? 0}%
           </div>
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -234,6 +243,8 @@ export function RevisionArenaTab({
 }: RevisionArenaTabProps) {
   const apiUrl = operatorApiUrl ?? "";
   const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(operatorKind);
+  const readRequiresOwner = deploymentKind !== "fleet";
   const query = useRevisionArena(botId, {
     operatorApiUrl,
     operatorKind,
@@ -283,12 +294,12 @@ export function RevisionArenaTab({
     );
   }
 
-  if (!auth.isAuthenticated) {
+  if (readRequiresOwner && !auth.isAuthenticated) {
     return (
-      <AuthBanner
-        onAuth={auth.authenticate}
-        isAuthenticating={auth.isAuthenticating}
-        error={auth.error}
+      <OperatorAccessCard
+        title="Revision arena owner-only"
+        description="Sign with the owner wallet to inspect and approve this instance bot's revisions."
+        apiUrl={apiUrl}
       />
     );
   }
@@ -331,36 +342,135 @@ export function RevisionArenaTab({
     );
   }
 
+  const activeRevision = sortedRevisions.find(
+    (revision) => revision.revision_id === query.data.active_revision_id,
+  );
+  const liveRevision = sortedRevisions.find(
+    (revision) => revision.revision_id === query.data.live_revision_id,
+  );
+  const candidateCount = sortedRevisions.filter(
+    (revision) => revision.status === "candidate" || revision.status === "staged",
+  ).length;
+  const blockedCount = sortedRevisions.filter(
+    (revision) =>
+      revision.status === "blocked" ||
+      revision.status === "failed" ||
+      revision.promotion_blockers.length > 0,
+  ).length;
+  const activeMode = activeRevision?.run_mode ?? "research";
+  const statCards = [
+    {
+      label: "Active",
+      value: activeRevision?.display_name ?? shortRevisionId(query.data.active_revision_id),
+      meta: shortRevisionId(query.data.active_revision_id),
+    },
+    {
+      label: "Live",
+      value: liveRevision?.display_name ?? shortRevisionId(query.data.live_revision_id),
+      meta: query.data.live_revision_id ? modeLabel(liveRevision?.run_mode ?? "live") : "no fund access",
+    },
+    {
+      label: "Candidates",
+      value: candidateCount.toString(),
+      meta: `${sortedRevisions.length} revisions`,
+    },
+    {
+      label: "Blocked",
+      value: blockedCount.toString(),
+      meta: "promotion gates",
+    },
+  ];
+
   return (
-    <div className="space-y-4">
-      <section className="glass-card rounded-xl border border-arena-elements-dividerColor p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-base font-display font-semibold text-arena-elements-textPrimary">
-              Revision Arena
-            </h2>
-            <p className="mt-1 max-w-3xl text-sm text-arena-elements-textSecondary">
-              {query.data.invariant}
-            </p>
+    <div className="space-y-5">
+      <section className="glass-card-strong overflow-hidden rounded-xl border border-arena-elements-dividerColor">
+        <div className="border-b border-arena-elements-dividerColor/60 px-5 py-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className={`h-2 w-2 rounded-full ${statusClass(activeRevision?.status ?? "active")}`} />
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-data ${modeClass(activeMode)}`}>
+                  {modeLabel(activeMode)}
+                </span>
+              </div>
+              <h2 className="font-display text-2xl font-bold tracking-tight text-arena-elements-textPrimary">
+                Evolution Arena
+              </h2>
+              <p className="mt-2 max-w-4xl text-base leading-relaxed text-arena-elements-textSecondary">
+                {query.data.invariant}
+              </p>
+            </div>
+            {!auth.isAuthenticated && !readRequiresOwner && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={auth.authenticate}
+                disabled={auth.isAuthenticating}
+                className="h-9"
+              >
+                {auth.isAuthenticating ? "Connecting…" : "Owner Sign In"}
+              </Button>
+            )}
           </div>
-          <div className="grid grid-cols-2 gap-2 text-right text-[11px] font-data sm:min-w-[260px]">
-            <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-2">
-              <div className="text-arena-elements-textTertiary">Active</div>
-              <div className="mt-1 text-arena-elements-textPrimary">
-                {query.data.active_revision_id}
+        </div>
+
+        <div className="grid gap-0 border-b border-arena-elements-dividerColor/60 sm:grid-cols-2 xl:grid-cols-4">
+          {statCards.map((stat) => (
+            <div
+              key={stat.label}
+              className="border-b border-arena-elements-dividerColor/50 px-5 py-4"
+            >
+              <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                {stat.label}
+              </div>
+              <div className="mt-1 truncate font-display text-2xl font-bold text-arena-elements-textPrimary">
+                {stat.value}
+              </div>
+              <div className="mt-1 truncate text-sm font-data text-arena-elements-textTertiary">
+                {stat.meta}
               </div>
             </div>
-            <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-2">
-              <div className="text-arena-elements-textTertiary">Live</div>
-              <div className="mt-1 text-arena-elements-textPrimary">
-                {query.data.live_revision_id ?? "none"}
+          ))}
+        </div>
+
+        <div className="grid gap-0 md:grid-cols-3">
+          {query.data.modes.map((mode) => (
+            <div
+              key={mode.mode}
+              className="border-b border-arena-elements-dividerColor/50 px-5 py-4"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-xs font-data ${modeClass(mode.mode)}`}
+                >
+                  {modeLabel(mode.mode)}
+                </span>
+                <span className="text-xs font-data text-arena-elements-textTertiary">
+                  {mode.can_touch_funds ? "fund access" : "no fund access"}
+                </span>
               </div>
+              <p className="mt-2 text-sm leading-relaxed text-arena-elements-textSecondary">
+                {mode.description}
+              </p>
             </div>
-          </div>
+          ))}
         </div>
       </section>
 
       <section className="glass-card overflow-hidden rounded-xl border border-arena-elements-dividerColor">
+        <div className="flex items-center justify-between border-b border-arena-elements-dividerColor/60 px-5 py-4">
+          <div>
+            <h3 className="font-display text-lg font-semibold text-arena-elements-textPrimary">
+              Revision Timeline
+            </h3>
+            <p className="mt-1 text-sm text-arena-elements-textSecondary">
+              Candidates, blockers, paper evidence, and live authority.
+            </p>
+          </div>
+          <span className="rounded-full border border-arena-elements-dividerColor/60 px-3 py-1 text-xs font-data text-arena-elements-textTertiary">
+            {sortedRevisions.length}
+          </span>
+        </div>
         {sortedRevisions.length > 0 ? (
           sortedRevisions.map((revision) => (
             <RevisionRow
@@ -369,6 +479,7 @@ export function RevisionArenaTab({
               onApprove={approveRevision}
               onReject={rejectRevision}
               decisionPending={decision.isPending}
+              canSubmitDecision={auth.isAuthenticated}
             />
           ))
         ) : (
@@ -382,29 +493,6 @@ export function RevisionArenaTab({
             </p>
           </div>
         )}
-      </section>
-
-      <section className="grid gap-3 md:grid-cols-3">
-        {query.data.modes.map((mode) => (
-          <div
-            key={mode.mode}
-            className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span
-                className={`rounded-full border px-2 py-0.5 text-[11px] font-data ${modeClass(mode.mode)}`}
-              >
-                {modeLabel(mode.mode)}
-              </span>
-              <span className="text-[11px] font-data text-arena-elements-textTertiary">
-                {mode.can_touch_funds ? "fund access" : "no fund access"}
-              </span>
-            </div>
-            <p className="mt-2 text-xs text-arena-elements-textSecondary">
-              {mode.description}
-            </p>
-          </div>
-        ))}
       </section>
     </div>
   );

@@ -134,42 +134,87 @@ export default function IndexPage() {
   const avgScore = leaderboardBots.length > 0
     ? Math.round(leaderboardBots.reduce((sum, b) => sum + b.avgValidatorScore, 0) / leaderboardBots.length)
     : 0;
+  const activeAgents = leaderboardBots.filter((bot) => bot.status === 'active').length;
+  const cloudStats = [
+    { label: 'Agents', value: leaderboardBots.length.toLocaleString(), sublabel: `${activeAgents} active` },
+    {
+      label: 'Capital',
+      value: totalTvl > 0 ? `$${totalTvl >= 1000 ? `${(totalTvl / 1000).toFixed(0)}K` : totalTvl.toFixed(0)}` : '—',
+      sublabel: 'reported TVL',
+    },
+    { label: 'Trades', value: totalTrades > 0 ? totalTrades.toLocaleString() : '—', sublabel: 'recorded' },
+    { label: 'Validator', value: avgScore > 0 ? `${avgScore}` : '—', sublabel: 'avg score' },
+  ];
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
-      {/* Create CTA */}
-      <Link
-        to="/create"
-        className="block mb-8 p-6 rounded-xl border border-violet-500/20 bg-gradient-to-r from-violet-500/5 to-indigo-500/5 hover:from-violet-500/10 hover:to-indigo-500/10 transition-all group"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="font-display font-bold text-xl mb-1">Create Your Trading Agent</h2>
-            <p className="text-sm text-arena-elements-textSecondary">
-              Describe what you want to trade. Your AI agent builds itself, learns, and evolves.
-            </p>
-          </div>
-          <span className="text-2xl group-hover:translate-x-1 transition-transform">→</span>
-        </div>
-      </Link>
-
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
-        <div>
-          <div className="flex items-center gap-3 mb-1.5">
-            <h1 className="font-display font-bold text-3xl tracking-tight">Leaderboard</h1>
-            <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-700/10 dark:bg-emerald-500/10 border border-emerald-700/20 dark:border-emerald-500/20">
-              <div className="w-2 h-2 rounded-full bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse" />
-              <span className="text-xs font-data font-semibold text-arena-elements-icon-success uppercase tracking-wider">
-                {isOnChain ? 'onchain' : 'Live'}
+      <section className="glass-card-strong mb-6 overflow-hidden rounded-xl border border-arena-elements-dividerColor">
+        <div className="flex flex-col gap-5 p-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <div className="inline-flex items-center gap-1.5 rounded border border-emerald-700/20 bg-emerald-700/10 px-2 py-1 dark:border-emerald-500/20 dark:bg-emerald-500/10">
+                <div className="w-2 h-2 rounded-full bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse" />
+                <span className="text-xs font-data font-semibold text-arena-elements-icon-success uppercase tracking-wider">
+                  {isOnChain ? 'onchain' : 'Live'}
+                </span>
+              </div>
+              <span className="rounded border border-amber-500/20 bg-amber-500/8 px-2 py-1 text-xs font-data font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                Evolution
+              </span>
+              <span className="rounded border border-violet-500/20 bg-violet-500/8 px-2 py-1 text-xs font-data font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
+                Validator gated
               </span>
             </div>
+            <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">
+              AI Trading Cloud
+            </h1>
+            <p className="mt-2 max-w-3xl text-base text-arena-elements-textSecondary">
+              Live agents, self-improving revisions, validation, and execution telemetry.
+            </p>
           </div>
-          <div className="flex items-center gap-5 text-sm font-data text-arena-elements-textSecondary">
-            <span><span className="text-arena-elements-textPrimary font-semibold">{leaderboardBots.length}</span> agents</span>
-            {totalTvl > 0 && <span><span className="text-arena-elements-textPrimary font-semibold">${totalTvl >= 1000 ? `${(totalTvl / 1000).toFixed(0)}K` : totalTvl.toFixed(0)}</span> TVL</span>}
-            {totalTrades > 0 && <span><span className="text-arena-elements-textPrimary font-semibold">{totalTrades.toLocaleString()}</span> trades</span>}
-            {avgScore > 0 && <span><span className="text-arena-elements-textPrimary font-semibold">{avgScore}</span>/100</span>}
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Link
+              to="/provision"
+              className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-4 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+            >
+              <span className="i-ph:plus-bold text-xs" />
+              Deploy
+            </Link>
+            <Link
+              to="/create"
+              className="inline-flex h-10 items-center gap-2 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60 px-4 text-sm font-display font-medium text-arena-elements-textPrimary transition-colors hover:bg-arena-elements-item-backgroundHover"
+            >
+              <span className="i-ph:chat-circle-dots text-sm" />
+              Create From Chat
+            </Link>
+          </div>
+        </div>
+        <div className="grid border-t border-arena-elements-dividerColor/60 sm:grid-cols-2 lg:grid-cols-4">
+          {cloudStats.map((stat) => (
+            <div
+              key={stat.label}
+              className="border-b border-arena-elements-dividerColor/50 px-5 py-4 lg:border-b-0"
+            >
+              <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                {stat.label}
+              </div>
+              <div className="mt-1 font-data text-2xl font-bold text-arena-elements-textPrimary">
+                {stat.value}
+              </div>
+              <div className="mt-1 text-sm text-arena-elements-textSecondary">
+                {stat.sublabel}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Leaderboard</h2>
+          <div className="mt-1 flex items-center gap-5 text-sm font-data text-arena-elements-textSecondary">
+            <span><span className="font-semibold text-arena-elements-textPrimary">{leaderboardBots.length}</span> agents</span>
+            {totalTrades > 0 && <span><span className="font-semibold text-arena-elements-textPrimary">{totalTrades.toLocaleString()}</span> trades</span>}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -190,13 +235,6 @@ export default function IndexPage() {
               <div className="i-ph:list text-base" />
             </button>
           </div>
-          <Link
-            to="/provision"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-700 dark:text-violet-400 text-sm font-display font-medium hover:bg-violet-500/20 transition-colors"
-          >
-            <span className="i-ph:plus-bold text-xs" />
-            Deploy
-          </Link>
         </div>
       </div>
 

@@ -9,7 +9,7 @@ const authState = {
   authenticate: vi.fn(),
   error: null as string | null,
   authCacheKey: "test-token",
-  getCachedToken: () => "test-token",
+  getCachedToken: () => "test-token" as string | null,
   getToken: vi.fn(async () => "test-token"),
 };
 
@@ -26,6 +26,9 @@ function jsonResponse(payload: unknown): Response {
 
 describe("RevisionArenaTab", () => {
   beforeEach(() => {
+    authState.token = "test-token";
+    authState.authCacheKey = "test-token";
+    authState.getCachedToken = () => "test-token";
     authState.isAuthenticated = true;
     authState.isAuthenticating = false;
     authState.error = null;
@@ -112,12 +115,71 @@ describe("RevisionArenaTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByText("Revision Arena")).toBeInTheDocument();
-    expect(screen.getByText("Revision 0")).toBeInTheDocument();
+    expect(await screen.findByText("Evolution Arena")).toBeInTheDocument();
+    expect(screen.getAllByText("Revision 0").length).toBeGreaterThan(0);
     expect(screen.getByText("Revision 1")).toBeInTheDocument();
     expect(screen.getByText("missing persisted paper trading evidence")).toBeInTheDocument();
     expect(screen.getByText("strategy.rs")).toBeInTheDocument();
     expect(screen.getAllByText("none").length).toBeGreaterThan(0);
+  });
+
+  it("shows fleet revisions publicly without exposing approval controls", async () => {
+    authState.isAuthenticated = false;
+    authState.token = "";
+    authState.authCacheKey = "anonymous";
+    authState.getCachedToken = () => null;
+    const { RevisionArenaTab } = await import("../RevisionArenaTab");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          bot_id: "bot-1",
+          invariant: "Only approved revisions can touch funds.",
+          active_revision_id: "rev-0",
+          live_revision_id: null,
+          revisions: [
+            {
+              revision_id: "mcp-sr-1",
+              display_name: "Candidate 1",
+              source: "self-improvement-mcp",
+              status: "candidate",
+              run_mode: "paper",
+              can_execute_live: false,
+              parent_revision_id: "rev-0",
+              run_id: "sr-1",
+              created_at: "2026-05-20T10:00:00Z",
+              user_intent: "Improve the strategy after backtesting.",
+              patch_sha256: "sha256:abcdef1234567890",
+              files_changed: ["strategy.rs"],
+              tests: ["cargo test"],
+              promotion_approved: false,
+              promotion_blockers: [],
+              paper_evidence: null,
+            },
+          ],
+          modes: [],
+        }),
+      ),
+    );
+
+    render(
+      <RevisionArenaTab
+        botId="bot-1"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByText("Evolution Arena")).toBeInTheDocument();
+    expect(screen.getByText("Candidate 1")).toBeInTheDocument();
+    expect(screen.queryByText("Approve")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reject")).not.toBeInTheDocument();
+
+    authState.token = "test-token";
+    authState.authCacheKey = "test-token";
+    authState.getCachedToken = () => "test-token";
   });
 
   it("lets the user approve or reject candidate revisions", async () => {

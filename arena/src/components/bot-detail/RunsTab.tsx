@@ -55,6 +55,16 @@ interface RunItem {
   title: string;
   subtitle: string;
   status: RunStatus;
+  durationLabel: string;
+  tokenLabel: string;
+  signalLabel: string;
+}
+
+interface RunsSummary {
+  total: number;
+  running: number;
+  completed: number;
+  failed: number;
 }
 
 const RUNS_BRANDING: AgentBranding = {
@@ -266,6 +276,13 @@ function getRunSubtitle(run: BotRun): string {
   return formatRunTimestamp(run.startedAt);
 }
 
+function getRunTokenLabel(run: BotRun): string {
+  const total = run.inputTokens + run.outputTokens;
+  if (total <= 0) return "tokens n/a";
+  if (total >= 1_000) return `${(total / 1_000).toFixed(total >= 10_000 ? 0 : 1)}k tok`;
+  return `${total} tok`;
+}
+
 function isInformativeRun(run: BotRun): boolean {
   const result = run.result?.trim();
   return Boolean(run.error || (result && result !== "No messages."));
@@ -413,6 +430,7 @@ function RunsBanner({
 
 function RunsSidebar({
   runs,
+  summary,
   activeRunId,
   stacked,
   hasOlderRuns,
@@ -421,6 +439,7 @@ function RunsSidebar({
   onLoadOlder,
 }: {
   runs: RunItem[];
+  summary: RunsSummary;
   activeRunId: string;
   stacked: boolean;
   hasOlderRuns: boolean;
@@ -433,13 +452,37 @@ function RunsSidebar({
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : "flex min-h-0 w-[360px] basis-[360px] shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
+          : "flex min-h-0 w-[312px] basis-[312px] shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
       }
     >
       <div className="border-b border-arena-elements-dividerColor/50 px-4 py-3">
-        <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
-          Runs
-        </span>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
+            Runs
+          </span>
+          <span className="font-data text-sm text-arena-elements-textPrimary">
+            {summary.total}
+          </span>
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-1.5">
+          {[
+            ["Live", summary.running],
+            ["Done", summary.completed],
+            ["Fail", summary.failed],
+          ].map(([label, value]) => (
+            <div
+              key={label}
+              className="rounded-md border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/35 px-2 py-1.5"
+            >
+              <div className="text-[10px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                {label}
+              </div>
+              <div className="font-data text-sm font-semibold text-arena-elements-textPrimary">
+                {value}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div
@@ -463,7 +506,7 @@ function RunsSidebar({
                 <button
                   key={run.id}
                   aria-pressed={isActive}
-                  className={`group flex w-full items-center gap-3 border-l-2 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
+                  className={`group flex w-full items-start gap-3 border-l-2 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
                     isActive
                       ? "border-amber-500 bg-arena-elements-item-backgroundActive"
                       : "border-transparent hover:bg-arena-elements-item-backgroundHover"
@@ -482,17 +525,28 @@ function RunsSidebar({
                     }`}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
-                      {run.title}
-                    </div>
-                    <div className="mt-1 flex items-center gap-2">
-                      <div className="truncate text-sm font-data text-arena-elements-textTertiary">
-                        {run.subtitle}
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      <div className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
+                        {run.title}
                       </div>
                       <span
-                        className={`rounded-full border px-2 py-0.5 text-xs font-data ${getStatusBadgeClass(run.status)}`}
+                        className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-data ${getStatusBadgeClass(run.status)}`}
                       >
                         {getStatusLabel(run.status)}
+                      </span>
+                    </div>
+                    <div className="mt-1 truncate text-sm font-data text-arena-elements-textTertiary">
+                      {run.subtitle}
+                    </div>
+                    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className="rounded-md border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/40 px-1.5 py-0.5 text-[11px] font-data text-arena-elements-textSecondary">
+                        {run.signalLabel}
+                      </span>
+                      <span className="text-[11px] font-data text-arena-elements-textTertiary">
+                        {run.durationLabel}
+                      </span>
+                      <span className="text-[11px] font-data text-arena-elements-textTertiary">
+                        {run.tokenLabel}
                       </span>
                     </div>
                   </div>
@@ -538,6 +592,15 @@ function RunMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function RunMetricPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-2/45 px-2.5 py-1 font-data text-xs text-arena-elements-textSecondary">
+      <span className="text-arena-elements-textTertiary">{label}</span>
+      <span className="text-arena-elements-textPrimary">{value}</span>
+    </span>
+  );
+}
+
 type RunResultSection = {
   title: string;
   items: Array<{ label: string; value: string }>;
@@ -560,6 +623,22 @@ function formatResultValue(value: unknown): string | null {
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value)) return `${value.length}`;
   return null;
+}
+
+function getRunSignalLabel(run: BotRun): string {
+  if (run.error) return "Error";
+  const result = parseRunResultJson(run.result);
+  const decision = asRecord(result?.decision);
+  const tradeAction = asRecord(result?.trade_action);
+  const setup = asRecord(decision?.setup);
+  const candidate =
+    formatResultValue(decision?.action) ??
+    formatResultValue(setup?.action) ??
+    formatResultValue(tradeAction?.execution_status) ??
+    formatResultValue(tradeAction?.validation_status);
+
+  if (candidate) return candidate.replace(/_/g, " ").toUpperCase();
+  return getStatusLabel(run.status);
 }
 
 function pushResultItem(
@@ -1008,9 +1087,18 @@ export function RunsTab({
         title: getRunTitle(run),
         subtitle: getRunSubtitle(run),
         status: run.status,
+        durationLabel: formatDuration(run.durationMs),
+        tokenLabel: getRunTokenLabel(run),
+        signalLabel: getRunSignalLabel(run),
       })),
     [runs],
   );
+  const runSummary = useMemo<RunsSummary>(() => ({
+    total: runs.length,
+    running: runs.filter((run) => run.status === "running").length,
+    completed: runs.filter((run) => run.status === "completed").length,
+    failed: runs.filter((run) => run.status === "failed" || run.status === "interrupted").length,
+  }), [runs]);
 
   const runsErrorMessage = extractRunsErrorMessage(
     runsQuery.error instanceof Error ? runsQuery.error.message : null,
@@ -1122,6 +1210,7 @@ export function RunsTab({
         >
           <RunsSidebar
             runs={runItems}
+            summary={runSummary}
             activeRunId={activeRun?.runId ?? ""}
             stacked={isStackedLayout}
             hasOlderRuns={runsQuery.hasNextPage}
@@ -1150,6 +1239,14 @@ export function RunsTab({
                       {getStatusLabel(activeRun?.status ?? "failed")}
                     </span>
                   </div>
+                  {activeRun && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <RunMetricPill label="Signal" value={getRunSignalLabel(activeRun)} />
+                      <RunMetricPill label="Duration" value={formatDuration(activeRun.durationMs)} />
+                      <RunMetricPill label="Tokens" value={getRunTokenLabel(activeRun)} />
+                      <RunMetricPill label="Trace" value={activeRun.traceId ? "captured" : "summary"} />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

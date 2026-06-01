@@ -597,21 +597,23 @@ export function useRevisionArena(botId: string, options: BotApiQueryOptions = {}
   const auth = useOperatorAuth(apiUrl);
   const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
+  const needsAuth = fleetReadRequiresAuth(deploymentKind);
+  const authKey = needsAuth ? auth.authCacheKey : 'public';
 
   return useQuery<RevisionArena>({
-    queryKey: ['revision-arena', apiUrl, botId, deploymentKind, auth.authCacheKey],
+    queryKey: ['revision-arena', apiUrl, botId, deploymentKind, authKey],
     queryFn: async () => {
       const path = buildBotScopedPathForDeploymentKind(
         deploymentKind,
         botId,
         '/evolution/revision-arena',
       );
-      return fetchOperatorBotApi<RevisionArena>(apiUrl, auth, path);
+      return fetchOperatorBotApi<RevisionArena>(apiUrl, auth, path, { auth: needsAuth });
     },
     staleTime: 10_000,
     refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
-    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
+    enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
   });
 }
 

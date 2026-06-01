@@ -38,6 +38,7 @@ import { ErrorBoundary } from "~/components/ErrorBoundary";
 import { EnvelopeNeededBanner } from "~/components/bot-detail/EnvelopeNeededBanner";
 import { useAccount } from "wagmi";
 import { useBotDetail } from "~/lib/hooks/useBotDetail";
+import { useBotLiveSummary } from "~/lib/hooks/useBotLiveSummary";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
 import { useRouteOperatorAutoAuth } from "~/lib/hooks/useRouteOperatorAutoAuth";
 import { useOperatorSyncScope } from "~/lib/hooks/useOperatorSyncScope";
@@ -48,7 +49,7 @@ import {
   getOperatorKindForBlueprint,
   useOperatorMeta,
 } from "~/lib/operator/meta";
-import { isLiveBotStatus } from "~/lib/format";
+import { formatNumber, isLiveBotStatus, normalizeDisplayNumber } from "~/lib/format";
 import {
   provisionsForOwner,
   type TrackedProvision,
@@ -84,6 +85,20 @@ type BotTabValue = (typeof VALID_BOT_TABS)[number];
 
 function isBotTabValue(value: string | null | undefined): value is BotTabValue {
   return !!value && (VALID_BOT_TABS as readonly string[]).includes(value);
+}
+
+function formatImmersivePercent(value: number | null): string {
+  if (value == null) return "—";
+  const displayValue = normalizeDisplayNumber(value, 1);
+  return `${displayValue > 0 ? "+" : ""}${formatNumber(displayValue, {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 1,
+  })}%`;
+}
+
+function formatImmersiveCurrency(value: number | null): string {
+  if (value == null) return "—";
+  return `$${formatNumber(value, { maximumFractionDigits: value >= 1000 ? 0 : 2 })}`;
 }
 
 export default function BotDetailPage() {
@@ -241,14 +256,18 @@ export default function BotDetailPage() {
     [bot?.strategyConfig],
   );
 
+  const botTargetChainId = bot ? getBotStrategyChainId(bot) : null;
+  const botTargetNetwork = botTargetChainId != null
+    ? networks[botTargetChainId]?.label ?? `Chain ${botTargetChainId}`
+    : "Unknown network";
+
   useEffect(() => {
     if (!bot) return;
-    const targetChainId = getBotStrategyChainId(bot);
-    if (!targetChainId || !networks[targetChainId]) return;
-    if (selectedChainIdStore.get() !== targetChainId) {
-      selectedChainIdStore.set(targetChainId);
+    if (!botTargetChainId || !networks[botTargetChainId]) return;
+    if (selectedChainIdStore.get() !== botTargetChainId) {
+      selectedChainIdStore.set(botTargetChainId);
     }
-  }, [bot]);
+  }, [bot, botTargetChainId]);
 
   const { data: operatorMeta } = useOperatorMeta(
     bot?.operatorApiUrl ?? routeOperatorApiUrl,
@@ -279,6 +298,14 @@ export default function BotDetailPage() {
   // Must call hooks before early returns (React rules of hooks)
   const botIsLive = bot ? isLiveBotStatus(bot.status) : false;
   const immersiveTab = activeTab === "runs" || activeTab === "chat";
+  const immersiveSummary = useBotLiveSummary({
+    botId: bot?.id ?? "",
+    botName: displayBotName,
+    operatorApiUrl: bot?.operatorApiUrl,
+    operatorKind: bot?.operatorKind,
+    chainId: bot?.chainId,
+    enabled: Boolean(bot) && immersiveTab,
+  });
   const pendingValidationCount = usePendingValidationCount(
     bot?.id ?? "",
     displayBotName,
@@ -397,6 +424,25 @@ export default function BotDetailPage() {
                 <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
                   {activeTab === "runs" ? "Trading Runs" : "Chat"}
                 </div>
+              </div>
+              <div className="hidden min-w-0 items-center gap-1.5 xl:flex">
+                {[
+                  bot.paperTrade ? "Paper" : "Live",
+                  botTargetNetwork,
+                  `NAV ${formatImmersiveCurrency(immersiveSummary.portfolioValue)}`,
+                  `30D ${formatImmersivePercent(immersiveSummary.pnlPercent)}`,
+                  `Sharpe ${immersiveSummary.sharpeRatio == null ? "—" : formatNumber(immersiveSummary.sharpeRatio, {
+                    maximumFractionDigits: 2,
+                    minimumFractionDigits: 2,
+                  })}`,
+                ].map((label) => (
+                  <span
+                    key={label}
+                    className="max-w-[210px] truncate rounded-full border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/60 px-2.5 py-1 font-data text-xs text-arena-elements-textSecondary"
+                  >
+                    {label}
+                  </span>
+                ))}
               </div>
             </div>
 

@@ -28,9 +28,9 @@ export interface BotHeaderNavItem {
 }
 
 const NAV_GROUPS: Array<{ label: string; values: string[] }> = [
-  { label: 'Trading', values: ['performance', 'positions', 'trades'] },
-  { label: 'Workflow', values: ['runs', 'chat', 'reasoning', 'arena'] },
-  { label: 'Ops', values: ['vault', 'envelope', 'controls', 'terminal', 'secrets'] },
+  { label: 'Monitor', values: ['performance', 'positions', 'trades'] },
+  { label: 'Autonomy', values: ['runs', 'chat', 'reasoning', 'arena'] },
+  { label: 'Admin', values: ['vault', 'envelope', 'controls', 'terminal', 'secrets'] },
 ];
 
 function groupNavItems(items: BotHeaderNavItem[]) {
@@ -213,7 +213,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
     { label: 'Network', value: targetNetwork },
     { label: 'Capital', value: formatCapital(initialCapitalUsd) },
     { label: 'Max DD', value: maxDrawdownLimit == null ? '—' : `${formatNumber(maxDrawdownLimit, { maximumFractionDigits: 1 })}%` },
-    { label: 'Telemetry', value: '30s public snapshots' },
+    { label: 'Cadence', value: '30s snapshots' },
   ];
 
   return (
@@ -247,7 +247,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
             </div>
 
             <div className="flex flex-col gap-1.5 md:flex-row md:items-end">
-              <h1 className="min-w-0 max-w-[760px] break-words font-display text-2xl font-bold leading-tight tracking-tight">
+              <h1 className="min-w-0 max-w-[820px] break-words font-display text-3xl font-bold leading-[1.05] tracking-tight">
                 {explicitTitle}
               </h1>
               <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 pb-0.5 text-sm text-arena-elements-textTertiary">
@@ -267,11 +267,11 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
               </div>
             </div>
 
-            <div className="mt-2 flex flex-wrap gap-1.5">
+            <div className="mt-2.5 flex flex-wrap gap-2">
               {[...titleParts.metadata, ...trustItems.map((item) => `${item.label}: ${item.value}`)].map((label) => (
                 <span
                   key={label}
-                  className="inline-flex min-h-6 items-center rounded-full border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 px-2 py-0.5 font-data text-[10px] uppercase tracking-wider text-arena-elements-textSecondary"
+                  className="inline-flex min-h-7 items-center rounded-full border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 px-2.5 py-1 font-data text-xs text-arena-elements-textSecondary"
                 >
                   {label}
                 </span>
