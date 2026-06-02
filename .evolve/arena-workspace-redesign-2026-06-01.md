@@ -2399,3 +2399,37 @@ Verification:
 - Visual inspection passed:
   - `.evolve/arena-leaderboard-list-first-smoke-20260602-v3/1440x900-leaderboard.png`: agent list owns the page; Volume/Fills are tabs instead of stacked modules.
   - `.evolve/arena-leaderboard-list-first-smoke-20260602-v3/1280x800-leaderboard.png`: no clipped top metric labels; the agent table remains the primary surface.
+
+## 2026-06-02 Larger-Risk Trading Surface Pass
+
+User-reported problem:
+
+- The previous pass improved the shell, but the core data still felt too toy-like: fill rows were oversized cards, portfolio was stacked as two separate panels, loading states leaked light/grey surfaces, and the leaderboard still read too much like a small scoreboard.
+
+Decision:
+
+- Treat Performance, Portfolio, and Agents as exchange-style ledgers with shallow surfaces and dense rows.
+- Keep decision rationale visible, but collapse it into a compact selected-fill strip instead of letting a full inspector consume half the fill rail.
+- Prefer direct component fixes over global wrapper selectors when a dark trading surface leaks generic app styles.
+
+Shipped in this slice:
+
+- Replaced the Performance fill-card rail with a compact selectable fill tape that shows up to 12 fills, tabular notional, token icons, and a compact public decision rationale strip.
+- Kept the public decision-inspection contract intact while removing the bulky old inspector from the chart-adjacent rail.
+- Rebuilt Portfolio as one terminal workspace with Positions and Executions panes instead of two separate stacked cards.
+- Added ledger-specific loading and empty states for positions and executions so dark trading screens no longer flash giant light/grey skeleton slabs.
+- Reduced dense portfolio table minimum widths so position ledgers do not force unnecessary horizontal overflow.
+- Reworked the agent leaderboard rows into a larger explorer list with identicon-first identity, folded strategy/status metadata, larger row rhythm, and more trading-table-like metric alignment.
+
+Verification so far:
+
+- `pnpm --dir arena typecheck` passes.
+- `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/PerformanceTab.test.tsx src/components/bot-detail/__tests__/PositionsTab.test.tsx src/components/bot-detail/__tests__/TradeHistoryTab.test.tsx --reporter=dot` passes: 3 files, 48 tests.
+- `pnpm --dir arena exec vitest run src/routes/__tests__/leaderboard.test.tsx src/components/arena/__tests__/LatestAgentTrades.test.tsx --reporter=dot` passes: 2 files, 4 tests.
+- `pnpm --dir arena exec vitest run --reporter=dot` passes: 67 files, 387 tests.
+- `pnpm --dir arena build` passes. Existing large-chunk warnings remain unchanged.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-risky-ledger-pass-smoke-20260602-v3` passes.
+- Visual inspection passed:
+  - `.evolve/arena-risky-ledger-pass-smoke-20260602-v3/1440x900-performance.png`: chart remains dominant; fills are compact rows with a selected-decision rationale strip instead of oversized cards.
+  - `.evolve/arena-risky-ledger-pass-smoke-20260602-v3/1440x900-portfolio.png`: Portfolio is one coherent terminal workspace; no grey skeleton/metric slab leak.
+  - `.evolve/arena-risky-ledger-pass-smoke-20260602-v3/1440x900-leaderboard.png`: agent row identity is readable after removing the decorative row sparkline.

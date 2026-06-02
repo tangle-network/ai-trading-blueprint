@@ -34,6 +34,30 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   });
 
   if (isLoading) {
+    if (ledger) {
+      return (
+        <div className="h-full min-h-0 overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
+          <div className="grid grid-cols-3 divide-x divide-[#273035] border-b border-[#273035]">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="px-3 py-2">
+                <div className="h-2 w-12 animate-pulse rounded bg-[#253138]" />
+                <div className="mt-2 h-4 w-20 animate-pulse rounded bg-[#253138]" />
+              </div>
+            ))}
+          </div>
+          <div className="divide-y divide-[#273035]">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="grid grid-cols-[minmax(0,1fr)_5rem_5rem] gap-3 px-3 py-3">
+                <div className="h-4 animate-pulse rounded bg-[#253138]" />
+                <div className="h-4 animate-pulse rounded bg-[#253138]" />
+                <div className="h-4 animate-pulse rounded bg-[#253138]" />
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="glass-card rounded-xl text-center py-16 text-base text-arena-elements-textSecondary">
         <div className="i-ph:arrow-clockwise text-3xl mb-3 mx-auto text-arena-elements-textTertiary animate-spin" />
@@ -43,6 +67,14 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   }
 
   if (!portfolio) {
+    if (ledger) {
+      return (
+        <div className="flex h-full min-h-[8rem] items-center justify-center rounded-[5px] border border-[#273035] bg-[#0b1418] px-4 text-center font-display text-sm text-[#949e9c]">
+          No portfolio data available{isLive ? '.' : ` while it is ${botStatusLabel(status).toLowerCase()}.`}
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-4">
         {verificationState === 'unverified' && (
@@ -115,8 +147,8 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
     ? (totalMarginUsed / portfolio.totalValueUsd) * 100
     : null;
   const renderStandardPositionsTable = (positions: Position[], dense = false) => (
-    <div className="overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
-      <Table className="min-w-[780px]">
+    <div className={`${ledger ? 'rounded-[5px] border-[#273035] bg-[#0b1418]' : 'rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
+      <Table className={dense ? 'min-w-[620px]' : 'min-w-[780px]'}>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
           <TableHead className={`${dense ? 'py-2.5' : 'py-4'} text-base`}>Asset</TableHead>
@@ -161,8 +193,8 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   );
 
   const renderPerpPositionsTable = (positions: Position[], dense = false) => (
-    <div className="overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
-      <Table className="min-w-[1120px]">
+    <div className={`${ledger ? 'rounded-[5px] border-[#273035] bg-[#0b1418]' : 'rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
+      <Table className={dense ? 'min-w-[920px]' : 'min-w-[1120px]'}>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
           <TableHead className={`${dense ? 'py-2.5' : 'py-4'} text-base`}>Market</TableHead>
@@ -414,12 +446,12 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
         </div>
       )}
 
-      <div className={`${ledger ? 'grid-cols-3 gap-0 overflow-hidden rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36' : workspace ? compactRail ? 'mb-3 grid-cols-2 gap-3' : 'mb-3 grid-cols-2 gap-3 xl:grid-cols-3' : 'mb-4 gap-3 sm:grid-cols-2'} grid`}>
-        <div className={`${ledger ? 'border-r border-arena-elements-dividerColor/60 px-3 py-2' : 'glass-card rounded-lg px-4 py-3'} min-w-0`}>
-          <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
+      <div className={`${ledger ? 'grid-cols-3 gap-0 overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]' : workspace ? compactRail ? 'mb-3 grid-cols-2 gap-3' : 'mb-3 grid-cols-2 gap-3 xl:grid-cols-3' : 'mb-4 gap-3 sm:grid-cols-2'} grid`}>
+        <div className={`${ledger ? 'border-r border-[#273035] px-3 py-2' : 'glass-card rounded-lg px-4 py-3'} min-w-0`}>
+          <div className={`font-data text-xs uppercase tracking-wider ${ledger ? 'text-[#697371]' : 'text-arena-elements-textTertiary'}`}>
             {hasPerpPositions ? 'Equity' : 'Value'}
           </div>
-          <div className={`${ledger ? 'text-lg' : 'text-2xl'} mt-1 min-w-0 break-words font-data font-bold leading-tight tracking-tight text-arena-elements-textPrimary`}>
+          <div className={`${ledger ? 'text-lg text-[#f6fefd]' : 'text-2xl text-arena-elements-textPrimary'} mt-1 min-w-0 break-words font-data font-bold leading-tight tracking-tight`}>
             {formatCurrency(portfolio.displayTotalValueUsd)}
           </div>
           {!hasPerpPositions && !ledger && (
@@ -428,29 +460,29 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
             </p>
           )}
         </div>
-        <div className={`${ledger ? 'border-r border-arena-elements-dividerColor/60 px-3 py-2' : 'glass-card rounded-lg px-4 py-3'} min-w-0`}>
-          <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
+        <div className={`${ledger ? 'border-r border-[#273035] px-3 py-2' : 'glass-card rounded-lg px-4 py-3'} min-w-0`}>
+          <div className={`font-data text-xs uppercase tracking-wider ${ledger ? 'text-[#697371]' : 'text-arena-elements-textTertiary'}`}>
             Cash
           </div>
-          <div className={`${ledger ? 'text-lg' : 'text-2xl'} mt-1 min-w-0 break-words font-data font-bold leading-tight tracking-tight text-arena-elements-textPrimary`}>
+          <div className={`${ledger ? 'text-lg text-[#f6fefd]' : 'text-2xl text-arena-elements-textPrimary'} mt-1 min-w-0 break-words font-data font-bold leading-tight tracking-tight`}>
             {formatCurrency(portfolio.displayCashBalance)}
           </div>
         </div>
         {hasPerpPositions ? (
           <div className={`${ledger ? 'px-3 py-2' : 'glass-card rounded-lg px-4 py-3'} min-w-0`}>
-            <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
+            <div className={`font-data text-xs uppercase tracking-wider ${ledger ? 'text-[#697371]' : 'text-arena-elements-textTertiary'}`}>
               Margin
             </div>
-            <div className={`${ledger ? 'text-lg' : 'text-2xl'} mt-1 min-w-0 break-words font-data font-bold leading-tight tracking-tight text-arena-elements-textPrimary`}>
+            <div className={`${ledger ? 'text-lg text-[#f6fefd]' : 'text-2xl text-arena-elements-textPrimary'} mt-1 min-w-0 break-words font-data font-bold leading-tight tracking-tight`}>
               {formatPercent(totalMarginUsage)}
             </div>
           </div>
         ) : (
           <div className={`${ledger ? 'px-3 py-2' : 'glass-card rounded-lg px-4 py-3'} min-w-0`}>
-            <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
+            <div className={`font-data text-xs uppercase tracking-wider ${ledger ? 'text-[#697371]' : 'text-arena-elements-textTertiary'}`}>
               Positions
             </div>
-            <div className={`${ledger ? 'text-lg' : 'text-2xl'} mt-1 min-w-0 break-words font-data font-bold leading-tight tracking-tight text-arena-elements-textPrimary`}>
+            <div className={`${ledger ? 'text-lg text-[#f6fefd]' : 'text-2xl text-arena-elements-textPrimary'} mt-1 min-w-0 break-words font-data font-bold leading-tight tracking-tight`}>
               {portfolio.positions.length.toLocaleString()}
             </div>
           </div>

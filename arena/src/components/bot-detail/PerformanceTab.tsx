@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import type { Bot } from '~/lib/types/bot';
 import { Card, CardHeader, CardTitle, CardContent } from '@tangle-network/blueprint-ui/components';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
@@ -28,7 +28,6 @@ import { TradingPerformanceChart, type TradeChartMarker } from './TradingPerform
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 import { PERFORMANCE_SECTION_COPY } from './metricCopy';
 import { buildDecisionItemsFromTrades } from '~/lib/decisionFeed';
-import { DecisionInspector } from './shared/DecisionInspector';
 import { TradeInstrumentDisplay } from './shared/AssetDisplay';
 
 const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
@@ -438,7 +437,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const marketVolumeValue = marketCandles.length > 0
     ? marketCandles.reduce((sum, candle) => sum + candle.volume, 0)
     : null;
-  const recentTradeTape = useMemo(() => (trades ?? []).slice(0, 6), [trades]);
+  const recentTradeTape = useMemo(() => (trades ?? []).slice(0, 12), [trades]);
   const tradeDecisionItems = useMemo(
     () => buildDecisionItemsFromTrades(recentTradeTape),
     [recentTradeTape],
@@ -446,23 +445,6 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const selectedDecision = tradeDecisionItems.find((item) => item.id === selectedDecisionId)
     ?? tradeDecisionItems[0]
     ?? null;
-  const selectedTrade = selectedDecision?.source === 'trade'
-    ? recentTradeTape.find((trade) => `trade:${trade.id}` === selectedDecision.id) ?? recentTradeTape[0] ?? null
-    : recentTradeTape[0] ?? null;
-  const buyTapeCount = recentTradeTape.filter((trade) => isBuySideTradeAction(trade.action)).length;
-  const sellTapeCount = recentTradeTape.filter((trade) => isSellSideTradeAction(trade.action)).length;
-  const otherTapeCount = Math.max(0, recentTradeTape.length - buyTapeCount - sellTapeCount);
-
-  useEffect(() => {
-    if (tradeDecisionItems.length === 0) {
-      if (selectedDecisionId !== null) setSelectedDecisionId(null);
-      return;
-    }
-
-    if (!tradeDecisionItems.some((item) => item.id === selectedDecisionId)) {
-      setSelectedDecisionId(tradeDecisionItems[0].id);
-    }
-  }, [selectedDecisionId, tradeDecisionItems]);
 
   const canUseCopilot = Boolean(canCommand && operatorAuth.isAuthenticated && operatorAuth.token);
   const marketMoveTone = marketMove == null
@@ -775,93 +757,94 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             />
           ) : (
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-2">
-              <div className="mb-2 flex shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-1 pb-2">
-                <div>
-                  <h3 className="font-display text-sm font-semibold text-[#f6fefd]">
-                    Fills
-                  </h3>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 font-data text-[11px] text-[#949e9c]">
-                    <span>{buyTapeCount} buy</span>
-                    <span className="text-[#575e62]">/</span>
-                    <span>{sellTapeCount} sell</span>
-                    {otherTapeCount > 0 && (
-                      <>
-                        <span className="text-[#575e62]">/</span>
-                        <span>{otherTapeCount} other</span>
-                      </>
-                    )}
-                  </div>
-                </div>
+              <div className="mb-1.5 flex h-8 shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-1 pb-1.5">
+                <h3 className="font-display text-sm font-semibold text-[#f6fefd]">
+                  Fills
+                </h3>
                 <span className="font-data text-xs text-[#949e9c]">
-                  {Math.min(recentTradeTape.length, 6)}
-                  {tradePage?.total != null
-                    ? ` / ${tradePage.total.toLocaleString()}`
-                    : trades && trades.length > recentTradeTape.length
-                      ? ` / ${trades.length.toLocaleString()}`
-                      : ''}
+                  {recentTradeTape.length.toLocaleString()}
+                  {' / '}
+                  {(tradePage?.total ?? trades?.length ?? recentTradeTape.length).toLocaleString()}
                 </span>
               </div>
-              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,0.88fr)_minmax(210px,1fr)] gap-2">
-                <DecisionInspector
-                  item={selectedDecision}
-                  variant="terminal"
-                  instrumentSlot={selectedTrade ? (
-                    <TradeInstrumentDisplay
-                      trade={selectedTrade}
-                      size="md"
-                      showVenue
-                      labelClassName="text-base !text-[#f6fefd]"
-                    />
-                  ) : undefined}
-                  className="rounded-[5px] border border-[#273035] bg-[#0b1418]"
-                />
+              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_56px] overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
                 <div
-                  className="min-h-0 overflow-y-auto rounded-[5px] border border-[#273035] bg-[#0b1418] p-1.5"
+                  className="min-h-0 overflow-y-auto [scrollbar-gutter:stable]"
                   aria-label="Recent fills"
                   tabIndex={0}
                 >
-                  {recentTradeTape.map((trade) => {
-                    const decisionId = `trade:${trade.id}`;
-                    const isSelected = selectedDecision?.id === decisionId;
+                  <div className="sticky top-0 z-10 grid grid-cols-[72px_minmax(0,1fr)_92px] border-b border-[#273035] bg-[#0b1418]/95 px-2 py-1.5 font-data text-[10px] uppercase text-[#697371] backdrop-blur min-[1440px]:grid-cols-[82px_minmax(0,1fr)_112px]">
+                    <span>Side</span>
+                    <span>Market</span>
+                    <span className="text-right">Notional</span>
+                  </div>
+                  <div className="divide-y divide-[#273035]">
+                    {recentTradeTape.map((trade) => {
+                      const decisionId = `trade:${trade.id}`;
+                      const selected = selectedDecision?.id === decisionId;
 
-                    return (
-                      <button
-                        key={trade.id}
-                        type="button"
-                        className={`mb-1.5 grid w-full grid-cols-[72px_minmax(0,1fr)_86px] items-center gap-2 rounded-[5px] border px-2.5 py-2.5 text-left transition-colors last:mb-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
-                          isSelected
-                            ? 'border-[#50d2c1]/45 bg-[#143c38] shadow-[inset_3px_0_0_rgba(80,210,193,0.82)]'
-                            : 'border-[#273035] bg-[#0f1a1f] hover:bg-[#16242a]'
-                        }`}
-                        aria-pressed={isSelected}
-                        onClick={() => setSelectedDecisionId(decisionId)}
-                      >
-                        <div className="min-w-0">
-                          <div className={`inline-flex rounded-[3px] border border-current/20 px-1.5 py-0.5 font-data text-[10px] font-semibold uppercase ${getTradeActionToneClass(trade.action)}`}>
-                            {formatTradeActionLabel(trade.action)}
+                      return (
+                        <button
+                          key={trade.id}
+                          type="button"
+                          className={`grid w-full grid-cols-[72px_minmax(0,1fr)_92px] items-center gap-2 px-2 py-1.5 text-left transition-colors min-[1440px]:grid-cols-[82px_minmax(0,1fr)_112px] ${
+                            selected
+                              ? 'bg-[#123f3a] shadow-[inset_3px_0_0_rgba(80,210,193,0.82)]'
+                              : 'hover:bg-[#101f25]'
+                          }`}
+                          aria-pressed={selected}
+                          onClick={() => setSelectedDecisionId(decisionId)}
+                          title={`${formatTradeActionLabel(trade.action)} ${getTradeMarketLabel(trade)} · ${formatTradeMicrostructure(trade)}`}
+                        >
+                          <div className="min-w-0">
+                            <div className={`truncate font-data text-xs font-semibold uppercase ${getTradeActionToneClass(trade.action)}`}>
+                              {formatTradeActionLabel(trade.action)}
+                            </div>
+                            <div className="mt-0.5 truncate font-data text-[10px] text-[#697371]">
+                              {formatTradeTime(trade.timestamp)}
+                            </div>
                           </div>
-                          <div className="mt-1 truncate font-data text-[11px] text-[#949e9c]">
-                            {formatTradeTime(trade.timestamp)}
+                          <TradeInstrumentDisplay
+                            trade={trade}
+                            size="sm"
+                            showVenue={false}
+                            labelClassName="max-w-[220px] text-sm !text-[#f6fefd]"
+                          />
+                          <div className="min-w-0 text-right">
+                            <div className="font-data text-sm font-semibold tabular-nums text-[#f6fefd]">
+                              {formatTradeUsd(trade.notionalUsd)}
+                            </div>
+                            <div className="truncate font-data text-[10px] text-[#697371]">
+                              {formatExecutionMode(trade)}
+                            </div>
                           </div>
-                        </div>
-                        <TradeInstrumentDisplay
-                          trade={trade}
-                          size="sm"
-                          showVenue={false}
-                          labelClassName="max-w-[150px] text-[14px] !text-[#f6fefd]"
-                        />
-                        <div className="min-w-0 text-right">
-                          <div className="font-data text-sm font-semibold tabular-nums text-[#f6fefd]">
-                            {formatTradeUsd(trade.notionalUsd)}
-                          </div>
-                          <div className="truncate font-data text-[10px] text-[#949e9c]" title={formatTradeMicrostructure(trade)}>
-                            {formatExecutionMode(trade)}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
+                <aside
+                  className="min-h-0 border-t border-[#273035] bg-[#0f1a1f] px-2.5 py-2"
+                  aria-label="Decision inspector"
+                >
+                  {selectedDecision ? (
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center justify-between gap-3">
+                        <div className="truncate font-data text-xs font-semibold uppercase text-[#50d2c1]">
+                          {selectedDecision.actionLabel}
+                        </div>
+                        <div className="shrink-0 font-data text-[11px] text-[#949e9c]">
+                          {selectedDecision.statusLabel}
+                        </div>
+                      </div>
+                      <p className="mt-0.5 line-clamp-1 text-sm leading-5 text-[#d2dad7]">
+                        {selectedDecision.reason}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-[#949e9c]">No decisions captured yet.</p>
+                  )}
+                </aside>
               </div>
             </div>
           )}

@@ -49,48 +49,63 @@ export function PortfolioWorkspace({
   ].join(' ');
 
   return (
-    <div className={`flex h-full min-h-0 flex-col gap-2 ${terminalTableClass}`}>
-      <section className="flex min-h-0 flex-[0.9] flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.24)]">
-        <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0b1418] px-3">
-          <h2 className="font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
+    <section className={`flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.24)] ${terminalTableClass}`}>
+      <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0b1418] px-3">
+        <div className="min-w-0">
+          <h2 className="truncate font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
             Portfolio
           </h2>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 [scrollbar-gutter:stable]">
-          <PositionsTab
-            botId={botId}
-            status={status}
-            chainId={chainId}
-            operatorApiUrl={operatorApiUrl}
-            operatorKind={operatorKind}
-            verificationState={verificationState}
-            assetMetadata={assetMetadata}
-            workspace
-            workspaceLayout="ledger"
-          />
+        <div className="hidden items-center gap-2 font-data text-xs text-[#697371] min-[980px]:flex">
+          <span className="text-[#d2dad7]">{botName}</span>
+          <span aria-hidden="true">/</span>
+          <span>{isLive ? 'Live' : 'Paper'}</span>
         </div>
-      </section>
+      </div>
 
-      <section className="flex min-h-0 flex-[1.25] flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.24)]">
-        <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0b1418] px-3">
-          <h2 className="font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
-            Executions
-          </h2>
-        </div>
-        <div className="min-h-0 flex-1 p-2">
-          <TradeHistoryTab
-            botId={botId}
-            botName={botName}
-            isLive={isLive}
-            chainId={chainId}
-            operatorApiUrl={operatorApiUrl}
-            operatorKind={operatorKind}
-            verificationState={verificationState}
-            assetMetadata={assetMetadata}
-            compact
-          />
-        </div>
-      </section>
-    </div>
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(142px,0.36fr)_minmax(0,1fr)] overflow-hidden min-[1620px]:grid-cols-[minmax(380px,0.38fr)_minmax(0,1fr)] min-[1620px]:grid-rows-none">
+        <section className="flex min-h-0 flex-col overflow-hidden border-b border-[#273035] bg-[#0f1a1f] min-[1620px]:border-b-0 min-[1620px]:border-r">
+          <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0d171b] px-3">
+            <h3 className="font-data text-xs font-semibold uppercase text-[#949e9c]">
+              Positions
+            </h3>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 [scrollbar-gutter:stable]">
+            <PositionsTab
+              botId={botId}
+              status={status}
+              chainId={chainId}
+              operatorApiUrl={operatorApiUrl}
+              operatorKind={operatorKind}
+              verificationState={verificationState}
+              assetMetadata={assetMetadata}
+              workspace
+              workspaceLayout="ledger"
+            />
+          </div>
+        </section>
+
+        <section className="flex min-h-0 flex-col overflow-hidden bg-[#0f1a1f]">
+          <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0d171b] px-3">
+            <h3 className="font-data text-xs font-semibold uppercase text-[#949e9c]">
+              Executions
+            </h3>
+          </div>
+          <div className="min-h-0 flex-1 p-2">
+            <TradeHistoryTab
+              botId={botId}
+              botName={botName}
+              isLive={isLive}
+              chainId={chainId}
+              operatorApiUrl={operatorApiUrl}
+              operatorKind={operatorKind}
+              verificationState={verificationState}
+              assetMetadata={assetMetadata}
+              compact
+            />
+          </div>
+        </section>
+      </div>
+    </section>
   );
 }

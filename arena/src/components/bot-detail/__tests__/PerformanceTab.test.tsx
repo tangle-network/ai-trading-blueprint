@@ -533,7 +533,7 @@ describe('PerformanceTab', () => {
 
     expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.getAllByText('Fills').length).toBeGreaterThan(0);
-    expect(screen.getByText('6 / 12')).toBeInTheDocument();
+    expect(screen.getByText('12 / 12')).toBeInTheDocument();
     expect(screen.queryByText('Execution Tape')).not.toBeInTheDocument();
     expect(screen.queryByText('Fill Ledger')).not.toBeInTheDocument();
   });

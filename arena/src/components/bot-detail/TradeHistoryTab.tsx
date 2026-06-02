@@ -298,11 +298,13 @@ function TradePager({
   onPrevious,
   onNext,
   className,
+  terminal = false,
 }: {
   page: TradePage | undefined;
   onPrevious: () => void;
   onNext: () => void;
   className?: string;
+  terminal?: boolean;
 }) {
   const range = formatTradePageRange(page);
   const canPrevious = Boolean(page && page.offset > 0);
@@ -312,15 +314,19 @@ function TradePager({
 
   return (
     <div className={`flex items-center justify-end gap-2 ${className ?? ''}`}>
-      <span className="font-data text-sm tabular-nums text-arena-elements-textSecondary">
+      <span className={`font-data text-sm tabular-nums ${terminal ? 'text-[#d2dad7]' : 'text-arena-elements-textSecondary'}`}>
         {range}
       </span>
-      <div className="inline-flex overflow-hidden rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55">
+      <div className={`inline-flex overflow-hidden rounded-[5px] border ${terminal ? 'border-[#273035] bg-[#0b1418]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55'}`}>
         <button
           type="button"
           onClick={onPrevious}
           disabled={!canPrevious}
-          className="inline-flex h-8 w-8 items-center justify-center text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary disabled:pointer-events-none disabled:opacity-35"
+          className={`inline-flex h-8 w-8 items-center justify-center transition-colors disabled:pointer-events-none disabled:opacity-35 ${
+            terminal
+              ? 'text-[#949e9c] hover:bg-[#16242a] hover:text-[#f6fefd]'
+              : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
+          }`}
           aria-label="Previous trades page"
         >
           <span className="i-ph:caret-left-bold text-sm" aria-hidden="true" />
@@ -329,7 +335,11 @@ function TradePager({
           type="button"
           onClick={onNext}
           disabled={!canNext}
-          className="inline-flex h-8 w-8 items-center justify-center border-l border-arena-elements-dividerColor/70 text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary disabled:pointer-events-none disabled:opacity-35"
+          className={`inline-flex h-8 w-8 items-center justify-center border-l transition-colors disabled:pointer-events-none disabled:opacity-35 ${
+            terminal
+              ? 'border-[#273035] text-[#949e9c] hover:bg-[#16242a] hover:text-[#f6fefd]'
+              : 'border-arena-elements-dividerColor/70 text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
+          }`}
           aria-label="Next trades page"
         >
           <span className="i-ph:caret-right-bold text-sm" aria-hidden="true" />
@@ -405,6 +415,30 @@ export function TradeHistoryTab({
   };
 
   if (isLoading) {
+    if (compact) {
+      return (
+        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
+          <div className="grid grid-cols-[8rem_8rem_minmax(0,1fr)_8rem_7rem_6rem] gap-3 border-b border-[#273035] px-4 py-3 font-data text-xs uppercase text-[#697371]">
+            <span>Time</span>
+            <span>Trade</span>
+            <span>Market</span>
+            <span className="text-right">Size</span>
+            <span className="text-right">USD</span>
+            <span className="text-right">Mode</span>
+          </div>
+          <div className="divide-y divide-[#273035]">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div key={index} className="grid grid-cols-[8rem_8rem_minmax(0,1fr)_8rem_7rem_6rem] gap-3 px-4 py-3">
+                {Array.from({ length: 6 }).map((__, cellIndex) => (
+                  <div key={cellIndex} className="h-4 animate-pulse rounded bg-[#253138]" />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className={compact ? 'flex h-full min-h-0 flex-col gap-2' : 'space-y-3'}>
         <div className={`${compact ? 'min-h-0 flex-1' : ''} overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36`}>
@@ -426,6 +460,14 @@ export function TradeHistoryTab({
   }
 
   if (!trades || trades.length === 0) {
+    if (compact) {
+      return (
+        <div className="flex h-full min-h-[10rem] items-center justify-center rounded-[5px] border border-[#273035] bg-[#0b1418] px-4 text-center font-display text-sm text-[#949e9c]">
+          No executions recorded for this agent.
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-4">
         {verificationState === 'unverified' && (
@@ -450,9 +492,10 @@ export function TradeHistoryTab({
         onPrevious={previousPage}
         onNext={nextPage}
         className={compact ? 'absolute -top-[2.55rem] right-0 z-10' : undefined}
+        terminal={compact}
       />
 
-      <div className={`${compact ? 'min-h-0 flex-1 overflow-auto' : 'overflow-x-auto'} rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36`}>
+      <div className={`${compact ? 'min-h-0 flex-1 overflow-auto rounded-[5px] border-[#273035] bg-[#0b1418]' : 'overflow-x-auto rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} border`}>
         <Table className={compact ? 'min-w-[980px]' : 'min-w-[1120px]'}>
           <TradeTableHead compact={compact} />
           <TableBody>
