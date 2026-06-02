@@ -205,12 +205,6 @@ function resolveExecutionCount({
   };
 }
 
-function executionCountLabel(source: ExecutionCountSource): string {
-  if (source === 'loaded-trades') return 'Loaded Trades';
-  if (source === 'none') return 'Trades';
-  return 'Total Trades';
-}
-
 function executionCountSubvalue({ source, loaded, total }: { source: ExecutionCountSource; loaded: number; total: number | null }): string | null {
   if (total != null && loaded > 0 && loaded < total) return `${loaded.toLocaleString()} loaded`;
   if (source === 'metric-total' && loaded > 0) return `${loaded.toLocaleString()} ledger rows`;
@@ -412,7 +406,6 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     tradeTotal: tradePage?.total,
   });
   const totalTradesValue = executionCount.value;
-  const executionStatLabel = executionCountLabel(executionCount.source);
   const executionStatSubvalue = executionCountSubvalue(executionCount);
   const firstChartPoint = chartPoints[0] ?? null;
   const latestChartPoint = chartPoints[chartPoints.length - 1] ?? null;
@@ -503,6 +496,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     ? [
         {
           label: 'Last Price',
+          shortLabel: 'Price',
           value: formatChartCurrency(latestMarketCandle?.close ?? null),
           tone: marketMoveTone,
           subvalue: formatSignedChartPercent(marketMovePercent),
@@ -510,6 +504,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         },
         {
           label: `${selectedRange.label} High / Low`,
+          shortLabel: 'H / L',
           value: formatChartCurrency(marketHighValue),
           tone: 'text-arena-elements-textPrimary',
           subvalue: formatChartCurrency(marketLowValue),
@@ -517,16 +512,19 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         },
         {
           label: 'Volume',
+          shortLabel: 'Vol',
           value: formatChartNumber(marketVolumeValue),
           tone: 'text-arena-elements-textPrimary',
         },
         {
           label: 'Range PnL',
+          shortLabel: 'PnL',
           value: accountPnlForDisplay == null ? '—' : formatChartCurrency(accountPnlForDisplay),
           tone: accountPnlTone,
         },
         {
-          label: executionStatLabel,
+          label: 'Fills',
+          shortLabel: 'Fills',
           value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
           tone: 'text-arena-elements-textPrimary',
           subvalue: executionStatSubvalue,
@@ -536,21 +534,25 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     : [
         {
           label: 'Account Value',
+          shortLabel: 'Equity',
           value: formatChartCurrency(accountValueForDisplay),
           tone: 'text-arena-elements-textPrimary',
         },
         {
           label: 'Range PnL',
+          shortLabel: 'PnL',
           value: accountPnlForDisplay == null ? '—' : formatChartCurrency(accountPnlForDisplay),
           tone: accountPnlTone,
         },
         {
           label: `${selectedRange.label} Return`,
+          shortLabel: 'Return',
           value: formatSignedChartPercent(accountReturnForDisplay),
           tone: accountReturnTone,
         },
         {
-          label: executionStatLabel,
+          label: 'Fills',
+          shortLabel: 'Fills',
           value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
           tone: 'text-arena-elements-textPrimary',
           subvalue: executionStatSubvalue,
@@ -558,6 +560,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         },
         {
           label: 'Account High / Low',
+          shortLabel: 'H / L',
           value: formatChartCurrency(chartHighValue),
           tone: 'text-arena-elements-textPrimary',
           subvalue: formatChartCurrency(chartLowValue),
@@ -565,8 +568,8 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         },
       ] as const;
   const chartHeading = effectiveChartMode === 'market'
-    ? `${isHyperliquidPerpBot && marketCandleToken ? `${marketCandleToken}-PERP` : marketCandleToken ?? 'Market'} Terminal`
-    : 'Account Terminal';
+    ? `${isHyperliquidPerpBot && marketCandleToken ? `${marketCandleToken}-PERP` : marketCandleToken ?? 'Market'}`
+    : 'Account';
 
   if (isLoading) {
     return (
@@ -603,47 +606,69 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         <UnverifiedDataNotice subject="performance snapshots" />
       )}
 
-      <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(190px,25dvh)] gap-3 overflow-hidden min-[1280px]:grid-cols-[minmax(0,1fr)_380px] min-[1280px]:grid-rows-none min-[1440px]:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="glass-card-strong flex min-h-0 flex-col overflow-hidden rounded-xl p-3 shadow-[0_24px_90px_rgba(0,0,0,0.22)]">
-          <div className="mb-3 flex shrink-0 flex-col gap-3 min-[1180px]:flex-row min-[1180px]:items-start min-[1180px]:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="font-display text-2xl font-bold tracking-tight">
+      <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(190px,25dvh)] gap-2 overflow-hidden min-[1280px]:grid-cols-[minmax(0,1fr)_332px] min-[1280px]:grid-rows-none min-[1440px]:grid-cols-[minmax(0,1fr)_346px]">
+        <div className="flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
+          <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1180px]:h-[72px] min-[1180px]:flex-row min-[1180px]:items-stretch">
+            <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1180px]:w-[178px] min-[1180px]:border-b-0 min-[1180px]:border-r">
+              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#123f3a] text-[#50d2c1]">
+                <span className="i-ph:chart-line-up text-base" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="truncate font-display text-lg font-semibold leading-tight text-[#f6fefd]">
                   {chartHeading}
                 </h2>
+                {(lastCheckpointLabel || liveNavLabel) && (
+                  <div className="mt-0.5 truncate font-data text-[11px] text-[#949e9c]">
+                    {lastCheckpointLabel ?? 'checkpoint unavailable'}
+                    {liveNavLabel ? ` · live ${liveNavLabel}` : ''}
+                  </div>
+                )}
               </div>
-              {(lastCheckpointLabel || liveNavLabel) && (
-                <p className="mt-1.5 text-xs font-data text-arena-elements-textTertiary">
-                  {lastCheckpointLabel ? `Last checkpoint: ${lastCheckpointLabel}` : 'Last checkpoint: unavailable'}
-                  {liveNavLabel ? ` · Live NAV: ${liveNavLabel}` : ''}
-                </p>
-              )}
             </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
+
+            <div className="grid min-w-0 flex-1 grid-cols-5 divide-x divide-[#273035] overflow-hidden">
+              {chartStats.map((stat) => (
+                <div key={stat.label} className="min-w-0 px-2.5 py-2 min-[1440px]:px-3">
+                  <div className="truncate font-data text-[11px] text-[#949e9c]">
+                    {stat.shortLabel}
+                  </div>
+                  <div className={`mt-1 truncate font-data text-[15px] font-semibold leading-none tabular-nums ${stat.tone === accountPnlTone || stat.tone === accountReturnTone || stat.tone === marketMoveTone ? stat.tone : 'text-[#f6fefd]'}`}>
+                    {stat.value}
+                  </div>
+                  {'subvalue' in stat && stat.subvalue && (
+                    <div className="mt-1 hidden truncate font-data text-[11px] text-[#949e9c] min-[1440px]:block">
+                      {stat.subvaluePrefix ? `${stat.subvaluePrefix} ` : ''}{stat.subvalue}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex shrink-0 items-center gap-1 border-t border-[#273035] px-2 py-2 min-[1180px]:border-l min-[1180px]:border-t-0">
               <div
-                className="inline-flex w-fit rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/60 p-1"
+                className="inline-flex rounded-[5px] bg-[#273035] p-0.5"
                 role="group"
                 aria-label="Chart mode"
               >
-                    {(['market', 'nav'] as const).map((mode) => (
+                {(['market', 'nav'] as const).map((mode) => (
                   <button
                     key={mode}
                     type="button"
-                    className={`h-8 rounded-md px-3 text-sm font-data transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 disabled:cursor-not-allowed disabled:opacity-45 ${
+                    className={`h-7 rounded-[4px] px-2.5 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 disabled:cursor-not-allowed disabled:opacity-45 ${
                       chartMode === mode
-                        ? 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
-                        : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
+                        ? 'bg-[#50d2c1] text-[#04060c]'
+                        : 'text-[#d2dad7] hover:bg-[#344148] hover:text-[#f6fefd]'
                     }`}
                     aria-pressed={chartMode === mode}
                     disabled={mode === 'market' && !hasMarketCandles}
                     onClick={() => setChartMode(mode)}
                   >
-                    {mode === 'market' ? 'Market' : 'Account'}
+                    {mode === 'market' ? 'Market' : 'NAV'}
                   </button>
                 ))}
               </div>
               <div
-                className="inline-flex w-fit rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/60 p-1"
+                className="inline-flex rounded-[5px] bg-[#273035] p-0.5"
                 role="group"
                 aria-label="Performance date range"
               >
@@ -651,10 +676,10 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   <button
                     key={item.value}
                     type="button"
-                    className={`h-8 rounded-md px-3 text-sm font-data transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                    className={`h-7 rounded-[4px] px-2 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
                       range === item.value
-                        ? 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
-                        : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
+                        ? 'bg-[#d2dad7] text-[#04060c]'
+                        : 'text-[#949e9c] hover:bg-[#344148] hover:text-[#f6fefd]'
                     }`}
                     aria-pressed={range === item.value}
                     onClick={() => setRange(item.value)}
@@ -666,35 +691,9 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             </div>
           </div>
 
-          <div className="mb-3 grid shrink-0 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-            {chartStats.map((stat) => (
-              <div
-                key={stat.label}
-                className="min-h-[50px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/54 px-3 py-2"
-              >
-                <div className="truncate text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                  {stat.label}
-                </div>
-                <div className={`mt-1 truncate font-data text-base font-bold leading-none ${stat.tone}`}>
-                  {stat.value}
-                </div>
-                {'subvalue' in stat && stat.subvalue && (
-                  <div className="mt-1 truncate font-data text-xs text-arena-elements-textTertiary">
-                    {stat.subvaluePrefix ? `${stat.subvaluePrefix} ` : ''}{stat.subvalue}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          <div
-            className="min-h-0 flex-1 rounded-xl border border-arena-elements-dividerColor/70 p-2"
-            style={{
-              background: 'linear-gradient(180deg, rgba(10,10,15,0.92), rgba(10,10,15,0.70))',
-            }}
-          >
+          <div className="min-h-0 flex-1 bg-[#0f1a1f]">
             {chartIsRenderable ? (
-              <div className="h-full min-h-[220px] min-[1280px]:min-h-[320px]">
+              <div className="h-full min-h-[260px] min-[1280px]:min-h-[420px]">
                 <TradingPerformanceChart
                   points={chartPoints}
                   tradeMarkers={tradeMarkers}
@@ -705,18 +704,18 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                 />
               </div>
             ) : (
-              <div className="grid h-full min-h-[220px] place-items-center gap-4 p-3 min-[1280px]:min-h-[320px]">
-                <div className="w-full max-w-3xl rounded-xl border border-arena-elements-dividerColor/60 bg-black/18 p-5 text-left shadow-inner">
+              <div className="grid h-full min-h-[260px] place-items-center gap-4 p-3 min-[1280px]:min-h-[420px]">
+                <div className="w-full max-w-3xl rounded-md border border-[#273035] bg-[#0b1418] p-5 text-left">
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="min-w-0">
-                      <div className="font-data text-[11px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-                        Awaiting first checkpoint
+                      <div className="font-data text-[11px] text-[#949e9c]">
+                        Awaiting checkpoint
                       </div>
-                      <h3 className="mt-2 font-display text-2xl font-semibold text-arena-elements-textPrimary">
+                      <h3 className="mt-2 font-display text-2xl font-semibold text-[#f6fefd]">
                         No performance snapshots available yet.
                       </h3>
                     </div>
-                    <span className="rounded-full border border-arena-elements-dividerColor/70 px-3 py-1 font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
+                    <span className="rounded-[4px] border border-[#273035] px-3 py-1 font-data text-xs text-[#949e9c]">
                       {bot.paperTrade ? 'Paper' : 'Live'}
                     </span>
                   </div>
@@ -728,12 +727,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     ].map((item) => (
                       <div
                         key={item.label}
-                        className="min-w-0 rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/36 px-3 py-2"
+                        className="min-w-0 rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-3 py-2"
                       >
-                        <div className="truncate font-data text-[10px] uppercase tracking-wider text-arena-elements-textTertiary">
+                        <div className="truncate font-data text-[10px] text-[#949e9c]">
                           {item.label}
                         </div>
-                        <div className="mt-1 truncate font-data text-base font-semibold text-arena-elements-textPrimary">
+                        <div className="mt-1 truncate font-data text-base font-semibold text-[#f6fefd]">
                           {item.value}
                         </div>
                       </div>
@@ -745,14 +744,14 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           </div>
         </div>
 
-        <aside className="flex min-h-0 flex-col overflow-hidden min-[1280px]:gap-3">
+        <aside className="flex min-h-0 flex-col overflow-hidden min-[1280px]:gap-2">
           {tradePageIsPending ? (
-            <div className="glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl p-3">
-              <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
-                <h3 className="font-display text-sm font-bold uppercase tracking-[0.12em] text-arena-elements-textPrimary">
-                  Execution Inspector
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-2">
+              <div className="mb-2 flex shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-1 pb-2">
+                <h3 className="font-display text-sm font-semibold text-[#f6fefd]">
+                  Fills
                 </h3>
-                <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
+                <span className="font-data text-xs text-[#949e9c]">
                   Loading
                 </span>
               </div>
@@ -760,7 +759,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                 {Array.from({ length: 6 }, (_, index) => (
                   <div
                     key={index}
-                    className="rounded-lg border border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/32 px-3 py-3"
+                    className="rounded-[5px] border border-[#273035] bg-[#0b1418] px-3 py-3"
                   >
                     <Skeleton className="h-4 w-24" />
                     <Skeleton className="mt-2 h-3 w-40" />
@@ -777,25 +776,25 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
               className="min-h-0 flex-1"
             />
           ) : (
-            <div className="glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl p-3">
-              <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-2">
+              <div className="mb-2 flex shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-1 pb-2">
                 <div>
-                  <h3 className="font-display text-sm font-bold uppercase tracking-[0.12em] text-arena-elements-textPrimary">
-                    Execution Inspector
+                  <h3 className="font-display text-sm font-semibold text-[#f6fefd]">
+                    Fills
                   </h3>
-                  <div className="mt-1 flex flex-wrap items-center gap-1.5 font-data text-[11px] text-arena-elements-textTertiary">
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 font-data text-[11px] text-[#949e9c]">
                     <span>{buyTapeCount} buy</span>
-                    <span className="text-arena-elements-dividerColor">/</span>
+                    <span className="text-[#575e62]">/</span>
                     <span>{sellTapeCount} sell</span>
                     {otherTapeCount > 0 && (
                       <>
-                        <span className="text-arena-elements-dividerColor">/</span>
+                        <span className="text-[#575e62]">/</span>
                         <span>{otherTapeCount} other</span>
                       </>
                     )}
                   </div>
                 </div>
-                <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
+                <span className="font-data text-xs text-[#949e9c]">
                   {Math.min(recentTradeTape.length, 6)}
                   {tradePage?.total != null
                     ? ` / ${tradePage.total.toLocaleString()}`
@@ -804,7 +803,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                       : ''}
                 </span>
               </div>
-              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,0.9fr)_minmax(210px,1fr)] gap-3">
+              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,0.88fr)_minmax(210px,1fr)] gap-2">
                 <DecisionInspector
                   item={selectedDecision}
                   variant="terminal"
@@ -816,17 +815,13 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                       labelClassName="text-base"
                     />
                   ) : undefined}
-                  className="rounded-xl border border-arena-elements-dividerColor/50"
+                  className="rounded-[5px] border border-[#273035] bg-[#0b1418]"
                 />
                 <div
-                  className="min-h-0 overflow-y-auto rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/28 p-2"
+                  className="min-h-0 overflow-y-auto rounded-[5px] border border-[#273035] bg-[#0b1418] p-1.5"
                   aria-label="Recent fills"
                   tabIndex={0}
                 >
-                  <div className="mb-2 flex items-center justify-between gap-2 px-1 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-                    <span>Recent Fills</span>
-                    <span>Side / Instrument / Notional</span>
-                  </div>
                   {recentTradeTape.map((trade) => {
                     const decisionId = `trade:${trade.id}`;
                     const isSelected = selectedDecision?.id === decisionId;
@@ -835,19 +830,19 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                       <button
                         key={trade.id}
                         type="button"
-                        className={`mb-2 grid w-full grid-cols-[74px_minmax(0,1fr)_94px] items-center gap-2 rounded-xl border px-3 py-3 text-left transition-colors last:mb-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                        className={`mb-1.5 grid w-full grid-cols-[72px_minmax(0,1fr)_86px] items-center gap-2 rounded-[5px] border px-2.5 py-2.5 text-left transition-colors last:mb-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
                           isSelected
-                            ? 'border-violet-500/45 bg-violet-500/10 shadow-[inset_3px_0_0_rgba(139,92,246,0.72)]'
-                            : 'border-arena-elements-dividerColor/42 bg-arena-elements-background-depth-1/22 hover:bg-arena-elements-item-backgroundHover'
+                            ? 'border-[#50d2c1]/45 bg-[#143c38] shadow-[inset_3px_0_0_rgba(80,210,193,0.82)]'
+                            : 'border-[#273035] bg-[#0f1a1f] hover:bg-[#16242a]'
                         }`}
                         aria-pressed={isSelected}
                         onClick={() => setSelectedDecisionId(decisionId)}
                       >
                         <div className="min-w-0">
-                          <div className={`inline-flex rounded-md border border-current/20 px-2 py-1 font-data text-[11px] font-bold uppercase ${getTradeActionToneClass(trade.action)}`}>
+                          <div className={`inline-flex rounded-[3px] border border-current/20 px-1.5 py-0.5 font-data text-[10px] font-semibold uppercase ${getTradeActionToneClass(trade.action)}`}>
                             {formatTradeActionLabel(trade.action)}
                           </div>
-                          <div className="mt-1.5 truncate font-data text-[11px] text-arena-elements-textTertiary">
+                          <div className="mt-1 truncate font-data text-[11px] text-[#949e9c]">
                             {formatTradeTime(trade.timestamp)}
                           </div>
                         </div>
@@ -855,13 +850,13 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                           trade={trade}
                           size="sm"
                           showVenue={false}
-                          labelClassName="max-w-[170px] text-[14px]"
+                          labelClassName="max-w-[150px] text-[14px] text-[#f6fefd]"
                         />
                         <div className="min-w-0 text-right">
-                          <div className="font-data text-base font-semibold text-arena-elements-textPrimary">
+                          <div className="font-data text-sm font-semibold tabular-nums text-[#f6fefd]">
                             {formatTradeUsd(trade.notionalUsd)}
                           </div>
-                          <div className="truncate font-data text-[10px] uppercase tracking-wide text-arena-elements-textTertiary" title={formatTradeMicrostructure(trade)}>
+                          <div className="truncate font-data text-[10px] text-[#949e9c]" title={formatTradeMicrostructure(trade)}>
                             {formatExecutionMode(trade)}
                           </div>
                         </div>

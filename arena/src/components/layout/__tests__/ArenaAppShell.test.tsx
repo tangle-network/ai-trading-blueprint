@@ -68,8 +68,8 @@ describe('ArenaAppShell', () => {
     const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
 
     expect(sidebar).not.toBeNull();
+    expect(within(sidebar!).getByRole('link', { name: /home/i })).toHaveAttribute('href', '/');
     expect(within(sidebar!).getByRole('link', { name: /my agents/i })).toHaveAttribute('href', '/dashboard');
-    expect(within(sidebar!).getByRole('link', { name: /leaderboard/i })).toHaveAttribute('href', '/');
     expect(within(sidebar!).getByRole('link', { name: /deploy/i })).toHaveAttribute('href', '/provision');
     expect(within(sidebar!).getByRole('link', { name: /create/i })).toHaveAttribute('href', '/create');
     expect(within(sidebar!).queryByText(/commandable/i)).not.toBeInTheDocument();
@@ -85,7 +85,7 @@ describe('ArenaAppShell', () => {
 
     expect(sidebar).not.toBeNull();
     expect(within(sidebar!).queryByText(/callable agents/i)).not.toBeInTheDocument();
-    expect(within(sidebar!).getByRole('link', { name: /leaderboard/i })).toHaveAttribute('href', '/');
+    expect(within(sidebar!).getByRole('link', { name: /home/i })).toHaveAttribute('href', '/');
   });
 
   it('persists the collapsed desktop sidebar preference', async () => {

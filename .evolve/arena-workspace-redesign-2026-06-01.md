@@ -227,6 +227,77 @@ The chart should support two first-class modes:
 
 The default should be `Market` when candles exist for the traded instrument and `NAV` otherwise.
 
+### Hyperliquid Trade Page Recon — 2026-06-02
+
+Reference captured with the site-clone workflow against `https://app.hyperliquid.xyz/trade`:
+
+- Rendered screenshot: `.evolve/hyperliquid-trade-recon/reference-1440x900.png`
+- Computed style/token extraction: `.evolve/hyperliquid-trade-recon/reference.json`
+- Captured state: `71.538 | HYPE | Hyperliquid`, 1440x900 viewport, 585 visible elements.
+
+Extracted design facts:
+
+- The reference uses one app font stack for almost everything: `OurFont, system-ui, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", sans-serif`.
+- Most text is only `12px` or `16px`; the premium feel comes from density and hierarchy, not huge type.
+- Primary surface colors are low-contrast exchange blacks and blue-greens: body `rgb(48,48,48)`, panels around `rgb(15,26,31)`, active controls around `rgb(39,48,53)`, positive `rgb(80,210,193)`, negative `rgb(237,112,136)`, muted labels `rgb(148,158,156)`.
+- Border radius is usually `0px`, `5px`, or `8px`, not large rounded cards.
+- The chart owns the center. Header metrics, order book, trade form, and positions are thin strips/panels around it. There are almost no explanatory subtitles.
+- The order book/trade form are not glassy. They are flat, dense, dark panels with subtle dividers and compressed rows.
+
+Chart redesign alternatives after recon:
+
+1. **Winner: Exchange Terminal Strip**
+
+```text
+┌ symbol + checkpoint ┬ Price ┬ H/L ┬ Vol ┬ PnL ┬ Fills ┬ mode/range ┐
+├─────────────────────────────────────────────────────────────────────┤
+│ full dark TradingView candle/NAV chart, no card-stat layer           │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Score: 9/10. This directly fixes the toy problem. It removes the dashboard-card layer, makes the chart materially larger, keeps controls in a single exchange-style strip, and uses Hyperliquid-like colors/radii without copying branding or assets.
+
+2. **Chart + Orderbook Rail**
+
+```text
+┌ symbol strip ┐
+├ chart ┬ synthetic orderbook/depth ┐
+└───────┴───────────────────────────┘
+```
+
+Score: 8/10 future, 5/10 today. It would feel more like Hyperliquid, but we do not yet have normalized orderbook/depth across Hyperliquid, Polymarket, DEX spot, and custom venues. Adding fake depth would be worse than the current chart.
+
+3. **All-In Full-Screen Chart**
+
+```text
+┌ chart fills everything ┐
+└ hover/drawer for fills ┘
+```
+
+Score: 8/10 for power users, 6/10 for the arena. It maximizes price action, but it hides the agent’s execution narrative, which is a core differentiator.
+
+4. **TradingView Native Shell**
+
+```text
+┌ TV-like toolbar ┐
+├ chart           ┤
+└ indicators      ┘
+```
+
+Score: 7/10. Familiar, but it would make the product feel like an embedded chart widget rather than an agent trading cockpit. It also adds toolbar chrome before we have enough indicator controls to justify it.
+
+5. **Dashboard Card Upgrade**
+
+```text
+┌ title + stat cards ┐
+├ improved chart     ┤
+└ fills card         ┘
+```
+
+Score: 4/10. This is close to the current failure mode. Better colors would help, but the structure would still read like a SaaS dashboard, not a professional trading venue.
+
+Decision: implement option 1 now. Keep the existing `lightweight-charts` renderer and venue candle hooks, but make the surrounding Performance surface act like an exchange terminal: dark flat panel, compact symbol strip, inline metrics, tighter controls, larger chart, subtler grid, no visible chart attribution chip, compact NAV marker, and a matching dark execution rail.
+
 ### Performance Execution Rail Alternatives — Fill Evidence + Agent Rationale
 
 After the first TradingView chart pass, the chart was credible but the right rail still read like a generic “recent trades” table. That is not enough for a quant/trading workspace. The right rail should answer “what did the agent just do, why did it do it, what venue/instrument/size was touched, and did execution clear validation?” without requiring the user to leave the chart.
@@ -595,6 +666,20 @@ root.tsx
   - Final screenshot evidence:
     - `.evolve/arena-operations-overview-smoke-20260601-final/1440x900-operations.png`
     - `.evolve/arena-operations-overview-smoke-20260601-final/1280x800-operations.png`
+- Completed the Hyperliquid-inspired terminal chart pass:
+  - Used the site-clone recon workflow against `https://app.hyperliquid.xyz/trade` to extract rendered screenshot and computed tokens instead of guessing.
+  - Captured reference artifacts:
+    - `.evolve/hyperliquid-trade-recon/reference-1440x900.png`
+    - `.evolve/hyperliquid-trade-recon/reference.json`
+  - Replaced the Performance stat-card shell with a flat dark exchange terminal strip: symbol, checkpoint timestamp, Price, H/L, Vol, PnL, Fills, mode, and range controls in one row.
+  - Kept `lightweight-charts` and the existing venue candle/NAV hooks; the change is a presentation/interaction upgrade, not a duplicate chart engine.
+  - Updated chart palette toward professional exchange colors: muted dark panel, subtle grid, Hyperliquid-like positive/negative colors, dark tooltip/readout, and no visible attribution chip.
+  - Converted the right Performance rail to a matching dark fills rail and gave `DecisionInspector` a terminal variant so selected fills are readable inside the chart surface.
+  - Trimmed the terminal decision inspector to summary, notional, instrument, status badges, and thesis. Full stages/evidence stay available in dedicated trade/ops contexts.
+  - Hid secondary strip subvalues below 1440px so the 1280px terminal no longer truncates `Low` / ledger-row copy.
+  - Final screenshot evidence:
+    - `.evolve/arena-hyperliquid-terminal-smoke-20260602-final-resume/1440x900-performance.png`
+    - `.evolve/arena-hyperliquid-terminal-smoke-20260602-final-resume/1280x800-performance.png`
 - Verification completed:
   - `pnpm --dir arena typecheck` passes.
   - `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/PerformanceTab.test.tsx` passes.
@@ -633,6 +718,11 @@ root.tsx
   - Latest full Arena verification after the homepage + Operations + Portfolio passes:
     - `pnpm --dir arena typecheck` passes.
     - `pnpm --dir arena test` passes: 55 files, 311 tests.
+  - Latest Hyperliquid terminal chart verification:
+    - `pnpm --dir arena test` passes: 66 files, 380 tests.
+    - `pnpm --dir arena typecheck` passes.
+    - `pnpm --dir arena build` passes.
+    - `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-hyperliquid-terminal-smoke-20260602-final-resume` passes.
     - `pnpm --dir arena build` passes.
   - Production deploy workflow fix:
     - `.github/workflows/deploy-arena.yml` now bakes `VITE_TRADING_OPERATOR_API_URLS` and `VITE_ADDITIONAL_TRADING_OPERATOR_API_URLS`, so the deployed homepage volume chart can read the configured public operator fleet instead of only `VITE_OPERATOR_API_URL`.

@@ -70,6 +70,11 @@ interface ChartRuntime {
 const SYNTHETIC_TIME_BASE_SECONDS = 1_700_000_000;
 const DENSE_MARKER_THRESHOLD = 16;
 const DENSE_MARKER_BUCKET_TARGET = 10;
+const TERMINAL_SURFACE = '#0f1a1f';
+const TERMINAL_GRID = 'rgba(148, 158, 156, 0.085)';
+const TERMINAL_TICK = '#949e9c';
+const TERMINAL_TOOLTIP = 'rgba(15, 26, 31, 0.95)';
+const TERMINAL_BORDER = 'rgba(39, 48, 53, 0.96)';
 const markerTimeFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
@@ -495,25 +500,25 @@ export function TradingPerformanceChart({
         autoSize: true,
         height: containerRef.current.clientHeight || 520,
         layout: {
-          background: { type: charts.ColorType.Solid, color: 'transparent' },
-          textColor: chartTheme.tickColor,
+          background: { type: charts.ColorType.Solid, color: TERMINAL_SURFACE },
+          textColor: TERMINAL_TICK,
           attributionLogo: false,
-          fontFamily: "'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+          fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         },
         grid: {
           vertLines: { color: 'transparent' },
-          horzLines: { color: chartTheme.gridColor },
+          horzLines: { color: TERMINAL_GRID },
         },
         rightPriceScale: {
           borderVisible: false,
-          scaleMargins: { top: 0.14, bottom: 0.18 },
+          scaleMargins: { top: 0.08, bottom: activeMode === 'market' ? 0.2 : 0.14 },
         },
         timeScale: {
           borderVisible: false,
-          rightOffset: activeMode === 'market' ? 10 : 6,
+          rightOffset: activeMode === 'market' ? 7 : 5,
           barSpacing: activeMode === 'market'
-            ? marketSeriesData.length < 20 ? 18 : 9
-            : preparedPoints.length < 3 ? 80 : 12,
+            ? marketSeriesData.length < 20 ? 16 : 8
+            : preparedPoints.length < 3 ? 72 : 11,
           timeVisible: true,
           secondsVisible: false,
           tickMarkFormatter: (time: Time) => {
@@ -530,13 +535,13 @@ export function TradingPerformanceChart({
         crosshair: {
           mode: charts.CrosshairMode.Magnet,
           vertLine: {
-            color: chartTheme.tickColor,
-            labelBackgroundColor: chartTheme.tooltipBg,
+            color: 'rgba(148, 158, 156, 0.48)',
+            labelBackgroundColor: TERMINAL_TOOLTIP,
             style: charts.LineStyle.Dashed,
           },
           horzLine: {
-            color: chartTheme.tickColor,
-            labelBackgroundColor: chartTheme.tooltipBg,
+            color: 'rgba(148, 158, 156, 0.38)',
+            labelBackgroundColor: TERMINAL_TOOLTIP,
             style: charts.LineStyle.Dotted,
           },
         },
@@ -652,11 +657,11 @@ export function TradingPerformanceChart({
           if (navSeriesData.length > 1) {
             runtime.navPaneStartPriceLine = runtime.navPaneSeries.createPriceLine({
               price: navSeriesData[0].value,
-              color: chartTheme.tickColor,
+              color: TERMINAL_TICK,
               lineWidth: 1,
               lineStyle: charts.LineStyle.Dashed,
               axisLabelVisible: false,
-              title: 'Start NAV',
+              title: 'NAV',
             });
           }
         }
@@ -671,11 +676,11 @@ export function TradingPerformanceChart({
         if (navSeriesData.length > 1) {
           runtime.startPriceLine = runtime.areaSeries.createPriceLine({
             price: navSeriesData[0].value,
-            color: chartTheme.tickColor,
+            color: TERMINAL_TICK,
             lineWidth: 1,
             lineStyle: charts.LineStyle.Dashed,
             axisLabelVisible: false,
-            title: 'Start NAV',
+            title: 'NAV',
           });
         }
         chart.timeScale().fitContent();
@@ -754,13 +759,10 @@ export function TradingPerformanceChart({
     };
   }, [
     activeMode,
-    chartTheme.gridColor,
     chartTheme.gradientEnd,
     chartTheme.hoverBorderColor,
     chartTheme.negative,
     chartTheme.positive,
-    chartTheme.tickColor,
-    chartTheme.tooltipBg,
     fillTopColor,
     hasIntegratedNavPane,
     lineColor,
@@ -789,11 +791,11 @@ export function TradingPerformanceChart({
     if (navSeriesData.length > 1) {
       runtime.startPriceLine = runtime.areaSeries.createPriceLine({
         price: navSeriesData[0].value,
-        color: chartTheme.tickColor,
+        color: TERMINAL_TICK,
         lineWidth: 1,
         lineStyle: 2,
         axisLabelVisible: false,
-        title: 'Start NAV',
+        title: 'NAV',
       });
     }
 
@@ -806,7 +808,6 @@ export function TradingPerformanceChart({
     chartMarkers,
     chartTheme.gradientEnd,
     chartTheme.hoverBorderColor,
-    chartTheme.tickColor,
     fillTopColor,
     lineColor,
     navSeriesData,
@@ -847,11 +848,11 @@ export function TradingPerformanceChart({
       if (navSeriesData.length > 1) {
         runtime.navPaneStartPriceLine = runtime.navPaneSeries.createPriceLine({
           price: navSeriesData[0].value,
-          color: chartTheme.tickColor,
+          color: TERMINAL_TICK,
           lineWidth: 1,
           lineStyle: 2,
           axisLabelVisible: false,
-          title: 'Start NAV',
+          title: 'NAV',
         });
       }
     }
@@ -867,7 +868,6 @@ export function TradingPerformanceChart({
     chartTheme.hoverBorderColor,
     chartTheme.negative,
     chartTheme.positive,
-    chartTheme.tickColor,
     fillTopColor,
     lineColor,
     marketMarkers,
@@ -891,36 +891,34 @@ export function TradingPerformanceChart({
       : null);
 
   return (
-    <div className="relative h-full min-h-[320px] w-full overflow-hidden rounded-lg" data-testid="tradingview-performance-chart">
+    <div className="relative h-full min-h-[320px] w-full overflow-hidden bg-[#0f1a1f]" data-testid="tradingview-performance-chart">
       <div ref={containerRef} className="absolute inset-0" />
       {readout && (
-        <div className="pointer-events-none absolute left-4 top-4 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/88 px-3 py-2 shadow-[0_12px_34px_rgba(0,0,0,0.22)] backdrop-blur">
-          <div className="font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
+        <div
+          className="pointer-events-none absolute left-3 top-3 rounded-md border px-3 py-2 shadow-[0_18px_40px_rgba(0,0,0,0.32)]"
+          style={{ background: TERMINAL_TOOLTIP, borderColor: TERMINAL_BORDER }}
+        >
+          <div className="font-data text-[11px] text-[#949e9c]">
             {readout.label}
           </div>
-          <div className="mt-1 font-data text-xl font-bold text-arena-elements-textPrimary">
+          <div className="mt-0.5 font-data text-xl font-semibold tabular-nums text-[#f6fefd]">
             {formatAxisCurrency(readout.value)}
           </div>
           {readout.detail && (
-            <div className="mt-1 font-data text-[11px] text-arena-elements-textSecondary">
+            <div className="mt-1 font-data text-[11px] text-[#949e9c]">
               {readout.detail}
             </div>
           )}
         </div>
       )}
       {activeMode === 'market' && navSeriesData.length > 0 && (
-        <div className="pointer-events-none absolute bottom-3 left-4 rounded-md border border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-1/72 px-2 py-1 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary backdrop-blur">
-          Account NAV / PnL
+        <div
+          className="pointer-events-none absolute bottom-2 left-3 rounded-sm border px-2 py-0.5 font-data text-[10px] font-semibold text-[#949e9c]"
+          style={{ background: 'rgba(15, 26, 31, 0.78)', borderColor: TERMINAL_BORDER }}
+        >
+          NAV
         </div>
       )}
-      <a
-        href="https://www.tradingview.com/lightweight-charts/"
-        target="_blank"
-        rel="noreferrer"
-        className="absolute bottom-2 right-3 rounded-sm bg-arena-elements-background-depth-1/35 px-1.5 py-0.5 font-data text-[8px] uppercase tracking-wider text-arena-elements-textTertiary/45 transition-colors hover:text-arena-elements-textSecondary"
-      >
-        Powered by TradingView
-      </a>
     </div>
   );
 }

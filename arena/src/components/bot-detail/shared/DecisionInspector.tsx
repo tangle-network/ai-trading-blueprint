@@ -25,6 +25,22 @@ const toneIconClass: Record<DecisionFeedTone, string> = {
   active: 'text-violet-600 dark:text-violet-300',
 };
 
+const terminalToneBadgeClass: Record<DecisionFeedTone, string> = {
+  neutral: 'border-[#273035] bg-[#16242a] text-[#d2dad7]',
+  success: 'border-[#50d2c1]/28 bg-[#143c38] text-[#50d2c1]',
+  warning: 'border-amber-400/28 bg-amber-500/10 text-amber-300',
+  danger: 'border-[#ed7088]/32 bg-[#3a1d26] text-[#ed7088]',
+  active: 'border-[#50d2c1]/28 bg-[#123f3a] text-[#50d2c1]',
+};
+
+const terminalToneIconClass: Record<DecisionFeedTone, string> = {
+  neutral: 'text-[#949e9c]',
+  success: 'text-[#50d2c1]',
+  warning: 'text-amber-300',
+  danger: 'text-[#ed7088]',
+  active: 'text-[#50d2c1]',
+};
+
 interface DecisionInspectorProps {
   item: DecisionFeedItem | null | undefined;
   className?: string;
@@ -32,24 +48,29 @@ interface DecisionInspectorProps {
   instrumentSlot?: ReactNode;
 }
 
-function StageRow({ stage }: { stage: DecisionFeedStage }) {
+function StageRow({ stage, isTerminal = false }: { stage: DecisionFeedStage; isTerminal?: boolean }) {
   return (
-    <div className="grid grid-cols-[24px_minmax(0,1fr)] gap-2 rounded-lg border border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/25 p-2.5">
+    <div className={cx(
+      'grid grid-cols-[24px_minmax(0,1fr)] gap-2 p-2.5',
+      isTerminal
+        ? 'rounded-[5px] border border-[#273035] bg-[#0f1a1f]'
+        : 'rounded-lg border border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/25',
+    )}>
       <span
-        className={cx(stage.iconClass, 'mt-0.5 text-base', toneIconClass[stage.tone])}
+        className={cx(stage.iconClass, 'mt-0.5 text-base', isTerminal ? terminalToneIconClass[stage.tone] : toneIconClass[stage.tone])}
         aria-hidden="true"
       />
       <div className="min-w-0">
         <div className="flex min-w-0 items-center justify-between gap-2">
-          <span className="font-display text-xs font-semibold text-arena-elements-textPrimary">
+          <span className={cx('font-display text-xs font-semibold', isTerminal ? 'text-[#f6fefd]' : 'text-arena-elements-textPrimary')}>
             {stage.label}
           </span>
-          <span className={cx('rounded-full border px-1.5 py-0.5 font-data text-[11px]', toneBadgeClass[stage.tone])}>
+          <span className={cx('rounded-full border px-1.5 py-0.5 font-data text-[11px]', isTerminal ? terminalToneBadgeClass[stage.tone] : toneBadgeClass[stage.tone])}>
             {stage.value}
           </span>
         </div>
         {stage.detail && (
-          <p className="mt-1 line-clamp-2 text-xs leading-5 text-arena-elements-textSecondary">
+          <p className={cx('mt-1 line-clamp-2 text-xs leading-5', isTerminal ? 'text-[#949e9c]' : 'text-arena-elements-textSecondary')}>
             {stage.detail}
           </p>
         )}
@@ -99,39 +120,47 @@ export function DecisionInspector({
   return (
     <aside
       className={cx(
-        'flex min-h-0 flex-col overflow-y-auto bg-arena-elements-background-depth-2/24',
+        'flex min-h-0 flex-col overflow-y-auto',
+        isTerminal ? 'bg-[#0b1418] text-[#f6fefd]' : 'bg-arena-elements-background-depth-2/24',
         isTerminal ? 'p-3' : 'p-4',
         className,
       )}
       aria-label="Decision inspector"
     >
       <div className={cx(
-        'rounded-xl border border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/34',
-        isTerminal ? 'p-3' : 'border-0 bg-transparent p-0',
+        isTerminal
+          ? 'rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-2.5'
+          : 'rounded-xl border-0 border-arena-elements-dividerColor/45 bg-transparent p-0',
       )}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="rounded-full border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/62 px-2 py-0.5 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+              <span className={cx(
+                'rounded-full border px-2 py-0.5 font-data text-[10px] font-semibold uppercase tracking-wider',
+                isTerminal
+                  ? 'border-[#273035] bg-[#16242a] text-[#949e9c]'
+                  : 'border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/62 text-arena-elements-textTertiary',
+              )}>
                 {sourceLabel(item.source)}
               </span>
-              <span className={cx('rounded-full border px-2 py-0.5 font-data text-xs', toneBadgeClass[item.statusTone])}>
+              <span className={cx('rounded-full border px-2 py-0.5 font-data text-xs', isTerminal ? terminalToneBadgeClass[item.statusTone] : toneBadgeClass[item.statusTone])}>
                 {item.statusLabel}
               </span>
             </div>
             <h3 className={cx(
-              'mt-2 truncate font-display font-semibold tracking-tight text-arena-elements-textPrimary',
-              isTerminal ? 'text-2xl' : 'text-base',
+              'mt-2 truncate font-display font-semibold tracking-tight',
+              isTerminal ? 'text-[#f6fefd]' : 'text-arena-elements-textPrimary',
+              isTerminal ? 'text-xl' : 'text-base',
             )}>
               {item.actionLabel}
             </h3>
           </div>
           <div className="shrink-0 pt-1 text-right">
-            <span className="font-data text-xs text-arena-elements-textTertiary">
+            <span className={cx('font-data text-xs', isTerminal ? 'text-[#949e9c]' : 'text-arena-elements-textTertiary')}>
               {item.subtitle}
             </span>
             {isTerminal && item.notionalLabel && (
-              <div className="mt-2 font-data text-xl font-bold text-arena-elements-textPrimary">
+              <div className="mt-2 font-data text-xl font-bold tabular-nums text-[#f6fefd]">
                 {item.notionalLabel}
               </div>
             )}
@@ -141,7 +170,8 @@ export function DecisionInspector({
         <div className={cx('mt-3', instrumentSlot ? 'min-w-0' : '')}>
           {instrumentSlot ?? (
             <p className={cx(
-              'truncate font-data text-arena-elements-textSecondary',
+              'truncate font-data',
+              isTerminal ? 'text-[#d2dad7]' : 'text-arena-elements-textSecondary',
               isTerminal ? 'text-base' : 'text-sm',
             )}>
               {item.instrumentLabel}
@@ -149,24 +179,29 @@ export function DecisionInspector({
           )}
         </div>
         {isTerminal && primaryStats.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1.5">
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
             {primaryStats.map((stat) => (
               <span
                 key={stat.label}
-                className="max-w-full truncate rounded-full border border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-2/54 px-2 py-1 font-data text-[11px] text-arena-elements-textSecondary"
+                className={cx(
+                  'max-w-full truncate rounded-full border px-2 py-1 font-data text-[11px]',
+                  isTerminal
+                    ? 'border-[#273035] bg-[#16242a] text-[#d2dad7]'
+                    : 'border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-2/54 text-arena-elements-textSecondary',
+                )}
                 title={`${stat.label}: ${stat.value}`}
               >
-                <span className="text-arena-elements-textTertiary">{stat.label}</span> {stat.value}
+                <span className={isTerminal ? 'text-[#949e9c]' : 'text-arena-elements-textTertiary'}>{stat.label}</span> {stat.value}
               </span>
             ))}
           </div>
         )}
         {isTerminal && (
-          <div className="mt-3 rounded-lg border border-arena-elements-dividerColor/35 bg-arena-elements-background-depth-2/32 p-2.5">
-            <div className="text-[10px] font-display font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+          <div className="mt-2.5 rounded-[5px] border border-[#273035] bg-[#0b1418] p-2.5">
+            <div className="text-[10px] font-display font-semibold uppercase tracking-wider text-[#949e9c]">
               Thesis
             </div>
-            <p className="mt-1 line-clamp-3 text-sm leading-5 text-arena-elements-textPrimary">
+            <p className="mt-1 line-clamp-2 text-sm leading-5 text-[#f6fefd]">
               {item.reason}
             </p>
           </div>
@@ -208,24 +243,29 @@ export function DecisionInspector({
         </div>
       )}
 
-      {capturedStages.length > 0 && (
+      {capturedStages.length > 0 && !isTerminal && (
         <div className={cx('mt-3 grid gap-2', isTerminal ? 'grid-cols-1 min-[1440px]:grid-cols-2' : 'grid-cols-1')}>
           {capturedStages.map((stage) => (
-            <StageRow key={stage.key} stage={stage} />
+            <StageRow key={stage.key} stage={stage} isTerminal={isTerminal} />
           ))}
         </div>
       )}
 
-      {item.provenance.length > 0 && (
+      {item.provenance.length > 0 && !isTerminal && (
         <div className="mt-4">
-          <div className="text-xs font-display font-semibold uppercase text-arena-elements-textTertiary">
+          <div className={cx('text-xs font-display font-semibold uppercase', isTerminal ? 'text-[#949e9c]' : 'text-arena-elements-textTertiary')}>
             Evidence
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {item.provenance.slice(0, 8).map((fact) => (
               <span
                 key={`${fact.label}-${fact.value}`}
-                className="max-w-full truncate rounded-full border border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/30 px-2 py-1 font-data text-xs text-arena-elements-textSecondary"
+                className={cx(
+                  'max-w-full truncate rounded-full border px-2 py-1 font-data text-xs',
+                  isTerminal
+                    ? 'border-[#273035] bg-[#0f1a1f] text-[#d2dad7]'
+                    : 'border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/30 text-arena-elements-textSecondary',
+                )}
                 title={`${fact.label}: ${fact.value}`}
               >
                 {fact.label}: {fact.value}

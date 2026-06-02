@@ -532,10 +532,8 @@ describe('PerformanceTab', () => {
     render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
 
     expect(screen.getByText('12')).toBeInTheDocument();
-    expect(screen.getByText('Loaded Trades')).toBeInTheDocument();
-    expect(screen.getByText('Execution Inspector')).toBeInTheDocument();
+    expect(screen.getAllByText('Fills').length).toBeGreaterThan(0);
     expect(screen.getByText('6 / 12')).toBeInTheDocument();
-    expect(screen.getByText('Recent Fills')).toBeInTheDocument();
     expect(screen.queryByText('Execution Tape')).not.toBeInTheDocument();
     expect(screen.queryByText('Fill Ledger')).not.toBeInTheDocument();
   });
@@ -564,7 +562,7 @@ describe('PerformanceTab', () => {
 
     render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
 
-    expect(screen.getByText('Total Trades')).toBeInTheDocument();
+    expect(screen.getAllByText('Fills').length).toBeGreaterThan(0);
     expect(screen.getByText('110')).toBeInTheDocument();
     expect(screen.getByText('6 loaded')).toBeInTheDocument();
     expect(screen.getByText('6 / 110')).toBeInTheDocument();
@@ -626,12 +624,12 @@ describe('PerformanceTab', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { name: 'ETH-PERP Terminal' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'ETH-PERP' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Market' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText('Last Price')).toBeInTheDocument();
-    expect(screen.getByText('30D High / Low')).toBeInTheDocument();
-    expect(screen.getByText('Volume')).toBeInTheDocument();
-    expect(screen.getByText('Range PnL')).toBeInTheDocument();
+    expect(screen.getByText('Price')).toBeInTheDocument();
+    expect(screen.getByText('H / L')).toBeInTheDocument();
+    expect(screen.getByText('Vol')).toBeInTheDocument();
+    expect(screen.getAllByText('PnL').length).toBeGreaterThan(0);
     expect(screen.getAllByText('$3,324').length).toBeGreaterThan(0);
     await waitFor(() => expect(lightweightChartMock.candleSeries.setData).toHaveBeenCalled());
     expect(lightweightChartMock.candleSeries.setData).toHaveBeenCalledWith(
@@ -652,7 +650,7 @@ describe('PerformanceTab', () => {
         expect.objectContaining({ value: 10000 }),
       ]),
     );
-    expect(screen.getByText('Account NAV / PnL')).toBeInTheDocument();
+    expect(screen.getAllByText('NAV').length).toBeGreaterThan(0);
     expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ text: '', shape: 'arrowUp', position: 'belowBar' }),
@@ -678,7 +676,7 @@ describe('PerformanceTab', () => {
     render(<PerformanceTab bot={makeBot()} isLive canCommand />);
 
     expect(await screen.findByText('Owner chart copilot')).toBeInTheDocument();
-    expect(screen.getByText('Execution Inspector')).toBeInTheDocument();
+    expect(screen.getAllByText('Fills').length).toBeGreaterThan(0);
   });
 
   it('keeps authenticated non-commandable viewers on the public trade tape', async () => {
@@ -699,7 +697,7 @@ describe('PerformanceTab', () => {
     render(<PerformanceTab bot={makeBot()} isLive />);
 
     expect(screen.queryByText('Owner chart copilot')).not.toBeInTheDocument();
-    expect(await screen.findByText('Execution Inspector')).toBeInTheDocument();
+    expect((await screen.findAllByText('Fills')).length).toBeGreaterThan(0);
   });
 
   it('keeps the agent recent-trades rail stable while the trade ledger loads', async () => {
@@ -717,7 +715,7 @@ describe('PerformanceTab', () => {
 
     render(<PerformanceTab bot={makeBot()} isLive />);
 
-    expect(await screen.findByText('Execution Inspector')).toBeInTheDocument();
+    expect((await screen.findAllByText('Fills')).length).toBeGreaterThan(0);
     expect(screen.queryByText('Latest Trades')).not.toBeInTheDocument();
     expect(screen.getByText('Loading')).toBeInTheDocument();
   });
@@ -783,7 +781,7 @@ describe('PerformanceTab', () => {
       />,
     );
 
-    expect(screen.getByText(/Last checkpoint: .*Live NAV:/)).toBeInTheDocument();
+    expect(screen.getByText(/May 27, 4:05 AM.*live May 27, 4:07 AM/)).toBeInTheDocument();
   });
 
   it('does not label live NAV when the latest checkpoint is already fresh', () => {
@@ -810,7 +808,7 @@ describe('PerformanceTab', () => {
       />,
     );
 
-    expect(screen.getByText(/Last checkpoint:/)).toBeInTheDocument();
-    expect(screen.queryByText(/Live NAV:/)).not.toBeInTheDocument();
+    expect(screen.getByText('May 27, 4:05 AM')).toBeInTheDocument();
+    expect(screen.queryByText(/live May 27/)).not.toBeInTheDocument();
   });
 });

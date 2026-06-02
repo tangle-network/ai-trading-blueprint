@@ -22,9 +22,9 @@ const FIXTURE_OWNER_AUTH_KEY = `arena.operator_auth.${FIXTURE_OPERATOR.toLowerCa
 
 const SECTION_EXPECTATIONS = {
   performance: [
-    ['Market', 'Account', 'Price'],
+    ['Market', 'NAV', 'Price'],
     ['ETH', 'Performance', 'Awaiting first checkpoint'],
-    ['Execution Inspector', 'Latest Trades', 'Copilot'],
+    ['Fills', 'Latest Trades', 'Copilot'],
   ],
   portfolio: [
     'Portfolio',
@@ -43,8 +43,8 @@ const SECTION_EXPECTATIONS = {
 };
 const LIVE_SECTION_EXPECTATIONS = {
   performance: [
-    ['Market', 'Account', 'Price', 'Performance'],
-    ['Execution Inspector', 'Latest Trades', 'Copilot', 'Awaiting first checkpoint'],
+    ['Market', 'NAV', 'Price', 'Performance'],
+    ['Fills', 'Latest Trades', 'Copilot', 'Awaiting checkpoint'],
   ],
   portfolio: [
     'Portfolio',
