@@ -89,6 +89,7 @@ HYPERLIQUID_API_WALLET_PRIVATE_KEY="${HYPERLIQUID_API_WALLET_PRIVATE_KEY:-}"
 # aarch64-unknown-linux-gnu (since v0.1.3) so this works on ARM cax* boxes too.
 # Cuts ~30-min source builds + ~10 GB of `target/` to a ~11 MB download.
 USE_RELEASE_BINARY="${USE_RELEASE_BINARY:-}"
+CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-https://trading-arena.blueprint.tangle.tools,https://trading-arena.pages.dev}"
 
 if [[ -z "${TANGLE_CONTRACT:-}" && -f "$TNT_CORE_DEPLOYMENT_MANIFEST" ]]; then
   # shellcheck source=/dev/null
@@ -546,6 +547,7 @@ VALIDATION_DEADLINE_SECS=3600
 VALIDATOR_MIN_SCORE=50
 HYPERLIQUID_TESTNET=${HL_TESTNET}
 BLUEPRINT_STATE_DIR=/mnt/trading-data/blueprint-state
+CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS}
 EOF
 chmod 600 /opt/trading-blueprint/repo/settings.env
 printf '%s' "\$AI_PROVIDER_SETTINGS" >> /opt/trading-blueprint/repo/settings.env
