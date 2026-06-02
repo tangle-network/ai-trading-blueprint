@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArenaAppShell } from '../ArenaAppShell';
@@ -56,6 +57,7 @@ function renderShell(path = '/dashboard') {
 
 describe('ArenaAppShell', () => {
   beforeEach(() => {
+    window.localStorage.clear();
     hoisted.account.address = '0x1111111111111111111111111111111111111111';
     hoisted.account.isConnected = true;
   });
@@ -84,6 +86,15 @@ describe('ArenaAppShell', () => {
     expect(sidebar).not.toBeNull();
     expect(within(sidebar!).queryByText(/callable agents/i)).not.toBeInTheDocument();
     expect(within(sidebar!).getByRole('link', { name: /leaderboard/i })).toHaveAttribute('href', '/');
+  });
+
+  it('persists the collapsed desktop sidebar preference', async () => {
+    renderShell();
+
+    await userEvent.click(screen.getByRole('button', { name: /collapse sidebar/i }));
+
+    expect(window.localStorage.getItem('arena:sidebar-collapsed')).toBe('true');
+    expect(screen.getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
   });
 
   it.each([

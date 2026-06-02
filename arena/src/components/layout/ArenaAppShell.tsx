@@ -1,5 +1,5 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router';
-import { type Dispatch, type SetStateAction, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useState } from 'react';
 import { ChainSwitcher, TangleLogo, ThemeToggle } from '@tangle-network/blueprint-ui/components';
 import { cn } from '@tangle-network/blueprint-ui';
 import { TxDropdown } from './TxDropdown';
@@ -12,6 +12,8 @@ const primaryNavItems = [
   { label: 'Create', href: '/create', icon: 'i-ph:chat-circle-dots' },
 ];
 
+const SIDEBAR_COLLAPSED_KEY = 'arena:sidebar-collapsed';
+
 function isNavActive(pathname: string, href: string) {
   if (href === '/') return pathname === '/' || pathname === '/arena';
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -20,7 +22,14 @@ function isNavActive(pathname: string, href: string) {
 export function ArenaAppShell() {
   const location = useLocation();
   const isBotWorkspace = location.pathname.startsWith('/arena/bot/');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? 'true' : 'false');
+  }, [sidebarCollapsed]);
 
   return (
     <div className="bp-tone-arena flex h-[100dvh] overflow-hidden bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">

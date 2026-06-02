@@ -1617,3 +1617,26 @@ Current implementation tranche:
 
 - BAD deep audit scored the unauthenticated homepage poorly, but the same run killed the preview before pages 2-4 and produced false zero-page scores. Treat it as advisory only.
 - Real remaining product gaps: persistent wallet/account capital context, deploy cost/risk preview, operations safety cockpit, operator-level bot summaries, URL-scoped auth for same-kind operators, and integrated chart lower pane.
+
+## 2026-06-02 Navigation + Scope Audit
+
+Rule: public discovery and wallet command surfaces must stay separate.
+
+- Public surfaces can show leaderboard agents, platform volume, and latest trades across operators.
+- Wallet surfaces (`/dashboard`, deploy follow-ups, service expansion, command shortcuts) should show only agents relevant to the connected wallet: submitter/caller match, direct operator match, matching wallet service vault, or tracked local provision. Owned/operated service membership keeps the service visible, but does not by itself make every bot on that service a wallet agent.
+- The global app sidebar should remain product navigation only. It should never become a live agent roster because that mixes public discovery with user commandability and creates the "random agents in my sidebar" failure mode.
+- Service expansion inside `My Agents` should not inherit every public bot on that service. It should use the same wallet-scoped agent set as the main dashboard cards.
+- Collapsed navigation is a user workspace preference, so it should persist across route changes and reloads.
+
+Implementation selected:
+
+1. Keep `/api/bots` fleet reads public for homepage/leaderboard/volume.
+2. Keep `useBots()` broad because multiple public surfaces depend on it.
+3. Scope `dashboard.tsx` service rows from `visibleMyBots`, not `authoritativeBots`.
+4. Persist `ArenaAppShell` desktop sidebar collapse state in localStorage.
+
+Rejected alternatives:
+
+- Auth-scope all operator bot sync: would break public leaderboard, latest trades, and platform volume.
+- Re-add a callable-agent list in the sidebar: worsens the three-sidebar problem and repeats the original confusion.
+- Hide owned services if no commandable bots are visible: loses useful service/provision state.

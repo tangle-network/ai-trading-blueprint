@@ -26,7 +26,7 @@ import {
   doesProvisionLikelyReferToBot,
   partitionProvisionsForBots,
 } from '~/lib/utils/botProvisionReconciliation';
-import { isBotOwnedByWallet } from '~/lib/utils/botAccess';
+import { isBotInWalletWorkspace } from '~/lib/utils/botAccess';
 import {
   ALL_TRADING_OPERATOR_API_URLS,
   getOperatorApiUrlForBlueprint,
@@ -121,7 +121,7 @@ export default function HomePage() {
   const myBots = useMemo(() => {
     return authoritativeBots.filter((b) => {
       if (b.status === 'archived') return false;
-      return isBotOwnedByWallet(b, {
+      return isBotInWalletWorkspace(b, {
         walletAddress: userAddress,
         services,
         provisions: myProvisions,
@@ -131,16 +131,15 @@ export default function HomePage() {
   const visibleMyBots = myBots;
 
   // Bots grouped by service
-  const botsByService = useMemo(() => {
-    const map = new Map<number, typeof bots>();
-    for (const bot of authoritativeBots) {
-      if (bot.status === 'archived') continue;
+  const myBotsByService = useMemo(() => {
+    const map = new Map<number, typeof visibleMyBots>();
+    for (const bot of visibleMyBots) {
       const list = map.get(bot.serviceId) ?? [];
       list.push(bot);
       map.set(bot.serviceId, list);
     }
     return map;
-  }, [authoritativeBots]);
+  }, [visibleMyBots]);
 
   // Provision groups
   const inProgressProvisions = unresolvedProvisions.filter((p) =>
@@ -332,7 +331,7 @@ export default function HomePage() {
                 <StaggerItem key={svc.serviceId}>
                   <ServiceCard
                     service={svc}
-                    bots={botsByService.get(svc.serviceId) ?? []}
+                    bots={myBotsByService.get(svc.serviceId) ?? []}
                     lockedBotCount={lockedBotsByService.get(svc.serviceId) ?? 0}
                   />
                 </StaggerItem>

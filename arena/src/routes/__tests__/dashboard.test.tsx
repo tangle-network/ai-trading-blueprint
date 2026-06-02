@@ -145,9 +145,10 @@ vi.mock('~/lib/contracts/addresses', () => ({
 }));
 
 vi.mock('~/components/home/ServiceCard', () => ({
-  ServiceCard: ({ service, lockedBotCount }: any) => (
+  ServiceCard: ({ service, bots, lockedBotCount }: any) => (
     <div>
       service-{service.serviceId}-locked-{lockedBotCount}
+      <div>service-{service.serviceId}-bots-{bots.map((bot: any) => bot.name).join(',') || 'none'}</div>
     </div>
   ),
 }));
@@ -361,5 +362,61 @@ describe('dashboard auth-aware rendering', () => {
 
     expect(screen.getByText('bot-submitted-bot')).toBeInTheDocument();
     expect(screen.queryByText('No services or bots yet')).not.toBeInTheDocument();
+  });
+
+  it('keeps service expansions scoped to wallet-relevant bots, not every public bot on that service', async () => {
+    botsState.operatorDataState = 'ready';
+    botsState.bots = [
+      {
+        id: 'bot-mine',
+        serviceId: 1,
+        name: 'mine',
+        operatorAddress: '0x0000000000000000000000000000000000000002',
+        submitterAddress: accountState.address,
+        vaultAddress: '0x00000000000000000000000000000000000000bb',
+        strategyType: 'dex',
+        status: 'active',
+        createdAt: 1,
+        pnlPercent: 0,
+        pnlAbsolute: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        tvl: 0,
+        avgValidatorScore: 0,
+        sparklineData: [],
+        source: 'operator',
+      },
+      {
+        id: 'bot-other',
+        serviceId: 1,
+        name: 'other-submitter',
+        operatorAddress: '0x0000000000000000000000000000000000000002',
+        submitterAddress: '0x0000000000000000000000000000000000000003',
+        vaultAddress: '0x00000000000000000000000000000000000000cc',
+        strategyType: 'dex',
+        status: 'active',
+        createdAt: 1,
+        pnlPercent: 0,
+        pnlAbsolute: 0,
+        sharpeRatio: 0,
+        maxDrawdown: 0,
+        winRate: 0,
+        totalTrades: 0,
+        tvl: 0,
+        avgValidatorScore: 0,
+        sparklineData: [],
+        source: 'operator',
+      },
+    ];
+
+    const { default: HomePage } = await import('../dashboard');
+    render(<HomePage />);
+
+    expect(screen.getByText('bot-mine')).toBeInTheDocument();
+    expect(screen.queryByText('bot-other-submitter')).not.toBeInTheDocument();
+    expect(screen.getByText('service-1-bots-mine')).toBeInTheDocument();
+    expect(screen.queryByText(/service-1-bots-.*other-submitter/)).not.toBeInTheDocument();
   });
 });

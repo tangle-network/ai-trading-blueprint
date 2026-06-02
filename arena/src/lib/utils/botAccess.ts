@@ -56,3 +56,34 @@ export function isBotOwnedByWallet(
     provision.phase !== 'failed' && doesProvisionMatchBot(provision, bot),
   );
 }
+
+export function isBotInWalletWorkspace(
+  bot: Bot,
+  {
+    walletAddress,
+    services = [],
+    provisions = [],
+  }: {
+    walletAddress: string | undefined | null;
+    services?: Pick<UserService, 'vaultAddresses'>[];
+    provisions?: TrackedProvision[];
+  },
+): boolean {
+  if (isBotCallableByWallet(bot, walletAddress)) return true;
+
+  const wallet = normalizeAddress(walletAddress);
+  const operator = normalizeAddress(bot.operatorAddress);
+  if (wallet && operator && wallet === operator) return true;
+
+  const serviceVaults = new Set(
+    services.flatMap((service) =>
+      service.vaultAddresses.map((address) => address.toLowerCase()),
+    ),
+  );
+  const botVault = normalizeAddress(bot.vaultAddress);
+  if (botVault && serviceVaults.has(botVault)) return true;
+
+  return provisions.some((provision) =>
+    provision.phase !== 'failed' && doesProvisionMatchBot(provision, bot),
+  );
+}
