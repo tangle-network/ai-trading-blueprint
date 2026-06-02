@@ -791,10 +791,15 @@ async function evaluate(page, expression) {
     expression,
     awaitPromise: true,
     returnByValue: true,
-  });
-  if (result.exceptionDetails) {
-    throw new Error(result.exceptionDetails.text ?? 'Runtime.evaluate failed');
-  }
+	  });
+	  if (result.exceptionDetails) {
+	    const details = result.exceptionDetails;
+	    const description = details.exception?.description
+	      ?? details.exception?.value
+	      ?? details.text
+	      ?? 'Runtime.evaluate failed';
+	    throw new Error(description);
+	  }
   return result.result?.value;
 }
 

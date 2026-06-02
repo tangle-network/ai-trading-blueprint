@@ -46,7 +46,7 @@ interface HoverReadout {
 }
 
 const SYNTHETIC_TIME_BASE_SECONDS = 1_700_000_000;
-const DENSE_MARKER_THRESHOLD = 32;
+const DENSE_MARKER_THRESHOLD = 16;
 const DENSE_MARKER_BUCKET_TARGET = 10;
 const markerTimeFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
