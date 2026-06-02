@@ -14,7 +14,6 @@ import {
   UnsupportedFeatureCard,
 } from "~/components/operator/OperatorAccessCard";
 import {
-  asRecord,
   buildRunReplayHistoryPath,
   buildRunReplaySessionId,
   chooseDefaultRun,
@@ -31,8 +30,16 @@ import {
   type BotRunsResponse,
   type RunStatus,
 } from "~/lib/botRuns";
+import {
+  buildDecisionItemsFromRuns,
+  buildRunResultSections,
+  getRunSignalLabel,
+  parseRunResultJson,
+} from "~/lib/decisionFeed";
 import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 import { UnverifiedDataNotice } from "./shared/DataAccessNotices";
+import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
+import { DecisionInspector } from "./shared/DecisionInspector";
 
 interface RunsTabProps {
   botId: string;
@@ -406,192 +413,6 @@ function RunMetricPill({ label, value }: { label: string; value: string }) {
   );
 }
 
-type RunResultSection = {
-  title: string;
-  items: Array<{ label: string; value: string }>;
-};
-
-function parseRunResultJson(result: string | null): Record<string, unknown> | null {
-  if (!result) return null;
-
-  try {
-    return asRecord(JSON.parse(result));
-  } catch {
-    return null;
-  }
-}
-
-function formatResultValue(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "string") return value.length > 0 ? value : null;
-  if (typeof value === "number") return Number.isFinite(value) ? `${value}` : null;
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (Array.isArray(value)) return `${value.length}`;
-  return null;
-}
-
-function getRunSignalLabel(run: BotRun): string {
-  if (run.error) return "Error";
-  const result = parseRunResultJson(run.result);
-  const decision = asRecord(result?.decision);
-  const tradeAction = asRecord(result?.trade_action);
-  const setup = asRecord(decision?.setup);
-  const candidate =
-    formatResultValue(decision?.action) ??
-    formatResultValue(setup?.action) ??
-    formatResultValue(tradeAction?.execution_status) ??
-    formatResultValue(tradeAction?.validation_status);
-
-  if (candidate) return candidate.replace(/_/g, " ").toUpperCase();
-  return getStatusLabel(run.status);
-}
-
-function pushResultItem(
-  items: RunResultSection["items"],
-  label: string,
-  value: unknown,
-) {
-  const formatted = formatResultValue(value);
-  if (formatted) {
-    items.push({ label, value: formatted });
-  }
-}
-
-function approvalItems(value: unknown): RunResultSection["items"] {
-  const items: RunResultSection["items"] = [];
-  const approval = asRecord(value);
-  if (!approval) {
-    pushResultItem(items, "Approval", value);
-    return items;
-  }
-
-  pushResultItem(items, "Status", approval.status);
-  pushResultItem(items, "Verified", approval.verified_corewriter_approval);
-  pushResultItem(items, "API wallet", approval.api_wallet_address);
-  pushResultItem(items, "Vault account", approval.vault_account);
-  pushResultItem(items, "Tx hash", approval.tx_hash);
-  pushResultItem(items, "Extra agents", approval.extra_agents);
-  return items;
-}
-
-function formatAssetSummary(value: unknown): string | null {
-  const asset = asRecord(value);
-  if (!asset) return null;
-
-  const symbol = formatResultValue(asset.symbol ?? asset.asset ?? asset.token ?? asset.address);
-  const balance = formatResultValue(asset.balance ?? asset.amount ?? asset.quantity);
-  const valueUsd = formatResultValue(asset.value_usd ?? asset.notional_usd ?? asset.usd_value);
-  const priceUsd = formatResultValue(asset.price_usd ?? asset.mark_price_usd);
-  const parts = [
-    symbol,
-    balance ? `${balance} units` : null,
-    valueUsd ? `$${valueUsd}` : null,
-    priceUsd ? `price $${priceUsd}` : null,
-  ].filter(Boolean);
-
-  return parts.length ? parts.join(" • ") : null;
-}
-
-function buildRunResultSections(result: Record<string, unknown>): RunResultSection[] {
-  const sections: RunResultSection[] = [];
-  const checkedState = asRecord(result.checked_state);
-  const decision = asRecord(result.decision);
-  const setup = asRecord(decision?.setup);
-  const fundingAction = asRecord(result.funding_action);
-  const approvalAction = asRecord(result.api_wallet_approval_action);
-  const approvalResponse = asRecord(approvalAction?.response);
-  const tradeAction = asRecord(result.trade_action);
-
-  const timing: RunResultSection["items"] = [];
-  pushResultItem(timing, "Started", result.run_started_at);
-  pushResultItem(timing, "Completed", result.run_completed_at);
-  if (timing.length) sections.push({ title: "Timing", items: timing });
-
-  if (checkedState) {
-    const items: RunResultSection["items"] = [];
-    pushResultItem(items, "NAV status", checkedState.nav_status);
-    pushResultItem(items, "Mode", checkedState.mode);
-    pushResultItem(items, "Protocol", checkedState.protocol);
-    pushResultItem(items, "Total NAV USDC", checkedState.total_nav_usdc);
-    pushResultItem(items, "Total NAV USD", checkedState.total_nav_usd);
-    pushResultItem(items, "Total value USD", checkedState.total_value_usd);
-    pushResultItem(
-      items,
-      "Hyperliquid equity USDC",
-      checkedState.hyperliquid_equity_usdc,
-    );
-    pushResultItem(items, "Perp margin USDC", checkedState.perp_margin_usdc);
-    pushResultItem(items, "WETH held", checkedState.weth_held);
-    pushResultItem(items, "USDC held", checkedState.usdc_held);
-    pushResultItem(items, "WETH price", checkedState.weth_price);
-    pushResultItem(items, "RSI 14", checkedState.rsi_14);
-    pushResultItem(items, "EMA 12", checkedState.ema_12);
-    pushResultItem(items, "EMA 26", checkedState.ema_26);
-    pushResultItem(items, "Candles", checkedState.candles);
-    pushResultItem(items, "Base weight", checkedState.base_weight);
-    pushResultItem(items, "Target base weight", checkedState.target_base_weight);
-    pushResultItem(items, "Rebalance band %", checkedState.rebalance_band_pct);
-    pushResultItem(items, "Positions", checkedState.positions_count);
-    pushResultItem(items, "Open orders", checkedState.open_orders_count);
-    if (Array.isArray(checkedState.assets)) {
-      checkedState.assets.slice(0, 6).forEach((asset, index) => {
-        pushResultItem(items, `Asset ${index + 1}`, formatAssetSummary(asset));
-      });
-    }
-    if (items.length) sections.push({ title: "Checked State", items });
-  }
-
-  if (decision) {
-    const items: RunResultSection["items"] = [];
-    pushResultItem(items, "Action", decision.action);
-    pushResultItem(items, "Reason", decision.reason);
-    pushResultItem(items, "Setup action", setup?.action);
-    pushResultItem(items, "Asset", setup?.asset);
-    pushResultItem(items, "Amount in", setup?.amount_in);
-    pushResultItem(items, "Rationale", setup?.rationale);
-    if (items.length) sections.push({ title: "Decision", items });
-
-    const approval = approvalItems(decision.approval);
-    if (approval.length) sections.push({ title: "Approval", items: approval });
-  }
-
-  if (fundingAction) {
-    const items: RunResultSection["items"] = [];
-    pushResultItem(items, "Attempted", fundingAction.attempted);
-    pushResultItem(items, "Status", fundingAction.status);
-    pushResultItem(items, "Requested USDC", fundingAction.requested_usdc);
-    if (items.length) sections.push({ title: "Funding", items });
-  }
-
-  if (approvalAction) {
-    const items: RunResultSection["items"] = [];
-    pushResultItem(items, "Attempted", approvalAction.attempted);
-    pushResultItem(items, "Status", approvalAction.status);
-    pushResultItem(items, "Response", approvalResponse?.status);
-    pushResultItem(items, "Verified", approvalResponse?.verified_corewriter_approval);
-    pushResultItem(items, "Tx hash", approvalResponse?.tx_hash);
-    if (items.length) {
-      sections.push({ title: "API Wallet Approval Action", items });
-    }
-  }
-
-  if (tradeAction) {
-    const items: RunResultSection["items"] = [];
-    pushResultItem(items, "Attempted", tradeAction.attempted);
-    pushResultItem(items, "Validation status", tradeAction.validation_status);
-    pushResultItem(items, "Execution status", tradeAction.execution_status);
-    pushResultItem(items, "Tx hash", tradeAction.tx_hash);
-    pushResultItem(items, "Paper", tradeAction.paper_trade);
-    pushResultItem(items, "Notional USD", tradeAction.notional_usd);
-    pushResultItem(items, "Protocol", tradeAction.target_protocol);
-    pushResultItem(items, "Token in", tradeAction.token_in);
-    pushResultItem(items, "Token out", tradeAction.token_out);
-    if (items.length) sections.push({ title: "Trade", items });
-  }
-
-  return sections;
-}
-
 function RunResultSummary({ result }: { result: string }) {
   const parsed = useMemo(() => parseRunResultJson(result), [result]);
   const sections = useMemo(
@@ -903,6 +724,10 @@ export function RunsTab({
       })),
     [runs],
   );
+  const decisionItems = useMemo(
+    () => buildDecisionItemsFromRuns(runs),
+    [runs],
+  );
   const runSummary = useMemo<RunsSummary>(() => ({
     total: runs.length,
     running: runs.filter((run) => run.status === "running").length,
@@ -921,6 +746,9 @@ export function RunsTab({
   const traceReplayFailed = canReplayRunTrace && !canStreamTranscript && Boolean(stream.error);
   const shouldShowTraceReplay =
     (canStreamTranscript || canReplayRunTrace) && !traceReplayFailed && !streamErrorMessage;
+  const selectedDecisionId = activeRun ? `run:${activeRun.runId}` : undefined;
+  const selectedDecisionItem =
+    decisionItems.find((item) => item.id === selectedDecisionId) ?? decisionItems[0];
   const headerTitle = activeRun ? getRunTitle(activeRun) : "Autonomous Run";
   const headerSubtitle = activeRun
     ? `${getWorkflowKindDescription(activeRun.workflowKind)} • ${formatRunTimestamp(activeRun.startedAt)}`
@@ -1067,18 +895,42 @@ export function RunsTab({
               error={streamErrorMessage}
             />
 
-            <div className="min-h-0 flex-1 bg-arena-elements-background-depth-1/15">
-              {shouldShowTraceReplay ? (
-                <ChatTranscript
-                  messages={stream.messages}
-                  partMap={stream.partMap}
-                  isStreaming={stream.isStreaming}
-                  branding={RUNS_BRANDING}
-                  placeholder="This trace is read only"
+            <DecisionActivityStrip
+              items={decisionItems}
+              selectedId={selectedDecisionItem?.id}
+              onSelect={(item) => setActiveRunId(item.sourceId)}
+            />
+
+            <div
+              className={`min-h-0 flex-1 bg-arena-elements-background-depth-1/15 ${
+                isStackedLayout ? "flex flex-col" : "grid grid-cols-[minmax(0,1fr)_340px]"
+              }`}
+            >
+              {isStackedLayout && (
+                <DecisionInspector
+                  item={selectedDecisionItem}
+                  className="max-h-80 border-b border-arena-elements-dividerColor/50"
                 />
-              ) : activeRun ? (
-                <RunDetailPanel run={activeRun} />
-              ) : null}
+              )}
+              <div className={isStackedLayout ? "min-h-0 min-w-0 flex-1" : "min-h-0 min-w-0"}>
+                {shouldShowTraceReplay ? (
+                  <ChatTranscript
+                    messages={stream.messages}
+                    partMap={stream.partMap}
+                    isStreaming={stream.isStreaming}
+                    branding={RUNS_BRANDING}
+                    placeholder="This trace is read only"
+                  />
+                ) : activeRun ? (
+                  <RunDetailPanel run={activeRun} />
+                ) : null}
+              </div>
+              {!isStackedLayout && (
+                <DecisionInspector
+                  item={selectedDecisionItem}
+                  className="border-l border-arena-elements-dividerColor/50"
+                />
+              )}
             </div>
 
           </div>

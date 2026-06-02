@@ -471,8 +471,9 @@ describe("RunsTab", () => {
       );
     });
     expect(screen.queryByText("Trading run details")).not.toBeInTheDocument();
-    expect(screen.queryByText("Decision")).not.toBeInTheDocument();
-    expect(screen.queryByText("api-wallet-approval-not-verified")).not.toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: /decision inspector/i })).toBeInTheDocument();
+    expect(screen.getByText("Decision")).toBeInTheDocument();
+    expect(screen.getAllByText("api-wallet-approval-not-verified").length).toBeGreaterThan(0);
     expect(screen.queryByText(/result_schema_version/)).not.toBeInTheDocument();
     expect(screen.queryByText("Transcript unavailable")).not.toBeInTheDocument();
   });

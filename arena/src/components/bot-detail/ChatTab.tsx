@@ -28,7 +28,10 @@ import {
   hasReplayableRunTrace,
   parseRunsResponse,
 } from "~/lib/botRuns";
+import { buildDecisionItemsFromRuns } from "~/lib/decisionFeed";
 import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
+import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
+import { DecisionInspector } from "./shared/DecisionInspector";
 
 interface ChatTabProps {
   botId: string;
@@ -481,12 +484,25 @@ export function ChatTab({
     },
     staleTime: 5_000,
   });
-  const publicReplayRun = useMemo(() => {
+  const [selectedPublicRunId, setSelectedPublicRunId] = useState("");
+  const publicReplayRuns = useMemo(() => {
     if (canWrite) return null;
-    const replayableRuns =
-      publicRunsQuery.data?.runs.filter((run) => hasReplayableRunTrace(run)) ?? [];
-    return chooseDefaultRun(replayableRuns);
+    return publicRunsQuery.data?.runs.filter((run) => hasReplayableRunTrace(run)) ?? [];
   }, [canWrite, publicRunsQuery.data]);
+  const publicReplayRun = useMemo(() => {
+    if (!publicReplayRuns) return null;
+    return (
+      publicReplayRuns.find((run) => run.runId === selectedPublicRunId) ??
+      chooseDefaultRun(publicReplayRuns)
+    );
+  }, [publicReplayRuns, selectedPublicRunId]);
+  const decisionItems = useMemo(
+    () => (publicReplayRuns ? buildDecisionItemsFromRuns(publicReplayRuns) : []),
+    [publicReplayRuns],
+  );
+  const selectedDecisionItem =
+    decisionItems.find((item) => item.sourceId === publicReplayRun?.runId) ??
+    decisionItems[0];
   const hasKnownActiveSession = sessions.some(
     (session) => session.id === activeSessionId,
   );
@@ -817,19 +833,47 @@ export function ChatTab({
             isAborting={isAborting}
           />
 
-          <div className="flex-1 min-h-0 bg-arena-elements-background-depth-1/15">
-            <ChatTranscript
-              messages={stream.messages}
-              partMap={stream.partMap}
-              isStreaming={stream.isStreaming}
-              onSend={canWrite ? handleSend : undefined}
-              branding={TRADING_BRANDING}
-              placeholder={
-                stream.isStreaming
-                  ? "Agent is working…"
-                  : `Ask ${botName} anything…`
-              }
-            />
+          <DecisionActivityStrip
+            items={decisionItems}
+            selectedId={selectedDecisionItem?.id}
+            onSelect={(item) => setSelectedPublicRunId(item.sourceId)}
+          />
+
+          <div
+            className={`min-h-0 flex-1 bg-arena-elements-background-depth-1/15 ${
+              decisionItems.length === 0
+                ? ""
+                : isStackedLayout
+                  ? "flex flex-col"
+                  : "grid grid-cols-[minmax(0,1fr)_340px]"
+            }`}
+          >
+            {decisionItems.length > 0 && isStackedLayout && (
+              <DecisionInspector
+                item={selectedDecisionItem}
+                className="max-h-80 border-b border-arena-elements-dividerColor/50"
+              />
+            )}
+            <div className={decisionItems.length > 0 && isStackedLayout ? "min-h-0 min-w-0 flex-1" : "min-h-0 min-w-0"}>
+              <ChatTranscript
+                messages={stream.messages}
+                partMap={stream.partMap}
+                isStreaming={stream.isStreaming}
+                onSend={canWrite ? handleSend : undefined}
+                branding={TRADING_BRANDING}
+                placeholder={
+                  stream.isStreaming
+                    ? "Agent is working…"
+                    : `Ask ${botName} anything…`
+                }
+              />
+            </div>
+            {decisionItems.length > 0 && !isStackedLayout && (
+              <DecisionInspector
+                item={selectedDecisionItem}
+                className="border-l border-arena-elements-dividerColor/50"
+              />
+            )}
           </div>
 
           {(canWrite || canCommand) && (
