@@ -793,18 +793,75 @@ fn required_factory_signatures(requested: U256, signer_count: usize) -> Result<U
     Ok(required)
 }
 
-/// Self-heal a bot whose sidecar sandbox is missing from operator-local state.
+/// Recreate and reactivate missing paper-trade sidecars for active bots.
 ///
 /// When the operator's local sandbox state is lost but the bot record survives
 /// (e.g. the host was rebuilt and the data volume re-attached), the sandbox
 /// container is gone while `bot.sandbox_id` still points at it. provision
 /// dedups existing bots and activate only injects into an existing sandbox, so
-/// nothing recreates it — the bot is wedged on `stale_state`. This rebuilds the
-/// same base env provision constructs, creates a fresh sidecar, and repoints the
-/// bot at the new sandbox id. Idempotent: a no-op when the sandbox exists.
+/// nothing recreates it. For paper bots this rebuilds the same base env,
+/// creates a fresh sidecar, repoints the bot at the new sandbox id, and
+/// re-injects the operator AI keys. Live-money bots are intentionally skipped
+/// because the
+/// operator cannot safely reconstruct user exchange/API secrets from the bot
+/// record alone.
+pub async fn ensure_active_bot_sandboxes() -> usize {
+    let bots = match crate::state::list_bots(None, 10_000, 0) {
+        Ok(page) => page.bots,
+        Err(e) => {
+            tracing::warn!("self-heal: list_bots failed: {e}");
+            return 0;
+        }
+    };
+    let ai_env = match crate::operator_credentials::operator_ai_env() {
+        Ok(env) => env,
+        Err(e) => {
+            tracing::warn!("self-heal: missing operator AI credentials: {e}");
+            return 0;
+        }
+    };
+
+    let mut healed = 0usize;
+    for bot in bots {
+        if !bot.trading_active || bot.wind_down_started_at.is_some() {
+            continue;
+        }
+        if !bot.paper_trade {
+            tracing::warn!(
+                bot_id = %bot.id,
+                sandbox_id = %bot.sandbox_id,
+                "self-heal: refusing to recreate missing live-money sandbox without user secrets"
+            );
+            continue;
+        }
+        if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_ok() {
+            continue;
+        }
+
+        match recreate_bot_sandbox(&bot).await {
+            Ok(_) => {
+                if let Err(e) =
+                    crate::jobs::activate_bot_with_secrets(&bot.id, ai_env.clone(), None).await
+                {
+                    tracing::warn!(bot_id = %bot.id, %e, "self-heal: re-activate failed");
+                    continue;
+                }
+                healed += 1;
+            }
+            Err(e) => tracing::warn!(bot_id = %bot.id, %e, "self-heal: sandbox recreate failed"),
+        }
+    }
+
+    if healed > 0 {
+        tracing::info!("self-heal: recreated {healed} missing paper bot sandbox(es)");
+    }
+    healed
+}
+
+/// Self-heal one bot whose sidecar sandbox is missing from operator-local state.
 ///
-/// Caller is responsible for re-injecting secrets afterwards (operator AI keys)
-/// via `activate_bot_with_secrets`.
+/// Caller is responsible for re-injecting secrets afterwards via
+/// `activate_bot_with_secrets`.
 pub async fn recreate_bot_sandbox(bot: &crate::state::TradingBotRecord) -> Result<String, String> {
     if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_ok() {
         return Ok(bot.sandbox_id.clone());

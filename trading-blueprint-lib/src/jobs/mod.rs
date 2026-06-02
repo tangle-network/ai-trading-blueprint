@@ -24,6 +24,7 @@ pub use exec::exec;
 pub use extend::extend;
 pub use extend::extend_core;
 pub use prompt::prompt;
+pub use provision::ensure_active_bot_sandboxes;
 pub use provision::provision;
 pub use provision::provision_core;
 pub use provision::recreate_bot_sandbox;

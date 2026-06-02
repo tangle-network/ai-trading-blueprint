@@ -838,12 +838,18 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
     tracing::info!("=== WORKFLOW TICK HANDLER ENTERED ===");
 
     // 1. Check all active bots for wind-down eligibility
-    let all_bots = bots()?.values().map_err(|e| e.to_string())?;
+    let mut all_bots = bots()?.values().map_err(|e| e.to_string())?;
     tracing::info!("Found {} bots", all_bots.len());
 
     disable_stopped_bot_workflows(&all_bots)?;
     disable_stale_bot_workflows(&all_bots)?;
     backfill_active_bot_run_history(&all_bots);
+
+    if crate::jobs::ensure_active_bot_sandboxes().await > 0 {
+        all_bots = bots()?.values().map_err(|e| e.to_string())?;
+        disable_stale_bot_workflows(&all_bots)?;
+        backfill_active_bot_run_history(&all_bots);
+    }
 
     for bot in &all_bots {
         if !should_initiate_wind_down(bot) {

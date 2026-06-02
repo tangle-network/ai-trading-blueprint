@@ -12,6 +12,7 @@ pub mod graceful_consumer;
 pub mod jobs;
 pub mod on_chain;
 pub mod operator_chat;
+pub mod operator_credentials;
 pub mod polymarket_ws;
 pub mod prompts;
 pub mod providers;

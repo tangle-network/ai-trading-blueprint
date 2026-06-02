@@ -1069,12 +1069,13 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         })?;
 
     // 2. Auto-activate with AI provider from env
-    let mut user_env = operator_ai_env().map_err(|message| {
-        ApiError::message(
-            StatusCode::BAD_REQUEST,
-            format!("Activation failed: {message}"),
-        )
-    })?;
+    let mut user_env =
+        trading_blueprint_lib::operator_credentials::operator_ai_env().map_err(|message| {
+            ApiError::message(
+                StatusCode::BAD_REQUEST,
+                format!("Activation failed: {message}"),
+            )
+        })?;
     // Pass the user's prompt as an env var so the agent can read it
     user_env.insert(
         "USER_STRATEGY_PROMPT".into(),
@@ -1936,103 +1937,13 @@ async fn list_bot_run_messages(
 
 // ── Secrets handlers ─────────────────────────────────────────────────────
 
-/// Recreate sidecar sandboxes for active bots whose operator-local sandbox was
+/// Recreate sidecar sandboxes for active paper bots whose operator-local sandbox was
 /// lost (e.g. host rebuilt + data volume re-attached). Idempotent: skips bots
 /// whose sandbox already exists. Rebuilds the sidecar from the preserved bot
 /// record, then re-injects the operator AI keys so the agent path works. Runs
 /// once at startup. Best-effort — a per-bot failure is logged and skipped.
 pub async fn ensure_active_bot_sandboxes() {
-    let bots = match trading_blueprint_lib::state::list_bots(None, 10_000, 0) {
-        Ok(page) => page.bots,
-        Err(e) => {
-            tracing::warn!("self-heal: list_bots failed: {e}");
-            return;
-        }
-    };
-    let ai_env = operator_ai_env().ok();
-    let mut healed = 0usize;
-    for bot in bots {
-        if !bot.trading_active {
-            continue;
-        }
-        if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_ok() {
-            continue;
-        }
-        match trading_blueprint_lib::jobs::recreate_bot_sandbox(&bot).await {
-            Ok(_new_id) => {
-                if let Some(env) = ai_env.clone() {
-                    if let Err(e) =
-                        trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot.id, env, None)
-                            .await
-                    {
-                        tracing::warn!(bot_id = %bot.id, %e, "self-heal: re-activate failed");
-                    }
-                }
-                healed += 1;
-            }
-            Err(e) => tracing::warn!(bot_id = %bot.id, %e, "self-heal: sandbox recreate failed"),
-        }
-    }
-    if healed > 0 {
-        tracing::info!("self-heal: recreated {healed} missing bot sandbox(es)");
-    }
-}
-
-fn operator_ai_env() -> Result<serde_json::Map<String, serde_json::Value>, String> {
-    let mut env = serde_json::Map::new();
-    let providers: &[(&str, &str, &str, &[&str])] = &[
-        (
-            "ANTHROPIC_API_KEY",
-            "anthropic",
-            "claude-sonnet-4-6",
-            &["ANTHROPIC_API_KEY"],
-        ),
-        (
-            "ZAI_API_KEY",
-            "zai-coding-plan",
-            "glm-4.7",
-            &["ZAI_API_KEY"],
-        ),
-        (
-            "TANGLE_API_KEY",
-            "openrouter",
-            "anthropic/claude-sonnet-4-6",
-            &["TANGLE_API_KEY", "TANGLE_ROUTER_API_KEY"],
-        ),
-        (
-            "TANGLE_ROUTER_API_KEY",
-            "openrouter",
-            "anthropic/claude-sonnet-4-6",
-            &["TANGLE_ROUTER_API_KEY", "TANGLE_API_KEY"],
-        ),
-    ];
-
-    for &(env_var, model_provider, model_name, native_keys) in providers {
-        if let Ok(key) = std::env::var(env_var) {
-            if key.is_empty() {
-                continue;
-            }
-            env.insert("OPENCODE_MODEL_PROVIDER".into(), model_provider.into());
-            env.insert("OPENCODE_MODEL_NAME".into(), model_name.into());
-            env.insert("OPENCODE_MODEL_API_KEY".into(), key.clone().into());
-            if env_var == "TANGLE_API_KEY" || env_var == "TANGLE_ROUTER_API_KEY" {
-                let base_url = std::env::var("TANGLE_ROUTER_BASE_URL")
-                    .unwrap_or_else(|_| "https://router.tangle.tools/v1".to_string());
-                env.insert("TANGLE_ROUTER_BASE_URL".into(), base_url.clone().into());
-                env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.into());
-            }
-            for native_key in native_keys {
-                env.insert((*native_key).into(), key.clone().into());
-            }
-            return Ok(env);
-        }
-    }
-
-    Err(
-        "No API keys provided and operator has no pre-configured AI keys. \
-         Set ANTHROPIC_API_KEY, ZAI_API_KEY, or TANGLE_API_KEY in the operator environment."
-            .to_string(),
-    )
+    trading_blueprint_lib::jobs::ensure_active_bot_sandboxes().await;
 }
 
 async fn configure_secrets(
@@ -2055,7 +1966,7 @@ async fn configure_secrets(
     // When env_json is empty, use operator-provided AI keys from the binary's environment.
     // This supports the "use operator provided keys" frontend option.
     let env_json = if body.env_json.is_empty() {
-        let env = operator_ai_env()
+        let env = trading_blueprint_lib::operator_credentials::operator_ai_env()
             .map_err(|message| ApiError::message(StatusCode::BAD_REQUEST, message))?;
         if let Some(provider) = env
             .get("OPENCODE_MODEL_PROVIDER")
