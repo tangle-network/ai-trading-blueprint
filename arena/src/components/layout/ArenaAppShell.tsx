@@ -118,7 +118,7 @@ export function ArenaAppShell() {
           })}
         </nav>
 
-        <div className="min-h-0 flex-1 border-t border-arena-elements-dividerColor/60 px-2 py-3">
+        <div className="flex min-h-0 flex-1 flex-col border-t border-arena-elements-dividerColor/60 px-2 py-3">
           {!sidebarCollapsed && (
             <div className="mb-2 flex items-center justify-between px-2">
               <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
@@ -132,7 +132,7 @@ export function ArenaAppShell() {
               </Link>
             </div>
           )}
-          <div className="space-y-1 overflow-y-auto pr-1">
+          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
             {activeAgents.length === 0 ? (
               <div className={cn(
                 'rounded-lg border border-dashed border-arena-elements-dividerColor/70 text-xs text-arena-elements-textTertiary',
