@@ -160,16 +160,17 @@ describe('LeaderboardPage', () => {
     const { default: LeaderboardPage } = await import('../leaderboard');
     render(<LeaderboardPage />, { wrapper: createWrapper() });
 
-    expect(screen.getByRole('heading', { name: 'Leaderboard' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Agent Explorer' })).toBeInTheDocument();
     expect(screen.getByText('$43.2K')).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Search agents' })).toBeInTheDocument();
     expect(hoisted.platformVolumeChartProps.at(-1)).toEqual(expect.objectContaining({
       variant: 'command',
       className: 'min-h-0',
     }));
     expect(hoisted.latestAgentTradesProps.at(-1)).toEqual(expect.objectContaining({
-      variant: 'panel',
-      limit: 20,
+      variant: 'explorer',
+      limit: 50,
       className: 'min-h-0',
     }));
     expect(hoisted.leaderboardTableProps.at(-1)).toEqual(expect.objectContaining({

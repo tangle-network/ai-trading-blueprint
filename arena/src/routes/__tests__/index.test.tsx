@@ -156,7 +156,7 @@ describe('leaderboard auth-aware rendering', () => {
     expect(screen.getByText('Operator authentication required')).toBeInTheDocument();
   });
 
-  it('keeps volume, fills, and top agents in one bounded arena terminal', async () => {
+  it('keeps the homepage focused on platform volume and live fills', async () => {
     botsState.bots = [makePublicBot()];
     botsState.operatorDataState = 'ready';
 
@@ -173,10 +173,10 @@ describe('leaderboard auth-aware rendering', () => {
     }));
     expect(hoisted.latestAgentTradesProps.at(-1)).toEqual(expect.objectContaining({
       variant: 'panel',
-      limit: 12,
+      limit: 18,
       className: 'h-full min-h-0',
     }));
-    expect(screen.getByText('Top agents')).toBeInTheDocument();
-    expect(screen.getByText('ETH Macro Scalper')).toBeInTheDocument();
+    expect(screen.queryByText('Top agents')).not.toBeInTheDocument();
+    expect(screen.queryByText('ETH Macro Scalper')).not.toBeInTheDocument();
   });
 });

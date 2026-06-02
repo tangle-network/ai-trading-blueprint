@@ -7,7 +7,7 @@ import { WalletButton } from './WalletButton';
 
 const primaryNavItems = [
   { label: 'Home', href: '/', icon: 'i-ph:trophy' },
-  { label: 'Leaderboard', href: '/leaderboard', icon: 'i-ph:table' },
+  { label: 'Agents', href: '/leaderboard', icon: 'i-ph:table' },
   { label: 'My Agents', href: '/dashboard', icon: 'i-ph:house' },
   { label: 'Deploy', href: '/provision', icon: 'i-ph:rocket-launch' },
   { label: 'Create', href: '/create', icon: 'i-ph:chat-circle-dots' },

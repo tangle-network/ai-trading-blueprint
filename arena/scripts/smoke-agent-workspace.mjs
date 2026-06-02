@@ -63,8 +63,8 @@ const LIVE_SECTION_EXPECTATIONS = {
     ['Validation', 'Validator', 'Controls', 'Terminal', 'Envelope'],
   ],
 };
-const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Arena', 'Volume', 'Fills', 'Top agents', 'ETH Macro Scalper'];
-const FIXTURE_LEADERBOARD_EXPECTATIONS = ['Leaderboard', '24H Volume', 'Fills/Hr', 'ETH Macro Scalper', 'Agents'];
+const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Arena', 'Volume', 'Fills', 'Agent Explorer', 'ETH Macro Scalper'];
+const FIXTURE_LEADERBOARD_EXPECTATIONS = ['Agent Explorer', '24H Volume', 'Fills/Hr', 'ETH Macro Scalper', 'Agents', 'Latest Fills'];
 
 function parseArgs(argv) {
   const args = {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
 import { useAccount } from 'wagmi';
@@ -16,12 +16,13 @@ import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/o
 import { isPublicLeaderboardBot } from '~/lib/botVisibility';
 import { rankLeaderboardBots } from '~/lib/leaderboardRanking';
 import { formatCompactUsd, formatNumber } from '~/lib/format';
+import type { Bot } from '~/lib/types/bot';
 
 export const meta: MetaFunction = () => [
-  { title: 'Arena Leaderboard' },
+  { title: 'Agent Explorer — AI Trading Arena' },
 ];
 
-function Metric({ value, label }: { value: string; label: string }) {
+function ExplorerMetric({ value, label }: { value: string; label: string }) {
   return (
     <div className="min-w-0">
       <div className="font-data text-lg font-bold leading-none text-arena-elements-textPrimary">
@@ -34,8 +35,21 @@ function Metric({ value, label }: { value: string; label: string }) {
   );
 }
 
+function botMatchesSearch(bot: Bot, search: string): boolean {
+  const query = search.trim().toLowerCase();
+  if (!query) return true;
+  return [
+    bot.name,
+    bot.strategyType,
+    bot.operatorAddress,
+    bot.vaultAddress,
+    bot.id,
+  ].some((value) => value.toLowerCase().includes(query));
+}
+
 export default function LeaderboardPage() {
   const { isConnected } = useAccount();
+  const [search, setSearch] = useState('');
   useTradingRouteAutoAuth({
     enabled: isConnected && HAS_TRADING_OPERATOR_API,
     routeKey: 'leaderboard',
@@ -49,8 +63,12 @@ export default function LeaderboardPage() {
   }, []);
 
   const bots = useBotEnrichment(rawBots, { enabled: enrichmentEnabled });
-  const leaderboardBots = bots.filter(isPublicLeaderboardBot);
-  const sortedBots = rankLeaderboardBots(leaderboardBots);
+  const leaderboardBots = useMemo(() => bots.filter(isPublicLeaderboardBot), [bots]);
+  const sortedBots = useMemo(() => rankLeaderboardBots(leaderboardBots), [leaderboardBots]);
+  const visibleBots = useMemo(
+    () => sortedBots.filter((bot) => botMatchesSearch(bot, search)),
+    [search, sortedBots],
+  );
   const oneDayVolume = usePlatformVolumeSeries(leaderboardBots, '1d');
   const oneDayTrades = oneDayVolume.series.summary.totalTradeCount;
   const tradesPerHour = oneDayTrades > 0 ? oneDayTrades / 24 : 0;
@@ -63,14 +81,14 @@ export default function LeaderboardPage() {
           <div className="flex min-w-0 items-center gap-3 xl:min-w-[18rem]">
             <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-700 animate-glow-pulse dark:bg-emerald-400" />
             <h1 className="truncate font-display text-xl font-bold tracking-tight">
-              Leaderboard
+              Agent Explorer
             </h1>
           </div>
           <div className="grid min-w-0 flex-1 grid-cols-4 gap-4 xl:max-w-2xl">
-            <Metric value={formatCompactUsd(oneDayVolume.series.summary.totalUsd)} label="24H Volume" />
-            <Metric value={oneDayTrades > 0 ? oneDayTrades.toLocaleString() : '—'} label="24H Fills" />
-            <Metric value={tradesPerHour > 0 ? formatNumber(tradesPerHour, { maximumFractionDigits: 1 }) : '—'} label="Fills/Hr" />
-            <Metric value={activeAgents.toLocaleString()} label="Active" />
+            <ExplorerMetric value={formatCompactUsd(oneDayVolume.series.summary.totalUsd)} label="24H Volume" />
+            <ExplorerMetric value={oneDayTrades > 0 ? oneDayTrades.toLocaleString() : '—'} label="24H Fills" />
+            <ExplorerMetric value={tradesPerHour > 0 ? formatNumber(tradesPerHour, { maximumFractionDigits: 1 }) : '—'} label="Fills/Hr" />
+            <ExplorerMetric value={activeAgents.toLocaleString()} label="Active" />
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Link
@@ -122,7 +140,7 @@ export default function LeaderboardPage() {
           </div>
         )
       ) : (
-        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.42fr)] lg:grid-rows-[minmax(300px,0.9fr)_minmax(300px,1.1fr)]">
+        <div className="grid min-h-0 flex-1 gap-3 lg:grid-rows-[minmax(260px,0.7fr)_minmax(220px,0.45fr)_minmax(300px,0.8fr)]">
           <PlatformVolumeChart
             bots={leaderboardBots}
             variant="command"
@@ -130,21 +148,39 @@ export default function LeaderboardPage() {
           />
           <LatestAgentTrades
             bots={leaderboardBots}
-            variant="panel"
-            limit={20}
+            variant="explorer"
+            limit={50}
             className="min-h-0"
           />
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/54 lg:col-span-2">
-            <div className="flex h-11 shrink-0 items-center justify-between border-b border-arena-elements-dividerColor/60 px-3">
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/54">
+            <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-arena-elements-dividerColor/60 px-3">
               <h2 className="font-display text-lg font-semibold tracking-tight text-arena-elements-textPrimary">
                 Agents
               </h2>
-              <span className="font-data text-sm text-arena-elements-textTertiary">
-                {sortedBots.length.toLocaleString()} {sortedBots.length === 1 ? 'agent' : 'agents'}
-              </span>
+              <div className="flex min-w-0 flex-1 items-center justify-end gap-3">
+                <div className="relative min-w-[12rem] max-w-[24rem] flex-1 sm:flex-none">
+                  <span className="i-ph:magnifying-glass pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-arena-elements-textTertiary" aria-hidden="true" />
+                  <input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    aria-label="Search agents"
+                    placeholder="Search agent, strategy, address"
+                    className="h-8 w-full rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/58 pl-8 pr-2 font-display text-sm text-arena-elements-textPrimary outline-none transition-colors placeholder:text-arena-elements-textTertiary focus:border-violet-500/55 focus:ring-2 focus:ring-violet-500/18"
+                  />
+                </div>
+                <span className="hidden font-data text-sm text-arena-elements-textTertiary sm:inline">
+                  {visibleBots.length.toLocaleString()} / {sortedBots.length.toLocaleString()}
+                </span>
+              </div>
             </div>
             <div className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
-              <LeaderboardTable bots={sortedBots} />
+              {visibleBots.length > 0 ? (
+                <LeaderboardTable bots={visibleBots} />
+              ) : (
+                <div className="flex h-full min-h-[16rem] items-center justify-center px-6 text-center font-display text-sm text-arena-elements-textSecondary">
+                  No agents match that search.
+                </div>
+              )}
             </div>
           </section>
         </div>

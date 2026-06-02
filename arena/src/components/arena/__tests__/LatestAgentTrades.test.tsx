@@ -112,4 +112,34 @@ describe('LatestAgentTrades', () => {
     expect(screen.getByRole('heading', { name: 'Fills' })).toBeInTheDocument();
     expect(screen.queryByText('Last 20')).not.toBeInTheDocument();
   });
+
+  it('renders a dense explorer table for the dedicated agent explorer route', () => {
+    const bot = makeBot();
+    hoisted.latestTrades = Array.from({ length: 3 }, (_, index) => ({
+      trade: makeTrade(index),
+      bot,
+      botId: bot.id,
+      botName: bot.name,
+    }));
+
+    render(
+      <MemoryRouter>
+        <LatestAgentTrades
+          bots={[bot]}
+          variant="explorer"
+          limit={50}
+          className="h-full min-h-0"
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('live-fill-tape')).toHaveClass('overflow-hidden', 'h-full', 'min-h-0');
+    expect(screen.getByTestId('live-fill-explorer-scroll')).toHaveClass('overflow-auto', 'min-h-0', 'flex-1');
+    expect(screen.getByRole('heading', { name: 'Latest Fills' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Market' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'USD' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Mode' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
+  });
 });

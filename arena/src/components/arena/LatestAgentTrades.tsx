@@ -17,7 +17,7 @@ interface LatestAgentTradesProps {
   className?: string;
   enabled?: boolean;
   limit?: number;
-  variant?: 'standard' | 'panel';
+  variant?: 'standard' | 'panel' | 'explorer';
 }
 
 function formatReference(trade: Trade): string {
@@ -39,17 +39,19 @@ export function LatestAgentTrades({
     limit: limit ?? 10,
   });
   const isPanel = variant === 'panel';
+  const isExplorer = variant === 'explorer';
+  const isBounded = isPanel || isExplorer;
   const visibleTrades = limit ? trades.slice(0, limit) : trades;
 
   return (
     <section
       data-testid="live-fill-tape"
-      className={`${isPanel ? 'flex h-full min-h-0 flex-col overflow-hidden' : 'mb-6'} rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/42 ${className}`}
+      className={`${isBounded ? 'flex h-full min-h-0 flex-col overflow-hidden' : 'mb-6'} rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/42 ${className}`}
       aria-live="polite"
     >
       <div className="flex items-center justify-between gap-4 border-b border-arena-elements-dividerColor/60 px-4 py-3 sm:px-5">
         <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-          Fills
+          {isExplorer ? 'Latest Fills' : 'Fills'}
         </h2>
         {trades.length === 0 && candidateCount > 0 && (
           <span className="font-data text-xs text-arena-elements-textTertiary">
@@ -59,19 +61,19 @@ export function LatestAgentTrades({
       </div>
 
       {isLoading ? (
-        <div className={`${isPanel ? 'min-h-0 flex-1 overflow-hidden' : ''} divide-y divide-arena-elements-dividerColor/50`}>
+        <div className={`${isBounded ? 'min-h-0 flex-1 overflow-hidden' : ''} divide-y divide-arena-elements-dividerColor/50`}>
           {Array.from({ length: 6 }).map((_, index) => (
-            <div key={index} className={`grid grid-cols-[1fr_auto] gap-4 px-4 py-3 sm:px-5 ${isPanel ? '' : 'lg:grid-cols-[7rem_1.3fr_1.4fr_6rem_5rem]'}`}>
+            <div key={index} className={`grid grid-cols-[1fr_auto] gap-4 px-4 py-3 sm:px-5 ${isBounded ? '' : 'lg:grid-cols-[7rem_1.3fr_1.4fr_6rem_5rem]'}`}>
               <Skeleton className="h-7 w-20" />
               <Skeleton className="h-7 w-full" />
-              {!isPanel && <Skeleton className="hidden h-7 w-full lg:block" />}
-              {!isPanel && <Skeleton className="hidden h-7 w-16 lg:block" />}
+              {!isBounded && <Skeleton className="hidden h-7 w-full lg:block" />}
+              {!isBounded && <Skeleton className="hidden h-7 w-16 lg:block" />}
               <Skeleton className="h-7 w-12" />
             </div>
           ))}
         </div>
       ) : visibleTrades.length === 0 ? (
-        <div className={`${isPanel ? 'flex min-h-0 flex-1 items-center justify-center' : 'px-5 py-10'} text-center text-sm text-arena-elements-textSecondary`}>
+        <div className={`${isBounded ? 'flex min-h-0 flex-1 items-center justify-center' : 'px-5 py-10'} text-center text-sm text-arena-elements-textSecondary`}>
           No recent fills reported by active agents.
         </div>
       ) : isPanel ? (
@@ -135,6 +137,89 @@ export function LatestAgentTrades({
               );
             })}
           </div>
+        </div>
+      ) : isExplorer ? (
+        <div
+          data-testid="live-fill-explorer-scroll"
+          className="min-h-0 flex-1 overflow-auto overscroll-contain [scrollbar-gutter:stable]"
+        >
+          <table className="w-full min-w-[860px] border-separate border-spacing-0">
+            <thead className="sticky top-0 z-10 bg-arena-elements-background-depth-2/96 backdrop-blur">
+              <tr>
+                <th className="border-b border-arena-elements-dividerColor/60 px-4 py-2 text-left font-data text-xs font-medium text-arena-elements-textTertiary">Time</th>
+                <th className="border-b border-arena-elements-dividerColor/60 px-4 py-2 text-left font-data text-xs font-medium text-arena-elements-textTertiary">Agent</th>
+                <th className="border-b border-arena-elements-dividerColor/60 px-4 py-2 text-left font-data text-xs font-medium text-arena-elements-textTertiary">Fill</th>
+                <th className="border-b border-arena-elements-dividerColor/60 px-4 py-2 text-left font-data text-xs font-medium text-arena-elements-textTertiary">Market</th>
+                <th className="border-b border-arena-elements-dividerColor/60 px-4 py-2 text-right font-data text-xs font-medium text-arena-elements-textTertiary">USD</th>
+                <th className="border-b border-arena-elements-dividerColor/60 px-4 py-2 text-right font-data text-xs font-medium text-arena-elements-textTertiary">Ref</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleTrades.map(({ trade, bot, botId, botName }) => {
+                const operatorAddress = bot?.operatorAddress;
+                const hasOperatorAddress = operatorAddress != null && isAddress(operatorAddress);
+                const agentName = bot?.name ?? botName;
+                return (
+                  <tr
+                    key={`${botId}:${trade.id}`}
+                    className="group cursor-pointer transition-colors hover:bg-arena-elements-item-backgroundHover"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${agentName} performance`}
+                    onClick={() => navigate(`/arena/bot/${encodeURIComponent(botId)}/performance`)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        navigate(`/arena/bot/${encodeURIComponent(botId)}/performance`);
+                      }
+                    }}
+                  >
+                    <td
+                      className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textTertiary"
+                      title={new Date(trade.timestamp).toLocaleString()}
+                    >
+                      {formatTradeAge(trade.timestamp)}
+                    </td>
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
+                      <Link
+                        to={`/arena/bot/${encodeURIComponent(botId)}/performance`}
+                        className="flex min-w-0 items-center gap-2.5"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {hasOperatorAddress ? (
+                          <Identicon address={operatorAddress as Address} size={22} />
+                        ) : (
+                          <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
+                        )}
+                        <span className="truncate font-display text-sm font-semibold text-arena-elements-textPrimary group-hover:text-violet-700 dark:group-hover:text-violet-300">
+                          {agentName}
+                        </span>
+                      </Link>
+                    </td>
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
+                      <span className={`inline-flex h-8 min-w-[4.75rem] items-center justify-center rounded-md px-2.5 font-data text-xs font-bold ${getTradeActionPillClass(trade.action)}`}>
+                        {formatTradeActionLabel(trade.action)}
+                      </span>
+                    </td>
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
+                      <TradeInstrumentDisplay
+                        trade={trade}
+                        size="md"
+                        showVenue={false}
+                        labelClassName="max-w-[320px]"
+                      />
+                    </td>
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 text-right align-middle font-data text-base font-semibold text-arena-elements-textPrimary">
+                      {formatTradeUsd(trade.notionalUsd)}
+                    </td>
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 text-right align-middle font-data text-sm text-arena-elements-textTertiary">
+                      {formatReference(trade)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       ) : (
         <div className="overflow-x-auto">

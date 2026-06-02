@@ -2207,3 +2207,43 @@ Verification:
   - `.evolve/arena-portfolio-leaderboard-smoke-20260602-v5/1440x900-leaderboard.png`: full explorer table fits with no horizontal clipping.
   - `.evolve/arena-portfolio-leaderboard-smoke-20260602-v5/1280x800-leaderboard.png`: table remains readable in the tighter desktop viewport.
   - `.evolve/arena-portfolio-leaderboard-smoke-20260602-v5/1440x900-portfolio.png`: portfolio and executions render as aligned ledgers with internal table scroll only.
+
+## 2026-06-02 Agent Explorer Separation Pass
+
+User-reported problem:
+
+- The homepage should not carry the full leaderboard/agent-table job. The app needs a clean separate leaderboard/agent explorer page that can show platform/blueprint volume, fills/hour, latest trades, and a professional Etherscan-style agent table.
+
+Decision:
+
+- Home is the live command glance: platform volume plus latest fills.
+- `/leaderboard` is the dedicated Agent Explorer: aggregate strip, volume chart, latest fills ledger, searchable ranked agent table.
+- The global sidebar label is `Agents`, while the URL remains `/leaderboard` for route stability.
+
+Screenshot-driven correction:
+
+- First pass placed the latest fills explorer table beside the volume chart. At 1440px it forced horizontal scrolling inside the right rail, which failed the Etherscan-style page goal.
+- Final layout stacks full-width rows: volume chart, latest fills table, agents table. This keeps every fill column visible and makes the explorer page read like a real ledger surface rather than a cramped dashboard rail.
+
+Shipped in this slice:
+
+- Removed the homepage `Top agents` mini-table and search so Home no longer duplicates the full explorer workflow.
+- Increased the homepage live fill panel from 12 to 18 rows because it now owns the right side by itself.
+- Renamed the primary nav entry from `Leaderboard` to `Agents`.
+- Reworked `/leaderboard` title and metadata to `Agent Explorer`.
+- Added a searchable agent table header on `/leaderboard`.
+- Added `LatestAgentTrades` `explorer` mode with a full-width ledger: Time, Agent, Fill, Market, USD, Ref. It intentionally omits the old Mode/Status columns that repeated paper/status concepts.
+- Updated the browser smoke fixture expectations to defend the new Home/Explorer split.
+
+Verification:
+
+- `pnpm --dir arena exec vitest run src/routes/__tests__/index.test.tsx src/routes/__tests__/leaderboard.test.tsx src/components/arena/__tests__/LatestAgentTrades.test.tsx src/components/layout/__tests__/ArenaAppShell.test.tsx --reporter=dot` passes: 4 files, 14 tests.
+- `pnpm --dir arena exec vitest run src/routes/__tests__/leaderboard.test.tsx src/components/arena/__tests__/LatestAgentTrades.test.tsx --reporter=dot` passes after the full-width explorer correction: 2 files, 4 tests.
+- `pnpm --dir arena test -- --reporter=dot` passes: 67 files, 387 tests.
+- `pnpm --dir arena typecheck` passes.
+- `pnpm --dir arena build` passes. Existing large-chunk warnings remain unchanged.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-agent-explorer-smoke-20260602` passes.
+- Visual inspection passed:
+  - `.evolve/arena-agent-explorer-smoke-20260602/1440x900-home.png`: Home is now volume + fills, with no ranked-agent duplicate.
+  - `.evolve/arena-agent-explorer-smoke-20260602/1440x900-leaderboard.png`: Agent Explorer shows full-width volume, latest fills, and agents ledgers with no horizontal squeeze.
+  - `.evolve/arena-agent-explorer-smoke-20260602/1280x800-leaderboard.png`: the explorer remains readable at tighter desktop width.
