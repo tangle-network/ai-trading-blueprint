@@ -289,7 +289,7 @@ function markerPlacements(candidates: MarkerCandidate[], dense: boolean): Marker
 
 function toMarkerLabel(marker: TradeChartMarker, count: number, dense: boolean): string {
   if (!dense) return count > 1 ? `${marker.text} x${count}` : marker.text;
-  return count >= 8 ? `x${count}` : '';
+  return '';
 }
 
 function toMarkerSize(count: number, dense: boolean, denseSingletonSize: number): number {
