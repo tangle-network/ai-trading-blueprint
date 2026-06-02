@@ -2,7 +2,6 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useStore } from '@nanostores/react';
-import { useQueryClient } from '@tanstack/react-query';
 import { useAccount } from 'wagmi';
 import { selectedChainIdStore } from '@tangle-network/blueprint-ui';
 import { AnimatedPage, Button } from '@tangle-network/blueprint-ui/components';
@@ -174,16 +173,21 @@ export default function BotDetailPage() {
     : operationPanelFromLegacyTab(legacyTab);
   const { address, isConnected } = useAccount();
   const { bots, isLoading } = useBots();
-  const queryClient = useQueryClient();
   const [secretsTarget, setSecretsTarget] = useState<SecretsTarget | null>(null);
   const myProvisions = useStore(
     provisionsForOwner(address),
   ) as TrackedProvision[];
 
   useEffect(() => {
-    if (!id || !legacySection) return;
-    navigate(buildSectionUrl(id, legacySection, requestedOperationsPanel), { replace: true });
-  }, [id, legacySection, navigate, requestedOperationsPanel]);
+    if (!id) return;
+    if (legacySection) {
+      navigate(buildSectionUrl(id, legacySection, requestedOperationsPanel), { replace: true });
+      return;
+    }
+    if (!routeSection) {
+      navigate(buildSectionUrl(id, 'performance'), { replace: true });
+    }
+  }, [id, legacySection, navigate, requestedOperationsPanel, routeSection]);
 
   const matchingProvision = useMemo(() => {
     return findMatchingInstanceRouteProvision(myProvisions, id);
@@ -311,26 +315,6 @@ export default function BotDetailPage() {
   const detailApiUrl = bot?.operatorApiUrl ?? routeOperatorApiUrl;
   const isHyperliquidPerpBot = bot?.strategyType === 'hyperliquid_perp';
 
-  useEffect(() => {
-    if (!bot?.id || !detailApiUrl) return;
-
-    queryClient.invalidateQueries({
-      queryKey: ['bot-detail', detailApiUrl, bot.id],
-    });
-    queryClient.invalidateQueries({
-      queryKey: ['bot-portfolio', detailApiUrl, bot.id],
-    });
-    queryClient.invalidateQueries({
-      queryKey: ['bot-trades', detailApiUrl, bot.id],
-    });
-    queryClient.invalidateQueries({
-      queryKey: ['bot-metrics', detailApiUrl, bot.id],
-    });
-    queryClient.invalidateQueries({
-      queryKey: ['bot-metrics-summary', detailApiUrl, bot.id],
-    });
-  }, [bot?.id, detailApiUrl, queryClient]);
-
   const botIsLive = bot ? isLiveBotStatus(bot.status) : false;
   const pendingValidationCount = usePendingValidationCount(
     bot?.id ?? '',
@@ -346,7 +330,7 @@ export default function BotDetailPage() {
       { value: 'portfolio', label: 'Portfolio', icon: 'i-ph:wallet' },
     ];
 
-    if (operatorMeta?.features.chat) {
+    if (operatorMeta?.features.chat !== false) {
       items.push(
         { value: 'runs', label: 'Traces', icon: 'i-ph:list-checks' },
         { value: 'chat', label: 'Chat', icon: 'i-ph:chat-circle-dots' },
@@ -412,6 +396,11 @@ export default function BotDetailPage() {
     navigate(buildSectionUrl(id, section));
   };
 
+  const handleOperationsPanelChange = (panel: OperationsPanel) => {
+    if (!id) return;
+    navigate(buildSectionUrl(id, 'operations', panel));
+  };
+
   const configureSecrets = () => {
     setSecretsTarget({
       apiUrl: bot.operatorApiUrl ?? undefined,
@@ -424,7 +413,7 @@ export default function BotDetailPage() {
 
   const needsSecrets =
     bot.status === 'needs_config' || bot.secretsConfigured === false;
-  const hasChat = operatorMeta?.features.chat === true;
+  const hasChat = operatorMeta?.features.chat !== false;
   const hasTerminal = operatorMeta?.features.terminal === true;
   const canCommandBot = isBotCommandableByWallet(bot, address);
 
@@ -491,6 +480,7 @@ export default function BotDetailPage() {
             botName={displayBotName}
             isLive={botIsLive}
             initialPanel={requestedOperationsPanel}
+            onPanelChange={handleOperationsPanelChange}
             hasTerminal={hasTerminal}
             isHyperliquidPerpBot={isHyperliquidPerpBot}
             assetMetadata={botAssetMetadata}

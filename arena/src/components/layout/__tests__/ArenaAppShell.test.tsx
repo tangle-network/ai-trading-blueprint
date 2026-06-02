@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bot } from '~/lib/types/bot';
@@ -194,7 +194,7 @@ describe('ArenaAppShell', () => {
 	    expect(within(sidebar!).getByRole('link', { name: /arena/i })).toHaveAttribute('href', '/');
 	  });
 
-	  it('starts collapsed in agent workspaces and keeps the fleet route accessible', () => {
+	  it('keeps focus workspaces free of global navigation chrome', () => {
 	    hoisted.bots = [
 	      makeBot({
 	        id: 'mine',
@@ -206,17 +206,9 @@ describe('ArenaAppShell', () => {
 
 	    renderShell('/arena/bot/mine/chat');
 
-	    const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
-
-	    expect(sidebar).not.toBeNull();
-	    expect(sidebar).toHaveClass('w-16');
-	    expect(within(sidebar!).getByRole('link', { name: /arena/i })).toHaveAttribute('href', '/');
-	    expect(within(sidebar!).queryByRole('button', { name: /base sepolia testnet/i })).not.toBeInTheDocument();
-	    expect(within(sidebar!).queryByRole('button', { name: /transactions/i })).not.toBeInTheDocument();
-
-	    fireEvent.click(within(sidebar!).getByRole('button', { name: /expand sidebar/i }));
-
-	    expect(sidebar).toHaveClass('w-64');
-	    expect(within(sidebar!).getByText('Callable Agent')).toBeInTheDocument();
+	    expect(screen.queryByRole('navigation', { name: 'Arena navigation' })).not.toBeInTheDocument();
+	    expect(screen.queryByRole('button', { name: /base sepolia testnet/i })).not.toBeInTheDocument();
+	    expect(screen.queryByRole('button', { name: /transactions/i })).not.toBeInTheDocument();
+	    expect(screen.getByText('Agent body')).toBeInTheDocument();
 	  });
 	});

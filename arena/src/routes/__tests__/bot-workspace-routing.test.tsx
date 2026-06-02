@@ -5,6 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const hoisted = vi.hoisted(() => ({
   selectedChainId: 84532,
+  operatorMetaData: {
+    features: {
+      chat: true,
+      terminal: true,
+    },
+  } as { features: { chat: boolean; terminal: boolean } } | undefined,
 }));
 
 vi.mock('@nanostores/react', () => ({
@@ -122,12 +128,7 @@ vi.mock('~/lib/operator/meta', async () => {
     OPERATOR_API_URL: 'http://operator.test',
     INSTANCE_OPERATOR_API_URL: 'http://instance.test',
     useOperatorMeta: () => ({
-      data: {
-        features: {
-          chat: true,
-          terminal: true,
-        },
-      },
+      data: hoisted.operatorMetaData,
     }),
   };
 });
@@ -153,8 +154,13 @@ vi.mock('~/components/bot-detail/ChatTab', () => ({
 }));
 
 vi.mock('~/components/bot-detail/OperationsWorkspace', () => ({
-  OperationsWorkspace: ({ initialPanel }: any) => (
-    <div data-testid="workspace-operations">Operations workspace {initialPanel}</div>
+  OperationsWorkspace: ({ initialPanel, onPanelChange }: any) => (
+    <div data-testid="workspace-operations">
+      Operations workspace {initialPanel}
+      <button type="button" onClick={() => onPanelChange?.('validation')}>
+        Open Validation
+      </button>
+    </div>
   ),
 }));
 
@@ -210,6 +216,20 @@ function findWorkspace(testId: string) {
 describe('bot workspace routing', () => {
   beforeEach(() => {
     hoisted.selectedChainId = 84532;
+    hoisted.operatorMetaData = {
+      features: {
+        chat: true,
+        terminal: true,
+      },
+    };
+  });
+
+  it('canonicalizes bare agent routes to performance', async () => {
+    const router = renderBotWorkspace(['/arena/bot/bot-1']);
+
+    expect(await findWorkspace('workspace-performance')).toBeInTheDocument();
+    await waitFor(() => expect(router.state.location.pathname).toBe('/arena/bot/bot-1/performance'));
+    expect(router.state.location.search).toBe('');
   });
 
   it('preserves browser back navigation between route-native agent sections', async () => {
@@ -246,5 +266,24 @@ describe('bot workspace routing', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/arena/bot/bot-1/operations'));
     expect(router.state.location.search).toBe('?panel=terminal');
     expect(await findWorkspace('workspace-operations')).toHaveTextContent('terminal');
+  });
+
+  it('keeps direct chat routes available while operator metadata is still loading', async () => {
+    hoisted.operatorMetaData = undefined;
+    const router = renderBotWorkspace(['/arena/bot/bot-1/chat']);
+
+    expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/arena/bot/bot-1/chat');
+    expect(screen.getByRole('button', { name: /chat/i })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('persists operations panel changes in the route query string', async () => {
+    const router = renderBotWorkspace(['/arena/bot/bot-1/operations']);
+
+    expect(await findWorkspace('workspace-operations')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /open validation/i }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/arena/bot/bot-1/operations'));
+    expect(router.state.location.search).toBe('?panel=validation');
   });
 });

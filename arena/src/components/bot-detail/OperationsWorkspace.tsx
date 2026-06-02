@@ -20,6 +20,7 @@ interface OperationsWorkspaceProps {
   botName: string;
   isLive: boolean;
   initialPanel?: string | null;
+  onPanelChange?: (panel: OperationsPanel) => void;
   hasTerminal: boolean;
   isHyperliquidPerpBot: boolean;
   assetMetadata?: TokenMetadata[];
@@ -362,6 +363,7 @@ export function OperationsWorkspace({
   botName,
   isLive,
   initialPanel,
+  onPanelChange,
   hasTerminal,
   isHyperliquidPerpBot,
   assetMetadata,
@@ -454,6 +456,10 @@ export function OperationsWorkspace({
     ? activePanel
     : panels[0]?.value ?? 'overview';
   const activeItem = panels.find((panel) => panel.value === effectiveActivePanel) ?? panels[0];
+  const selectPanel = (panel: OperationsPanel) => {
+    setActivePanel(panel);
+    onPanelChange?.(panel);
+  };
 
   const content = (() => {
     switch (effectiveActivePanel) {
@@ -465,7 +471,7 @@ export function OperationsWorkspace({
             hasTerminal={hasTerminal}
             isHyperliquidPerpBot={isHyperliquidPerpBot}
             canCommand={canCommand}
-            onSelectPanel={setActivePanel}
+            onSelectPanel={selectPanel}
           />
         );
       case 'validation':
@@ -513,15 +519,20 @@ export function OperationsWorkspace({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/54">
-      <div className="shrink-0 border-b border-arena-elements-dividerColor/70 px-4 py-3">
+      <div className="shrink-0 border-b border-arena-elements-dividerColor/70 px-4 py-2.5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
               Risk & Ops
             </div>
-            <h2 className="mt-1 font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-              Runtime State
+            <h2 className="mt-0.5 truncate font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
+              {activeItem?.label ?? 'Runtime State'}
             </h2>
+            {activeItem?.description && (
+              <p className="mt-0.5 truncate text-sm text-arena-elements-textSecondary">
+                {activeItem.description}
+              </p>
+            )}
           </div>
           <nav
             className="flex max-w-full gap-1 overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/58 p-1"
@@ -533,7 +544,7 @@ export function OperationsWorkspace({
               <button
                 key={panel.value}
                 type="button"
-                onClick={() => setActivePanel(panel.value)}
+                onClick={() => selectPanel(panel.value)}
                 aria-current={selected ? 'page' : undefined}
                 className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
                   selected
@@ -552,19 +563,6 @@ export function OperationsWorkspace({
       </div>
 
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {activeItem && (
-          <div className="shrink-0 border-b border-arena-elements-dividerColor/70 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className={`${activeItem.icon} text-lg text-violet-500 dark:text-violet-300`} aria-hidden="true" />
-              <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-                {activeItem.label}
-              </h2>
-            </div>
-            <p className="mt-1 text-sm text-arena-elements-textSecondary">
-              {activeItem.description}
-            </p>
-          </div>
-        )}
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           <ErrorBoundary>
             <Suspense fallback={<OperationsPanelLoading label={activeItem?.label} />}>

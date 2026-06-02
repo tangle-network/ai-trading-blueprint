@@ -1,5 +1,5 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router';
-import { useEffect, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react';
 import type { Address } from 'viem';
 import { useAccount } from 'wagmi';
 import { ChainSwitcher, Identicon, TangleLogo, ThemeToggle } from '@tangle-network/blueprint-ui/components';
@@ -32,8 +32,6 @@ function formatReturn(value: number) {
 
 export function ArenaAppShell() {
   const location = useLocation();
-  const { address } = useAccount();
-  const { bots } = useBots();
   const isBotWorkspace = location.pathname.startsWith('/arena/bot/');
   const isAgentFocusRoute = /^\/arena\/bot\/[^/]+\/(?:chat|runs)\/?$/.test(location.pathname);
   const previousIsBotWorkspace = useRef(isBotWorkspace);
@@ -45,6 +43,63 @@ export function ArenaAppShell() {
     previousIsBotWorkspace.current = isBotWorkspace;
   }, [isBotWorkspace]);
 
+  return (
+    <div className="bp-tone-arena flex h-[100dvh] overflow-hidden bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:rounded-lg focus:bg-violet-600 focus:text-white focus:text-sm focus:font-display focus:font-medium"
+      >
+        Skip to content
+      </a>
+
+      {!isAgentFocusRoute && (
+        <DesktopArenaSidebar
+          pathname={location.pathname}
+          sidebarCollapsed={sidebarCollapsed}
+          setSidebarCollapsed={setSidebarCollapsed}
+        />
+      )}
+
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
+        {!isAgentFocusRoute && (
+          <div className="flex h-14 shrink-0 items-center justify-between border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 px-3 backdrop-blur-xl lg:hidden">
+            <Link to="/" className="min-w-0">
+              <TangleLogo label="Trading Cloud" />
+            </Link>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <ChainSwitcher />
+              <WalletButton />
+            </div>
+          </div>
+        )}
+
+        <main
+          id="main-content"
+          className={cn(
+            'relative z-10 min-h-0 flex-1',
+            isAgentFocusRoute ? 'overflow-hidden' : 'overflow-y-auto',
+          )}
+        >
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+}
+
+interface DesktopArenaSidebarProps {
+  pathname: string;
+  sidebarCollapsed: boolean;
+  setSidebarCollapsed: Dispatch<SetStateAction<boolean>>;
+}
+
+function DesktopArenaSidebar({
+  pathname,
+  sidebarCollapsed,
+  setSidebarCollapsed,
+}: DesktopArenaSidebarProps) {
+  const { address } = useAccount();
+  const { bots } = useBots();
   const eligibleAgents = bots
     .filter((bot) => bot.verificationState !== 'unverified')
     .filter((bot) => bot.status === 'active' || bot.status === 'paused' || bot.totalTrades > 0);
@@ -64,174 +119,147 @@ export function ArenaAppShell() {
   const showAgentRoster = agentSections.length > 0;
 
   return (
-    <div className="bp-tone-arena flex h-[100dvh] overflow-hidden bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:rounded-lg focus:bg-violet-600 focus:text-white focus:text-sm focus:font-display focus:font-medium"
-      >
-        Skip to content
-      </a>
-
-      <aside
-        className={cn(
-          'relative z-10 hidden shrink-0 flex-col border-r border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/86 shadow-[12px_0_38px_rgba(0,0,0,0.18)] backdrop-blur-xl transition-[width] duration-200 lg:flex',
-          sidebarCollapsed ? (isAgentFocusRoute ? 'w-16' : 'w-20') : 'w-64',
-        )}
-      >
-        <div className={cn(
-          'flex h-14 shrink-0 items-center gap-2 border-b border-arena-elements-dividerColor/70 px-3',
-          sidebarCollapsed ? 'justify-center' : 'justify-between',
-        )}>
-          <Link to="/" className={cn('flex min-w-0 items-center', sidebarCollapsed && 'sr-only')}>
-            <TangleLogo label={sidebarCollapsed ? undefined : 'Trading Cloud'} />
-          </Link>
-          <button
-            type="button"
-            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/52 text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          >
-            <span className={sidebarCollapsed ? 'i-ph:caret-right-bold text-lg' : 'i-ph:caret-left-bold text-lg'} />
-          </button>
-        </div>
-
-        <nav className="shrink-0 space-y-1 px-2 py-3" aria-label="Arena navigation">
-          {primaryNavItems.map((item) => {
-            const active = isNavActive(location.pathname, item.href);
-            return (
-              <NavLink
-                key={item.href}
-                to={item.href}
-                className={cn(
-                  'flex h-10 items-center rounded-lg text-sm font-display font-medium transition-colors',
-                  sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3',
-                  active
-                    ? 'bg-violet-500/14 text-arena-elements-textPrimary'
-                    : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary',
-	                )}
-	                title={sidebarCollapsed ? item.label : undefined}
-	                aria-label={sidebarCollapsed ? item.label : undefined}
-	              >
-                <span className={`${item.icon} text-base ${active ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary'}`} aria-hidden="true" />
-                {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
-              </NavLink>
-            );
-          })}
-        </nav>
-
-        <div className="flex min-h-0 flex-1 flex-col border-t border-arena-elements-dividerColor/60 px-2 py-3">
-          {!sidebarCollapsed && showAgentRoster && (
-            <div className="mb-2 px-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-              Commandable
-            </div>
-          )}
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
-            {agentSections.map((section) => (
-              <div key={section.label} className="space-y-1">
-                {!sidebarCollapsed && (
-                  <div className="px-2 pb-1 pt-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary first:pt-0">
-                    {section.label}
-                  </div>
-                )}
-                {section.bots.map((bot) => {
-                  const selected = location.pathname.startsWith(`/arena/bot/${bot.id}`);
-                  const positive = bot.pnlPercent >= 0;
-                  return (
-                    <Link
-                      key={bot.id}
-                      to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
-                      className={cn(
-                        'group flex items-center rounded-lg border transition-colors',
-                        sidebarCollapsed ? 'min-h-12 justify-center px-0 py-2' : 'min-h-[56px] gap-2 px-2 py-2',
-                        selected
-                          ? 'border-violet-500/28 bg-violet-500/12'
-                          : 'border-transparent hover:border-arena-elements-dividerColor/70 hover:bg-arena-elements-item-backgroundHover',
-	                      )}
-	                      title={sidebarCollapsed ? `${section.label}: ${bot.name}` : undefined}
-	                      aria-label={sidebarCollapsed ? `${section.label}: ${bot.name}` : undefined}
-	                    >
-                      <Identicon address={bot.operatorAddress as Address} size={sidebarCollapsed ? 28 : 26} />
-                      {!sidebarCollapsed && (
-                        <>
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate font-display text-sm font-semibold text-arena-elements-textPrimary">
-                              {bot.name}
-                            </div>
-                            <div className="mt-0.5 flex items-center gap-2 text-[11px] text-arena-elements-textTertiary">
-                              <span className={cn(
-                                'h-1.5 w-1.5 rounded-full',
-                                bot.status === 'active' ? 'bg-emerald-500' : 'bg-amber-400',
-                              )} />
-                              <span className="truncate">{botStatusLabel(bot.status)}</span>
-                            </div>
-                          </div>
-                          <div className={cn(
-                            'font-data text-xs font-bold',
-                            bot.pnlPercent === 0
-                              ? 'text-arena-elements-textTertiary'
-                              : positive
-                                ? 'text-arena-elements-icon-success'
-                                : 'text-arena-elements-icon-error',
-                          )}
-                          >
-                            {formatReturn(bot.pnlPercent)}
-                          </div>
-                        </>
-                      )}
-                    </Link>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {!isAgentFocusRoute && (
-          <div className="shrink-0 border-t border-arena-elements-dividerColor/70 p-2">
-            <div className={cn('mb-2 grid gap-1', sidebarCollapsed ? 'grid-cols-1' : 'grid-cols-2')}>
-              <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
-                {sidebarCollapsed ? (
-                  <button
-                    type="button"
-                    onClick={() => setSidebarCollapsed(false)}
-                    className="inline-flex h-10 w-full items-center justify-center rounded-md text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-                    aria-label="Base Sepolia testnet"
-                    title="Base Sepolia testnet"
-                  >
-                    <span className="i-ph:globe-hemisphere-west text-base" aria-hidden="true" />
-                  </button>
-                ) : (
-                  <ChainSwitcher />
-                )}
-              </div>
-              <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
-                <ThemeToggle />
-              </div>
-            </div>
-            <div className="mb-2">
-              <TxDropdown />
-            </div>
-            {!sidebarCollapsed && <WalletButton />}
-          </div>
-        )}
-      </aside>
-
-      <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex h-14 shrink-0 items-center justify-between border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 px-3 backdrop-blur-xl lg:hidden">
-          <Link to="/" className="min-w-0">
-            <TangleLogo label="Trading Cloud" />
-          </Link>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <ChainSwitcher />
-            <WalletButton />
-          </div>
-        </div>
-
-        <main id="main-content" className="relative z-10 min-h-0 flex-1 overflow-y-auto">
-          <Outlet />
-        </main>
+    <aside
+      className={cn(
+        'relative z-10 hidden shrink-0 flex-col border-r border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/86 shadow-[12px_0_38px_rgba(0,0,0,0.18)] backdrop-blur-xl transition-[width] duration-200 lg:flex',
+        sidebarCollapsed ? 'w-20' : 'w-64',
+      )}
+    >
+      <div className={cn(
+        'flex h-14 shrink-0 items-center gap-2 border-b border-arena-elements-dividerColor/70 px-3',
+        sidebarCollapsed ? 'justify-center' : 'justify-between',
+      )}>
+        <Link to="/" className={cn('flex min-w-0 items-center', sidebarCollapsed && 'sr-only')}>
+          <TangleLogo label={sidebarCollapsed ? undefined : 'Trading Cloud'} />
+        </Link>
+        <button
+          type="button"
+          onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/52 text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <span className={sidebarCollapsed ? 'i-ph:caret-right-bold text-lg' : 'i-ph:caret-left-bold text-lg'} />
+        </button>
       </div>
-    </div>
+
+      <nav className="shrink-0 space-y-1 px-2 py-3" aria-label="Arena navigation">
+        {primaryNavItems.map((item) => {
+          const active = isNavActive(pathname, item.href);
+          return (
+            <NavLink
+              key={item.href}
+              to={item.href}
+              className={cn(
+                'flex h-10 items-center rounded-lg text-sm font-display font-medium transition-colors',
+                sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3',
+                active
+                  ? 'bg-violet-500/14 text-arena-elements-textPrimary'
+                  : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary',
+              )}
+              title={sidebarCollapsed ? item.label : undefined}
+              aria-label={sidebarCollapsed ? item.label : undefined}
+            >
+              <span className={`${item.icon} text-base ${active ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary'}`} aria-hidden="true" />
+              {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+            </NavLink>
+          );
+        })}
+      </nav>
+
+      <div className="flex min-h-0 flex-1 flex-col border-t border-arena-elements-dividerColor/60 px-2 py-3">
+        {!sidebarCollapsed && showAgentRoster && (
+          <div className="mb-2 px-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+            Commandable
+          </div>
+        )}
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+          {agentSections.map((section) => (
+            <div key={section.label} className="space-y-1">
+              {!sidebarCollapsed && (
+                <div className="px-2 pb-1 pt-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary first:pt-0">
+                  {section.label}
+                </div>
+              )}
+              {section.bots.map((bot) => {
+                const selected = pathname.startsWith(`/arena/bot/${bot.id}`);
+                const positive = bot.pnlPercent >= 0;
+                return (
+                  <Link
+                    key={bot.id}
+                    to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
+                    className={cn(
+                      'group flex items-center rounded-lg border transition-colors',
+                      sidebarCollapsed ? 'min-h-12 justify-center px-0 py-2' : 'min-h-[56px] gap-2 px-2 py-2',
+                      selected
+                        ? 'border-violet-500/28 bg-violet-500/12'
+                        : 'border-transparent hover:border-arena-elements-dividerColor/70 hover:bg-arena-elements-item-backgroundHover',
+                    )}
+                    title={sidebarCollapsed ? `${section.label}: ${bot.name}` : undefined}
+                    aria-label={sidebarCollapsed ? `${section.label}: ${bot.name}` : undefined}
+                  >
+                    <Identicon address={bot.operatorAddress as Address} size={sidebarCollapsed ? 28 : 26} />
+                    {!sidebarCollapsed && (
+                      <>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-display text-sm font-semibold text-arena-elements-textPrimary">
+                            {bot.name}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-arena-elements-textTertiary">
+                            <span className={cn(
+                              'h-1.5 w-1.5 rounded-full',
+                              bot.status === 'active' ? 'bg-emerald-500' : 'bg-amber-400',
+                            )} />
+                            <span className="truncate">{botStatusLabel(bot.status)}</span>
+                          </div>
+                        </div>
+                        <div className={cn(
+                          'font-data text-xs font-bold',
+                          bot.pnlPercent === 0
+                            ? 'text-arena-elements-textTertiary'
+                            : positive
+                              ? 'text-arena-elements-icon-success'
+                              : 'text-arena-elements-icon-error',
+                        )}
+                        >
+                          {formatReturn(bot.pnlPercent)}
+                        </div>
+                      </>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="shrink-0 border-t border-arena-elements-dividerColor/70 p-2">
+        <div className={cn('mb-2 grid gap-1', sidebarCollapsed ? 'grid-cols-1' : 'grid-cols-2')}>
+          <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
+            {sidebarCollapsed ? (
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(false)}
+                className="inline-flex h-10 w-full items-center justify-center rounded-md text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                aria-label="Base Sepolia testnet"
+                title="Base Sepolia testnet"
+              >
+                <span className="i-ph:globe-hemisphere-west text-base" aria-hidden="true" />
+              </button>
+            ) : (
+              <ChainSwitcher />
+            )}
+          </div>
+          <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
+            <ThemeToggle />
+          </div>
+        </div>
+        <div className="mb-2">
+          <TxDropdown />
+        </div>
+        {!sidebarCollapsed && <WalletButton />}
+      </div>
+    </aside>
   );
 }
