@@ -1976,3 +1976,87 @@ Verification:
 - `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/PerformanceTab.test.tsx src/components/bot-detail/shared/__tests__/AssetDisplay.test.tsx src/components/bot-detail/__tests__/performanceChart.test.ts --reporter=dot` passes: 3 files, 30 tests.
 - `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-performance-terminal-neutral-stats-smoke-20260602` passes.
 - Visual inspection of `.evolve/arena-performance-terminal-neutral-stats-smoke-20260602/1280x800-performance.png` confirms neutral terminal stats render bright inside the Hyperliquid-style chart shell.
+
+## 2026-06-02 Home Command Terminal Pass
+
+Pre-patch evidence:
+
+- Ran `bad design-audit --url https://trading-arena.blueprint.tangle.tools --pages 1 --profile defi --audit-passes standard --sink .evolve/bad-arena-home-continuation-20260602 --json`.
+- BAD scored production Home at `6/10` legacy, `5.5/10` v2 rollup. Highest-leverage dimensions were product intent (`5/10`) and workflow (`5/10`).
+- The reliable findings matched the live screenshot: the first viewport was split between repeated KPI cards, a chart/tape row, and a leaderboard that started below the fold. The page read like a dashboard stack instead of an arena command surface.
+
+Five alternatives considered:
+
+1. **Chart-left command terminal**
+
+```text
+┌ compact arena header: agents · 30D volume · 30D fills · deploy ┐
+├──────────────────────────────────────┬─────────────────────────┤
+│ Platform volume chart                │ Live fills              │
+│                                      ├─────────────────────────┤
+│                                      │ Top agents              │
+└──────────────────────────────────────┴─────────────────────────┘
+```
+
+Score: 9.1/10. Best for the default Home route because it keeps the most exchange-like object, volume over time, dominant while making the two action feeds visible: current fills and winners.
+
+2. **Tape-first arena**
+
+```text
+┌ header ┐
+├──────────────────────────┬─────────────────────────────────────┤
+│ Volume chart             │ Live fills full height              │
+├──────────────────────────┤                                     │
+│ Top agents compact       │                                     │
+└──────────────────────────┴─────────────────────────────────────┘
+```
+
+Score: 8.4/10. Strong for "is anything happening right now" but weaker as a trading product because it demotes platform volume and ranking.
+
+3. **Leaderboard-first exchange board**
+
+```text
+┌ header ┐
+├──────────────────────────────┬─────────────────────────────────┤
+│ Top agents table             │ Volume chart                    │
+│                              ├─────────────────────────────────┤
+│                              │ Live fills                      │
+└──────────────────────────────┴─────────────────────────────────┘
+```
+
+Score: 8.0/10. Good for competition, weaker for the agent system because live market activity feels secondary.
+
+4. **Three-column exchange split**
+
+```text
+┌ leaderboard ┬ chart ┬ fills ┐
+```
+
+Score: 7.5/10. Familiar from exchange terminals but too cramped at 1280px after the global sidebar.
+
+5. **Copilot-first Home**
+
+```text
+┌ chat/copilot ┬ chart + fills + leaderboard preview ┐
+```
+
+Score: 7.0/10. Better for onboarding, worse for the core promise that interesting trading activity should be obvious before the user asks.
+
+Selected implementation: Alternative 1.
+
+Shipped in this slice:
+
+- Home now uses a bounded `Arena market terminal` region instead of a stacked chart row plus below-fold leaderboard.
+- The command header is compact and removes duplicated KPI card chrome. It shows only the platform title, active pulse, agent count, 30D volume, 30D fills, and Deploy.
+- The platform volume chart owns the left side of the first viewport.
+- The right rail stacks `Fills` and `Top agents`, so current activity and winners are visible at 1280px without scrolling.
+- `LatestAgentTrades` panel mode now uses a compact three-column feed: `Time`, `Agent / Market`, `USD`, with the action pill and notional in the right column. This fixes the clipped Market/USD columns that appeared when the right rail narrowed.
+- Top-agent strategy labels now use `HL Perp` instead of leaking raw `hyperliquid_perp` strings.
+- Missing bot-level fill counts now render as `-` instead of contradicting the live fill tape.
+
+Verification:
+
+- `pnpm --dir arena exec vitest run src/routes/__tests__/index.test.tsx src/components/arena/__tests__/LatestAgentTrades.test.tsx --reporter=dot` passes: 2 files, 3 tests.
+- `pnpm --dir arena typecheck` passes.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-home-command-terminal-smoke-20260602-v2` passes.
+- Visual inspection of `.evolve/arena-home-command-terminal-smoke-20260602-v2/1280x800-home.png` confirms the chart, fill tape, and top-agent panel all fit in the first viewport and the fill tape no longer clips Market/USD.

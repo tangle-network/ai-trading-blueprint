@@ -22,7 +22,7 @@ const botsState = {
   bots: [] as any[],
   isLoading: false,
   isOnChain: false,
-  operatorDataState: 'locked' as const,
+  operatorDataState: 'locked' as 'locked' | 'ready',
 };
 
 vi.mock('react-router', () => ({
@@ -48,12 +48,22 @@ vi.mock('~/lib/hooks/useBotEnrichment', () => ({
   useBotEnrichment: (bots: any[]) => bots,
 }));
 
-vi.mock('~/components/arena/FilterBar', () => ({
-  FilterBar: () => <div>filters</div>,
-}));
-
-vi.mock('~/components/arena/LeaderboardTable', () => ({
-  LeaderboardTable: () => <div>table</div>,
+vi.mock('~/lib/hooks/useBotApi', () => ({
+  usePlatformVolumeSeries: () => ({
+    series: {
+      buckets: [],
+      bucketMs: 86_400_000,
+      summary: {
+        totalUsd: 434_300,
+        paperUsd: 434_300,
+        liveUsd: 0,
+        pricedTradeCount: 72,
+        totalTradeCount: 72,
+      },
+    },
+    isLoading: false,
+    isFetching: false,
+  }),
 }));
 
 vi.mock('~/components/arena/LatestAgentTrades', () => ({
@@ -92,6 +102,31 @@ vi.mock('~/components/operator/OperatorAccessCard', () => ({
   OperatorSessionBanner: () => null,
 }));
 
+function makePublicBot(overrides: Record<string, any> = {}) {
+  return {
+    id: 'bot-1',
+    serviceId: 1,
+    name: 'ETH Macro Scalper',
+    operatorAddress: '0x1111111111111111111111111111111111111111',
+    vaultAddress: '0x2222222222222222222222222222222222222222',
+    strategyType: 'hyperliquid_perp',
+    status: 'active',
+    createdAt: Date.now(),
+    pnlPercent: 12.4,
+    pnlAbsolute: 1240,
+    sharpeRatio: 1.7,
+    maxDrawdown: 2.1,
+    winRate: 58,
+    totalTrades: 49,
+    tvl: 10_000,
+    avgValidatorScore: 91,
+    sparklineData: [10_000, 10_200, 10_180, 10_450],
+    verificationState: 'authoritative',
+    operatorApiUrl: 'https://operator.test',
+    ...overrides,
+  };
+}
+
 describe('leaderboard auth-aware rendering', () => {
   beforeEach(() => {
     botsState.bots = [];
@@ -121,13 +156,16 @@ describe('leaderboard auth-aware rendering', () => {
     expect(screen.getByText('Operator authentication required')).toBeInTheDocument();
   });
 
-  it('keeps platform volume and live fill tape on the same bounded command row', async () => {
+  it('keeps volume, fills, and top agents in one bounded arena terminal', async () => {
+    botsState.bots = [makePublicBot()];
+    botsState.operatorDataState = 'ready';
+
     const { default: IndexPage } = await import('../_index');
     render(<IndexPage />, { wrapper: createWrapper() });
 
-    expect(screen.getByRole('region', { name: /platform volume and live fill tape/i })).toHaveClass(
-      'h-[min(620px,calc(100dvh-17rem))]',
-      'min-h-[480px]',
+    expect(screen.getByRole('region', { name: /arena market terminal/i })).toHaveClass(
+      'flex-1',
+      'min-h-0',
     );
     expect(hoisted.platformVolumeChartProps.at(-1)).toEqual(expect.objectContaining({
       variant: 'command',
@@ -135,8 +173,10 @@ describe('leaderboard auth-aware rendering', () => {
     }));
     expect(hoisted.latestAgentTradesProps.at(-1)).toEqual(expect.objectContaining({
       variant: 'panel',
-      limit: 20,
+      limit: 12,
       className: 'h-full min-h-0',
     }));
+    expect(screen.getByText('Top agents')).toBeInTheDocument();
+    expect(screen.getByText('ETH Macro Scalper')).toBeInTheDocument();
   });
 });

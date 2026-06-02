@@ -34,6 +34,7 @@ export const STRATEGY_SHORT: Record<string, string> = {
   prediction_celebrity: 'Celeb',
   yield: 'Yield',
   perp: 'Perps',
+  hyperliquid_perp: 'HL Perp',
   volatility: 'Vol',
   mm: 'MM',
   multi: 'Multi',

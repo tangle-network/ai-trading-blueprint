@@ -79,11 +79,9 @@ export function LatestAgentTrades({
           data-testid="live-fill-tape-scroll"
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
-          <div className="sticky top-0 z-10 grid grid-cols-[4.25rem_minmax(9rem,0.9fr)_6.25rem_minmax(12rem,1.35fr)_6.75rem] gap-3 border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/96 px-3 py-2 text-xs font-medium text-arena-elements-textTertiary backdrop-blur">
+          <div className="sticky top-0 z-10 grid grid-cols-[4.25rem_minmax(0,1fr)_6.25rem] gap-3 border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/96 px-3 py-2 text-xs font-medium text-arena-elements-textTertiary backdrop-blur">
             <span>Time</span>
-            <span>Agent</span>
-            <span>Side</span>
-            <span>Market</span>
+            <span>Agent / Market</span>
             <span className="text-right">USD</span>
           </div>
           <div className="divide-y divide-arena-elements-dividerColor/50">
@@ -95,7 +93,7 @@ export function LatestAgentTrades({
                 <button
                   key={`${botId}:${trade.id}`}
                   type="button"
-                  className="group grid w-full grid-cols-[4.25rem_minmax(9rem,0.9fr)_6.25rem_minmax(12rem,1.35fr)_6.75rem] items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                  className="group grid w-full grid-cols-[4.25rem_minmax(0,1fr)_6.25rem] items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
                   aria-label={`Open ${agentName} performance`}
                   onClick={() => navigate(`/arena/bot/${encodeURIComponent(botId)}/performance`)}
                 >
@@ -105,29 +103,33 @@ export function LatestAgentTrades({
                   >
                     {formatTradeAge(trade.timestamp)}
                   </span>
-                  <span className="flex min-w-0 items-center gap-2">
-                    {hasOperatorAddress ? (
-                      <Identicon address={operatorAddress as Address} size={22} />
-                    ) : (
-                      <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
-                    )}
-                    <span className="truncate font-display text-sm font-semibold text-arena-elements-textPrimary group-hover:text-violet-700 dark:group-hover:text-violet-300">
-                      {agentName}
+                  <span className="min-w-0">
+                    <span className="flex min-w-0 items-center gap-2">
+                      {hasOperatorAddress ? (
+                        <Identicon address={operatorAddress as Address} size={22} />
+                      ) : (
+                        <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
+                      )}
+                      <span className="truncate font-display text-sm font-semibold text-arena-elements-textPrimary group-hover:text-violet-700 dark:group-hover:text-violet-300">
+                        {agentName}
+                      </span>
+                    </span>
+                    <span className="mt-1 block min-w-0">
+                      <TradeInstrumentDisplay
+                        trade={trade}
+                        size="sm"
+                        showVenue={false}
+                        labelClassName="max-w-full"
+                      />
                     </span>
                   </span>
-                  <span className={`inline-flex h-8 min-w-0 items-center justify-center rounded-md px-2 font-data text-xs font-bold ${getTradeActionPillClass(trade.action)}`}>
-                    {formatTradeActionLabel(trade.action)}
-                  </span>
-                  <span className="min-w-0">
-                    <TradeInstrumentDisplay
-                      trade={trade}
-                      size="sm"
-                      showVenue={false}
-                      labelClassName="max-w-full"
-                    />
-                  </span>
-                  <span className="text-right font-data text-base font-semibold text-arena-elements-textPrimary">
-                    {formatTradeUsd(trade.notionalUsd)}
+                  <span className="flex min-w-0 flex-col items-end gap-1 text-right">
+                    <span className={`inline-flex h-7 max-w-full items-center justify-center truncate rounded-md px-2 font-data text-[11px] font-bold ${getTradeActionPillClass(trade.action)}`}>
+                      {formatTradeActionLabel(trade.action)}
+                    </span>
+                    <span className="font-data text-sm font-semibold text-arena-elements-textPrimary">
+                      {formatTradeUsd(trade.notionalUsd)}
+                    </span>
                   </span>
                 </button>
               );
