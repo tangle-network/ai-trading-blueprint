@@ -36,7 +36,10 @@ const SECTION_EXPECTATIONS = {
     ['Trading Run', 'No runs yet'],
     ['Run ID', 'Autonomous activity', 'DONE', 'SKIP', 'TRADE'],
   ],
-  chat: ['Trading Agent', ['Breakout retest', 'fast_backtest', 'No messages yet']],
+  chat: [
+    'Trading Agent',
+    ['Breakout retest', 'fast_backtest', 'Reasoning', 'Final outcome', 'No messages yet'],
+  ],
   operations: ['Operations', 'Validation', 'Validator'],
 };
 const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Cloud', 'Platform Volume', 'Execution Tape', 'Leaderboard', 'ETH Macro Scalper'];
