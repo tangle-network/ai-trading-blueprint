@@ -196,7 +196,7 @@ describe('TradeHistoryTab', () => {
     // Expanded view shows the APPROVED badge and validator details
     expect(screen.getAllByText('APPROVED').length).toBeGreaterThanOrEqual(1);
     await user.click(screen.getByText('0x1234...5678').closest('button')!);
-    expect(screen.getByText('Solid trade rationale')).toBeInTheDocument();
+    expect(screen.getAllByText('Solid trade rationale').length).toBeGreaterThan(0);
   });
 
   it('collapses an expanded trade when the expanded body is clicked', async () => {
@@ -225,8 +225,26 @@ describe('TradeHistoryTab', () => {
     await user.click(row);
     expect(screen.getByText('Notional')).toBeInTheDocument();
 
-    await user.click(screen.getByText('Execution').closest('div')!);
+    await user.click(screen.getAllByText('Execution')[0].closest('div')!);
     expect(screen.queryByText('Notional')).not.toBeInTheDocument();
+  });
+
+  it('expands trades without validator data to show decision provenance', async () => {
+    const user = userEvent.setup();
+    setTrades([
+      makeTrade({
+        validatorScore: undefined,
+        validation: undefined,
+        agentReasoning: 'No validator detail, but the agent reason is present.',
+      }),
+    ]);
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    const row = screen.getByText('BUY').closest('tr')!;
+    await user.click(row);
+
+    expect(screen.getByRole('complementary', { name: /decision inspector/i })).toBeInTheDocument();
+    expect(screen.getAllByText('No validator detail, but the agent reason is present.').length).toBeGreaterThan(0);
   });
 
   it('renders contradictory historical paper approvals as unsigned instead of approved', async () => {

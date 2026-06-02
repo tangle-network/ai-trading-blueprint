@@ -11,7 +11,9 @@ import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import { countUsableValidatorSignatures, getTradeValidationDisplay } from '~/lib/tradeValidation';
 import { formatNumber } from '~/lib/format';
+import { buildDecisionItemFromTrade } from '~/lib/decisionFeed';
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
+import { DecisionInspector } from './shared/DecisionInspector';
 
 interface TradeHistoryTabProps {
   botId: string;
@@ -337,27 +339,26 @@ export function TradeHistoryTab({
               : getTradePairLabel(trade);
             const hasValidation = responses.length > 0 || trade.validatorScore != null;
             const isExpanded = expandedId === trade.id;
+            const decisionItem = buildDecisionItemFromTrade(trade);
 
             return (
               <TableRow
-              key={trade.id}
-              className={hasValidation ? 'cursor-pointer' : ''}
-              onClick={(event) => {
-                if (!hasValidation || isInteractiveTradeTarget(event.target)) return;
-                setExpandedId(isExpanded ? null : trade.id);
-              }}
-              {...(hasValidation ? {
-                role: 'button' as const,
-                tabIndex: 0,
-                'aria-expanded': isExpanded,
-                onKeyDown: (e: React.KeyboardEvent) => {
+                key={trade.id}
+                className="cursor-pointer"
+                onClick={(event) => {
+                  if (isInteractiveTradeTarget(event.target)) return;
+                  setExpandedId(isExpanded ? null : trade.id);
+                }}
+                role="button"
+                tabIndex={0}
+                aria-expanded={isExpanded}
+                onKeyDown={(e: React.KeyboardEvent) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
                     setExpandedId(isExpanded ? null : trade.id);
                   }
-                },
-              } : {})}
-            >
+                }}
+              >
               <TableCell className="py-4 align-top text-base font-data text-arena-elements-textTertiary" colSpan={isExpanded ? (compact ? 3 : 6) : undefined}>
                 {isExpanded ? (
                   /* Expanded view replaces the row */
@@ -419,6 +420,11 @@ export function TradeHistoryTab({
                         tone={validationDisplay?.badgeVariant === 'success' ? 'success' : validationDisplay?.badgeVariant === 'destructive' ? 'danger' : 'neutral'}
                       />
                     </div>
+
+                    <DecisionInspector
+                      item={decisionItem}
+                      className="mb-4 max-h-none rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/30"
+                    />
 
                     {isHyperliquidTrade(trade) ? (
                       <div className="mb-3 px-1">
@@ -600,9 +606,7 @@ export function TradeHistoryTab({
                             </Badge>
                           )}
                           {/* Expand hint */}
-                          {hasValidation && (
-                            <div className="i-ph:caret-down text-sm text-arena-elements-textTertiary" />
-                          )}
+                          <div className="i-ph:caret-down text-sm text-arena-elements-textTertiary" />
                           {/* No score */}
                           {trade.validatorScore == null && responses.length === 0 && (
                             <span className="font-data text-base text-arena-elements-textTertiary">-</span>

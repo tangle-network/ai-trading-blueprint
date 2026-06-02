@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { Bot } from '~/lib/types/bot';
 import { Card, CardHeader, CardTitle, CardContent } from '@tangle-network/blueprint-ui/components';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
@@ -20,6 +20,8 @@ import { TradingPerformanceChart, type TradeChartMarker } from './TradingPerform
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 import { AssetPairDisplay } from './shared/AssetDisplay';
 import { PERFORMANCE_SECTION_COPY } from './metricCopy';
+import { buildDecisionItemsFromTrades } from '~/lib/decisionFeed';
+import { DecisionInspector } from './shared/DecisionInspector';
 
 const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
 const TRADE_MARKER_LOOKBACK_LIMIT = 100;
@@ -250,6 +252,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const isHyperliquidPerpBot = bot.strategyType === 'hyperliquid_perp';
   const [range, setRange] = useState<PerformanceRange>('30d');
   const [chartMode, setChartMode] = useState<PerformanceChartMode>('market');
+  const [selectedDecisionId, setSelectedDecisionId] = useState<string | null>(null);
   const selectedRange = PERFORMANCE_RANGES.find((item) => item.value === range) ?? PERFORMANCE_RANGES[1];
 
   const {
@@ -387,7 +390,26 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const marketVolumeValue = marketCandles.length > 0
     ? marketCandles.reduce((sum, candle) => sum + candle.volume, 0)
     : null;
-  const recentTradeTape = (trades ?? []).slice(0, 6);
+  const recentTradeTape = useMemo(() => (trades ?? []).slice(0, 6), [trades]);
+  const tradeDecisionItems = useMemo(
+    () => buildDecisionItemsFromTrades(recentTradeTape),
+    [recentTradeTape],
+  );
+  const selectedDecision = tradeDecisionItems.find((item) => item.id === selectedDecisionId)
+    ?? tradeDecisionItems[0]
+    ?? null;
+
+  useEffect(() => {
+    if (tradeDecisionItems.length === 0) {
+      if (selectedDecisionId !== null) setSelectedDecisionId(null);
+      return;
+    }
+
+    if (!tradeDecisionItems.some((item) => item.id === selectedDecisionId)) {
+      setSelectedDecisionId(tradeDecisionItems[0].id);
+    }
+  }, [selectedDecisionId, tradeDecisionItems]);
+
   const canUseCopilot = Boolean(canCommand && operatorAuth.isAuthenticated && operatorAuth.token);
   const chartReturnTone = chartReturnValue == null
     ? 'text-arena-elements-textPrimary'
@@ -656,8 +678,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                 token={operatorAuth.token as string}
               />
             </Suspense>
-          ) : (
-          recentTradeTape.length === 0 ? (
+          ) : recentTradeTape.length === 0 ? (
             <LatestAgentTrades
               bots={[bot]}
               enabled={isLive}
@@ -666,57 +687,65 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
               className="min-h-0 flex-1"
             />
           ) : (
-          <div className="glass-card flex min-h-0 flex-1 flex-col rounded-xl p-3">
-            <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
-	              <h3 className="font-display text-lg font-semibold">Trade Tape</h3>
-	              <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
-	                Last {Math.min(recentTradeTape.length, 6)}
-	                {trades && trades.length > recentTradeTape.length ? ` of ${trades.length}` : ''}
-	              </span>
-            </div>
-            {recentTradeTape.length > 0 ? (
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                {recentTradeTape.map((trade) => {
-                  const buySide = isBuySideAction(trade.action);
-                  const sellSide = isSellSideAction(trade.action);
-                  const actionTone = buySide
-                    ? 'text-arena-elements-icon-success'
-                    : sellSide
-                      ? 'text-arena-elements-icon-error'
-                      : 'text-amber-600 dark:text-amber-300';
+            <div className="glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl p-3">
+              <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
+                <h3 className="font-display text-lg font-semibold">Decision Tape</h3>
+                <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
+                  Last {Math.min(recentTradeTape.length, 6)}
+                  {trades && trades.length > recentTradeTape.length ? ` of ${trades.length}` : ''}
+                </span>
+              </div>
+              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(190px,0.95fr)] gap-3">
+                <DecisionInspector
+                  item={selectedDecision}
+                  className="rounded-xl border border-arena-elements-dividerColor/50"
+                />
+                <div className="min-h-0 space-y-2 overflow-y-auto pr-1" aria-label="Trade decisions">
+                  {recentTradeTape.map((trade) => {
+                    const buySide = isBuySideAction(trade.action);
+                    const sellSide = isSellSideAction(trade.action);
+                    const decisionId = `trade:${trade.id}`;
+                    const isSelected = selectedDecision?.id === decisionId;
+                    const actionTone = buySide
+                      ? 'text-arena-elements-icon-success'
+                      : sellSide
+                        ? 'text-arena-elements-icon-error'
+                        : 'text-amber-600 dark:text-amber-300';
 
-                  return (
-                    <div
-                      key={trade.id}
-                      className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/40 px-3 py-2"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className={`font-data text-sm font-bold ${actionTone}`}>
-                          {formatTradeAction(trade.action)}
+                    return (
+                      <button
+                        key={trade.id}
+                        type="button"
+                        className={`w-full rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                          isSelected
+                            ? 'border-violet-500/45 bg-violet-500/10 shadow-[inset_3px_0_0_rgba(139,92,246,0.72)]'
+                            : 'border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/40 hover:bg-arena-elements-item-backgroundHover'
+                        }`}
+                        aria-pressed={isSelected}
+                        onClick={() => setSelectedDecisionId(decisionId)}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className={`font-data text-sm font-bold ${actionTone}`}>
+                            {formatTradeAction(trade.action)}
+                          </div>
+                          <div className="font-data text-xs text-arena-elements-textTertiary">
+                            {formatTradeTime(trade.timestamp)}
+                          </div>
                         </div>
-                        <div className="font-data text-xs text-arena-elements-textTertiary">
-                          {formatTradeTime(trade.timestamp)}
+                        <div className="mt-2 min-w-0">
+                          {renderTradeTapeInstrument(trade)}
                         </div>
-                      </div>
-                      <div className="mt-2 min-w-0">
-                        {renderTradeTapeInstrument(trade)}
-                      </div>
-                      <div className="mt-1 font-data text-sm text-arena-elements-textSecondary">
-                        {trade.notionalUsd != null && trade.notionalUsd > 0
-                          ? formatChartCurrency(trade.notionalUsd)
-                          : 'Notional unavailable'}
-                      </div>
-                    </div>
-                  );
-                })}
+                        <div className="mt-1 font-data text-sm text-arena-elements-textSecondary">
+                          {trade.notionalUsd != null && trade.notionalUsd > 0
+                            ? formatChartCurrency(trade.notionalUsd)
+                            : 'Notional unavailable'}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            ) : (
-              <div className="rounded-lg border border-dashed border-arena-elements-dividerColor/70 px-3 py-8 text-center text-sm text-arena-elements-textTertiary">
-                No recent trade markers in this range.
-              </div>
-            )}
-          </div>
-          )
+            </div>
           )}
 
         </aside>

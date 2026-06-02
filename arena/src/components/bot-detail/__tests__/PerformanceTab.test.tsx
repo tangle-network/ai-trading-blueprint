@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { Bot } from '~/lib/types/bot';
 import type { Trade } from '~/lib/types/trade';
 import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
@@ -537,7 +538,44 @@ describe('PerformanceTab', () => {
     render(<PerformanceTab bot={makeBot()} isLive />);
 
     expect(screen.queryByText('Owner chart copilot')).not.toBeInTheDocument();
-    expect(await screen.findByText('Trade Tape')).toBeInTheDocument();
+    expect(await screen.findByText('Decision Tape')).toBeInTheDocument();
+  });
+
+  it('lets public viewers inspect the selected chart trade decision', async () => {
+    const user = userEvent.setup();
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 2,
+      },
+    ];
+    mockTrades = [
+      makeTrade({
+        id: 'trade-latest',
+        action: 'sell',
+        agentReasoning: 'Latest sell decision rationale.',
+        timestamp: Date.parse('2026-04-23T10:07:00.000Z'),
+      }),
+      makeTrade({
+        id: 'trade-older',
+        action: 'buy',
+        agentReasoning: 'Older buy decision rationale.',
+        timestamp: Date.parse('2026-04-23T10:05:00.000Z'),
+      }),
+    ];
+
+    render(<PerformanceTab bot={makeBot()} isLive />);
+
+    expect(screen.getByRole('complementary', { name: /decision inspector/i })).toBeInTheDocument();
+    expect(screen.getAllByText('Latest sell decision rationale.').length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole('button', { name: /BUY/i }));
+
+    expect(screen.getAllByText('Older buy decision rationale.').length).toBeGreaterThan(0);
   });
 
   it('labels live NAV separately when it is newer than the latest checkpoint', () => {

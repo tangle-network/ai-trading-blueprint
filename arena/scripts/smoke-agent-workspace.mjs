@@ -24,7 +24,7 @@ const SECTION_EXPECTATIONS = {
   performance: [
     ['Market', 'NAV'],
     ['ETH', 'Performance', 'Awaiting first checkpoint'],
-    ['Trade Tape', 'Execution Tape', 'Copilot'],
+    ['Decision Tape', 'Execution Tape', 'Copilot'],
   ],
   portfolio: [
     'Exposure',
@@ -1059,8 +1059,8 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
           failures.push(`${viewport.width}x${viewport.height} ${section}: missing expected text "${text}"`);
         }
       }
-      if (ownerPerformance && section === 'performance' && /Trade Tape/i.test(metrics.bodyText)) {
-        failures.push(`${viewport.width}x${viewport.height} ${section}: owner copilot rendered with public Trade Tape still visible`);
+      if (ownerPerformance && section === 'performance' && /Trade Tape|Decision Tape/i.test(metrics.bodyText)) {
+        failures.push(`${viewport.width}x${viewport.height} ${section}: owner copilot rendered with public decision tape still visible`);
       }
       await captureScreenshot(page, screenshotDir, viewport, section, ownerPerformance ? '-owner' : '');
     }
