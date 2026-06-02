@@ -63,17 +63,6 @@ export function getTradeMarketLabel(trade: Trade): string {
   return getTradePairLabel(trade);
 }
 
-export function getTradeInstrumentBadgeText(trade: Trade): string {
-  const market = getTradeMarketLabel(trade);
-  const perpToken = [trade.tokenIn, trade.tokenOut].find((token) => /perp/i.test(token));
-  const source = perpToken ?? market;
-  return source
-    .replace(/-PERP$/i, '')
-    .replace(/\/.*$/, '')
-    .slice(0, 3)
-    .toUpperCase();
-}
-
 export function formatTradeModeLabel(trade: Trade): string {
   return trade.paperTrade || trade.status === 'paper' ? 'Paper' : 'Live';
 }

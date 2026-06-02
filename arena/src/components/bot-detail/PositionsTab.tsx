@@ -113,12 +113,6 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   const totalMarginUsage = portfolio.totalValueUsd && portfolio.totalValueUsd > 0
     ? (totalMarginUsed / portfolio.totalValueUsd) * 100
     : null;
-  const pricedPositionValue = portfolio.positions.reduce(
-    (sum, pos) => sum + (pos.displayValueUsd ?? 0),
-    0,
-  );
-  const hasPricedPositionValue = portfolio.positions.some((pos) => pos.displayValueUsd != null);
-
   const renderStandardPositionsTable = (positions: Position[]) => (
     <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
       <Table className="min-w-[780px]">
@@ -419,7 +413,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
         </div>
       )}
 
-      <div className={`${workspace ? compactRail ? 'mb-3 grid-cols-2' : 'mb-3 grid-cols-2 xl:grid-cols-4' : 'mb-4 sm:grid-cols-2'} grid gap-3`}>
+      <div className={`${workspace ? compactRail ? 'mb-3 grid-cols-2' : 'mb-3 grid-cols-2 xl:grid-cols-3' : 'mb-4 sm:grid-cols-2'} grid gap-3`}>
         <div className="glass-card min-w-0 rounded-lg px-4 py-3">
           <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
             {hasPerpPositions ? 'Account Equity' : 'Account Value'}
@@ -433,19 +427,6 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
             </p>
           )}
         </div>
-        {!compactRail && (
-        <div className="glass-card min-w-0 rounded-lg px-4 py-3">
-          <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
-            Priced Positions
-          </div>
-          <div className="mt-1 min-w-0 break-words font-data text-2xl font-bold leading-tight tracking-tight text-arena-elements-textPrimary">
-            {hasPricedPositionValue ? formatCurrency(pricedPositionValue) : 'Unavailable'}
-          </div>
-          <p className="mt-1 text-sm text-arena-elements-textTertiary">
-            Sum of visible rows, excluding cash.
-          </p>
-        </div>
-        )}
         <div className="glass-card min-w-0 rounded-lg px-4 py-3">
           <div className="font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
             Available Cash

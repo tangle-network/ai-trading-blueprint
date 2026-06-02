@@ -1,4 +1,4 @@
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Badge, Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
@@ -34,6 +34,7 @@ function ScoreIndicator({ score }: { score: number }) {
 }
 
 export function LeaderboardTable({ bots }: LeaderboardTableProps) {
+  const navigate = useNavigate();
   const sorted = rankLeaderboardBots(bots);
 
   return (
@@ -49,22 +50,34 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
           <TableHead className="text-right hidden md:table-cell">Max DD</TableHead>
           <TableHead className="text-right hidden lg:table-cell">Account</TableHead>
           <TableHead className="text-right hidden sm:table-cell">Trades</TableHead>
-          <TableHead className="text-right hidden md:table-cell">Risk Score</TableHead>
+          <TableHead className="text-right hidden md:table-cell">Validator</TableHead>
           <TableHead className="hidden lg:table-cell">Status</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {sorted.map((bot, index) => (
+        {sorted.map((bot, index) => {
+          const href = `/arena/bot/${encodeURIComponent(bot.id)}/performance`;
+          return (
           <TableRow
             key={bot.id}
-            className="border-b border-arena-elements-dividerColor transition-colors hover:bg-arena-elements-item-backgroundHover group"
+            className="group cursor-pointer border-b border-arena-elements-dividerColor transition-colors hover:bg-arena-elements-item-backgroundHover"
+            role="button"
+            tabIndex={0}
+            aria-label={`Open ${bot.name} performance`}
+            onClick={() => navigate(href)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                navigate(href);
+              }
+            }}
           >
             <TableCell>
               <RankCell rank={index + 1} />
             </TableCell>
             <TableCell>
               <Link
-                to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
+                to={href}
                 className="font-display text-base font-semibold hover:text-violet-700 transition-colors duration-200 dark:hover:text-violet-300"
               >
                 {bot.name}
@@ -122,7 +135,8 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
               </Badge>
             </TableCell>
           </TableRow>
-        ))}
+          );
+        })}
       </TableBody>
     </Table>
   );

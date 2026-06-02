@@ -21,7 +21,6 @@ import {
   formatTradeUsd,
   getHyperliquidMarketLabel,
   getTradeActionToneClass,
-  getTradeInstrumentBadgeText,
   getTradeMarketLabel,
   isBuySideTradeAction,
   isSellSideTradeAction,
@@ -31,6 +30,7 @@ import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 import { PERFORMANCE_SECTION_COPY } from './metricCopy';
 import { buildDecisionItemsFromTrades } from '~/lib/decisionFeed';
 import { DecisionInspector } from './shared/DecisionInspector';
+import { TradeInstrumentDisplay } from './shared/AssetDisplay';
 
 const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
 const TRADE_MARKER_LOOKBACK_LIMIT = 100;
@@ -600,9 +600,6 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     ? `${marketCandleToken} Price`
                     : 'Account Value (USDC)'}
                 </h2>
-                <span className="rounded-full border border-arena-elements-dividerColor/70 px-2 py-0.5 font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
-                  {effectiveChartMode === 'market' ? 'Market' : 'Account'}
-                </span>
               </div>
               {(lastCheckpointLabel || liveNavLabel) && (
                 <p className="mt-1.5 text-xs font-data text-arena-elements-textTertiary">
@@ -802,7 +799,6 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   {recentTradeTape.map((trade) => {
                     const decisionId = `trade:${trade.id}`;
                     const isSelected = selectedDecision?.id === decisionId;
-                    const instrumentLabel = getTradeMarketLabel(trade);
 
                     return (
                       <button
@@ -822,14 +818,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                         <div className={`font-data text-xs font-bold ${getTradeActionToneClass(trade.action)}`}>
                           {formatTradeActionLabel(trade.action)}
                         </div>
-                        <div className="flex min-w-0 items-center gap-2" title={instrumentLabel}>
-                          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-100 font-data text-[9px] font-bold text-sky-700 ring-1 ring-black/5 dark:bg-sky-500/20 dark:text-sky-200 dark:ring-white/10">
-                            {getTradeInstrumentBadgeText(trade)}
-                          </span>
-                          <span className="truncate font-display text-[13px] font-semibold text-arena-elements-textPrimary">
-                            {instrumentLabel}
-                          </span>
-                        </div>
+                        <TradeInstrumentDisplay
+                          trade={trade}
+                          size="sm"
+                          showVenue={false}
+                          labelClassName="max-w-[150px] text-[13px]"
+                        />
                         <div className="min-w-0 text-right">
                           <div className="font-data text-sm font-semibold text-arena-elements-textPrimary">
                             {formatTradeUsd(trade.notionalUsd)}

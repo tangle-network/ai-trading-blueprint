@@ -1,5 +1,11 @@
 import { useState } from 'react';
+import { VENUE_CONFIG, type Trade } from '~/lib/types/trade';
 import type { ResolvedAssetDisplay } from '~/lib/tradeTokenMetadata';
+import {
+  getHyperliquidMarketLabel,
+  getHyperliquidSizeLabel,
+  getTradeMarketLabel,
+} from '~/lib/tradeDisplay';
 
 interface AssetDisplayProps {
   asset: ResolvedAssetDisplay;
@@ -14,6 +20,14 @@ interface AssetPairDisplayProps {
   right: ResolvedAssetDisplay;
   className?: string;
   size?: 'sm' | 'md' | 'lg';
+}
+
+interface TradeInstrumentDisplayProps {
+  trade: Trade;
+  className?: string;
+  size?: 'sm' | 'md';
+  showVenue?: boolean;
+  labelClassName?: string;
 }
 
 function joinClasses(...classes: Array<string | false | null | undefined>): string {
@@ -39,7 +53,7 @@ function assetSecondaryLabel(
   return asset.secondaryLabel;
 }
 
-function AssetIcon({
+export function AssetIcon({
   asset,
   size = 'md',
 }: {
@@ -150,6 +164,123 @@ export function AssetPairDisplay({ left, right, className, size = 'md' }: AssetP
       <span className={joinClasses('font-display text-arena-elements-textPrimary', labelClassName)}>
         {left.symbol}/{right.symbol}
       </span>
+    </div>
+  );
+}
+
+function predictionToneClass(outcomeLabel?: string): string {
+  if (/^yes$/i.test(outcomeLabel ?? '')) {
+    return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200';
+  }
+  if (/^no$/i.test(outcomeLabel ?? '')) {
+    return 'bg-crimson-100 text-crimson-800 dark:bg-crimson-500/20 dark:text-crimson-200';
+  }
+  return 'bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-500/20 dark:text-fuchsia-200';
+}
+
+function predictionIconText(outcomeLabel?: string): string {
+  const label = outcomeLabel?.trim();
+  if (!label) return 'PM';
+  return label.length <= 3 ? label.toUpperCase() : label.slice(0, 3).toUpperCase();
+}
+
+function perpIconText(trade: Trade): string {
+  return trade.hyperliquidMetadata?.asset?.trim().slice(0, 3).toUpperCase() || 'PERP';
+}
+
+function tradeInstrumentSecondary(trade: Trade): string | null {
+  if (trade.targetProtocol === 'hyperliquid') {
+    return getHyperliquidSizeLabel(trade) ?? 'Hyperliquid';
+  }
+  if (trade.targetProtocol === 'polymarket_clob') {
+    return [
+      trade.predictionMetadata?.outcomeLabel?.trim(),
+      trade.predictionMetadata?.marketSlug?.trim(),
+    ].filter(Boolean).join(' · ') || 'Prediction market';
+  }
+  return null;
+}
+
+export function TradeInstrumentDisplay({
+  trade,
+  className,
+  size = 'md',
+  showVenue = true,
+  labelClassName,
+}: TradeInstrumentDisplayProps) {
+  const venue = VENUE_CONFIG[trade.venue];
+  const isCompact = size === 'sm';
+
+  if (trade.targetProtocol !== 'hyperliquid' && trade.targetProtocol !== 'polymarket_clob') {
+    return (
+      <div className={joinClasses('min-w-0', className)}>
+        <AssetPairDisplay
+          left={trade.assetIn}
+          right={trade.assetOut}
+          size={isCompact ? 'sm' : 'md'}
+          className={labelClassName}
+        />
+        {showVenue && (
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 font-data text-xs text-arena-elements-textSecondary">
+            <span className={`${venue.color} inline-flex items-center gap-1`}>
+              <span className={`${venue.icon} text-sm`} aria-hidden="true" />
+              {venue.label}
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const marketLabel = trade.targetProtocol === 'hyperliquid'
+    ? getHyperliquidMarketLabel(trade) ?? getTradeMarketLabel(trade)
+    : getTradeMarketLabel(trade);
+  const secondary = tradeInstrumentSecondary(trade);
+  const iconClassName = trade.targetProtocol === 'hyperliquid'
+    ? 'bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200'
+    : predictionToneClass(trade.predictionMetadata?.outcomeLabel);
+  const iconText = trade.targetProtocol === 'hyperliquid'
+    ? perpIconText(trade)
+    : predictionIconText(trade.predictionMetadata?.outcomeLabel);
+
+  return (
+    <div
+      className={joinClasses('flex min-w-0 items-center gap-2', className)}
+      title={marketLabel}
+      aria-label={marketLabel}
+    >
+      <span
+        aria-hidden="true"
+        className={joinClasses(
+          'inline-flex shrink-0 items-center justify-center rounded-full font-data font-bold ring-1 ring-black/5 dark:ring-white/10',
+          isCompact ? 'h-6 w-6 text-[9px]' : 'h-8 w-8 text-[10px]',
+          iconClassName,
+        )}
+      >
+        {iconText}
+      </span>
+      <div className="min-w-0">
+        <div
+          className={joinClasses(
+            'truncate font-display font-semibold text-arena-elements-textPrimary',
+            isCompact ? 'text-sm' : 'text-sm',
+            labelClassName,
+          )}
+        >
+          {marketLabel}
+        </div>
+        {(showVenue || secondary) && (
+          <div className="mt-0.5 flex min-w-0 items-center gap-2 font-data text-xs text-arena-elements-textSecondary">
+            {showVenue && (
+              <span className={`${venue.color} inline-flex shrink-0 items-center gap-1`}>
+                <span className={`${venue.icon} text-sm`} aria-hidden="true" />
+                {venue.label}
+              </span>
+            )}
+            {secondary && <span className="truncate">{secondary}</span>}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,18 +1,16 @@
 import { Link, useNavigate } from 'react-router';
 import { isAddress, type Address } from 'viem';
 import { Badge, Identicon, Skeleton } from '@tangle-network/blueprint-ui/components';
-import { AssetPairDisplay } from '~/components/bot-detail/shared/AssetDisplay';
+import { TradeInstrumentDisplay } from '~/components/bot-detail/shared/AssetDisplay';
 import { useLatestAgentTrades } from '~/lib/hooks/useBotApi';
 import type { Bot } from '~/lib/types/bot';
-import { VENUE_CONFIG, type Trade } from '~/lib/types/trade';
+import type { Trade } from '~/lib/types/trade';
 import {
   formatTradeActionLabel,
   formatTradeAge,
   formatTradeModeLabel,
   formatTradeUsd,
   getTradeActionPillClass,
-  getTradeInstrumentBadgeText,
-  getTradeMarketLabel,
 } from '~/lib/tradeDisplay';
 
 interface LatestAgentTradesProps {
@@ -95,8 +93,6 @@ export function LatestAgentTrades({
             </thead>
             <tbody>
               {visibleTrades.map(({ trade, bot, botId, botName }) => {
-                const venue = VENUE_CONFIG[trade.venue];
-                const label = getTradeMarketLabel(trade);
                 const operatorAddress = bot?.operatorAddress;
                 const hasOperatorAddress = operatorAddress != null && isAddress(operatorAddress);
                 return (
@@ -136,39 +132,21 @@ export function LatestAgentTrades({
                       </Link>
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
-                      <span className={`inline-flex h-7 ${isPanel ? 'min-w-[4rem] px-2 text-[11px]' : 'min-w-[3.75rem] px-2'} items-center justify-center rounded-md font-data text-xs font-bold ${getTradeActionPillClass(trade.action)}`}>
+                      <span className={`inline-flex h-8 ${isPanel ? 'min-w-[4.5rem] px-2.5 text-xs' : 'min-w-[4.25rem] px-2.5'} items-center justify-center rounded-md font-data font-bold ${getTradeActionPillClass(trade.action)}`}>
                         {formatTradeActionLabel(trade.action)}
                       </span>
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
-                      <div className="min-w-0">
-                        {label ? (
-                          <div className="flex min-w-0 items-center gap-2" title={label}>
-                            <span
-                              aria-hidden="true"
-                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-arena-elements-item-backgroundActive font-data text-[10px] font-bold text-arena-elements-textSecondary ring-1 ring-black/5 dark:ring-white/10"
-                            >
-                              {getTradeInstrumentBadgeText(trade)}
-                            </span>
-                            <span className={`${isPanel ? 'max-w-[120px]' : 'max-w-[240px]'} truncate font-display text-sm font-medium text-arena-elements-textPrimary`}>
-                              {label}
-                            </span>
-                          </div>
-                        ) : (
-                          <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} size="md" />
-                        )}
-                        <div className="mt-0.5 flex min-w-0 items-center gap-2 font-data text-xs text-arena-elements-textSecondary">
-                          <span className={`${venue.color} inline-flex items-center gap-1`}>
-                            <span className={`${venue.icon} text-sm`} aria-hidden="true" />
-                            {venue.label}
-                          </span>
-                          {isPanel && (
-                            <span className="truncate">
-                              {formatTradeModeLabel(trade)}
-                            </span>
-                          )}
+                      <TradeInstrumentDisplay
+                        trade={trade}
+                        size={isPanel ? 'sm' : 'md'}
+                        labelClassName={isPanel ? 'max-w-[150px]' : 'max-w-[280px]'}
+                      />
+                      {isPanel && (
+                        <div className="mt-0.5 truncate pl-8 font-data text-xs text-arena-elements-textSecondary">
+                          {formatTradeModeLabel(trade)}
                         </div>
-                      </div>
+                      )}
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 text-right align-middle font-data text-base font-semibold text-arena-elements-textPrimary">
                       {formatTradeUsd(trade.notionalUsd)}

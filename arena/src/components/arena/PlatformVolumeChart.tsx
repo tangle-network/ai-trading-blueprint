@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AreaData, HistogramData, Time, UTCTimestamp } from 'lightweight-charts';
+import type { AreaData, HistogramData, IChartApi, ISeriesApi, Time, UTCTimestamp } from 'lightweight-charts';
 import { Badge, Skeleton } from '@tangle-network/blueprint-ui/components';
 import { loadLightweightCharts } from '~/components/bot-detail/lightweightChartRuntime';
 import { formatNumber } from '~/lib/format';
@@ -92,29 +92,110 @@ function PlatformVolumeTradingChart({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartTheme = useChartTheme();
-  const dataFingerprint = buckets.map((bucket) =>
-    `${bucket.timestamp}:${bucketValue(bucket, mode)}:${bucket.totalTradeCount}`,
-  ).join('|');
+  const runtimeRef = useRef<{
+    chart: IChartApi;
+    charts: Awaited<ReturnType<typeof loadLightweightCharts>>;
+    series: ISeriesApi<'Histogram'> | ISeriesApi<'Area'> | null;
+    mode: PlatformVolumeMode | null;
+    resizeObserver: ResizeObserver;
+  } | null>(null);
+  const latestInputRef = useRef({ buckets, mode, bucketMs, chartTheme });
+  const lastFitKeyRef = useRef<string | null>(null);
+  latestInputRef.current = { buckets, mode, bucketMs, chartTheme };
+
+  function createSeries(
+    runtime: NonNullable<typeof runtimeRef.current>,
+    nextMode: PlatformVolumeMode,
+    nextChartTheme: typeof chartTheme,
+  ): ISeriesApi<'Histogram'> | ISeriesApi<'Area'> {
+    if (nextMode === 'bucket') {
+      return runtime.chart.addSeries(runtime.charts.HistogramSeries, {
+        priceFormat: { type: 'custom', formatter: formatUsd },
+        lastValueVisible: true,
+        priceLineVisible: true,
+        priceLineColor: nextChartTheme.positive,
+        priceLineWidth: 1,
+        priceLineStyle: runtime.charts.LineStyle.Dashed,
+      });
+    }
+
+    const lineColor = nextMode === 'cumulative' ? '#8b5cf6' : nextChartTheme.positive;
+    return runtime.chart.addSeries(runtime.charts.AreaSeries, {
+      lineColor,
+      topColor: nextMode === 'cumulative' ? 'rgba(139,92,246,0.18)' : nextChartTheme.positiveGradientStart,
+      bottomColor: nextChartTheme.gradientEnd,
+      lineWidth: 2,
+      crosshairMarkerVisible: true,
+      crosshairMarkerRadius: 4,
+      crosshairMarkerBorderColor: nextChartTheme.hoverBorderColor,
+      crosshairMarkerBackgroundColor: lineColor,
+      lastPriceAnimation: runtime.charts.LastPriceAnimationMode.OnDataUpdate,
+      lastValueVisible: true,
+      priceLineVisible: true,
+      priceLineColor: lineColor,
+      priceLineWidth: 1,
+      priceLineStyle: runtime.charts.LineStyle.Dashed,
+    });
+  }
+
+  function applyChartData(runtime: NonNullable<typeof runtimeRef.current>, shouldFitContent: boolean) {
+    const {
+      buckets: nextBuckets,
+      mode: nextMode,
+      bucketMs: nextBucketMs,
+      chartTheme: nextChartTheme,
+    } = latestInputRef.current;
+
+    runtime.chart.applyOptions({
+      timeScale: {
+        barSpacing: nextBuckets.length < 8 ? 28 : nextBuckets.length < 40 ? 12 : 5,
+        timeVisible: nextBucketMs < 24 * 60 * 60 * 1000,
+        secondsVisible: false,
+      },
+    });
+
+    if (!runtime.series || runtime.mode !== nextMode) {
+      if (runtime.series) {
+        runtime.chart.removeSeries(runtime.series as ISeriesApi<'Area'>);
+      }
+      runtime.series = createSeries(runtime, nextMode, nextChartTheme);
+      runtime.mode = nextMode;
+    }
+
+    if (nextMode === 'bucket') {
+      (runtime.series as ISeriesApi<'Histogram'>).setData(
+        toHistogramData(nextBuckets, nextMode, nextChartTheme.positive),
+      );
+    } else {
+      (runtime.series as ISeriesApi<'Area'>).setData(toAreaData(nextBuckets, nextMode));
+    }
+
+    if (shouldFitContent) runtime.chart.timeScale().fitContent();
+  }
 
   useEffect(() => {
     let disposed = false;
-    let cleanup: (() => void) | null = null;
 
     loadLightweightCharts().then((charts) => {
       if (disposed || !containerRef.current) return;
+      const {
+        buckets: initialBuckets,
+        bucketMs: initialBucketMs,
+        chartTheme: initialChartTheme,
+      } = latestInputRef.current;
 
       const chart = charts.createChart(containerRef.current, {
         autoSize: true,
         height: containerRef.current.clientHeight || 240,
         layout: {
           background: { type: charts.ColorType.Solid, color: 'transparent' },
-          textColor: chartTheme.tickColor,
+          textColor: initialChartTheme.tickColor,
           attributionLogo: false,
           fontFamily: "'DM Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         },
         grid: {
           vertLines: { color: 'transparent' },
-          horzLines: { color: chartTheme.gridColor },
+          horzLines: { color: initialChartTheme.gridColor },
         },
         rightPriceScale: {
           borderVisible: false,
@@ -123,20 +204,20 @@ function PlatformVolumeTradingChart({
         timeScale: {
           borderVisible: false,
           rightOffset: 2,
-          barSpacing: buckets.length < 8 ? 28 : buckets.length < 40 ? 12 : 5,
-          timeVisible: bucketMs < 24 * 60 * 60 * 1000,
+          barSpacing: initialBuckets.length < 8 ? 28 : initialBuckets.length < 40 ? 12 : 5,
+          timeVisible: initialBucketMs < 24 * 60 * 60 * 1000,
           secondsVisible: false,
         },
         crosshair: {
           mode: charts.CrosshairMode.Magnet,
           vertLine: {
-            color: chartTheme.tickColor,
-            labelBackgroundColor: chartTheme.tooltipBg,
+            color: initialChartTheme.tickColor,
+            labelBackgroundColor: initialChartTheme.tooltipBg,
             style: charts.LineStyle.Dashed,
           },
           horzLine: {
-            color: chartTheme.tickColor,
-            labelBackgroundColor: chartTheme.tooltipBg,
+            color: initialChartTheme.tickColor,
+            labelBackgroundColor: initialChartTheme.tooltipBg,
             style: charts.LineStyle.Dotted,
           },
         },
@@ -156,55 +237,42 @@ function PlatformVolumeTradingChart({
         },
       });
 
-      if (mode === 'bucket') {
-        const histogramSeries = chart.addSeries(charts.HistogramSeries, {
-          priceFormat: { type: 'custom', formatter: formatUsd },
-          lastValueVisible: true,
-          priceLineVisible: true,
-          priceLineColor: chartTheme.positive,
-          priceLineWidth: 1,
-          priceLineStyle: charts.LineStyle.Dashed,
-        });
-        histogramSeries.setData(toHistogramData(buckets, mode, chartTheme.positive));
-      } else {
-        const lineColor = mode === 'cumulative' ? '#8b5cf6' : chartTheme.positive;
-        const areaSeries = chart.addSeries(charts.AreaSeries, {
-          lineColor,
-          topColor: mode === 'cumulative' ? 'rgba(139,92,246,0.18)' : chartTheme.positiveGradientStart,
-          bottomColor: chartTheme.gradientEnd,
-          lineWidth: 2,
-          crosshairMarkerVisible: true,
-          crosshairMarkerRadius: 4,
-          crosshairMarkerBorderColor: chartTheme.hoverBorderColor,
-          crosshairMarkerBackgroundColor: lineColor,
-          lastPriceAnimation: charts.LastPriceAnimationMode.OnDataUpdate,
-          lastValueVisible: true,
-          priceLineVisible: true,
-          priceLineColor: lineColor,
-          priceLineWidth: 1,
-          priceLineStyle: charts.LineStyle.Dashed,
-        });
-        areaSeries.setData(toAreaData(buckets, mode));
-      }
-
-      chart.timeScale().fitContent();
-
       const resizeObserver = new ResizeObserver(() => {
         if (!containerRef.current) return;
         chart.resize(containerRef.current.clientWidth, containerRef.current.clientHeight);
       });
       resizeObserver.observe(containerRef.current);
-      cleanup = () => {
-        resizeObserver.disconnect();
-        chart.remove();
+
+      runtimeRef.current = {
+        chart,
+        charts,
+        series: null,
+        mode: null,
+        resizeObserver,
       };
+      applyChartData(runtimeRef.current, true);
     });
 
     return () => {
       disposed = true;
-      cleanup?.();
+      if (runtimeRef.current) {
+        runtimeRef.current.resizeObserver.disconnect();
+        runtimeRef.current.chart.remove();
+        runtimeRef.current = null;
+      }
     };
-  }, [bucketMs, buckets.length, chartTheme, dataFingerprint, mode]);
+  }, [chartTheme]); // Recreate only when the theme changes.
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    const firstTimestamp = buckets[0]?.timestamp ?? 'none';
+    const lastTimestamp = buckets[buckets.length - 1]?.timestamp ?? 'none';
+    const fitKey = `${mode}:${bucketMs}:${buckets.length}:${firstTimestamp}:${lastTimestamp}`;
+    const shouldFitContent = lastFitKeyRef.current !== fitKey;
+    lastFitKeyRef.current = fitKey;
+    applyChartData(runtime, shouldFitContent);
+  }, [bucketMs, buckets, chartTheme, mode]);
 
   return (
     <div
@@ -250,7 +318,7 @@ export function PlatformVolumeChart({
               Platform Volume
             </h2>
             <Badge variant="outline" className="font-data text-xs">
-              Connected Operators
+              Coverage
             </Badge>
             {coverage.candidateOperators > 0 && (
               <Badge variant="outline" className="font-data text-xs">
@@ -264,7 +332,7 @@ export function PlatformVolumeChart({
             )}
           </div>
           <p className="mt-1 text-sm text-arena-elements-textSecondary">
-            USD notional across connected trading operators.
+            USD notional reported by trading operators.
           </p>
         </div>
 
@@ -332,7 +400,7 @@ export function PlatformVolumeChart({
               <div className="mb-3 flex items-start justify-between gap-4">
                 <div>
                   <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-                    {modeLabel}
+                    {modeLabel} (USD)
                   </div>
                   <div className="mt-1 font-data text-3xl font-bold tracking-tight text-arena-elements-textPrimary">
                     {formatUsd(latestValue)}

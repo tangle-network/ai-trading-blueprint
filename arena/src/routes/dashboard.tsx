@@ -285,14 +285,14 @@ export default function HomePage() {
             prefix="$"
             format={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)}K` : v.toFixed(0)}
           />
-          <StatTile label="Executions" value={operatorDataIncomplete ? '—' : totalTrades} className="hidden lg:block" />
+          <StatTile label="Trades" value={operatorDataIncomplete ? '—' : totalTrades} className="hidden lg:block" />
           <StatTile
-            label="Avg Risk Score"
+            label="Avg Validator"
             value={operatorDataIncomplete
               ? '—'
               : scoredBots.length > 0
                 ? avgRiskScore
-                : 0}
+                : '—'}
             className="hidden lg:block"
           />
         </div>

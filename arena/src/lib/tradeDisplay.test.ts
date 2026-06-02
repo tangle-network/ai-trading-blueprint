@@ -7,7 +7,6 @@ import {
   formatTradeUsd,
   getHyperliquidMarketLabel,
   getTradeActionBadgeVariant,
-  getTradeInstrumentBadgeText,
   getTradeMarketLabel,
 } from './tradeDisplay';
 
@@ -53,7 +52,6 @@ describe('trade display helpers', () => {
 
     expect(getHyperliquidMarketLabel(trade)).toBe('ETH-PERP');
     expect(getTradeMarketLabel(trade)).toBe('ETH-PERP');
-    expect(getTradeInstrumentBadgeText(trade)).toBe('ETH');
     expect(formatTradeModeLabel(trade)).toBe('Live');
   });
 
