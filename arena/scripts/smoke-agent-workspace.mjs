@@ -22,27 +22,27 @@ const FIXTURE_OWNER_AUTH_KEY = `arena.operator_auth.${FIXTURE_OPERATOR.toLowerCa
 
 const SECTION_EXPECTATIONS = {
   performance: [
-    ['Market', 'NAV'],
+    ['Price', 'Account'],
     ['ETH', 'Performance', 'Awaiting first checkpoint'],
-    ['Decision Tape', 'Execution Tape', 'Copilot'],
+    ['Decision Tape', 'Latest Executions', 'Copilot'],
   ],
   portfolio: [
-    'Exposure',
+    'Account',
     'Positions Value',
     ['Bot Equity', 'Account Total'],
-    ['Execution Ledger', 'No trades recorded'],
+    ['Trade Ledger', 'No executions recorded'],
   ],
   runs: [
-    ['Trading Run', 'No runs yet'],
-    ['Run ID', 'Autonomous activity', 'DONE', 'SKIP', 'TRADE'],
+    ['Autonomous Trace', 'No traces yet'],
+    ['Cycle', 'Autonomous traces', 'DONE', 'SKIP', 'TRADE'],
   ],
   chat: [
     'Trading Agent',
     ['Breakout retest', 'fast_backtest', 'Reasoning', 'Final outcome', 'No messages yet'],
   ],
-  operations: ['Operations', 'Validation', 'Validator'],
+  operations: ['Risk & Ops', 'Validation', 'Validator'],
 };
-const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Cloud', 'Platform Volume', 'Execution Tape', 'Leaderboard', 'ETH Macro Scalper'];
+const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Cloud', 'Platform Volume', 'Latest Executions', 'Arena', 'ETH Macro Scalper'];
 
 function parseArgs(argv) {
   const args = {
@@ -90,7 +90,8 @@ function printHelp() {
 
 Checks:
   - discovers a rendered /arena/bot/:id link
-  - verifies Performance, Portfolio, Runs, Chat, Operations do not body-scroll at 1440x900 and 1280x800
+  - verifies Performance, Portfolio, Traces, Chat, Risk & Ops do not body-scroll at 1440x900 and 1280x800
+  - verifies browser-visible operator API health and CORS when the deployed build exposes an operator URL
   - verifies Portfolio -> Chat -> browser Back -> Portfolio
   - verifies Chat -> Performance changes route in one click
 
@@ -918,6 +919,69 @@ async function chooseRecentlyTradedBotId(baseUrl, candidateIds) {
   return null;
 }
 
+async function assertBrowserOperatorApis(page, baseUrl) {
+  let operatorApiUrl = null;
+  try {
+    operatorApiUrl = await discoverOperatorApiUrlFromBuild(baseUrl);
+  } catch (error) {
+    throw new Error(`Could not inspect deployed operator URL: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!operatorApiUrl) {
+    console.warn('[arena-smoke] no deployed operator URL found in build metadata; skipping browser API/CORS check');
+    return;
+  }
+
+  const now = Date.now();
+  const from = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+  const to = new Date(now).toISOString();
+  const endpoints = [
+    '/api/meta',
+    '/api/bots?limit=1',
+    '/api/platform/trades?limit=1',
+    `/api/platform/volume?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&bucket=hour`,
+  ];
+
+  await navigate(page, baseUrl);
+  const results = await evaluate(page, `(async () => {
+    const operatorApiUrl = ${JSON.stringify(operatorApiUrl)};
+    const endpoints = ${JSON.stringify(endpoints)};
+    return Promise.all(endpoints.map(async (endpoint) => {
+      const url = new URL(endpoint, operatorApiUrl).toString();
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          credentials: 'omit',
+        });
+        const body = await response.text();
+        return {
+          endpoint,
+          ok: response.ok,
+          status: response.status,
+          corsOrigin: response.headers.get('access-control-allow-origin'),
+          body: body.slice(0, 160),
+        };
+      } catch (error) {
+        return {
+          endpoint,
+          ok: false,
+          status: 0,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }));
+  })()`);
+
+  const failures = results.filter((result) => !result.ok);
+  if (failures.length > 0) {
+    throw new Error(`Browser operator API/CORS check failed for ${operatorApiUrl}:\n${failures.map((failure) =>
+      `- ${failure.endpoint}: status=${failure.status}${failure.error ? ` error=${failure.error}` : ''} body=${JSON.stringify(failure.body ?? '')}`,
+    ).join('\n')}`);
+  }
+
+  console.log(`[arena-smoke] browser operator API/CORS passed for ${operatorApiUrl}`);
+}
+
 async function discoverAgentId(page, baseUrl, allowEmpty) {
   await navigate(page, baseUrl);
   let hrefs = [];
@@ -992,7 +1056,7 @@ async function captureScreenshot(page, screenshotDir, viewport, section, suffix 
 
 function getSectionExpectations(section, { ownerPerformance = false } = {}) {
   if (ownerPerformance && section === 'performance') {
-    return ['Market', 'ETH', 'Copilot'];
+    return ['Price', 'ETH', 'Copilot'];
   }
   return SECTION_EXPECTATIONS[section] ?? [];
 }
@@ -1028,7 +1092,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
       })()`);
         const expected = getSectionExpectations(section, { ownerPerformance });
         const hasExpectedText = textIncludes(nextMetrics.bodyText, expected);
-        const isStillLoading = /Loading bot data|Loading workspace|Loading autonomous runs/i.test(nextMetrics.bodyText);
+        const isStillLoading = /Loading bot data|Loading workspace|Loading autonomous traces/i.test(nextMetrics.bodyText);
         return hasExpectedText && !isStillLoading ? nextMetrics : false;
         }, { timeoutMs: 12_000, intervalMs: 250 });
       } catch {
@@ -1240,6 +1304,9 @@ async function main() {
       ? FIXTURE_BOT_ID
       : await discoverAgentId(page, args.url, args.allowEmpty);
     if (!botId) return;
+    if (!args.fixture) {
+      await assertBrowserOperatorApis(page, args.url);
+    }
     if (args.fixture && !args.ownerPerformance) {
       await assertFixtureHomeDashboard(page, args.url, {
         screenshotDir: args.screenshotDir,

@@ -84,7 +84,7 @@ export default function VaultPage() {
           to="/"
           className="inline-flex items-center gap-1.5 text-sm text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 mb-6 transition-colors duration-200 font-display font-medium"
         >
-          <span className="text-sm">&larr;</span> Back to Leaderboard
+          <span className="text-sm">&larr;</span> Back to Arena
         </Link>
 
         <div className="glass-card rounded-xl p-6 mb-8">

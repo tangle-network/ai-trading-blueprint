@@ -20,8 +20,8 @@ interface PlatformVolumeChartProps {
 }
 
 const MODES: Array<{ value: PlatformVolumeMode; label: string; icon: string }> = [
-  { value: 'bucket', label: 'Daily', icon: 'i-ph:chart-bar' },
-  { value: 'rolling7d', label: '7D', icon: 'i-ph:wave-sine' },
+  { value: 'bucket', label: 'Daily Volume', icon: 'i-ph:chart-bar' },
+  { value: 'rolling7d', label: '7D Rolling', icon: 'i-ph:wave-sine' },
   { value: 'cumulative', label: 'Cumulative', icon: 'i-ph:trend-up' },
 ];
 
@@ -210,7 +210,8 @@ function PlatformVolumeTradingChart({
     <div
       ref={containerRef}
       className={`${heightClassName} w-full overflow-hidden`}
-      aria-label="Platform volume chart"
+      role="img"
+      aria-label="Platform notional chart"
     />
   );
 }
@@ -231,12 +232,12 @@ export function PlatformVolumeChart({
   const hasVolume = series.summary.totalUsd > 0;
   const isCommand = variant === 'command';
   const operatorCoverage = coverage.candidateOperators > 0
-    ? `${coverage.fetchedOperators}/${coverage.candidateOperators} sources`
-    : 'No sources';
+    ? `${coverage.fetchedOperators}/${coverage.candidateOperators} operators`
+    : 'No operators';
   const summaryStats = [
     { label: 'Live', value: formatUsd(series.summary.liveUsd) },
     { label: 'Paper', value: formatUsd(series.summary.paperUsd) },
-    { label: 'Priced Trades', value: series.summary.pricedTradeCount.toLocaleString() },
+    { label: 'Priced Executions', value: series.summary.pricedTradeCount.toLocaleString() },
     { label: 'Coverage', value: operatorCoverage },
   ];
 
@@ -249,7 +250,7 @@ export function PlatformVolumeChart({
               Platform Volume
             </h2>
             <Badge variant="outline" className="font-data text-xs">
-              All configured operators
+              Connected Operators
             </Badge>
             {coverage.candidateOperators > 0 && (
               <Badge variant="outline" className="font-data text-xs">
@@ -263,7 +264,7 @@ export function PlatformVolumeChart({
             )}
           </div>
           <p className="mt-1 text-sm text-arena-elements-textSecondary">
-            USD notional from each configured operator aggregate endpoint.
+            USD notional across connected trading operators.
           </p>
         </div>
 
@@ -327,7 +328,7 @@ export function PlatformVolumeChart({
               <div className="mb-3 flex items-start justify-between gap-4">
                 <div>
                   <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-                    {modeLabel} volume
+                    {modeLabel}
                   </div>
                   <div className="mt-1 font-data text-3xl font-bold tracking-tight text-arena-elements-textPrimary">
                     {formatUsd(latestValue)}
@@ -382,7 +383,7 @@ export function PlatformVolumeChart({
                   No priced volume
                 </p>
                 <p className="mt-1 text-sm text-arena-elements-textSecondary">
-                  Awaiting USD-valued trades.
+                  Awaiting USD-valued executions.
                 </p>
               </div>
             </div>
@@ -395,7 +396,7 @@ export function PlatformVolumeChart({
               { label: 'Total volume', value: formatUsd(series.summary.totalUsd), icon: 'i-ph:chart-line-up' },
               { label: 'Live notional', value: formatUsd(series.summary.liveUsd), icon: 'i-ph:lightning' },
               { label: 'Paper notional', value: formatUsd(series.summary.paperUsd), icon: 'i-ph:notepad' },
-              { label: 'Priced trades', value: series.summary.pricedTradeCount.toLocaleString(), icon: 'i-ph:swap' },
+              { label: 'Priced executions', value: series.summary.pricedTradeCount.toLocaleString(), icon: 'i-ph:swap' },
             ].map((stat) => (
               <div
                 key={stat.label}

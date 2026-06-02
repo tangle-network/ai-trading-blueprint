@@ -22,7 +22,7 @@ const decisionItem: DecisionFeedItem = {
   validationLabel: 'approved',
   executionLabel: 'filled',
   provenance: [
-    { label: 'Run', value: 'run-1' },
+    { label: 'Cycle', value: 'run-1' },
     { label: 'Trace', value: 'trace-1' },
   ],
   stages: [
@@ -69,7 +69,7 @@ describe('decision inspector surfaces', () => {
     expect(screen.getByText('$11')).toBeInTheDocument();
     expect(screen.getAllByText('Validation').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Execution').length).toBeGreaterThan(0);
-    expect(screen.getByTitle('Run: run-1')).toBeInTheDocument();
+    expect(screen.getByTitle('Cycle: run-1')).toBeInTheDocument();
   });
 
   it('emits the selected decision from the activity strip', async () => {

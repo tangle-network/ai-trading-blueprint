@@ -112,7 +112,7 @@ describe('ArenaAppShell', () => {
     expect(sidebar).not.toBeNull();
     expect(within(sidebar!).getByText('Callable Agent')).toBeInTheDocument();
     expect(within(sidebar!).queryByText('Public Fleet Agent')).not.toBeInTheDocument();
-    expect(within(sidebar!).getByRole('link', { name: /fleet/i })).toHaveAttribute('href', '/');
+    expect(within(sidebar!).getAllByRole('link', { name: /arena/i }).some((link) => link.getAttribute('href') === '/')).toBe(true);
 	  });
 
 	  it('filters wallet relevance before slicing the sidebar roster', () => {
@@ -161,7 +161,7 @@ describe('ArenaAppShell', () => {
     expect(sidebar).not.toBeNull();
     expect(within(sidebar!).queryByText('Public Fleet Agent')).not.toBeInTheDocument();
 	    expect(within(sidebar!).queryByText(/callable agents/i)).not.toBeInTheDocument();
-	    expect(within(sidebar!).getByRole('link', { name: /leaderboard/i })).toHaveAttribute('href', '/');
+	    expect(within(sidebar!).getByRole('link', { name: /arena/i })).toHaveAttribute('href', '/');
 	  });
 
 	  it('starts collapsed in agent workspaces and keeps the fleet route accessible', () => {
@@ -179,7 +179,7 @@ describe('ArenaAppShell', () => {
 
 	    expect(sidebar).not.toBeNull();
 	    expect(sidebar).toHaveClass('w-20');
-	    expect(within(sidebar!).getByRole('link', { name: /leaderboard/i })).toHaveAttribute('href', '/');
+	    expect(within(sidebar!).getByRole('link', { name: /arena/i })).toHaveAttribute('href', '/');
 
 	    fireEvent.click(within(sidebar!).getByRole('button', { name: /expand sidebar/i }));
 

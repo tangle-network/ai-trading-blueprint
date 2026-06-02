@@ -66,8 +66,8 @@ function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
             )}
           </div>
           <div className="flex items-center gap-3 text-xs font-data text-arena-elements-textSecondary">
-            {bot.tvl > 0 && <span>${bot.tvl >= 1000 ? `${(bot.tvl / 1000).toFixed(0)}K` : bot.tvl.toFixed(0)} TVL</span>}
-            {bot.totalTrades > 0 && <span>{bot.totalTrades} trades</span>}
+            {bot.tvl > 0 && <span>${bot.tvl >= 1000 ? `${(bot.tvl / 1000).toFixed(0)}K` : bot.tvl.toFixed(0)} NAV</span>}
+            {bot.totalTrades > 0 && <span>{bot.totalTrades} executions</span>}
             {bot.sharpeRatio > 0 && <span>{bot.sharpeRatio.toFixed(1)} Sharpe</span>}
           </div>
           <div className="flex items-center gap-2">
@@ -76,7 +76,7 @@ function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
               <span className={`text-xs font-data font-bold px-1.5 py-0.5 rounded ${
                 bot.avgValidatorScore >= 85 ? 'bg-emerald-700/10 dark:bg-emerald-500/10 text-arena-elements-icon-success' :
                 bot.avgValidatorScore >= 70 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' : 'bg-crimson-500/10 text-crimson-600 dark:text-crimson-400'
-              }`}>{bot.avgValidatorScore}</span>
+              }`}>{bot.avgValidatorScore} Risk</span>
             )}
           </div>
         </div>
@@ -116,7 +116,6 @@ function formatCompactUsd(value: number): string {
 export default function IndexPage() {
   const { isConnected } = useAccount();
   const [search, setSearch] = useState('');
-  const [timePeriod, setTimePeriod] = useState('30d');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('cards');
   useTradingRouteAutoAuth({
     enabled: isConnected && HAS_TRADING_OPERATOR_API,
@@ -157,19 +156,20 @@ export default function IndexPage() {
   const totalTrades = leaderboardBots.reduce((sum, b) => sum + b.totalTrades, 0);
   const { series: homeVolumeSeries } = usePlatformVolumeSeries(leaderboardBots, '30d');
   const platformTradeCount = homeVolumeSeries.summary.totalTradeCount || totalTrades;
-  const avgScore = leaderboardBots.length > 0
-    ? Math.round(leaderboardBots.reduce((sum, b) => sum + b.avgValidatorScore, 0) / leaderboardBots.length)
+  const scoredBots = leaderboardBots.filter((bot) => bot.avgValidatorScore > 0);
+  const avgScore = scoredBots.length > 0
+    ? Math.round(scoredBots.reduce((sum, b) => sum + b.avgValidatorScore, 0) / scoredBots.length)
     : 0;
   const activeAgents = leaderboardBots.filter((bot) => bot.status === 'active').length;
   const cloudStats = [
-    { label: 'Agents', value: leaderboardBots.length.toLocaleString(), sublabel: `${activeAgents} active` },
+    { label: 'Connected Agents', value: leaderboardBots.length.toLocaleString(), sublabel: `${activeAgents} active` },
     {
-      label: '30D Volume',
+      label: '30D Notional',
       value: formatCompactUsd(homeVolumeSeries.summary.totalUsd),
-      sublabel: 'operator aggregate',
+      sublabel: 'connected operators',
     },
-    { label: 'Trades', value: platformTradeCount > 0 ? platformTradeCount.toLocaleString() : '—', sublabel: '30D aggregate' },
-    { label: 'Validator', value: avgScore > 0 ? `${avgScore}` : '—', sublabel: 'avg score' },
+    { label: '30D Executions', value: platformTradeCount > 0 ? platformTradeCount.toLocaleString() : '—', sublabel: 'priced + unpriced' },
+    { label: 'Avg Risk Score', value: avgScore > 0 ? `${avgScore}` : '—', sublabel: scoredBots.length > 0 ? `${scoredBots.length} scored` : 'awaiting validators' },
   ];
 
   return (
@@ -181,14 +181,14 @@ export default function IndexPage() {
               <div className="inline-flex items-center gap-1.5 rounded border border-emerald-700/20 bg-emerald-700/10 px-2 py-1 dark:border-emerald-500/20 dark:bg-emerald-500/10">
                 <div className="w-2 h-2 rounded-full bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse" />
                 <span className="text-xs font-data font-semibold text-arena-elements-icon-success uppercase tracking-wider">
-                  {isOnChain ? 'onchain' : 'Live'}
+                  {isOnChain ? 'Live Operator Data' : 'Live Data'}
                 </span>
               </div>
               <span className="rounded border border-amber-500/20 bg-amber-500/8 px-2 py-1 text-xs font-data font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
-                Evolution
+                Self-Improving
               </span>
               <span className="rounded border border-violet-500/20 bg-violet-500/8 px-2 py-1 text-xs font-data font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
-                Validator gated
+                Risk-Gated
               </span>
             </div>
             <div className="mt-3">
@@ -196,7 +196,7 @@ export default function IndexPage() {
                 AI Trading Cloud
               </h1>
               <p className="mt-1 max-w-2xl text-sm text-arena-elements-textSecondary sm:text-base">
-                Live agent capital, platform volume, and execution telemetry.
+                Live capital, volume, executions, and agent decisions.
               </p>
             </div>
             <div className="mt-4 flex shrink-0 flex-wrap items-center gap-2">
@@ -212,7 +212,7 @@ export default function IndexPage() {
                 className="inline-flex h-9 items-center gap-2 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60 px-3 text-sm font-display font-medium text-arena-elements-textPrimary transition-colors hover:bg-arena-elements-item-backgroundHover"
               >
                 <span className="i-ph:chat-circle-dots text-sm" />
-                Create From Chat
+                Design Agent
               </Link>
             </div>
           </div>
@@ -254,10 +254,10 @@ export default function IndexPage() {
 
       <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="font-display text-2xl font-bold tracking-tight">Leaderboard</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Arena</h2>
           <div className="mt-1 flex items-center gap-5 text-sm font-data text-arena-elements-textSecondary">
             <span><span className="font-semibold text-arena-elements-textPrimary">{leaderboardBots.length}</span> agents</span>
-            {totalTrades > 0 && <span><span className="font-semibold text-arena-elements-textPrimary">{totalTrades.toLocaleString()}</span> trades</span>}
+            {totalTrades > 0 && <span><span className="font-semibold text-arena-elements-textPrimary">{totalTrades.toLocaleString()}</span> executions</span>}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -284,8 +284,6 @@ export default function IndexPage() {
       <FilterBar
         search={search}
         onSearchChange={setSearch}
-        timePeriod={timePeriod}
-        onTimePeriodChange={setTimePeriod}
       />
 
       <OperatorSessionBanner />
@@ -309,7 +307,7 @@ export default function IndexPage() {
             description="Tangle's AI Trading Arena lets you provision and operate autonomous trading agents on-chain. Connect a wallet to deploy your first agent or follow live performance."
             bullets={[
               'Provision AI trading agents with one click',
-              'Watch real-time PnL, trades, and validator scores',
+              'Watch real-time returns, executions, and risk scores',
               'Stake against the operators you trust',
               'Configure secrets once your service is live',
             ]}

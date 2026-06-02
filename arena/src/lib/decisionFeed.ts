@@ -336,7 +336,7 @@ export function buildDecisionItemFromRun(run: BotRun): DecisionFeedItem {
     (parsed ? 'Structured result captured' : 'No structured result captured');
   const sections = parsed ? buildRunResultSections(parsed) : [];
   const provenance: DecisionFeedFact[] = [];
-  addFact(provenance, 'Run', run.runId);
+  addFact(provenance, 'Cycle', run.runId);
   addFact(provenance, 'Workflow', run.workflowKind);
   addFact(provenance, 'Trace', run.traceId);
   addFact(provenance, 'Session', run.sessionId);
@@ -365,7 +365,7 @@ export function buildDecisionItemFromRun(run: BotRun): DecisionFeedItem {
     statusLabel: getStatusLabel(run.status),
     statusTone: runStatusTone(run),
     actionLabel,
-    instrumentLabel: setupAsset ?? tradeAsset ?? protocol ?? 'Run',
+    instrumentLabel: setupAsset ?? tradeAsset ?? protocol ?? 'Trace',
     reason,
     notionalLabel: formatNotional(tradeAction?.notional_usd ?? setup?.amount_in),
     venueLabel: protocol ?? undefined,
@@ -390,6 +390,10 @@ function tradeStatusTone(trade: Trade): DecisionFeedTone {
 }
 
 function formatTradeAction(action: Trade['action']): string {
+  if (action === 'open_long') return 'LONG';
+  if (action === 'close_long') return 'CLOSE LONG';
+  if (action === 'open_short') return 'SHORT';
+  if (action === 'close_short') return 'CLOSE SHORT';
   return humanizeUpper(action);
 }
 
@@ -412,7 +416,7 @@ export function buildDecisionItemFromTrade(trade: Trade): DecisionFeedItem {
     trade.validatorScore ??
     null;
   const validationLabel = trade.validation
-    ? `${trade.validation.approved ? 'Approved' : 'Rejected'} ${formatNumber(validationScore ?? 0, { maximumFractionDigits: 2 })}`
+    ? `${trade.validation.approved ? 'Approved' : 'Rejected'} · ${formatNumber(validationScore ?? 0, { maximumFractionDigits: 2 })}`
     : validationScore != null
       ? `Score ${formatNumber(validationScore, { maximumFractionDigits: 2 })}`
       : undefined;

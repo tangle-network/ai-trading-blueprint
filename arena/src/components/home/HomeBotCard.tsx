@@ -100,7 +100,7 @@ export function HomeBotCard({
           {/* Operator identicon */}
           <Identicon address={bot.operatorAddress as Address} size={24} />
 
-          {/* Dismiss button for pending/unconfigured bots */}
+          {/* Dismiss button for pending/unconfigured agents */}
           {onDismiss && (bot.status === 'needs_config' || (bot.status === 'stopped' && !bot.secretsConfigured)) && (
             <button
               type="button"
@@ -139,10 +139,10 @@ export function HomeBotCard({
             {/* Stats */}
             <div className="flex items-center gap-3 text-xs font-data text-arena-elements-textSecondary flex-wrap">
               {bot.tvl > 0 && (
-                <span>${bot.tvl >= 1000 ? `${(bot.tvl / 1000).toFixed(0)}K` : bot.tvl.toFixed(0)} TVL</span>
+                <span>${bot.tvl >= 1000 ? `${(bot.tvl / 1000).toFixed(0)}K` : bot.tvl.toFixed(0)} NAV</span>
               )}
               {bot.totalTrades > 0 && (
-                <span>{bot.totalTrades} trades</span>
+                <span>{bot.totalTrades} executions</span>
               )}
               {bot.sharpeRatio > 0 && (
                 <span>{bot.sharpeRatio.toFixed(1)} Sharpe</span>
@@ -164,7 +164,7 @@ export function HomeBotCard({
                 }`}>
                   {bot.avgValidatorScore}
                 </span>
-                <span className="text-[11px] font-data text-arena-elements-textTertiary">score</span>
+                <span className="text-[11px] font-data text-arena-elements-textTertiary">risk</span>
               </div>
             )}
           </div>

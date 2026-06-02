@@ -49,6 +49,14 @@ function cleanBotTitle(displayName: string) {
   return displayName.replace(statusPattern, '').trim() || displayName;
 }
 
+function formatStrategyType(value: string): string {
+  return value
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+}
+
 export function AgentWorkspaceShell({
   bot,
   displayName,
@@ -74,6 +82,7 @@ export function AgentWorkspaceShell({
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
     chainId: bot.chainId,
+    enabled: !focusMode,
   });
   const [addressCopied, setAddressCopied] = useState(false);
   const explorerAddress = getExplorerAddressUrl(targetChainId ?? bot.chainId, bot.operatorAddress);
@@ -135,19 +144,29 @@ export function AgentWorkspaceShell({
       title: HEADER_RETURN_PERCENT_COPY.title,
     },
     {
-      label: 'Sharpe',
+      label: '30D Sharpe',
       value: formatDecimal(summary.sharpeRatio),
       color: '',
       title: 'Risk-adjusted return over sampled account value snapshots.',
     },
     {
-      label: 'Max DD',
+      label: 'Max Drawdown',
       value: formatPercent(summary.maxDrawdown),
       color: summary.maxDrawdown == null ? '' : 'text-crimson-400',
       title: 'Maximum drawdown over sampled account value history.',
     },
-    { label: 'Trades', value: tradeCount > 0 ? tradeCount.toLocaleString() : '—', color: '' },
-    { label: 'Equity', value: formatPortfolioValue(summary.portfolioValue), color: '' },
+    {
+      label: 'Executions',
+      value: tradeCount > 0 ? tradeCount.toLocaleString() : '—',
+      color: '',
+      title: 'Largest observed execution count from live metrics, trade ledger, and operator summary.',
+    },
+    {
+      label: 'NAV',
+      value: formatPortfolioValue(summary.portfolioValue),
+      color: '',
+      title: 'Latest priced account value, falling back to the latest account snapshot when portfolio pricing is unavailable.',
+    },
   ];
 
   return (
@@ -202,10 +221,10 @@ export function AgentWorkspaceShell({
                   </div>
                   <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
                     <Badge variant={botStatusBadgeVariant(bot.status)}>{botStatusLabel(bot.status)}</Badge>
-                    <Badge variant="accent">{bot.strategyType}</Badge>
+                    <Badge variant="accent">{formatStrategyType(bot.strategyType)}</Badge>
                     {bot.verificationState === 'unverified' && <Badge variant="outline">Unverified</Badge>}
                     <span className="font-data text-xs text-arena-elements-textTertiary">
-                      {bot.paperTrade ? 'Paper' : 'Live'} · {targetNetwork}
+                      {bot.paperTrade ? 'Paper mode' : 'Live'} · {targetNetwork}
                     </span>
                   </div>
                 </div>

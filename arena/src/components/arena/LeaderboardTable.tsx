@@ -41,15 +41,15 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
       <TableHeader>
         <TableRow className="hover:bg-transparent">
           <TableHead className="w-14">#</TableHead>
-          <TableHead>Bot</TableHead>
+          <TableHead>Agent</TableHead>
           <TableHead className="hidden md:table-cell">Strategy</TableHead>
           <TableHead className="hidden lg:table-cell">Chart</TableHead>
-          <TableHead className="text-right">PnL</TableHead>
+          <TableHead className="text-right">Return</TableHead>
           <TableHead className="text-right hidden sm:table-cell">Sharpe</TableHead>
           <TableHead className="text-right hidden md:table-cell">Max DD</TableHead>
-          <TableHead className="text-right hidden lg:table-cell">TVL</TableHead>
-          <TableHead className="text-right hidden sm:table-cell">Win Rate</TableHead>
-          <TableHead className="text-right hidden md:table-cell">Score</TableHead>
+          <TableHead className="text-right hidden lg:table-cell">NAV</TableHead>
+          <TableHead className="text-right hidden sm:table-cell">Executions</TableHead>
+          <TableHead className="text-right hidden md:table-cell">Risk Score</TableHead>
           <TableHead className="hidden lg:table-cell">Status</TableHead>
         </TableRow>
       </TableHeader>
@@ -110,7 +110,7 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
               {bot.tvl > 0 ? `$${(bot.tvl / 1000).toFixed(0)}K` : <span className="text-arena-elements-textTertiary">—</span>}
             </TableCell>
             <TableCell className="text-right font-data text-sm hidden sm:table-cell">
-              {bot.winRate > 0 ? `${bot.winRate}%` : <span className="text-arena-elements-textTertiary">—</span>}
+              {bot.totalTrades > 0 ? bot.totalTrades.toLocaleString() : <span className="text-arena-elements-textTertiary">—</span>}
             </TableCell>
             <TableCell className="text-right hidden md:table-cell">
               {bot.avgValidatorScore > 0 ? (

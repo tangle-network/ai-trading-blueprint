@@ -3554,7 +3554,7 @@ export default function ProvisionPage() {
         to="/"
         className="inline-flex items-center gap-1.5 text-sm text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 mb-6 font-display font-medium transition-colors"
       >
-        <span>&larr;</span> Leaderboard
+        <span>&larr;</span> Arena
       </Link>
 
       <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">

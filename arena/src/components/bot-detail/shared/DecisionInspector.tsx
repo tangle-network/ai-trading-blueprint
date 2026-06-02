@@ -76,6 +76,7 @@ export function DecisionInspector({ item, className }: DecisionInspectorProps) {
     item.validationLabel ? { label: 'Validation', value: item.validationLabel } : null,
     item.executionLabel ? { label: 'Execution', value: item.executionLabel } : null,
   ].filter((entry): entry is { label: string; value: string } => entry !== null);
+  const capturedStages = item.stages.filter((stage) => stage.value !== 'Not captured' || Boolean(stage.detail));
 
   return (
     <aside
@@ -131,16 +132,18 @@ export function DecisionInspector({ item, className }: DecisionInspectorProps) {
         </div>
       )}
 
-      <div className="mt-3 space-y-2">
-        {item.stages.map((stage) => (
-          <StageRow key={stage.key} stage={stage} />
-        ))}
-      </div>
+      {capturedStages.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {capturedStages.map((stage) => (
+            <StageRow key={stage.key} stage={stage} />
+          ))}
+        </div>
+      )}
 
       {item.provenance.length > 0 && (
         <div className="mt-4">
           <div className="text-xs font-display font-semibold uppercase text-arena-elements-textTertiary">
-            Provenance
+            Evidence
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {item.provenance.slice(0, 8).map((fact) => (

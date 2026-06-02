@@ -3,7 +3,7 @@ export const BOT_DETAIL_WINDOW_LABEL = '30D';
 const WINDOW_SNAPSHOT_EXPLANATION = 'Calculated from the earliest renderable snapshot to the latest snapshot in the fetched 30-day metrics window.';
 
 export const HEADER_RETURN_PERCENT_COPY = {
-  label: `${BOT_DETAIL_WINDOW_LABEL} Return %`,
+  label: `${BOT_DETAIL_WINDOW_LABEL} Return`,
   title: `${WINDOW_SNAPSHOT_EXPLANATION} This is not inception-to-date or all-time PnL.`,
 };
 

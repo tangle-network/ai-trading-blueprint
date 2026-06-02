@@ -290,8 +290,8 @@ function OperationsOverview({
         />
         <StatCard
           label="Control"
-          value={canCommand && bot.controlAvailable ? 'Available' : 'Read-only'}
-          detail={canCommand ? `${operatorKindLabel(bot.operatorKind)} operator` : 'Public viewer'}
+          value={canCommand && bot.controlAvailable ? 'Available' : 'Viewer'}
+          detail={canCommand ? `${operatorKindLabel(bot.operatorKind)} operator` : 'Public access'}
           icon="i-ph:sliders-horizontal"
         />
         <StatCard
@@ -517,10 +517,10 @@ export function OperationsWorkspace({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-              Operations
+              Risk & Ops
             </div>
             <h2 className="mt-1 font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-              Control Plane
+              Runtime State
             </h2>
           </div>
           <nav

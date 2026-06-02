@@ -32,16 +32,20 @@ function formatNotional(value?: number | null): string {
 }
 
 function actionTone(action: Trade['action']): string {
-  if (action === 'buy' || action === 'open_long') {
+  if (action === 'buy' || action === 'open_long' || action === 'close_short') {
     return 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
   }
-  if (action === 'sell' || action === 'close_long' || action === 'close_short') {
+  if (action === 'sell' || action === 'close_long' || action === 'open_short') {
     return 'bg-crimson-500/10 text-crimson-700 dark:text-crimson-300';
   }
   return 'bg-violet-500/10 text-violet-700 dark:text-violet-300';
 }
 
 function actionLabel(action: Trade['action']): string {
+  if (action === 'open_long') return 'LONG';
+  if (action === 'close_long') return 'CLOSE LONG';
+  if (action === 'open_short') return 'SHORT';
+  if (action === 'close_short') return 'CLOSE SHORT';
   return action.replace(/_/g, ' ').toUpperCase();
 }
 
@@ -75,16 +79,13 @@ export function LatestAgentTrades({
       <div className="flex items-center justify-between gap-4 border-b border-arena-elements-dividerColor/60 px-4 py-3 sm:px-5">
         <div>
           <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-            {isPanel ? 'Execution Tape' : 'Latest Trades'}
+            Latest Executions
           </h2>
-          <p className="mt-0.5 text-sm text-arena-elements-textSecondary">
-            Agent execution feed
-          </p>
         </div>
         <Badge variant="outline" className="font-data text-xs">
           {trades.length > 0
-            ? `${visibleTrades.length} recent`
-            : `${candidateCount} source${candidateCount === 1 ? '' : 's'}`}
+            ? `Last ${visibleTrades.length}`
+            : `${candidateCount} operator${candidateCount === 1 ? '' : 's'}`}
         </Badge>
       </div>
 
@@ -102,7 +103,7 @@ export function LatestAgentTrades({
         </div>
       ) : visibleTrades.length === 0 ? (
         <div className={`${isPanel ? 'flex min-h-0 flex-1 items-center justify-center' : 'px-5 py-10'} text-center text-sm text-arena-elements-textSecondary`}>
-          No recent trades reported by active agents.
+          No recent executions reported by active agents.
         </div>
       ) : (
         <div className={`${isPanel ? 'min-h-0 flex-1 overflow-y-auto' : ''} divide-y divide-arena-elements-dividerColor/50`}>

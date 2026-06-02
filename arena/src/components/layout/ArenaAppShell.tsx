@@ -11,10 +11,10 @@ import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
 
 const primaryNavItems = [
-  { label: 'Home', href: '/dashboard', icon: 'i-ph:house' },
-  { label: 'Leaderboard', href: '/', icon: 'i-ph:trophy' },
+  { label: 'My Agents', href: '/dashboard', icon: 'i-ph:house' },
+  { label: 'Arena', href: '/', icon: 'i-ph:trophy' },
   { label: 'Deploy Agent', href: '/provision', icon: 'i-ph:rocket-launch' },
-  { label: 'Create From Chat', href: '/create', icon: 'i-ph:chat-circle-dots' },
+  { label: 'Design Agent', href: '/create', icon: 'i-ph:chat-circle-dots' },
 ];
 
 function isNavActive(pathname: string, href: string) {
@@ -129,7 +129,7 @@ export function ArenaAppShell() {
                 to="/"
                 className="font-data text-[10px] uppercase tracking-wider text-arena-elements-textTertiary transition-colors hover:text-arena-elements-textPrimary"
               >
-                Fleet
+                Arena
               </Link>
             </div>
           )}

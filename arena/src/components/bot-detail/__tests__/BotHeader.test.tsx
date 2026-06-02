@@ -77,7 +77,7 @@ describe('BotHeader', () => {
     expect(screen.getByText('2.4%')).toBeInTheDocument();
     expect(screen.getByText('$10.2K')).toBeInTheDocument();
     expect(screen.getByText('92')).toBeInTheDocument();
-    expect(screen.getByText('30D Return %')).toBeInTheDocument();
+    expect(screen.getByText('30D Return')).toBeInTheDocument();
     expect(screen.getByText('Portfolio Value')).toBeInTheDocument();
     expect(screen.queryByText('PnL')).not.toBeInTheDocument();
   });
@@ -94,7 +94,7 @@ describe('BotHeader', () => {
     mockDetail = { validator_endpoints: ['https://validator.example'] };
     render(<BotHeader bot={makeBot()} />);
 
-    expect(screen.getByRole('button', { name: /About 30D Return %: Calculated/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /About 30D Return: Calculated/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /About Sharpe: Risk-adjusted return/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /About Max DD: Maximum drawdown/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /About Win Rate: Estimated win rate/i })).toBeInTheDocument();

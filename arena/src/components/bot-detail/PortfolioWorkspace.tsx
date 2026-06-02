@@ -32,10 +32,10 @@ export function PortfolioWorkspace({
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-              Exposure
+              Account
             </h2>
             <p className="text-sm text-arena-elements-textSecondary">
-              Current equity, cash, margin, and open risk.
+              Cash, positions, margin, and open risk.
             </p>
           </div>
         </div>
@@ -56,10 +56,10 @@ export function PortfolioWorkspace({
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-              Execution Ledger
+              Trade Ledger
             </h2>
             <p className="text-sm text-arena-elements-textSecondary">
-              Executions, paper fills, validator evidence, and exchange references.
+              Fills, simulations, validator evidence, and refs.
             </p>
           </div>
         </div>

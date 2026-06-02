@@ -167,7 +167,7 @@ export function OperatorSessionBanner() {
           Sign once to load operator-managed data
         </div>
         <p className="text-sm text-arena-elements-textSecondary mt-1">
-          Leaderboards, bot controls, and activation progress use operator-backed data and may stay unverified until the relevant operator session is established.
+          Arena rankings, agent controls, and activation progress use operator-backed data and may stay unverified until the relevant operator session is established.
         </p>
         {error && (
           <p className="text-xs text-crimson-500 mt-2">{error}</p>

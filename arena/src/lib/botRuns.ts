@@ -135,13 +135,13 @@ export function formatDuration(durationMs: number): string {
 export function getWorkflowKindLabel(kind: WorkflowKind): string {
   switch (kind) {
     case "trading":
-      return "Trading Run";
+      return "Trading Trace";
     case "research":
-      return "Research Run";
+      return "Research Trace";
     case "conversation":
-      return "Conversation Run";
+      return "Conversation Trace";
     default:
-      return "Autonomous Run";
+      return "Autonomous Trace";
   }
 }
 

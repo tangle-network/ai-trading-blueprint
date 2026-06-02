@@ -77,7 +77,7 @@ describe('TradeHistoryTab', () => {
 
   it('renders empty state when no trades', () => {
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
-    expect(screen.getByText('No trades recorded for this bot.')).toBeInTheDocument();
+    expect(screen.getByText('No executions recorded for this agent.')).toBeInTheDocument();
   });
 
   it('shows an unavailable state when trade history fails to load', () => {
@@ -88,7 +88,7 @@ describe('TradeHistoryTab', () => {
 
     expect(screen.getByText('Trade history unavailable')).toBeInTheDocument();
     expect(screen.getByText('operator request failed')).toBeInTheDocument();
-    expect(screen.queryByText('No trades recorded for this bot.')).not.toBeInTheDocument();
+    expect(screen.queryByText('No executions recorded for this agent.')).not.toBeInTheDocument();
   });
 
   it('renders trade rows with correct data', () => {
@@ -535,7 +535,7 @@ describe('TradeHistoryTab', () => {
 
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
 
-    expect(screen.getByText('OPEN LONG')).toBeInTheDocument();
+    expect(screen.getByText('LONG')).toBeInTheDocument();
     expect(screen.getByText('ETH-PERP')).toBeInTheDocument();
     expect(screen.getByText('HL accepted')).toBeInTheDocument();
     expect(screen.getByText(/Order: 10.9348 USDC/)).toBeInTheDocument();
@@ -568,7 +568,7 @@ describe('TradeHistoryTab', () => {
 
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
 
-    expect(screen.getByText('OPEN LONG')).toBeInTheDocument();
+    expect(screen.getByText('LONG')).toBeInTheDocument();
     expect(screen.getByText('HL rejected')).toBeInTheDocument();
     expect(screen.getByText(/Order: 11 USDC/)).toBeInTheDocument();
     expect(screen.queryByText('Hyperliquid perp')).not.toBeInTheDocument();

@@ -348,14 +348,14 @@ export default function BotDetailPage() {
 
     if (operatorMeta?.features.chat) {
       items.push(
-        { value: 'runs', label: 'Runs', icon: 'i-ph:list-checks' },
+        { value: 'runs', label: 'Traces', icon: 'i-ph:list-checks' },
         { value: 'chat', label: 'Chat', icon: 'i-ph:chat-circle-dots' },
       );
     }
 
     items.push({
       value: 'operations',
-      label: 'Operations',
+      label: 'Risk & Ops',
       icon: 'i-ph:sliders-horizontal',
       badge: pendingValidationCount > 0
         ? <span className="h-2 w-2 rounded-full bg-violet-500 animate-pulse" />
@@ -460,7 +460,7 @@ export default function BotDetailPage() {
           </ErrorBoundary>
         ) : (
           <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
-            Runs are unavailable for this operator.
+            Traces are unavailable for this operator.
           </div>
         );
       case 'chat':

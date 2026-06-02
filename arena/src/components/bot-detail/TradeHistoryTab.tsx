@@ -47,12 +47,12 @@ function TradeTableHead({ compact = false }: { compact?: boolean }) {
     <TableHeader>
       <TableRow className="hover:bg-transparent">
         <TableHead className={compact ? 'w-32 py-4 text-base' : 'w-44 py-4 text-base'}>Time</TableHead>
-        <TableHead className={compact ? 'w-40 py-4 text-base' : 'w-40 py-4 text-base'}>Action</TableHead>
-        <TableHead className={compact ? 'py-4 text-base' : 'min-w-[420px] py-4 text-base'}>Trade</TableHead>
+        <TableHead className={compact ? 'w-40 py-4 text-base' : 'w-40 py-4 text-base'}>Decision</TableHead>
+        <TableHead className={compact ? 'py-4 text-base' : 'min-w-[420px] py-4 text-base'}>Market</TableHead>
         {!compact && (
           <>
-            <TableHead className="hidden py-4 text-right text-base sm:table-cell">Validation</TableHead>
-            <TableHead className="py-4 text-base">Ref</TableHead>
+            <TableHead className="hidden py-4 text-right text-base sm:table-cell">Risk</TableHead>
+            <TableHead className="py-4 text-base">Reference</TableHead>
             <TableHead className="py-4 text-base">Status</TableHead>
           </>
         )}
@@ -144,12 +144,16 @@ function TradeDataUnavailableCard({ error }: { error: unknown }) {
 }
 
 function getActionLabel(action: Trade['action']): string {
+  if (action === 'open_long') return 'LONG';
+  if (action === 'close_long') return 'CLOSE LONG';
+  if (action === 'open_short') return 'SHORT';
+  if (action === 'close_short') return 'CLOSE SHORT';
   return action.replace(/_/g, ' ').toUpperCase();
 }
 
 function getActionVariant(action: Trade['action']): 'success' | 'destructive' | 'accent' {
-  if (action === 'buy' || action === 'open_long') return 'success';
-  if (action === 'sell' || action === 'close_long' || action === 'close_short') return 'destructive';
+  if (action === 'buy' || action === 'open_long' || action === 'close_short') return 'success';
+  if (action === 'sell' || action === 'close_long' || action === 'open_short') return 'destructive';
   return 'accent';
 }
 
@@ -314,7 +318,7 @@ export function TradeHistoryTab({
         )}
         <div className="glass-card rounded-xl text-center py-16 text-base text-arena-elements-textSecondary">
           <div className="i-ph:swap text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
-          No trades recorded for this bot.
+          No executions recorded for this agent.
         </div>
       </div>
     );
@@ -464,7 +468,7 @@ export function TradeHistoryTab({
                     {trade.execution && (
                       <div className="mb-4 rounded-xl border border-arena-elements-border/60 bg-arena-elements-bg-surface/60 p-4">
                         <div className="mb-3 text-base font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                          Execution QA
+                          Fill Quality
                         </div>
                         <div className="grid gap-3 text-base text-arena-elements-textSecondary md:grid-cols-2">
                           <div>

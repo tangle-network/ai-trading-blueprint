@@ -64,7 +64,7 @@ function useStableProvisions(userAddress: string | undefined): TrackedProvision[
 }
 
 export const meta: MetaFunction = () => [
-  { title: 'Home — AI Trading Arena' },
+  { title: 'My Agents — AI Trading Arena' },
 ];
 
 export default function HomePage() {
@@ -159,8 +159,11 @@ export default function HomePage() {
   // Aggregate stats (use visible bots for display)
   const activeBots = visibleMyBots.filter((b) => b.status === 'active');
   const totalTvl = visibleMyBots.reduce((sum, b) => sum + b.tvl, 0);
-  const totalPnlPct = visibleMyBots.reduce((sum, b) => sum + b.pnlPercent, 0);
   const totalTrades = visibleMyBots.reduce((sum, b) => sum + b.totalTrades, 0);
+  const scoredBots = visibleMyBots.filter((bot) => bot.avgValidatorScore > 0);
+  const avgRiskScore = scoredBots.length > 0
+    ? Math.round(scoredBots.reduce((sum, b) => sum + b.avgValidatorScore, 0) / scoredBots.length)
+    : 0;
   const knownBotCount = visibleMyBots.length;
 
   // Handlers
@@ -208,15 +211,15 @@ export default function HomePage() {
   if (!isConnected) {
     return (
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
-        <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">Home</h1>
+        <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">My Agents</h1>
         <p className="text-base text-arena-elements-textSecondary mb-8">
-          Your services and trading agents.
+          Owned services, deployed agents, and setup status.
         </p>
         <Card>
           <CardContent className="py-16 text-center space-y-3">
             <div className="i-ph:wallet text-4xl text-arena-elements-textTertiary mx-auto opacity-40" />
             <p className="text-sm text-arena-elements-textSecondary">
-              Connect your wallet to see your services and bots.
+              Connect your wallet to see your services and agents.
             </p>
           </CardContent>
         </Card>
@@ -228,9 +231,9 @@ export default function HomePage() {
   if (isLoading && services.length === 0 && visibleMyBots.length === 0) {
     return (
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
-        <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">Home</h1>
+        <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">My Agents</h1>
         <p className="text-base text-arena-elements-textSecondary mb-8">
-          Your services and trading agents.
+          Owned services, deployed agents, and setup status.
         </p>
         <div className="space-y-4">
           <Skeleton className="h-10 w-full" />
@@ -258,44 +261,37 @@ export default function HomePage() {
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
         <div>
-          <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">Home</h1>
+          <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">My Agents</h1>
           <p className="text-sm text-arena-elements-textSecondary">
-            Your services and trading agents.
+            Owned services, deployed agents, and setup status.
           </p>
         </div>
         <Button asChild>
           <Link to="/provision">
             <span className="i-ph:plus-bold text-xs mr-1.5" />
-            Deploy Agent
+            Deploy
           </Link>
         </Button>
       </div>
 
       {/* ── Stats bar ───────────────────────────────────────────────────── */}
       {hasContent && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-8">
+        <div className="grid grid-cols-2 gap-3 mb-8 sm:grid-cols-3 lg:grid-cols-5">
           <StatTile label="Services" value={services.length} />
-          <StatTile label="Active Bots" value={operatorDataIncomplete ? '—' : activeBots.length} />
+          <StatTile label="Active Agents" value={operatorDataIncomplete ? '—' : activeBots.length} />
           <StatTile
-            label="Total TVL"
+            label="Total NAV"
             value={operatorDataIncomplete ? '—' : totalTvl}
             prefix="$"
             format={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)}K` : v.toFixed(0)}
           />
+          <StatTile label="Executions" value={operatorDataIncomplete ? '—' : totalTrades} className="hidden lg:block" />
           <StatTile
-            label="Total PnL"
-            value={operatorDataIncomplete ? '—' : totalPnlPct}
-            suffix="%"
-            format={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}`}
-            valueColor={totalPnlPct >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'}
-          />
-          <StatTile label="Trades" value={operatorDataIncomplete ? '—' : totalTrades} className="hidden lg:block" />
-          <StatTile
-            label="Avg Score"
+            label="Avg Risk Score"
             value={operatorDataIncomplete
               ? '—'
-              : visibleMyBots.length > 0
-                ? Math.round(visibleMyBots.reduce((s, b) => s + b.avgValidatorScore, 0) / visibleMyBots.length)
+              : scoredBots.length > 0
+                ? avgRiskScore
                 : 0}
             className="hidden lg:block"
           />
@@ -346,12 +342,12 @@ export default function HomePage() {
         </section>
       )}
 
-      {/* ── My Bots ─────────────────────────────────────────────────────── */}
+      {/* ── My agents ───────────────────────────────────────────────────── */}
       {hasBotSection ? (
         <section>
           <div className="flex items-center gap-2 mb-4">
             <h2 className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
-              My Bots
+              My Agents
             </h2>
             <Badge variant="secondary" className="text-[10px]">{knownBotCount}</Badge>
             {hasLockedBots && (
@@ -385,7 +381,7 @@ export default function HomePage() {
             <OperatorAccessCard
               apiUrls={ALL_TRADING_OPERATOR_API_URLS}
               title="Operator authentication required"
-              description={`Authenticate to load ${lockedOperatorProvisions.length} operator-managed bot${lockedOperatorProvisions.length === 1 ? '' : 's'} on this dashboard.`}
+              description={`Authenticate to load ${lockedOperatorProvisions.length} operator-managed agent${lockedOperatorProvisions.length === 1 ? '' : 's'} on this dashboard.`}
             />
           )}
         </section>
@@ -394,7 +390,7 @@ export default function HomePage() {
           <CardContent className="py-16 text-center space-y-4">
             <div className="i-ph:robot text-4xl text-arena-elements-textTertiary mx-auto opacity-30" />
             <p className="text-base font-display font-medium text-arena-elements-textPrimary">
-              No services or bots yet
+              No services or agents yet
             </p>
             <p className="text-sm text-arena-elements-textSecondary max-w-sm mx-auto">
               Deploy an autonomous trading agent to get started.

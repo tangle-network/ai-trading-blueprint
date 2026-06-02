@@ -137,11 +137,11 @@ describe('decisionFeed', () => {
 
     const item = buildDecisionItemFromTrade(trade);
 
-    expect(item.title).toBe('OPEN LONG / USDC/ETH');
+    expect(item.title).toBe('LONG / USDC/ETH');
     expect(item.statusTone).toBe('success');
     expect(item.reason).toBe('breakout confirmed');
     expect(item.notionalLabel).toBe('$25');
-    expect(item.validationLabel).toBe('Approved 0.92');
+    expect(item.validationLabel).toBe('Approved · 0.92');
     expect(item.executionLabel).toBe('filled');
     expect(item.provenance).toEqual(
       expect.arrayContaining([

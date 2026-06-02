@@ -177,7 +177,7 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect((await screen.findAllByText("Trading Run")).length).toBeGreaterThan(
+    expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(
       0,
     );
     expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
@@ -201,7 +201,7 @@ describe("RunsTab", () => {
         }),
       );
     });
-    expect(await screen.findByText("Research Run")).toBeInTheDocument();
+    expect(await screen.findByText("Research Trace")).toBeInTheDocument();
     expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
   });
 
@@ -578,7 +578,7 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect((await screen.findAllByText("Trading Run")).length).toBeGreaterThan(
+    expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(
       0,
     );
     await waitFor(() => {

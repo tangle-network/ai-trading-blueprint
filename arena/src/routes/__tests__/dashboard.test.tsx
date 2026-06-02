@@ -246,13 +246,13 @@ describe('dashboard auth-aware rendering', () => {
     render(<HomePage />);
 
     expect(screen.getByText('Operator authentication required')).toBeInTheDocument();
-    expect(screen.getByText(/Authenticate to load 1 operator-managed bot/i)).toBeInTheDocument();
+    expect(screen.getByText(/Authenticate to load 1 operator-managed agent/i)).toBeInTheDocument();
     expect(hoisted.operatorAccessCardMock).toHaveBeenCalledWith(expect.objectContaining({
       apiUrls: ['/instance-operator-api'],
     }));
     expect(screen.getByText('service-1-locked-1')).toBeInTheDocument();
     expect(screen.queryByText('provisioning-1-failed-0')).not.toBeInTheDocument();
-    expect(screen.getByText('Active Bots').parentElement).toHaveTextContent('—');
+    expect(screen.getByText('Active Agents').parentElement).toHaveTextContent('—');
   });
 
   it('keeps genuinely unresolved provisions in the provisioning section', async () => {

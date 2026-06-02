@@ -471,8 +471,8 @@ describe('PerformanceTab', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { name: 'ETH market' })).toBeInTheDocument();
-    expect(screen.getByText('Market')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'ETH Price' })).toBeInTheDocument();
+    expect(screen.getByText('Price')).toBeInTheDocument();
     expect(screen.getByText('Last Price')).toBeInTheDocument();
     expect(screen.getByText('30D Move')).toBeInTheDocument();
 	    expect(screen.getByText('Volume')).toBeInTheDocument();
@@ -494,7 +494,7 @@ describe('PerformanceTab', () => {
     expect(lightweightChartMock.createSeriesMarkers).toHaveBeenCalledWith(
       lightweightChartMock.candleSeries,
       expect.arrayContaining([
-        expect.objectContaining({ text: 'BUY', shape: 'arrowUp', position: 'belowBar' }),
+        expect.objectContaining({ text: '', shape: 'arrowUp', position: 'belowBar' }),
       ]),
       { autoScale: true },
     );

@@ -333,9 +333,11 @@ function toSeriesMarkers(
   {
     dense,
     denseSingletonSize,
+    showLabels = true,
   }: {
     dense: boolean;
     denseSingletonSize: number;
+    showLabels?: boolean;
   },
 ): Array<SeriesMarker<Time>> {
   return placements.map(({ id, marker, time, count }) => ({
@@ -344,7 +346,7 @@ function toSeriesMarkers(
     position: marker.position,
     shape: marker.shape,
     color: marker.color,
-    text: toMarkerLabel(marker, count, dense),
+    text: showLabels ? toMarkerLabel(marker, count, dense) : '',
     size: toMarkerSize(count, dense, denseSingletonSize),
   }));
 }
@@ -417,6 +419,7 @@ export function TradingPerformanceChart({
     () => toSeriesMarkers(marketMarkerPlacements, {
       dense: denseTradeMarkers,
       denseSingletonSize: 0.78,
+      showLabels: false,
     }),
     [denseTradeMarkers, marketMarkerPlacements],
   );
@@ -444,11 +447,13 @@ export function TradingPerformanceChart({
         String(preparedPoint.time),
         preparedPoint.point,
       ]));
-	      const candleByTime = new Map(marketCandles.map((candle) => [
-	        String(Math.floor(candle.timestamp / 1000)),
-	        candle,
-	      ]));
-	      const placementById = markerReadoutsById;
+      const candleByTime = new Map(marketCandles.map((candle) => [
+        String(Math.floor(candle.timestamp / 1000)),
+        candle,
+      ]));
+      const firstMarketTime = marketSeriesData[0]?.time;
+      const lastMarketTime = marketSeriesData[marketSeriesData.length - 1]?.time;
+      const placementById = markerReadoutsById;
       const chart = charts.createChart(containerRef.current, {
         autoSize: true,
         height: containerRef.current.clientHeight || 520,
@@ -468,13 +473,16 @@ export function TradingPerformanceChart({
         },
         timeScale: {
           borderVisible: false,
-          rightOffset: 6,
+          rightOffset: activeMode === 'market' ? 10 : 6,
           barSpacing: activeMode === 'market'
             ? marketSeriesData.length < 20 ? 18 : 9
             : preparedPoints.length < 3 ? 80 : 12,
           timeVisible: true,
           secondsVisible: false,
           tickMarkFormatter: (time: Time) => {
+            if (activeMode === 'market' && (time === firstMarketTime || time === lastMarketTime)) {
+              return '';
+            }
             const key = timeKey(time);
             const navPoint = pointByTime.get(key);
             if (navPoint) return navPoint.label;

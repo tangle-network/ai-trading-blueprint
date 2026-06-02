@@ -139,11 +139,11 @@ function formatChartNumber(value: number | null): string {
 }
 
 function isSellSideAction(action: Trade['action']): boolean {
-  return action === 'sell' || action === 'close_long' || action === 'close_short';
+  return action === 'sell' || action === 'close_long' || action === 'open_short';
 }
 
 function isBuySideAction(action: Trade['action']): boolean {
-  return action === 'buy' || action === 'open_long' || action === 'open_short';
+  return action === 'buy' || action === 'open_long' || action === 'close_short';
 }
 
 function tradeMarkerColor(trade: Trade, chartTheme: ReturnType<typeof useChartTheme>): string {
@@ -165,12 +165,19 @@ function tradeMarkerPosition(trade: Trade): TradeChartMarker['position'] {
 }
 
 function formatTradeAction(action: Trade['action']): string {
+  if (action === 'open_long') return 'LONG';
+  if (action === 'close_long') return 'CLOSE LONG';
+  if (action === 'open_short') return 'SHORT';
+  if (action === 'close_short') return 'CLOSE SHORT';
   return action.replace(/_/g, ' ').toUpperCase();
 }
 
 function formatTradeMarkerText(trade: Trade): string {
-  if (isSellSideAction(trade.action)) return 'SELL';
-  if (isBuySideAction(trade.action)) return 'BUY';
+  if (trade.action === 'open_long') return 'LONG';
+  if (trade.action === 'open_short') return 'SHORT';
+  if (trade.action === 'close_long' || trade.action === 'close_short') return 'CLOSE';
+  if (trade.action === 'sell') return 'SELL';
+  if (trade.action === 'buy') return 'BUY';
   return formatTradeAction(trade.action);
 }
 
@@ -434,12 +441,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           tone: marketMoveTone,
         },
         {
-          label: 'Fills',
+          label: 'Executions',
           value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
           tone: 'text-arena-elements-textPrimary',
         },
         {
-          label: 'High / Low',
+          label: 'Price High / Low',
           value: formatChartCurrency(marketHighValue),
           tone: 'text-arena-elements-textPrimary',
           subvalue: formatChartCurrency(marketLowValue),
@@ -452,7 +459,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
       ] as const
     : [
         {
-          label: 'NAV',
+          label: 'Account Value',
           value: formatChartCurrency(latestChartValue),
           tone: 'text-arena-elements-textPrimary',
         },
@@ -467,12 +474,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           tone: chartReturnTone,
         },
         {
-          label: 'Trades',
+          label: 'Executions',
           value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
           tone: 'text-arena-elements-textPrimary',
         },
         {
-          label: 'High / Low',
+          label: 'NAV High / Low',
           value: formatChartCurrency(chartHighValue),
           tone: 'text-arena-elements-textPrimary',
           subvalue: formatChartCurrency(chartLowValue),
@@ -521,11 +528,11 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="font-display text-xl font-bold tracking-tight">
                   {effectiveChartMode === 'market' && marketCandleToken
-                    ? `${marketCandleToken} market`
-                    : 'NAV in USDC'}
+                    ? `${marketCandleToken} Price`
+                    : 'Account Value (USDC)'}
                 </h2>
                 <span className="rounded-full border border-arena-elements-dividerColor/70 px-2 py-0.5 font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
-                  {effectiveChartMode === 'market' ? 'Market' : 'NAV'}
+                  {effectiveChartMode === 'market' ? 'Price' : 'Account'}
                 </span>
               </div>
               {(lastCheckpointLabel || liveNavLabel) && (
@@ -541,7 +548,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                 role="group"
                 aria-label="Chart mode"
               >
-                {(['market', 'nav'] as const).map((mode) => (
+                    {(['market', 'nav'] as const).map((mode) => (
                   <button
                     key={mode}
                     type="button"
@@ -554,7 +561,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     disabled={mode === 'market' && !hasMarketCandles}
                     onClick={() => setChartMode(mode)}
                   >
-                    {mode}
+                    {mode === 'market' ? 'PRICE' : 'ACCOUNT'}
                   </button>
                 ))}
               </div>
@@ -638,7 +645,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   </div>
                   <div className="mt-5 grid gap-2 sm:grid-cols-3">
                     {[
-                      { label: 'Agent Trades', value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '0' },
+                      { label: 'Agent Executions', value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '0' },
                       { label: 'Strategy', value: bot.strategyType },
                       { label: 'Market Feed', value: hasMarketCandles ? `${marketCandles.length}` : 'NAV pending' },
                     ].map((item) => (
