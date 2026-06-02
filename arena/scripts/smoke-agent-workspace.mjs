@@ -34,11 +34,11 @@ const SECTION_EXPECTATIONS = {
   ],
   runs: [
     ['Trading Trace', 'No traces yet'],
-    ['Cycle', 'ETH Macro Scalper', 'COMPLETED', 'SKIP', 'TRADE'],
+    ['Cycle', 'Signal', 'COMPLETED', 'SKIP', 'TRADE'],
   ],
   chat: [
-    'ETH Macro Scalper',
-    ['Breakout retest', 'fast_backtest', 'Reasoning', 'Final outcome', 'No messages yet'],
+    ['Reasoning', 'Final outcome', 'No messages yet'],
+    ['tool', 'tools', 'fast_backtest', 'hyperliquid_nav'],
   ],
   operations: ['Risk & Ops', 'Validation', 'Validator'],
 };
