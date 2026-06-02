@@ -377,11 +377,10 @@ describe('PerformanceTab', () => {
 
     await waitFor(() => expect(lightweightChartMock.createSeriesMarkers).toHaveBeenCalled());
     const markerCall = lightweightChartMock.createSeriesMarkers.mock.calls[0];
-    const markers = markerCall[1] as Array<{ text?: string; time: number }>;
-    expect(markers.length).toBeGreaterThan(2);
-    expect(markers.length).toBeLessThan(49);
-    expect(markers.some((marker) => /^BUY x\d+$/.test(marker.text ?? ''))).toBe(true);
-    expect(markers.some((marker) => /^SELL x\d+$/.test(marker.text ?? ''))).toBe(true);
+	    const markers = markerCall[1] as Array<{ text?: string; time: number }>;
+	    expect(markers.length).toBeGreaterThan(2);
+	    expect(markers.length).toBeLessThan(49);
+	    expect(markers.every((marker) => !/BUY|SELL/.test(marker.text ?? ''))).toBe(true);
 
 	    const seriesData = lightweightChartMock.areaSeries.setData.mock.calls[0][0] as Array<{ time: number; value: number }>;
 	    expect(seriesData.length).toBeGreaterThan(2);
