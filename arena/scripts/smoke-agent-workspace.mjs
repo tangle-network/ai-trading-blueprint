@@ -1036,6 +1036,69 @@ async function clickNav(page, label) {
   if (!clicked) throw new Error(`Could not click workspace nav item: ${label}`);
 }
 
+async function clickButtonByLabel(page, label) {
+  const clicked = await evaluate(page, `(() => {
+    const label = ${JSON.stringify(label)};
+    const button = Array.from(document.querySelectorAll('button'))
+      .find((element) => element.getAttribute('aria-label') === label);
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+  if (!clicked) throw new Error(`Could not click button: ${label}`);
+}
+
+async function assertRailWidthChange(page, label, beforeExpression, predicateExpression) {
+  const before = await evaluate(page, beforeExpression);
+  await clickButtonByLabel(page, label);
+  const after = await waitFor(async () => {
+    const value = await evaluate(page, beforeExpression);
+    return await evaluate(page, `(() => {
+      const before = ${JSON.stringify(before)};
+      const value = ${JSON.stringify(value)};
+      return (${predicateExpression})(before, value) ? value : false;
+    })()`);
+  }, { timeoutMs: 4_000, intervalMs: 100 });
+  return { before, after };
+}
+
+async function assertCollapsibleRails(page, baseUrl, botId) {
+  await setViewport(page, { width: 1600, height: 900 });
+  await navigate(page, withPath(baseUrl, `/arena/bot/${encodeURIComponent(botId)}/performance`));
+  await waitFor(async () => {
+    const bodyText = await evaluate(page, 'document.body.innerText');
+    return /Performance|Market|NAV/i.test(bodyText);
+  }, { timeoutMs: 12_000, intervalMs: 250 });
+
+  const globalWidthExpression = `(() => document.querySelector('aside')?.getBoundingClientRect().width ?? 0)()`;
+  const agentWidthExpression = `(() => {
+    const asides = Array.from(document.querySelectorAll('aside'));
+    return asides[1]?.getBoundingClientRect().width ?? 0;
+  })()`;
+
+  const global = await assertRailWidthChange(
+    page,
+    'Collapse sidebar',
+    globalWidthExpression,
+    '((before, value) => before >= 220 && value <= 96)',
+  );
+  if (global.after >= global.before) {
+    throw new Error(`Global sidebar did not collapse: ${global.before} -> ${global.after}`);
+  }
+  await clickButtonByLabel(page, 'Expand sidebar');
+
+  const agent = await assertRailWidthChange(
+    page,
+    'Collapse agent rail',
+    agentWidthExpression,
+    '((before, value) => before >= 180 && value <= 80)',
+  );
+  if (agent.after >= agent.before) {
+    throw new Error(`Agent rail did not collapse: ${agent.before} -> ${agent.after}`);
+  }
+  await clickButtonByLabel(page, 'Expand agent rail');
+}
+
 async function assertRouteNavigation(page, baseUrl, botId) {
   await setViewport(page, VIEWPORTS[0]);
   await navigate(page, withPath(baseUrl, `/arena/bot/${encodeURIComponent(botId)}/portfolio`));
@@ -1101,6 +1164,7 @@ async function main() {
       screenshotDir: args.screenshotDir,
     });
     if (!args.ownerPerformance) {
+      await assertCollapsibleRails(page, args.url, botId);
       await assertRouteNavigation(page, args.url, botId);
     }
     console.log(`[arena-smoke] agent workspace passed for bot ${botId}${args.ownerPerformance ? ' (owner performance)' : ''}`);

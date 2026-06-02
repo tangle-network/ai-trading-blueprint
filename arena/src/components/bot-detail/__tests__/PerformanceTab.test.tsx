@@ -106,6 +106,11 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
     data: mockPortfolio,
     isLoading: false,
   }),
+  useLatestAgentTrades: () => ({
+    trades: [],
+    isLoading: false,
+    candidateCount: 1,
+  }),
 }));
 
 function makeTrade(overrides: Partial<Trade>): Trade {

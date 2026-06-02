@@ -209,11 +209,13 @@ function SessionWorkspaceSidebar({
   isStreaming,
   stacked,
   compactStacked,
+  collapsed,
   canWrite,
   onSelect,
   onDelete,
   onRename,
   onCreate,
+  onToggleCollapsed,
 }: {
   sessions: SessionItem[];
   activeSessionId: string;
@@ -221,11 +223,13 @@ function SessionWorkspaceSidebar({
   isStreaming: boolean;
   stacked: boolean;
   compactStacked: boolean;
+  collapsed: boolean;
   canWrite: boolean;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onCreate: () => void;
+  onToggleCollapsed: () => void;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -235,14 +239,17 @@ function SessionWorkspaceSidebar({
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : "flex min-h-0 w-[320px] basis-[320px] shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
+          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[320px] basis-[320px]"}`
       }
     >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-arena-elements-dividerColor/50">
-        <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
-          Sessions
-        </span>
-        {canWrite && (
+      <div className={`flex items-center border-b border-arena-elements-dividerColor/50 ${collapsed ? "justify-center px-2 py-3" : "justify-between px-4 py-3"}`}>
+        {!collapsed && (
+          <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
+            Sessions
+          </span>
+        )}
+        <div className="flex items-center gap-1">
+          {canWrite && !collapsed && (
           <button
             type="button"
             onClick={onCreate}
@@ -252,7 +259,19 @@ function SessionWorkspaceSidebar({
           >
             <span className="i-ph:plus text-base" />
           </button>
-        )}
+          )}
+          {!stacked && (
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-arena-elements-textTertiary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+              title={collapsed ? "Expand sessions" : "Collapse sessions"}
+              aria-label={collapsed ? "Expand sessions" : "Collapse sessions"}
+            >
+              <span className={collapsed ? "i-ph:caret-right-bold text-base" : "i-ph:caret-left-bold text-base"} />
+            </button>
+          )}
+        </div>
       </div>
 
       <div
@@ -271,6 +290,33 @@ function SessionWorkspaceSidebar({
           const isActive = session.id === activeSessionId;
           const isPrimary = session.id === primarySessionId;
           const showStreamingDot = isActive && isStreaming;
+
+          if (collapsed) {
+            return (
+              <button
+                key={session.id}
+                type="button"
+                title={displayTitle}
+                aria-pressed={isActive}
+                className={`mx-1.5 my-1 flex h-10 w-10 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                  isActive
+                    ? "bg-arena-elements-item-backgroundActive text-violet-700 dark:text-violet-300"
+                    : "text-arena-elements-textTertiary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary"
+                }`}
+                onClick={() => onSelect(session.id)}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    showStreamingDot
+                      ? "bg-emerald-400 animate-pulse"
+                      : isActive
+                        ? "bg-violet-500"
+                        : "bg-arena-elements-textTertiary/40"
+                  }`}
+                />
+              </button>
+            );
+          }
 
           return (
             <div
@@ -404,6 +450,7 @@ export function ChatTab({
       ? false
       : window.innerWidth < (immersive ? 860 : 1100),
   );
+  const [sessionSidebarCollapsed, setSessionSidebarCollapsed] = useState(false);
   const chatCacheKey = `${baseApiUrl}::${botId}`;
 
   const sessionToken = canWrite ? token : null;
@@ -670,6 +717,7 @@ export function ChatTab({
             isStreaming={stream.isStreaming}
             stacked={isStackedLayout}
             compactStacked={immersive}
+            collapsed={!isStackedLayout && sessionSidebarCollapsed}
             onSelect={setActiveSessionId}
             onDelete={(id) => {
               if (!canWrite) return;
@@ -685,6 +733,7 @@ export function ChatTab({
               if (!canWrite) return;
               void createSession("New Chat");
             }}
+            onToggleCollapsed={() => setSessionSidebarCollapsed((collapsed) => !collapsed)}
             canWrite={canWrite}
           />
         )}

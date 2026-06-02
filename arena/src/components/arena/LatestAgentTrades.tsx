@@ -10,6 +10,7 @@ import { getTradePairLabel, VENUE_CONFIG, type Trade } from '~/lib/types/trade';
 interface LatestAgentTradesProps {
   bots: Bot[];
   className?: string;
+  enabled?: boolean;
   limit?: number;
   variant?: 'standard' | 'panel';
 }
@@ -58,10 +59,14 @@ function marketLabel(trade: Trade): string | null {
 export function LatestAgentTrades({
   bots,
   className = '',
+  enabled = true,
   limit,
   variant = 'standard',
 }: LatestAgentTradesProps) {
-  const { trades, isLoading, candidateCount } = useLatestAgentTrades(bots);
+  const { trades, isLoading, candidateCount } = useLatestAgentTrades(bots, {
+    enabled,
+    limit: limit ?? 10,
+  });
   const isPanel = variant === 'panel';
   const visibleTrades = limit ? trades.slice(0, limit) : trades;
 

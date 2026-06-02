@@ -597,10 +597,12 @@ function fallbackBotName(botId: string): string {
 export function useLatestAgentTrades(
   bots: Bot[],
   {
+    enabled = true,
     limit = 10,
     perBotLimit = 4,
     maxBots = 32,
   }: {
+    enabled?: boolean;
     limit?: number;
     perBotLimit?: number;
     maxBots?: number;
@@ -643,7 +645,7 @@ export function useLatestAgentTrades(
       refetchOnMount: 'always' as const,
       refetchInterval: 15_000,
       retry: 1,
-      enabled: !!apiUrl,
+      enabled: enabled && !!apiUrl,
     })),
   });
 
@@ -714,7 +716,7 @@ export function useLatestAgentTrades(
         refetchOnMount: 'always' as const,
         refetchInterval: 15_000,
         retry: 1,
-        enabled: !!bot.operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
+        enabled: enabled && !!bot.operatorApiUrl && (!needsAuth || !!auth.getCachedToken()),
       };
     }),
   });

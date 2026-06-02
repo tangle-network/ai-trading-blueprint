@@ -434,38 +434,58 @@ function RunsSidebar({
   activeRunId,
   stacked,
   compactStacked,
+  collapsed,
   hasOlderRuns,
   isLoadingOlderRuns,
   onSelect,
   onLoadOlder,
+  onToggleCollapsed,
 }: {
   runs: RunItem[];
   summary: RunsSummary;
   activeRunId: string;
   stacked: boolean;
   compactStacked: boolean;
+  collapsed: boolean;
   hasOlderRuns: boolean;
   isLoadingOlderRuns: boolean;
   onSelect: (id: string) => void;
   onLoadOlder: () => void;
+  onToggleCollapsed: () => void;
 }) {
   return (
     <aside
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : "flex min-h-0 w-[312px] basis-[312px] shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
+          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[312px] basis-[312px]"}`
       }
     >
-      <div className="border-b border-arena-elements-dividerColor/50 px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
-            Runs
-          </span>
-          <span className="font-data text-sm text-arena-elements-textPrimary">
-            {summary.total}
-          </span>
+      <div className={`border-b border-arena-elements-dividerColor/50 ${collapsed ? "px-2 py-3" : "px-4 py-3"}`}>
+        <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : "justify-between"}`}>
+          {!collapsed && (
+            <>
+              <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
+                Runs
+              </span>
+              <span className="font-data text-sm text-arena-elements-textPrimary">
+                {summary.total}
+              </span>
+            </>
+          )}
+          {!stacked && (
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-arena-elements-textTertiary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60"
+              title={collapsed ? "Expand runs" : "Collapse runs"}
+              aria-label={collapsed ? "Expand runs" : "Collapse runs"}
+            >
+              <span className={collapsed ? "i-ph:caret-right-bold text-base" : "i-ph:caret-left-bold text-base"} />
+            </button>
+          )}
         </div>
+        {!collapsed && (
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           {[
             ["Live", summary.running],
@@ -485,6 +505,7 @@ function RunsSidebar({
             </div>
           ))}
         </div>
+        )}
       </div>
 
       <div
@@ -497,13 +518,41 @@ function RunsSidebar({
         aria-label="Autonomous runs"
       >
         {runs.length === 0 ? (
-          <div className="px-4 py-4 text-sm font-data text-arena-elements-textTertiary">
+          <div className={`${collapsed ? "px-2 text-center" : "px-4"} py-4 text-sm font-data text-arena-elements-textTertiary`}>
             No autonomous runs yet
           </div>
         ) : (
           <>
             {runs.map((run) => {
               const isActive = run.id === activeRunId;
+              if (collapsed) {
+                return (
+                  <button
+                    key={run.id}
+                    type="button"
+                    title={`${run.title} · ${run.signalLabel}`}
+                    aria-pressed={isActive}
+                    className={`mx-1.5 my-1 flex h-10 w-10 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
+                      isActive
+                        ? "bg-arena-elements-item-backgroundActive"
+                        : "hover:bg-arena-elements-item-backgroundHover"
+                    }`}
+                    onClick={() => onSelect(run.id)}
+                  >
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        run.status === "running"
+                          ? "bg-amber-400 animate-pulse"
+                          : run.status === "completed"
+                            ? "bg-emerald-500"
+                            : run.status === "interrupted"
+                              ? "bg-slate-500"
+                              : "bg-crimson-500"
+                      }`}
+                    />
+                  </button>
+                );
+              }
               return (
                 <button
                   key={run.id}
@@ -555,7 +604,7 @@ function RunsSidebar({
                 </button>
               );
             })}
-            {hasOlderRuns ? (
+            {hasOlderRuns && !collapsed ? (
               <div className="border-t border-arena-elements-dividerColor/40 px-3 py-2">
                 <button
                   type="button"
@@ -972,6 +1021,7 @@ export function RunsTab({
       ? false
       : window.innerWidth < (immersive ? 860 : 1100),
   );
+  const [runsSidebarCollapsed, setRunsSidebarCollapsed] = useState(false);
   const runsCacheKey = `${baseApiUrl}::${botId}::runs`;
   const authKey = token ?? "anonymous";
 
@@ -1222,12 +1272,14 @@ export function RunsTab({
               activeRunId={activeRun?.runId ?? ""}
               stacked={isStackedLayout}
               compactStacked={immersive}
+              collapsed={!isStackedLayout && runsSidebarCollapsed}
               hasOlderRuns={runsQuery.hasNextPage}
               isLoadingOlderRuns={runsQuery.isFetchingNextPage}
               onSelect={setActiveRunId}
               onLoadOlder={() => {
                 void runsQuery.fetchNextPage();
               }}
+              onToggleCollapsed={() => setRunsSidebarCollapsed((collapsed) => !collapsed)}
             />
           )}
 
