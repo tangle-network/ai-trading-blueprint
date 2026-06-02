@@ -2309,3 +2309,36 @@ Verification:
   - `.evolve/arena-runs-chat-focusbar-smoke-20260602/1440x900-runs.png`: full-screen Runs has visible run rail, transcript replay, and decision inspector with no header overlap.
   - `.evolve/arena-runs-chat-focusbar-smoke-20260602/1440x900-chat.png`: full-screen Chat has visible public run sessions, transcript replay, and decision inspector with no header overlap.
   - `.evolve/arena-runs-chat-focusbar-smoke-20260602/1280x800-runs.png` and `1280x800-chat.png`: both remain in-viewport at tighter desktop width.
+
+## 2026-06-02 Leaderboard List-First Correction
+
+User-reported problem:
+
+- `/leaderboard` still felt bad because the actual agent list was the smallest part of the page. The page stacked Volume, Latest Fills, and Agents as three modules instead of behaving like a dedicated agent explorer. At 1280px the top metric labels also clipped.
+
+Decision:
+
+- `/leaderboard` defaults to a full-height `Agents` screen.
+- `Fills` and `Volume` are explicit peer screens, not content stacked above the agent list.
+- Header metrics stay compact and are hidden at tighter desktop widths where they fight the view tabs and action buttons.
+
+Shipped in this slice:
+
+- Added `Agents`, `Fills`, and `Volume` screen tabs to `leaderboard.tsx`.
+- Made `Agents` the default active screen and gave the agent table the full remaining viewport.
+- Moved `LatestAgentTrades` and `PlatformVolumeChart` behind their own screens.
+- Increased the fills screen limit from 50 to 100 because that view now owns the page.
+- Updated fixture smoke expectations to defend the list-first hierarchy.
+
+Verification:
+
+- `bad design-audit --url https://trading-arena.blueprint.tangle.tools/leaderboard --extract-tokens --profile defi` captured the live bad state under `.evolve/live-leaderboard-audit-20260602`.
+- `pnpm --dir arena exec vitest run src/routes/__tests__/leaderboard.test.tsx src/components/arena/__tests__/LatestAgentTrades.test.tsx --reporter=dot` passes: 2 files, 4 tests.
+- `pnpm --dir arena exec vitest run src/routes/__tests__/leaderboard.test.tsx --reporter=dot` passes after the responsive header correction: 1 file, 2 tests.
+- `pnpm --dir arena typecheck` passes.
+- `pnpm --dir arena exec vitest run --reporter=dot` passes: 67 files, 387 tests.
+- `pnpm --dir arena build` passes. Existing large-chunk warnings remain unchanged.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-leaderboard-list-first-smoke-20260602-v3` passes.
+- Visual inspection passed:
+  - `.evolve/arena-leaderboard-list-first-smoke-20260602-v3/1440x900-leaderboard.png`: agent list owns the page; Volume/Fills are tabs instead of stacked modules.
+  - `.evolve/arena-leaderboard-list-first-smoke-20260602-v3/1280x800-leaderboard.png`: no clipped top metric labels; the agent table remains the primary surface.

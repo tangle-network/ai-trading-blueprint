@@ -22,10 +22,18 @@ export const meta: MetaFunction = () => [
   { title: 'Agent Explorer — AI Trading Arena' },
 ];
 
+type ExplorerView = 'agents' | 'fills' | 'volume';
+
+const EXPLORER_VIEWS: Array<{ value: ExplorerView; label: string; icon: string }> = [
+  { value: 'agents', label: 'Agents', icon: 'i-ph:list-bullets' },
+  { value: 'fills', label: 'Fills', icon: 'i-ph:arrows-left-right' },
+  { value: 'volume', label: 'Volume', icon: 'i-ph:chart-line-up' },
+];
+
 function ExplorerMetric({ value, label }: { value: string; label: string }) {
   return (
-    <div className="min-w-0">
-      <div className="font-data text-lg font-bold leading-none text-arena-elements-textPrimary">
+    <div className="min-w-0 border-l border-arena-elements-dividerColor/60 pl-3 first:border-l-0 first:pl-0">
+      <div className="font-data text-base font-bold leading-none text-arena-elements-textPrimary">
         {value}
       </div>
       <div className="mt-0.5 truncate font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
@@ -50,6 +58,7 @@ function botMatchesSearch(bot: Bot, search: string): boolean {
 export default function LeaderboardPage() {
   const { isConnected } = useAccount();
   const [search, setSearch] = useState('');
+  const [activeView, setActiveView] = useState<ExplorerView>('agents');
   useTradingRouteAutoAuth({
     enabled: isConnected && HAS_TRADING_OPERATOR_API,
     routeKey: 'leaderboard',
@@ -76,15 +85,41 @@ export default function LeaderboardPage() {
 
   return (
     <div className="mx-auto flex min-h-full max-w-[1500px] flex-col gap-3 px-3 py-3 sm:px-4 lg:h-full lg:overflow-hidden">
-      <section className="shrink-0 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 px-3 py-2.5">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          <div className="flex min-w-0 items-center gap-3 xl:min-w-[18rem]">
+      <section className="shrink-0 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 px-3 py-2">
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+          <div className="flex min-w-0 items-center gap-3 xl:min-w-[14rem]">
             <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-700 animate-glow-pulse dark:bg-emerald-400" />
             <h1 className="truncate font-display text-xl font-bold tracking-tight">
               Agent Explorer
             </h1>
           </div>
-          <div className="grid min-w-0 flex-1 grid-cols-4 gap-4 xl:max-w-2xl">
+          <div
+            className="flex max-w-full shrink-0 gap-1 overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/58 p-1"
+            role="tablist"
+            aria-label="Explorer screens"
+          >
+            {EXPLORER_VIEWS.map((view) => {
+              const selected = activeView === view.value;
+              return (
+                <button
+                  key={view.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => setActiveView(view.value)}
+                  className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-3 font-display text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                    selected
+                      ? 'bg-violet-500/14 text-arena-elements-textPrimary'
+                      : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
+                  }`}
+                >
+                  <span className={`${view.icon} text-sm ${selected ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary'}`} aria-hidden="true" />
+                  {view.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="hidden min-w-0 flex-1 grid-cols-4 gap-3 min-[1380px]:grid min-[1380px]:max-w-xl">
             <ExplorerMetric value={formatCompactUsd(oneDayVolume.series.summary.totalUsd)} label="24H Volume" />
             <ExplorerMetric value={oneDayTrades > 0 ? oneDayTrades.toLocaleString() : '—'} label="24H Fills" />
             <ExplorerMetric value={tradesPerHour > 0 ? formatNumber(tradesPerHour, { maximumFractionDigits: 1 }) : '—'} label="Fills/Hr" />
@@ -140,19 +175,24 @@ export default function LeaderboardPage() {
           </div>
         )
       ) : (
-        <div className="grid min-h-0 flex-1 gap-3 lg:grid-rows-[minmax(260px,0.7fr)_minmax(220px,0.45fr)_minmax(300px,0.8fr)]">
-          <PlatformVolumeChart
-            bots={leaderboardBots}
-            variant="command"
-            className="min-h-0"
-          />
-          <LatestAgentTrades
-            bots={leaderboardBots}
-            variant="explorer"
-            limit={50}
-            className="min-h-0"
-          />
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/54">
+        <div className="min-h-0 flex-1">
+          {activeView === 'volume' && (
+            <PlatformVolumeChart
+              bots={leaderboardBots}
+              variant="command"
+              className="h-full min-h-0"
+            />
+          )}
+          {activeView === 'fills' && (
+            <LatestAgentTrades
+              bots={leaderboardBots}
+              variant="explorer"
+              limit={100}
+              className="h-full min-h-0"
+            />
+          )}
+          {activeView === 'agents' && (
+          <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/54">
             <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-arena-elements-dividerColor/60 px-3">
               <h2 className="font-display text-lg font-semibold tracking-tight text-arena-elements-textPrimary">
                 Agents
@@ -183,6 +223,7 @@ export default function LeaderboardPage() {
               )}
             </div>
           </section>
+          )}
         </div>
       )}
     </div>

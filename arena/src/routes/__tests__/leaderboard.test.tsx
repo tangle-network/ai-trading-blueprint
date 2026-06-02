@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWrapper } from '~/test/mocks';
 
@@ -153,7 +153,7 @@ describe('LeaderboardPage', () => {
     expect(screen.getByText('Operator authentication required')).toBeInTheDocument();
   });
 
-  it('separates explorer charts, fill tape, and the full agent table', async () => {
+  it('defaults to the full agent list and separates fills and volume into screens', async () => {
     botsState.bots = [makePublicBot()];
     botsState.operatorDataState = 'ready';
 
@@ -163,19 +163,28 @@ describe('LeaderboardPage', () => {
     expect(screen.getByRole('heading', { name: 'Agent Explorer' })).toBeInTheDocument();
     expect(screen.getByText('$43.2K')).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Agents' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Fills' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'Volume' })).toHaveAttribute('aria-selected', 'false');
     expect(screen.getByRole('textbox', { name: 'Search agents' })).toBeInTheDocument();
-    expect(hoisted.platformVolumeChartProps.at(-1)).toEqual(expect.objectContaining({
-      variant: 'command',
-      className: 'min-h-0',
-    }));
-    expect(hoisted.latestAgentTradesProps.at(-1)).toEqual(expect.objectContaining({
-      variant: 'explorer',
-      limit: 50,
-      className: 'min-h-0',
-    }));
+    expect(hoisted.platformVolumeChartProps).toHaveLength(0);
+    expect(hoisted.latestAgentTradesProps).toHaveLength(0);
     expect(hoisted.leaderboardTableProps.at(-1)).toEqual(expect.objectContaining({
       bots: [expect.objectContaining({ name: 'ETH Macro Scalper' })],
     }));
     expect(screen.getByText('agent leaderboard table')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Fills' }));
+    expect(hoisted.latestAgentTradesProps.at(-1)).toEqual(expect.objectContaining({
+      variant: 'explorer',
+      limit: 100,
+      className: 'h-full min-h-0',
+    }));
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Volume' }));
+    expect(hoisted.platformVolumeChartProps.at(-1)).toEqual(expect.objectContaining({
+      variant: 'command',
+      className: 'h-full min-h-0',
+    }));
   });
 });
