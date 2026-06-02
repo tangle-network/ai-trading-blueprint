@@ -26,11 +26,33 @@ export function PortfolioWorkspace({
   verificationState,
   assetMetadata,
 }: PortfolioWorkspaceProps) {
+  const terminalTableClass = [
+    'text-[#d2dad7]',
+    '[&_.glass-card]:!border-[#273035]',
+    '[&_.glass-card]:!bg-[#0f1a1f]',
+    '[&_.glass-card]:!text-[#d2dad7]',
+    '[&_table]:!bg-[#0f1a1f]',
+    '[&_thead]:!bg-[#0b1418]',
+    '[&_tbody]:!bg-[#0f1a1f]',
+    '[&_tr]:!border-[#273035]',
+    '[&_th]:!border-[#273035]',
+    '[&_th]:!bg-[#0b1418]',
+    '[&_th]:!font-data',
+    '[&_th]:!text-[#949e9c]',
+    '[&_td]:!border-[#273035]',
+    '[&_td]:!bg-[#0f1a1f]',
+    '[&_td]:!text-[#d2dad7]',
+    '[&_code]:!text-[#d2dad7]',
+    '[&_.text-arena-elements-textPrimary]:!text-[#f6fefd]',
+    '[&_.text-arena-elements-textSecondary]:!text-[#d2dad7]',
+    '[&_.text-arena-elements-textTertiary]:!text-[#697371]',
+  ].join(' ');
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2">
-      <section className="flex min-h-0 flex-[0.9] flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/48">
-        <div className="flex h-11 shrink-0 items-center justify-between border-b border-arena-elements-dividerColor/55 px-3">
-          <h2 className="font-display text-lg font-semibold tracking-tight text-arena-elements-textPrimary">
+    <div className={`flex h-full min-h-0 flex-col gap-2 ${terminalTableClass}`}>
+      <section className="flex min-h-0 flex-[0.9] flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.24)]">
+        <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0b1418] px-3">
+          <h2 className="font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
             Portfolio
           </h2>
         </div>
@@ -49,9 +71,9 @@ export function PortfolioWorkspace({
         </div>
       </section>
 
-      <section className="flex min-h-0 flex-[1.25] flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/48">
-        <div className="flex h-11 shrink-0 items-center justify-between border-b border-arena-elements-dividerColor/55 px-3">
-          <h2 className="font-display text-lg font-semibold tracking-tight text-arena-elements-textPrimary">
+      <section className="flex min-h-0 flex-[1.25] flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.24)]">
+        <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0b1418] px-3">
+          <h2 className="font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
             Executions
           </h2>
         </div>

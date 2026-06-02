@@ -227,6 +227,63 @@ The chart should support two first-class modes:
 
 The default should be `Market` when candles exist for the traded instrument and `NAV` otherwise.
 
+### Agent Workspace Chrome Alternatives — 2026-06-02 Risk Pass
+
+The post-leaderboard live audit showed the page hierarchy improving, but agent workspaces were still conservative: identity, route switching, operator address, status, and metrics were packed into a horizontal strip above the actual trading surface. That is not how serious trading tools behave. Hyperliquid, Coinbase Advanced, Kraken Pro, and TradingView all bias toward persistent side chrome or ultra-thin top chrome so the chart/ledger owns the vertical axis.
+
+Five alternatives were considered:
+
+1. **Winner: Agent Command Rail**
+
+```text
+┌ agent rail: identity / metrics / sections ┬ trading workspace ┐
+│ Return Sharpe DD Trades Account           │ chart / portfolio │
+│ Performance Portfolio Runs Chat Ops       │ fills / controls  │
+└───────────────────────────────────────────┴───────────────────┘
+```
+
+Score: 9/10. This is the highest-leverage redesign because it removes the crowded top strip from every normal agent surface and makes Performance, Portfolio, and Operations feel like terminal pages instead of tabs. It also keeps Runs and Chat in focus mode, so transcript surfaces still get the whole screen.
+
+2. **Ultra-Thin Top Market Bar**
+
+```text
+┌ name · metrics · sections · address ┐
+├ full workspace                       ┤
+└──────────────────────────────────────┘
+```
+
+Score: 7/10. Better than the current header, but still burns vertical space and keeps too many unrelated controls in one line.
+
+3. **Global Sidebar + Agent Subsidebar**
+
+```text
+┌ global nav ┬ agent nav ┬ workspace ┐
+└────────────┴───────────┴───────────┘
+```
+
+Score: 6/10. Discoverable, but it recreates the three-sidebar complaint and squeezes the chart at 1280-1440px.
+
+4. **Floating Command Palette Only**
+
+```text
+┌ workspace full screen ┐
+│ cmd+k / floating nav  │
+└───────────────────────┘
+```
+
+Score: 8/10 for expert keyboard users, 4/10 for public users. Too hidden for an arena where live state must be obvious.
+
+5. **Chart-First With Overlay Pills**
+
+```text
+┌ chart owns viewport, pills overlay top-left/top-right ┐
+└ fills/portfolio drawers                               ┘
+```
+
+Score: 8/10 visually, 5/10 product-wise. It looks powerful but hides the route hierarchy and makes portfolio/operations feel secondary.
+
+Decision: implement option 1. The command rail is intentionally more opinionated than the previous header. It gives the selected agent a durable cockpit identity, makes section navigation unambiguous, keeps metrics visible without a row of dashboard cards, and reclaims vertical space for the chart and ledgers. To avoid degrading 1280/1440px performance pages, the chart execution rail now docks below the chart until wider desktop widths.
+
 ### Hyperliquid Trade Page Recon — 2026-06-02
 
 Reference captured with the site-clone workflow against `https://app.hyperliquid.xyz/trade`:

@@ -604,10 +604,10 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         <UnverifiedDataNotice subject="performance snapshots" />
       )}
 
-      <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(190px,25dvh)] gap-2 overflow-hidden min-[1280px]:grid-cols-[minmax(0,1fr)_332px] min-[1280px]:grid-rows-none min-[1440px]:grid-cols-[minmax(0,1fr)_346px]">
+      <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(190px,25dvh)] gap-2 overflow-hidden min-[1600px]:grid-cols-[minmax(0,1fr)_332px] min-[1600px]:grid-rows-none min-[1760px]:grid-cols-[minmax(0,1fr)_346px]">
         <div className="flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
-          <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1180px]:h-[72px] min-[1180px]:flex-row min-[1180px]:items-stretch">
-            <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1180px]:w-[178px] min-[1180px]:border-b-0 min-[1180px]:border-r">
+          <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[72px] min-[1120px]:flex-row min-[1120px]:items-stretch">
+            <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1120px]:w-[178px] min-[1120px]:border-b-0 min-[1120px]:border-r">
               <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#123f3a] text-[#50d2c1]">
                 <span className="i-ph:chart-line-up text-base" />
               </div>
@@ -642,7 +642,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
               ))}
             </div>
 
-            <div className="flex shrink-0 items-center gap-1 border-t border-[#273035] px-2 py-2 min-[1180px]:border-l min-[1180px]:border-t-0">
+            <div className="flex shrink-0 items-center gap-1 border-t border-[#273035] px-2 py-2 min-[1120px]:border-l min-[1120px]:border-t-0">
               <div
                 className="inline-flex rounded-[5px] bg-[#273035] p-0.5"
                 role="group"

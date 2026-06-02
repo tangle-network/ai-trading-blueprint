@@ -221,6 +221,10 @@ function findWorkspace(testId: string) {
   return screen.findByTestId(testId, {}, { timeout: 3_000 });
 }
 
+function clickFirstWorkspaceLink(name: RegExp) {
+  fireEvent.click(screen.getAllByRole('link', { name })[0]);
+}
+
 describe('bot workspace routing', () => {
   beforeEach(() => {
     hoisted.selectedChainId = 84532;
@@ -251,7 +255,7 @@ describe('bot workspace routing', () => {
 
     expect(await findWorkspace('workspace-performance')).toBeInTheDocument();
     expect(screen.getByText('12')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('link', { name: /chat/i }));
+    clickFirstWorkspaceLink(/chat/i);
 
     expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/chat');
@@ -278,7 +282,7 @@ describe('bot workspace routing', () => {
     const router = renderBotWorkspace(['/arena/bot/bot-1/portfolio']);
 
     expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('link', { name: /chat/i }));
+    clickFirstWorkspaceLink(/chat/i);
 
     expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/chat');
@@ -299,7 +303,7 @@ describe('bot workspace routing', () => {
     const router = renderBotWorkspace(['/arena/bot/sandbox-1/portfolio']);
 
     expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('link', { name: /chat/i }));
+    clickFirstWorkspaceLink(/chat/i);
 
     expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/sandbox-1/chat');
@@ -314,7 +318,7 @@ describe('bot workspace routing', () => {
     const router = renderBotWorkspace(['/arena/bot/bot-1/portfolio']);
 
     expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('link', { name: /runs/i }));
+    clickFirstWorkspaceLink(/runs/i);
 
     expect(await findWorkspace('workspace-runs')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/runs');

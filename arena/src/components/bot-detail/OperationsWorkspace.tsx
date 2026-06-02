@@ -65,10 +65,10 @@ function isOperationsPanel(value: string | null | undefined): value is Operation
 
 function OperationsPanelLoading({ label }: { label?: string }) {
   return (
-    <div className="flex min-h-[280px] items-center justify-center rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/42">
+    <div className="flex min-h-[280px] items-center justify-center rounded-[5px] border border-[#273035] bg-[#0f1a1f]">
       <div className="text-center">
-        <div className="i-ph:spinner-gap mx-auto text-2xl text-arena-elements-textTertiary animate-spin" />
-        <div className="mt-3 font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
+        <div className="i-ph:spinner-gap mx-auto text-2xl text-[#949e9c] animate-spin" />
+        <div className="mt-3 font-data text-xs uppercase tracking-wider text-[#949e9c]">
           Loading {label ?? 'panel'}
         </div>
       </div>
@@ -136,15 +136,15 @@ function StatCard({
   icon: string;
 }) {
   return (
-    <div className="min-w-0 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/54 px-3 py-3">
-      <div className="flex items-center gap-2 text-xs font-data font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+    <div className="min-w-0 rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-3 py-3">
+      <div className="flex items-center gap-2 text-xs font-data font-semibold uppercase tracking-wider text-[#949e9c]">
         <span className={`${icon} text-sm`} aria-hidden="true" />
         {label}
       </div>
-      <div className="mt-2 truncate font-data text-xl font-bold tracking-tight text-arena-elements-textPrimary">
+      <div className="mt-2 truncate font-data text-xl font-bold tracking-tight text-[#f6fefd]">
         {value}
       </div>
-      <div className="mt-1 truncate text-sm text-arena-elements-textSecondary">
+      <div className="mt-1 truncate text-sm text-[#949e9c]">
         {detail}
       </div>
     </div>
@@ -153,9 +153,9 @@ function StatCard({
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-3 border-b border-arena-elements-dividerColor/50 py-2 last:border-b-0">
-      <span className="shrink-0 text-sm text-arena-elements-textSecondary">{label}</span>
-      <span className="min-w-0 truncate text-right font-data text-sm font-semibold text-arena-elements-textPrimary" title={value}>
+    <div className="flex min-w-0 items-center justify-between gap-3 border-b border-[#273035] py-2 last:border-b-0">
+      <span className="shrink-0 text-sm text-[#949e9c]">{label}</span>
+      <span className="min-w-0 truncate text-right font-data text-sm font-semibold text-[#f6fefd]" title={value}>
         {value}
       </span>
     </div>
@@ -176,26 +176,26 @@ function ActionCard({
   onClick: () => void;
 }) {
   const toneClass = {
-    amber: 'border-amber-500/30 bg-amber-500/8 text-amber-700 dark:text-amber-300',
-    violet: 'border-violet-500/28 bg-violet-500/8 text-violet-700 dark:text-violet-300',
-    emerald: 'border-emerald-700/24 bg-emerald-700/8 text-emerald-700 dark:border-emerald-500/24 dark:bg-emerald-500/8 dark:text-emerald-300',
-    neutral: 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/54 text-arena-elements-textPrimary',
+    amber: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+    violet: 'border-[#50d2c1]/24 bg-[#123f3a]/54 text-[#50d2c1]',
+    emerald: 'border-emerald-500/24 bg-emerald-500/10 text-emerald-300',
+    neutral: 'border-[#273035] bg-[#0f1a1f] text-[#d2dad7]',
   }[tone];
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`group flex min-h-[112px] min-w-0 flex-col items-start rounded-xl border px-3 py-3 text-left transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${toneClass}`}
+      className={`group flex min-h-[112px] min-w-0 flex-col items-start rounded-[5px] border px-3 py-3 text-left transition-colors hover:bg-[#16242a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${toneClass}`}
     >
       <div className="flex w-full items-start justify-between gap-3">
         <span className={`${icon} text-lg`} aria-hidden="true" />
         <span className="i-ph:arrow-up-right text-sm opacity-60 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" aria-hidden="true" />
       </div>
-      <div className="mt-3 font-display text-base font-semibold text-arena-elements-textPrimary">
+      <div className="mt-3 font-display text-base font-semibold text-[#f6fefd]">
         {title}
       </div>
-      <div className="mt-1 text-sm leading-snug text-arena-elements-textSecondary">
+      <div className="mt-1 text-sm leading-snug text-[#949e9c]">
         {description}
       </div>
     </button>
@@ -238,14 +238,14 @@ function GuardrailTile({
   detail: string;
 }) {
   return (
-    <div className="min-w-0 rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/34 px-3 py-2.5">
-      <div className="truncate font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+    <div className="min-w-0 rounded-[5px] border border-[#273035] bg-[#0b1418] px-3 py-2.5">
+      <div className="truncate font-data text-[10px] font-semibold uppercase tracking-wider text-[#949e9c]">
         {label}
       </div>
-      <div className="mt-1 truncate font-data text-lg font-bold text-arena-elements-textPrimary">
+      <div className="mt-1 truncate font-data text-lg font-bold text-[#f6fefd]">
         {value}
       </div>
-      <div className="mt-1 truncate text-sm text-arena-elements-textSecondary">
+      <div className="mt-1 truncate text-sm text-[#949e9c]">
         {detail}
       </div>
     </div>
@@ -362,13 +362,13 @@ function OperationsOverview({
       </div>
 
       <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
-        <section className="rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/44 p-4">
+        <section className="rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-[#949e9c]">
                 Operational State
               </div>
-              <h3 className="mt-1 font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
+              <h3 className="mt-1 font-display text-xl font-semibold tracking-tight text-[#f6fefd]">
                 Safety and runtime map
               </h3>
             </div>
@@ -390,12 +390,12 @@ function OperationsOverview({
             ))}
           </div>
 
-          <div className="mt-3 rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/24 p-3">
+          <div className="mt-3 rounded-[5px] border border-[#273035] bg-[#0b1418] p-3">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-[#949e9c]">
                 Guardrails
               </div>
-              <span className="font-data text-xs text-arena-elements-textTertiary">
+              <span className="font-data text-xs text-[#949e9c]">
                 {runtimeModeLabel(bot)}
               </span>
             </div>
@@ -424,11 +424,11 @@ function OperationsOverview({
           </div>
         </section>
 
-        <aside className="rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/44 p-4">
-          <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+        <aside className="rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-4">
+          <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-[#949e9c]">
             Identity
           </div>
-          <h3 className="mt-1 font-display text-lg font-semibold text-arena-elements-textPrimary">
+          <h3 className="mt-1 font-display text-lg font-semibold text-[#f6fefd]">
             Agent references
           </h3>
           <div className="mt-3">
@@ -616,20 +616,27 @@ export function OperationsWorkspace({
         ) : null;
     }
   })();
+  const terminalOperationsClass = [
+    '[&_.text-arena-elements-textPrimary]:!text-[#f6fefd]',
+    '[&_.text-arena-elements-textSecondary]:!text-[#d2dad7]',
+    '[&_.text-arena-elements-textTertiary]:!text-[#949e9c]',
+    '[&_.glass-card]:!border-[#273035]',
+    '[&_.glass-card]:!bg-[#0f1a1f]',
+  ].join(' ');
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/54">
-      <div className="shrink-0 border-b border-arena-elements-dividerColor/70 px-4 py-2.5">
+    <div className={`flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418] ${terminalOperationsClass}`}>
+      <div className="shrink-0 border-b border-[#273035] bg-[#0f1a1f] px-4 py-2.5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+            <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-[#949e9c]">
               Operations
             </div>
-            <h2 className="mt-0.5 truncate font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
+            <h2 className="mt-0.5 truncate font-display text-xl font-semibold tracking-tight text-[#f6fefd]">
               {activeItem?.label ?? 'Runtime State'}
             </h2>
             {activeItem?.description && (
-              <p className="mt-0.5 truncate text-sm text-arena-elements-textSecondary">
+              <p className="mt-0.5 truncate text-sm text-[#949e9c]">
                 {activeItem.description}
               </p>
             )}
@@ -639,6 +646,7 @@ export function OperationsWorkspace({
             activeValue={effectiveActivePanel}
             onSelect={selectPanel}
             ariaLabel="Operations panels"
+            className="border-[#273035] bg-[#273035] p-0.5"
             buttonClassName="h-9"
           />
         </div>

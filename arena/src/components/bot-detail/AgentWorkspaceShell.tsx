@@ -167,10 +167,161 @@ export function AgentWorkspaceShell({
     },
   ];
 
+  const mobileHeader = (
+    <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1 px-2 py-2 lg:hidden">
+      <div className="flex min-w-0 items-center gap-2">
+        <Link
+          to="/leaderboard"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+          aria-label="Back to agents"
+          title="Back to agents"
+        >
+          <span className="i-ph:arrow-left text-base" aria-hidden="true" />
+        </Link>
+        <Identicon address={bot.operatorAddress as Address} size={30} />
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate font-display text-base font-semibold text-arena-elements-textPrimary">
+            {title}
+          </h1>
+          <div className="truncate font-data text-xs text-arena-elements-textTertiary">
+            {formatStrategyType(bot.strategyType)} / {bot.paperTrade ? 'Paper' : 'Live'} / {targetNetwork}
+          </div>
+        </div>
+      </div>
+      <WorkspaceNavStrip
+        items={navItems}
+        activeValue={activeSection}
+        getHref={buildSectionHref}
+        getState={buildSectionState}
+        ariaLabel="Agent workspace sections"
+        className="mt-2 border-0 bg-transparent p-0"
+        buttonClassName="h-9 rounded-lg px-2.5"
+      />
+    </div>
+  );
+
+  const agentRail = (
+    <aside className="hidden w-[244px] shrink-0 flex-col border-r border-[#273035] bg-[#0b1418] lg:flex xl:w-[264px]">
+      <div className="border-b border-[#273035] p-3">
+        <Link
+          to="/leaderboard"
+          className="mb-3 inline-flex h-8 items-center gap-1.5 rounded-[5px] px-2 font-data text-xs text-[#949e9c] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+        >
+          <span className="i-ph:arrow-left text-sm" aria-hidden="true" />
+          Agents
+        </Link>
+
+        <div className="flex min-w-0 items-start gap-3">
+          <Identicon address={bot.operatorAddress as Address} size={38} />
+          <div className="min-w-0 flex-1">
+            <h1 className="line-clamp-2 font-display text-lg font-semibold leading-tight text-[#f6fefd]">
+              {title}
+            </h1>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5 font-data text-[11px] text-[#949e9c]">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#50d2c1]" aria-hidden="true" />
+              <span className="truncate">{botStatusLabel(bot.status)}</span>
+              <span className="text-[#575e62]" aria-hidden="true">/</span>
+              <span className="truncate">{bot.paperTrade ? 'Paper' : 'Live'}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f]">
+          <div className="flex min-w-0 items-center">
+            <code className="min-w-0 flex-1 truncate px-2.5 py-2 font-data text-xs text-[#d2dad7]" title={bot.operatorAddress}>
+              {formatCompactAddress(bot.operatorAddress)}
+            </code>
+            <button
+              type="button"
+              onClick={copyOperatorAddress}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center border-l border-[#273035] text-[#949e9c] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+              aria-label={addressCopied ? 'Operator address copied' : 'Copy operator address'}
+              title={addressCopied ? 'Copied' : 'Copy operator address'}
+            >
+              <span className={addressCopied ? 'i-ph:check text-sm text-[#50d2c1]' : 'i-ph:copy text-sm'} aria-hidden="true" />
+            </button>
+            {explorerAddress && (
+              <a
+                href={explorerAddress.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center border-l border-[#273035] text-[#949e9c] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                aria-label={`View operator address on ${explorerAddress.label}`}
+                title={`View on ${explorerAddress.label}`}
+              >
+                <span className="i-ph:arrow-square-out text-sm" aria-hidden="true" />
+              </a>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-1.5">
+          {metrics.map((metric) => (
+            <div key={metric.label} className="min-w-0 rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2 py-2">
+              <div className="truncate font-data text-[10px] text-[#949e9c]">
+                {metric.label}
+              </div>
+              <div className={`mt-1 truncate font-data text-sm font-semibold tabular-nums ${metric.color || 'text-[#f6fefd]'}`}>
+                {metric.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2" aria-label="Agent workspace sections">
+        {navItems.map((item) => {
+          const selected = item.value === activeSection;
+          return (
+            <Link
+              key={item.value}
+              to={buildSectionHref(item.value)}
+              state={buildSectionState?.(item.value)}
+              aria-current={selected ? 'page' : undefined}
+              className={`group flex h-10 min-w-0 items-center gap-2 rounded-[5px] px-2.5 font-display text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+                selected
+                  ? 'bg-[#143c38] text-[#f6fefd] shadow-[inset_3px_0_0_rgba(80,210,193,0.9)]'
+                  : 'text-[#949e9c] hover:bg-[#16242a] hover:text-[#f6fefd]'
+              }`}
+            >
+              <span
+                className={`${item.icon} shrink-0 text-base ${
+                  selected ? 'text-[#50d2c1]' : 'text-[#949e9c] group-hover:text-[#d2dad7]'
+                }`}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              {item.badge}
+            </Link>
+          );
+        })}
+      </nav>
+
+      <div className="border-t border-[#273035] p-3">
+        <div className="grid gap-1.5 font-data text-[11px] text-[#949e9c]">
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <span className="text-[#697371]">Strategy</span>
+            <span className="truncate text-[#d2dad7]">{formatStrategyType(bot.strategyType)}</span>
+          </div>
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <span className="text-[#697371]">Network</span>
+            <span className="truncate text-[#d2dad7]">{targetNetwork}</span>
+          </div>
+          {bot.verificationState !== 'unverified' && (
+            <div className="flex items-center justify-between gap-2 text-[#50d2c1]">
+              <span>Verified Operator</span>
+              <span className="i-ph:seal-check-fill text-sm" aria-hidden="true" />
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
+  );
+
   return (
-    <div className="flex h-full min-h-0 overflow-hidden">
-      <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        {focusMode && (
+    <div className="flex h-full min-h-0 overflow-hidden bg-[#081013]">
+      {focusMode ? (
+        <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1">
             <div className="flex h-12 min-w-0 items-center gap-2 px-2">
               <Link
@@ -202,108 +353,25 @@ export function AgentWorkspaceShell({
               </div>
             </div>
           </div>
-        )}
-
-        {!focusMode && (
-          <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1 px-3 py-2">
-            <div className="mx-auto flex w-full max-w-[1500px] items-center gap-3">
-              <Link
-                to="/"
-                className="hidden h-9 shrink-0 items-center gap-1.5 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/58 px-2.5 font-display text-sm font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 lg:inline-flex"
-                aria-label="Back to arena leaderboard"
-                title="Back to arena leaderboard"
-              >
-                <span className="i-ph:arrow-left text-base" aria-hidden="true" />
-                Arena
-              </Link>
-              <div className="flex min-w-[240px] max-w-[380px] items-center gap-3">
-                <Identicon address={bot.operatorAddress as Address} size={34} />
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <h1 className="truncate font-display text-lg font-bold tracking-tight text-arena-elements-textPrimary">
-                      {title}
-                    </h1>
-                    <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full border border-arena-elements-dividerColor/60 px-1.5 text-xs text-arena-elements-textSecondary">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
-                      {botStatusLabel(bot.status)}
-                    </span>
-                    <div className="hidden shrink-0 items-center overflow-hidden rounded-md border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 font-data text-[11px] text-arena-elements-textTertiary sm:inline-flex">
-                      <code className="px-2 py-1" title={bot.operatorAddress}>
-                        {formatCompactAddress(bot.operatorAddress)}
-                      </code>
-                      <button
-                        type="button"
-                        onClick={copyOperatorAddress}
-                        className="inline-flex h-7 w-7 items-center justify-center border-l border-arena-elements-dividerColor/60 text-arena-elements-textTertiary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-                        aria-label={addressCopied ? 'Operator address copied' : 'Copy operator address'}
-                        title={addressCopied ? 'Copied' : 'Copy operator address'}
-                      >
-                        <span className={addressCopied ? 'i-ph:check text-sm text-emerald-500' : 'i-ph:copy text-sm'} aria-hidden="true" />
-                      </button>
-                      {explorerAddress && (
-                        <a
-                          href={explorerAddress.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex h-7 w-7 items-center justify-center border-l border-arena-elements-dividerColor/60 text-arena-elements-textTertiary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-                          aria-label={`View operator address on ${explorerAddress.label}`}
-                          title={`View on ${explorerAddress.label}`}
-                        >
-                          <span className="i-ph:arrow-square-out text-sm" aria-hidden="true" />
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-arena-elements-textTertiary">
-                    <span className="truncate">{formatStrategyType(bot.strategyType)}</span>
-                    <span aria-hidden="true">/</span>
-                    <span>{bot.paperTrade ? 'Paper' : 'Live'}</span>
-                    <span aria-hidden="true">/</span>
-                    <span className="truncate">{targetNetwork}</span>
-                    {bot.verificationState !== 'unverified' && (
-                      <span
-                        className="i-ph:seal-check-fill shrink-0 text-emerald-500"
-                        aria-label="Verified operator"
-                        title="Verified operator"
-                      />
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <WorkspaceNavStrip
-                items={navItems}
-                activeValue={activeSection}
-                getHref={buildSectionHref}
-                getState={buildSectionState}
-                ariaLabel="Agent workspace sections"
-                className="min-w-0 flex-1 border-0 bg-transparent p-0"
-                buttonClassName="h-10 rounded-lg px-3"
-                itemClassName="min-w-0 flex-1 justify-center"
-              />
-
-              <div className="hidden shrink-0 items-center gap-3 min-[1360px]:flex">
-                {metrics.map((metric) => (
-                  <div key={metric.label} className="min-w-[58px]">
-                    <div className="truncate text-xs text-arena-elements-textTertiary">
-                      {metric.label}
-                    </div>
-                    <div className={`mt-0.5 truncate font-data text-sm font-bold text-arena-elements-textPrimary ${metric.color}`}>
-                      {metric.value}
-                    </div>
-                  </div>
-                ))}
-              </div>
+          <div className="min-h-0 flex-1 overflow-hidden p-0">
+            <div className="h-full min-h-0">
+              {children}
             </div>
           </div>
-        )}
-
-        <div className={focusMode ? 'min-h-0 flex-1 overflow-hidden p-0' : 'min-h-0 flex-1 overflow-hidden p-2 sm:p-3'}>
-          <div className={focusMode ? 'h-full min-h-0' : 'mx-auto h-full min-h-0 w-full max-w-[1500px]'}>
-            {children}
-          </div>
-        </div>
-      </section>
+        </section>
+      ) : (
+        <>
+          {agentRail}
+          <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+            {mobileHeader}
+            <div className="min-h-0 flex-1 overflow-hidden p-2 sm:p-3">
+              <div className="h-full min-h-0 w-full">
+                {children}
+              </div>
+            </div>
+          </section>
+        </>
+      )}
     </div>
   );
 }
