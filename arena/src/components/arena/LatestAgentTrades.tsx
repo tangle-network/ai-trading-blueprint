@@ -91,13 +91,13 @@ export function LatestAgentTrades({
               const operatorAddress = bot?.operatorAddress;
               const hasOperatorAddress = operatorAddress != null && isAddress(operatorAddress);
               const agentName = bot?.name ?? botName;
+              const href = `/arena/bot/${encodeURIComponent(botId)}/performance`;
               return (
-                <button
+                <Link
                   key={`${botId}:${trade.id}`}
-                  type="button"
+                  to={href}
                   className="group grid w-full grid-cols-[4.25rem_minmax(0,1fr)_6.25rem] items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
                   aria-label={`Open ${agentName} performance`}
-                  onClick={() => navigate(`/arena/bot/${encodeURIComponent(botId)}/performance`)}
                 >
                   <span
                     className="font-data text-sm text-arena-elements-textTertiary"
@@ -133,7 +133,7 @@ export function LatestAgentTrades({
                       {formatTradeUsd(trade.notionalUsd)}
                     </span>
                   </span>
-                </button>
+                </Link>
               );
             })}
           </div>

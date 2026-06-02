@@ -2233,16 +2233,19 @@ Shipped in this slice:
 - Reworked `/leaderboard` title and metadata to `Agent Explorer`.
 - Added a searchable agent table header on `/leaderboard`.
 - Added `LatestAgentTrades` `explorer` mode with a full-width ledger: Time, Agent, Fill, Market, USD, Ref. It intentionally omits the old Mode/Status columns that repeated paper/status concepts.
+- Converted compact fill-tape rows from JS-only buttons to real agent-performance links so Home remains crawlable and production smoke can discover live agents after the Top Agents preview was removed.
 - Updated the browser smoke fixture expectations to defend the new Home/Explorer split.
 
 Verification:
 
 - `pnpm --dir arena exec vitest run src/routes/__tests__/index.test.tsx src/routes/__tests__/leaderboard.test.tsx src/components/arena/__tests__/LatestAgentTrades.test.tsx src/components/layout/__tests__/ArenaAppShell.test.tsx --reporter=dot` passes: 4 files, 14 tests.
 - `pnpm --dir arena exec vitest run src/routes/__tests__/leaderboard.test.tsx src/components/arena/__tests__/LatestAgentTrades.test.tsx --reporter=dot` passes after the full-width explorer correction: 2 files, 4 tests.
+- `pnpm --dir arena exec vitest run src/components/arena/__tests__/LatestAgentTrades.test.tsx --reporter=dot` passes after the link correction: 1 file, 2 tests.
 - `pnpm --dir arena test -- --reporter=dot` passes: 67 files, 387 tests.
 - `pnpm --dir arena typecheck` passes.
 - `pnpm --dir arena build` passes. Existing large-chunk warnings remain unchanged.
 - `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-agent-explorer-smoke-20260602` passes.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-agent-explorer-link-smoke-20260602` passes after the compact fill-tape link correction.
 - Visual inspection passed:
   - `.evolve/arena-agent-explorer-smoke-20260602/1440x900-home.png`: Home is now volume + fills, with no ranked-agent duplicate.
   - `.evolve/arena-agent-explorer-smoke-20260602/1440x900-leaderboard.png`: Agent Explorer shows full-width volume, latest fills, and agents ledgers with no horizontal squeeze.

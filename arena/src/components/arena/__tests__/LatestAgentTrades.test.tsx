@@ -110,6 +110,10 @@ describe('LatestAgentTrades', () => {
     expect(screen.getByTestId('live-fill-tape')).toHaveClass('overflow-hidden', 'h-full', 'min-h-0');
     expect(screen.getByTestId('live-fill-tape-scroll')).toHaveClass('overflow-y-auto', 'min-h-0', 'flex-1');
     expect(screen.getByRole('heading', { name: 'Fills' })).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Open Tape Bot performance' })[0]).toHaveAttribute(
+      'href',
+      '/arena/bot/bot-1/performance',
+    );
     expect(screen.queryByText('Last 20')).not.toBeInTheDocument();
   });
 
