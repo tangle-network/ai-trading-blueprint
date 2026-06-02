@@ -841,7 +841,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   aria-label="Trade decisions"
                   tabIndex={0}
                 >
-                  <div className="grid grid-cols-[64px_76px_minmax(0,1fr)_88px] gap-2 border-b border-arena-elements-dividerColor/50 px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                  <div className="grid grid-cols-[58px_60px_minmax(0,1fr)_82px] gap-2 border-b border-arena-elements-dividerColor/50 px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
                     <span>Time</span>
                     <span>Side</span>
                     <span>Instrument</span>
@@ -866,7 +866,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                       <button
                         key={trade.id}
                         type="button"
-                        className={`grid w-full grid-cols-[64px_76px_minmax(0,1fr)_88px] items-center gap-2 border-b border-arena-elements-dividerColor/40 px-3 py-2.5 text-left transition-colors last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                        className={`grid w-full grid-cols-[58px_60px_minmax(0,1fr)_82px] items-center gap-2 border-b border-arena-elements-dividerColor/40 px-3 py-2.5 text-left transition-colors last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
                           isSelected
                             ? 'bg-violet-500/10 shadow-[inset_3px_0_0_rgba(139,92,246,0.72)]'
                             : 'hover:bg-arena-elements-item-backgroundHover'
@@ -884,7 +884,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                           <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-100 font-data text-[9px] font-bold text-sky-700 ring-1 ring-black/5 dark:bg-sky-500/20 dark:text-sky-200 dark:ring-white/10">
                             {compactInstrumentIcon(instrumentLabel)}
                           </span>
-                          <span className="truncate font-display text-sm font-semibold text-arena-elements-textPrimary">
+                          <span className="truncate font-display text-[13px] font-semibold text-arena-elements-textPrimary">
                             {instrumentLabel}
                           </span>
                         </div>
