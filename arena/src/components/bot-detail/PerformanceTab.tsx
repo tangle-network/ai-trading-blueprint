@@ -383,6 +383,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 30_000 : false,
   });
+  const tradePageIsPending = tradePage == null;
   const trades = tradePage?.trades;
   const marketCandleToken = useMemo(
     () => inferMarketCandleToken(bot, trades),
@@ -808,6 +809,28 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                 token={operatorAuth.token as string}
               />
             </Suspense>
+          ) : tradePageIsPending ? (
+            <div className="glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl p-3">
+              <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
+                <h3 className="font-display text-sm font-bold uppercase tracking-[0.12em] text-arena-elements-textPrimary">
+                  Recent Trades
+                </h3>
+                <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
+                  Loading
+                </span>
+              </div>
+              <div className="space-y-2">
+                {Array.from({ length: 6 }, (_, index) => (
+                  <div
+                    key={index}
+                    className="rounded-lg border border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/32 px-3 py-3"
+                  >
+                    <Skeleton className="h-4 w-24" />
+                    <Skeleton className="mt-2 h-3 w-40" />
+                  </div>
+                ))}
+              </div>
+            </div>
           ) : recentTradeTape.length === 0 ? (
             <LatestAgentTrades
               bots={[bot]}

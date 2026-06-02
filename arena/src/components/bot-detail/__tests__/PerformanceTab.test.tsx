@@ -86,6 +86,7 @@ let mockMetricsSummary: Record<string, number> | undefined = {
 let mockPortfolio: Record<string, unknown> | undefined;
 let mockTrades: Trade[] = [];
 let mockTradeTotal: number | null = null;
+let mockTradePageLoading = false;
 let mockMarketCandles: Array<{
   timestamp: number;
   token: string;
@@ -111,16 +112,18 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
     data: mockTrades,
   }),
   useBotTradePage: () => ({
-    data: {
-      trades: mockTrades,
-      total: mockTradeTotal,
-      loaded: mockTrades.length,
-      limit: 100,
-      offset: 0,
-      hasTotal: mockTradeTotal != null,
-      isCapped: mockTradeTotal != null ? mockTrades.length < mockTradeTotal : false,
-      legacyArray: mockTradeTotal == null,
-    },
+    data: mockTradePageLoading
+      ? undefined
+      : {
+          trades: mockTrades,
+          total: mockTradeTotal,
+          loaded: mockTrades.length,
+          limit: 100,
+          offset: 0,
+          hasTotal: mockTradeTotal != null,
+          isCapped: mockTradeTotal != null ? mockTrades.length < mockTradeTotal : false,
+          legacyArray: mockTradeTotal == null,
+        },
   }),
   useBotMarketCandles: () => ({
     data: mockMarketCandles,
@@ -243,6 +246,7 @@ describe('PerformanceTab', () => {
     mockPortfolio = undefined;
     mockTrades = [];
     mockTradeTotal = null;
+    mockTradePageLoading = false;
     mockMarketCandles = [];
     operatorAuthMock.isAuthenticated = false;
     operatorAuthMock.token = null;
@@ -651,6 +655,26 @@ describe('PerformanceTab', () => {
 
     expect(screen.queryByText('Owner chart copilot')).not.toBeInTheDocument();
     expect(await screen.findByText('Recent Trades')).toBeInTheDocument();
+  });
+
+  it('keeps the agent recent-trades rail stable while the trade ledger loads', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockTradePageLoading = true;
+
+    render(<PerformanceTab bot={makeBot()} isLive />);
+
+    expect(await screen.findByText('Recent Trades')).toBeInTheDocument();
+    expect(screen.queryByText('Latest Trades')).not.toBeInTheDocument();
+    expect(screen.getByText('Loading')).toBeInTheDocument();
   });
 
   it('lets public viewers inspect the selected chart trade decision', async () => {
