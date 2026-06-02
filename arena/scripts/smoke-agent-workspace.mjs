@@ -851,7 +851,7 @@ async function navigate(page, url) {
   await page.send('Page.navigate', { url });
   await waitFor(async () => {
     const readyState = await evaluate(page, 'document.readyState');
-    return readyState === 'complete';
+    return readyState === 'interactive' || readyState === 'complete';
   }, { timeoutMs: 15_000 });
   await wait(250);
 }
