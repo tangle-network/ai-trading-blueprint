@@ -75,6 +75,10 @@ const WORKSPACE_SECTIONS: readonly AgentWorkspaceSection[] = [
   'operations',
 ];
 
+interface AgentRouteState {
+  agentBackHref?: string;
+}
+
 function isWorkspaceSection(value: string | null | undefined): value is AgentWorkspaceSection {
   return !!value && WORKSPACE_SECTIONS.includes(value as AgentWorkspaceSection);
 }
@@ -143,6 +147,14 @@ function isOperationsPanel(value: string | null | undefined): value is Operation
 function buildSectionUrl(id: string, section: AgentWorkspaceSection, panel?: OperationsPanel | null): string {
   const path = `/arena/bot/${encodeURIComponent(id)}/${section}`;
   return section === 'operations' && panel ? `${path}?panel=${panel}` : path;
+}
+
+function readAgentBackHref(state: unknown, id: string): string | null {
+  if (state == null || typeof state !== 'object') return null;
+  const href = (state as AgentRouteState).agentBackHref;
+  if (typeof href !== 'string') return null;
+  const expectedPrefix = `/arena/bot/${encodeURIComponent(id)}/`;
+  return href.startsWith(expectedPrefix) ? href : null;
 }
 
 function WorkspaceLoading() {
@@ -313,6 +325,7 @@ export default function BotDetailPage() {
     bot?.operatorApiUrl ?? routeOperatorApiUrl,
   );
   const detailApiUrl = bot?.operatorApiUrl ?? routeOperatorApiUrl;
+  const commandAuth = useOperatorAuth(detailApiUrl);
   const isHyperliquidPerpBot = bot?.strategyType === 'hyperliquid_perp';
 
   const botIsLive = bot ? isLiveBotStatus(bot.status) : false;
@@ -391,9 +404,20 @@ export default function BotDetailPage() {
     );
   }
 
-  const handleSectionChange = (section: AgentWorkspaceSection) => {
-    if (!id) return;
-    navigate(buildSectionUrl(id, section));
+  const routeAgentId = id ?? bot.id;
+  const currentAgentHref = `${location.pathname}${location.search}`;
+  const directAgentBackHref = buildSectionUrl(routeAgentId, 'performance');
+  const stateAgentBackHref = readAgentBackHref(location.state, routeAgentId);
+  const focusMode = activeSection === 'runs' || activeSection === 'chat';
+  const buildWorkspaceSectionHref = (section: AgentWorkspaceSection) =>
+    buildSectionUrl(routeAgentId, section);
+  const buildWorkspaceSectionState = (section: AgentWorkspaceSection): AgentRouteState | undefined => {
+    if (section !== 'runs' && section !== 'chat') return undefined;
+    return {
+      agentBackHref: focusMode
+        ? stateAgentBackHref ?? directAgentBackHref
+        : currentAgentHref,
+    };
   };
 
   const handleOperationsPanelChange = (panel: OperationsPanel) => {
@@ -415,7 +439,7 @@ export default function BotDetailPage() {
     bot.status === 'needs_config' || bot.secretsConfigured === false;
   const hasChat = operatorMeta?.features.chat !== false;
   const hasTerminal = operatorMeta?.features.terminal === true;
-  const canCommandBot = isBotCommandableByWallet(bot, address);
+  const canCommandBot = isBotCommandableByWallet(bot, address ?? commandAuth.accountAddress);
 
   const renderWorkspace = () => {
     switch (activeSection) {
@@ -491,7 +515,6 @@ export default function BotDetailPage() {
     }
   };
 
-  const focusMode = activeSection === 'runs' || activeSection === 'chat';
   const workspace = (
     <Suspense fallback={<WorkspaceLoading />}>
       {renderWorkspace()}
@@ -505,7 +528,9 @@ export default function BotDetailPage() {
         displayName={displayBotName}
         activeSection={activeSection}
         navItems={botNavItems}
-        onSectionChange={handleSectionChange}
+        buildSectionHref={buildWorkspaceSectionHref}
+        buildSectionState={buildWorkspaceSectionState}
+        backHref={focusMode ? stateAgentBackHref ?? directAgentBackHref : undefined}
         focusMode={focusMode}
       >
         {focusMode ? (

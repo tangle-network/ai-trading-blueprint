@@ -22,15 +22,14 @@ const FIXTURE_OWNER_AUTH_KEY = `arena.operator_auth.${FIXTURE_OPERATOR.toLowerCa
 
 const SECTION_EXPECTATIONS = {
   performance: [
-    ['Price', 'Account'],
+    ['Market', 'Account', 'Price'],
     ['ETH', 'Performance', 'Awaiting first checkpoint'],
-    ['Decision Tape', 'Latest Executions', 'Copilot'],
+    ['Recent Trades', 'Latest Trades', 'Copilot'],
   ],
   portfolio: [
-    'Account',
-    'Priced Positions',
-    ['Account Equity', 'NAV'],
-    ['Trade Ledger', 'No executions recorded'],
+    'Portfolio',
+    ['Account Equity', 'Account Value'],
+    ['Trade History', 'No executions recorded'],
   ],
   runs: [
     ['Trading Trace', 'No traces yet'],
@@ -42,7 +41,7 @@ const SECTION_EXPECTATIONS = {
   ],
   operations: ['Risk & Ops', 'Validation', 'Validator'],
 };
-const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Cloud', 'Platform Volume', 'Latest Executions', 'Arena', 'ETH Macro Scalper'];
+const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Arena', 'Platform Volume', 'Latest Trades', 'Leaderboard', 'ETH Macro Scalper'];
 
 function parseArgs(argv) {
   const args = {
@@ -1216,38 +1215,49 @@ async function assertRailWidthChange(page, label, beforeExpression, predicateExp
 
 async function assertCollapsibleRails(page, baseUrl, botId) {
   await setViewport(page, { width: 1600, height: 900 });
+  await navigate(page, withPath(baseUrl, '/dashboard'));
+  await waitFor(async () => {
+    const bodyText = await evaluate(page, 'document.body.innerText');
+    return /Home|My Agents|Deploy/i.test(bodyText);
+  }, { timeoutMs: 12_000, intervalMs: 250 });
+
+  const globalWidthExpression = `(() => document.querySelector('nav[aria-label="Arena navigation"]')?.closest('aside')?.getBoundingClientRect().width ?? 0)()`;
+  const initialGlobalWidth = await evaluate(page, globalWidthExpression);
+  if (initialGlobalWidth <= 96) {
+    const global = await assertRailWidthChange(
+      page,
+      'Expand sidebar',
+      globalWidthExpression,
+      '((before, value) => before <= 96 && value >= 220)',
+    );
+    if (global.after <= global.before) {
+      throw new Error(`Global sidebar did not expand: ${global.before} -> ${global.after}`);
+    }
+    await clickButtonByLabel(page, 'Collapse sidebar');
+  } else {
+    const global = await assertRailWidthChange(
+      page,
+      'Collapse sidebar',
+      globalWidthExpression,
+      '((before, value) => before >= 220 && value <= 96)',
+    );
+    if (global.after >= global.before) {
+      throw new Error(`Global sidebar did not collapse: ${global.before} -> ${global.after}`);
+    }
+    await clickButtonByLabel(page, 'Expand sidebar');
+  }
+
   await navigate(page, withPath(baseUrl, `/arena/bot/${encodeURIComponent(botId)}/performance`));
   await waitFor(async () => {
     const bodyText = await evaluate(page, 'document.body.innerText');
-    return /Performance|Market|NAV/i.test(bodyText);
+    return /Performance|Market|Account/i.test(bodyText);
   }, { timeoutMs: 12_000, intervalMs: 250 });
 
-	  const globalWidthExpression = `(() => document.querySelector('aside')?.getBoundingClientRect().width ?? 0)()`;
-	  const initialGlobalWidth = await evaluate(page, globalWidthExpression);
-	  if (initialGlobalWidth <= 96) {
-	    const global = await assertRailWidthChange(
-	      page,
-	      'Expand sidebar',
-	      globalWidthExpression,
-	      '((before, value) => before <= 96 && value >= 220)',
-	    );
-	    if (global.after <= global.before) {
-	      throw new Error(`Global sidebar did not expand: ${global.before} -> ${global.after}`);
-	    }
-	    await clickButtonByLabel(page, 'Collapse sidebar');
-	  } else {
-	    const global = await assertRailWidthChange(
-	      page,
-	      'Collapse sidebar',
-	      globalWidthExpression,
-	      '((before, value) => before >= 220 && value <= 96)',
-	    );
-	    if (global.after >= global.before) {
-	      throw new Error(`Global sidebar did not collapse: ${global.before} -> ${global.after}`);
-	    }
-	    await clickButtonByLabel(page, 'Expand sidebar');
-	  }
-	}
+  const hasGlobalAgentChrome = await evaluate(page, `Boolean(document.querySelector('nav[aria-label="Arena navigation"]'))`);
+  if (hasGlobalAgentChrome) {
+    throw new Error('Agent workspace route still rendered global arena navigation');
+  }
+}
 
 async function assertRouteNavigation(page, baseUrl, botId) {
   await setViewport(page, VIEWPORTS[0]);
@@ -1270,7 +1280,14 @@ async function assertRouteNavigation(page, baseUrl, botId) {
     const pathname = await evaluate(page, 'location.pathname');
     return pathname.endsWith('/chat');
   });
-  await clickNav(page, 'Performance');
+  await clickNav(page, 'Agent');
+  await waitFor(async () => {
+    const pathname = await evaluate(page, 'location.pathname');
+    return pathname.endsWith('/portfolio');
+  });
+
+  await navigate(page, withPath(baseUrl, `/arena/bot/${encodeURIComponent(botId)}/chat`));
+  await clickNav(page, 'Agent');
   await waitFor(async () => {
     const pathname = await evaluate(page, 'location.pathname');
     return pathname.endsWith('/performance');

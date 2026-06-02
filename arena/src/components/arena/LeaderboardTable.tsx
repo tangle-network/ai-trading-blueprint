@@ -1,11 +1,11 @@
 import { Link } from 'react-router';
-import { m } from 'framer-motion';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Badge, Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { strategyColors } from '~/lib/constants/strategyColors';
 import { SparklineChart } from './SparklineChart';
 import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
+import { rankLeaderboardBots } from '~/lib/leaderboardRanking';
 
 interface LeaderboardTableProps {
   bots: Bot[];
@@ -34,7 +34,7 @@ function ScoreIndicator({ score }: { score: number }) {
 }
 
 export function LeaderboardTable({ bots }: LeaderboardTableProps) {
-  const sorted = [...bots].sort((a, b) => b.pnlPercent - a.pnlPercent);
+  const sorted = rankLeaderboardBots(bots);
 
   return (
     <Table>
@@ -47,20 +47,17 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
           <TableHead className="text-right">Return</TableHead>
           <TableHead className="text-right hidden sm:table-cell">Sharpe</TableHead>
           <TableHead className="text-right hidden md:table-cell">Max DD</TableHead>
-          <TableHead className="text-right hidden lg:table-cell">NAV</TableHead>
-          <TableHead className="text-right hidden sm:table-cell">Executions</TableHead>
+          <TableHead className="text-right hidden lg:table-cell">Account</TableHead>
+          <TableHead className="text-right hidden sm:table-cell">Trades</TableHead>
           <TableHead className="text-right hidden md:table-cell">Risk Score</TableHead>
           <TableHead className="hidden lg:table-cell">Status</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {sorted.map((bot, index) => (
-          <m.tr
+          <TableRow
             key={bot.id}
-            initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: index * 0.04, duration: 0.3 }}
-            className="border-b border-arena-elements-dividerColor transition-all duration-200 hover:bg-arena-elements-item-backgroundHover group cursor-pointer"
+            className="border-b border-arena-elements-dividerColor transition-colors hover:bg-arena-elements-item-backgroundHover group"
           >
             <TableCell>
               <RankCell rank={index + 1} />
@@ -68,11 +65,11 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
             <TableCell>
               <Link
                 to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
-                className="font-display font-semibold text-sm hover:text-violet-400 transition-colors duration-200"
+                className="font-display text-base font-semibold hover:text-violet-700 transition-colors duration-200 dark:hover:text-violet-300"
               >
                 {bot.name}
               </Link>
-              <div className="flex items-center gap-1.5 text-xs font-data text-arena-elements-textTertiary mt-0.5">
+              <div className="flex items-center gap-1.5 text-sm font-data text-arena-elements-textTertiary mt-0.5">
                 <Identicon address={bot.operatorAddress as Address} size={14} />
                 {bot.operatorAddress.slice(0, 6)}...{bot.operatorAddress.slice(-4)}
               </div>
@@ -87,7 +84,7 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
             </TableCell>
             <TableCell className="text-right">
               {bot.pnlPercent !== 0 ? (
-                <span className={`font-data font-bold text-sm ${
+                <span className={`font-data font-bold text-lg ${
                   bot.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'
                 }`}>
                   {bot.pnlPercent >= 0 ? '+' : ''}{bot.pnlPercent.toFixed(1)}%
@@ -96,20 +93,20 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
                 <span className="font-data text-sm text-arena-elements-textTertiary">—</span>
               )}
             </TableCell>
-            <TableCell className="text-right font-data text-sm hidden sm:table-cell">
+            <TableCell className="text-right font-data text-base hidden sm:table-cell">
               {bot.sharpeRatio !== 0 ? bot.sharpeRatio.toFixed(1) : <span className="text-arena-elements-textTertiary">—</span>}
             </TableCell>
-            <TableCell className="text-right font-data text-sm hidden md:table-cell">
+            <TableCell className="text-right font-data text-base hidden md:table-cell">
               {bot.maxDrawdown !== 0 ? (
                 <span className="text-arena-elements-icon-error">{bot.maxDrawdown.toFixed(1)}%</span>
               ) : (
                 <span className="text-arena-elements-textTertiary">—</span>
               )}
             </TableCell>
-            <TableCell className="text-right font-data text-sm hidden lg:table-cell">
+            <TableCell className="text-right font-data text-base hidden lg:table-cell">
               {bot.tvl > 0 ? `$${(bot.tvl / 1000).toFixed(0)}K` : <span className="text-arena-elements-textTertiary">—</span>}
             </TableCell>
-            <TableCell className="text-right font-data text-sm hidden sm:table-cell">
+            <TableCell className="text-right font-data text-base hidden sm:table-cell">
               {bot.totalTrades > 0 ? bot.totalTrades.toLocaleString() : <span className="text-arena-elements-textTertiary">—</span>}
             </TableCell>
             <TableCell className="text-right hidden md:table-cell">
@@ -124,7 +121,7 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
                 {botStatusLabel(bot.status)}
               </Badge>
             </TableCell>
-          </m.tr>
+          </TableRow>
         ))}
       </TableBody>
     </Table>

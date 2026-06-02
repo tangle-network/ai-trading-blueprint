@@ -495,7 +495,7 @@ describe('PerformanceTab', () => {
 	    render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
 
 	    expect(screen.getByText('12')).toBeInTheDocument();
-	    expect(screen.getByText('Loaded Executions')).toBeInTheDocument();
+	    expect(screen.getByText('Loaded Trades')).toBeInTheDocument();
 	    expect(screen.getByText('Last 6 of 12 loaded')).toBeInTheDocument();
 	  });
 
@@ -523,7 +523,7 @@ describe('PerformanceTab', () => {
 
     render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
 
-    expect(screen.getByText('Total Executions')).toBeInTheDocument();
+    expect(screen.getByText('Total Trades')).toBeInTheDocument();
     expect(screen.getByText('110')).toBeInTheDocument();
     expect(screen.getByText('6 loaded')).toBeInTheDocument();
     expect(screen.getByText('Last 6 of 110')).toBeInTheDocument();
@@ -586,10 +586,10 @@ describe('PerformanceTab', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'ETH Price' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Price' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Market' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('Last Price')).toBeInTheDocument();
     expect(screen.getByText('30D Move')).toBeInTheDocument();
-	    expect(screen.getByText('Volume')).toBeInTheDocument();
+     expect(screen.getByText('Market Volume')).toBeInTheDocument();
 	    expect(screen.getByText('1,771')).toBeInTheDocument();
     expect(screen.queryByText('Range PnL')).not.toBeInTheDocument();
     await waitFor(() => expect(lightweightChartMock.candleSeries.setData).toHaveBeenCalled());
@@ -650,7 +650,7 @@ describe('PerformanceTab', () => {
     render(<PerformanceTab bot={makeBot()} isLive />);
 
     expect(screen.queryByText('Owner chart copilot')).not.toBeInTheDocument();
-    expect(await screen.findByText('Decision Tape')).toBeInTheDocument();
+    expect(await screen.findByText('Recent Trades')).toBeInTheDocument();
   });
 
   it('lets public viewers inspect the selected chart trade decision', async () => {

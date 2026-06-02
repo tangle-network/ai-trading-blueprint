@@ -700,7 +700,8 @@ export function ChatTab({
           ],
     [primarySessionId, sessions],
   );
-  const showSessionSidebar = sessionItems.length > 1;
+  const showSessionSidebar = !immersive && sessionItems.length > 1;
+  const showDecisionInspector = !immersive && decisionItems.length > 0;
   const chatHeaderTitle = activeSession
     ? getSessionDisplayTitle(
         {
@@ -850,20 +851,20 @@ export function ChatTab({
 
           <div
             className={`min-h-0 flex-1 bg-arena-elements-background-depth-1/15 ${
-              decisionItems.length === 0
+              !showDecisionInspector
                 ? ""
                 : isStackedLayout
                   ? "flex flex-col"
                   : "grid grid-cols-[minmax(0,1fr)_340px]"
             }`}
           >
-            {decisionItems.length > 0 && isStackedLayout && (
+            {showDecisionInspector && isStackedLayout && (
               <DecisionInspector
                 item={selectedDecisionItem}
                 className="max-h-80 border-b border-arena-elements-dividerColor/50"
               />
             )}
-            <div className={decisionItems.length > 0 && isStackedLayout ? "min-h-0 min-w-0 flex-1" : "min-h-0 min-w-0"}>
+            <div className={showDecisionInspector && isStackedLayout ? "min-h-0 min-w-0 flex-1" : "min-h-0 min-w-0"}>
               <ChatTranscript
                 messages={stream.messages}
                 partMap={stream.partMap}
@@ -877,7 +878,7 @@ export function ChatTab({
                 }
               />
             </div>
-            {decisionItems.length > 0 && !isStackedLayout && (
+            {showDecisionInspector && !isStackedLayout && (
               <DecisionInspector
                 item={selectedDecisionItem}
                 className="border-l border-arena-elements-dividerColor/50"

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Link } from 'react-router';
 
 function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(' ');
@@ -14,7 +15,9 @@ export interface WorkspaceNavItem<Value extends string> {
 interface WorkspaceNavStripProps<Value extends string> {
   items: Array<WorkspaceNavItem<Value>>;
   activeValue: Value;
-  onSelect: (value: Value) => void;
+  onSelect?: (value: Value) => void;
+  getHref?: (value: Value) => string;
+  getState?: (value: Value) => unknown;
   ariaLabel: string;
   className?: string;
   buttonClassName?: string;
@@ -25,6 +28,8 @@ export function WorkspaceNavStrip<Value extends string>({
   items,
   activeValue,
   onSelect,
+  getHref,
+  getState,
   ariaLabel,
   className,
   buttonClassName,
@@ -40,21 +45,16 @@ export function WorkspaceNavStrip<Value extends string>({
     >
       {items.map((item) => {
         const selected = item.value === activeValue;
-        return (
-          <button
-            key={item.value}
-            type="button"
-            onClick={() => onSelect(item.value)}
-            aria-current={selected ? 'page' : undefined}
-            className={cx(
-              'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60',
-              selected
-                ? 'bg-violet-500/14 text-arena-elements-textPrimary'
-                : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary',
-              buttonClassName,
-              itemClassName,
-            )}
-          >
+        const itemClass = cx(
+          'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60',
+          selected
+            ? 'bg-violet-500/14 text-arena-elements-textPrimary'
+            : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary',
+          buttonClassName,
+          itemClassName,
+        );
+        const content = (
+          <>
             <span
               className={cx(
                 item.icon,
@@ -67,6 +67,30 @@ export function WorkspaceNavStrip<Value extends string>({
             />
             <span>{item.label}</span>
             {item.badge}
+          </>
+        );
+        const href = getHref?.(item.value);
+
+        return href ? (
+          <Link
+            key={item.value}
+            to={href}
+            state={getState?.(item.value)}
+            aria-current={selected ? 'page' : undefined}
+            className={itemClass}
+            onClick={() => onSelect?.(item.value)}
+          >
+            {content}
+          </Link>
+        ) : (
+          <button
+            key={item.value}
+            type="button"
+            onClick={() => onSelect?.(item.value)}
+            aria-current={selected ? 'page' : undefined}
+            className={itemClass}
+          >
+            {content}
           </button>
         );
       })}

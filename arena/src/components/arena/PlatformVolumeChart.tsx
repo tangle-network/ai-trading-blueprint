@@ -237,7 +237,7 @@ export function PlatformVolumeChart({
   const summaryStats = [
     { label: 'Live', value: formatUsd(series.summary.liveUsd) },
     { label: 'Paper', value: formatUsd(series.summary.paperUsd) },
-    { label: 'Priced Executions', value: series.summary.pricedTradeCount.toLocaleString() },
+    { label: 'Priced Trades', value: series.summary.pricedTradeCount.toLocaleString() },
     { label: 'Coverage', value: operatorCoverage },
   ];
 
@@ -269,25 +269,29 @@ export function PlatformVolumeChart({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 2xl:justify-end">
-          <label className="sr-only" htmlFor="platform-volume-range">
-            Volume range
-          </label>
-          <div className="inline-flex h-9 items-center gap-2 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/72 px-2">
-            <span className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-              Range
-            </span>
-            <select
-              id="platform-volume-range"
-              value={range}
-              onChange={(event) => setRange(event.target.value as PlatformVolumeRange)}
-              className="h-7 rounded-md bg-arena-elements-background-depth-1 px-2 font-data text-sm text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-            >
-              {PLATFORM_VOLUME_RANGES.map((item) => (
-                <option key={item.value} value={item.value}>
+          <div
+            className="inline-flex rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/60 p-1"
+            aria-label="Volume range"
+            role="group"
+          >
+            {PLATFORM_VOLUME_RANGES.map((item) => {
+              const selected = item.value === range;
+              return (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => setRange(item.value)}
+                  className={`inline-flex h-8 items-center rounded-md px-3 font-data text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                    selected
+                      ? 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
+                      : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
+                  }`}
+                  aria-pressed={selected}
+                >
                   {item.label}
-                </option>
-              ))}
-            </select>
+                </button>
+              );
+            })}
           </div>
 
           <div
@@ -383,7 +387,7 @@ export function PlatformVolumeChart({
                   No priced volume
                 </p>
                 <p className="mt-1 text-sm text-arena-elements-textSecondary">
-                  Awaiting USD-valued executions.
+                  Awaiting USD-valued trades.
                 </p>
               </div>
             </div>
@@ -396,7 +400,7 @@ export function PlatformVolumeChart({
               { label: 'Total volume', value: formatUsd(series.summary.totalUsd), icon: 'i-ph:chart-line-up' },
               { label: 'Live notional', value: formatUsd(series.summary.liveUsd), icon: 'i-ph:lightning' },
               { label: 'Paper notional', value: formatUsd(series.summary.paperUsd), icon: 'i-ph:notepad' },
-              { label: 'Priced executions', value: series.summary.pricedTradeCount.toLocaleString(), icon: 'i-ph:swap' },
+              { label: 'Priced trades', value: series.summary.pricedTradeCount.toLocaleString(), icon: 'i-ph:swap' },
             ].map((stat) => (
               <div
                 key={stat.label}

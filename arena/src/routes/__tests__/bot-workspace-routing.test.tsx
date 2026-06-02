@@ -63,6 +63,7 @@ vi.mock('~/lib/hooks/useBots', () => ({
       serviceId: 1,
       name: 'Route Bot',
       operatorAddress: '0x1234567890abcdef1234567890abcdef12345678',
+      submitterAddress: '0x1234567890abcdef1234567890abcdef12345678',
       vaultAddress: '0x0000000000000000000000000000000000000000',
       strategyType: 'hyperliquid_perp',
       status: 'active',
@@ -77,9 +78,11 @@ vi.mock('~/lib/hooks/useBots', () => ({
       avgValidatorScore: 90,
       sparklineData: [100, 103],
       verificationState: 'authoritative',
+      source: 'operator',
       operatorKind: 'cloud',
       operatorApiUrl: 'http://operator.test',
       chainId: 84532,
+      sandboxId: 'sandbox-1',
       paperTrade: true,
       strategyConfig: { asset: 'ETH', initial_capital_usd: '1000' },
       riskParams: { max_drawdown_pct: '5' },
@@ -102,13 +105,14 @@ vi.mock('~/lib/hooks/useBotLiveSummary', () => ({
     pnlPercent: 3.2,
     sharpeRatio: 1.4,
     maxDrawdown: 2.1,
-    tradeCount: 12,
+    tradeCount: 1,
     portfolioValue: 1032,
   }),
 }));
 
 vi.mock('~/lib/hooks/useOperatorAuth', () => ({
   useOperatorAuth: () => ({
+    accountAddress: '0x1234567890abcdef1234567890abcdef12345678',
     isAuthenticating: false,
   }),
 }));
@@ -138,7 +142,11 @@ vi.mock('~/lib/stores/provisions', () => ({
 }));
 
 vi.mock('~/components/bot-detail/PerformanceTab', () => ({
-  PerformanceTab: () => <div data-testid="workspace-performance">Performance workspace</div>,
+  PerformanceTab: ({ canCommand }: any) => (
+    <div data-testid="workspace-performance">
+      Performance workspace {canCommand ? 'commandable' : 'public'}
+    </div>
+  ),
 }));
 
 vi.mock('~/components/bot-detail/PortfolioWorkspace', () => ({
@@ -232,12 +240,18 @@ describe('bot workspace routing', () => {
     expect(router.state.location.search).toBe('');
   });
 
+  it('uses the operator auth account as the command identity fallback', async () => {
+    renderBotWorkspace(['/arena/bot/bot-1/performance']);
+
+    expect(await findWorkspace('workspace-performance')).toHaveTextContent('commandable');
+  });
+
   it('preserves browser back navigation between route-native agent sections', async () => {
     const router = renderBotWorkspace(['/arena/bot/bot-1/performance']);
 
     expect(await findWorkspace('workspace-performance')).toBeInTheDocument();
     expect(screen.getByText('12')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /chat/i }));
+    fireEvent.click(screen.getByRole('link', { name: /chat/i }));
 
     expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/chat');
@@ -254,10 +268,61 @@ describe('bot workspace routing', () => {
     const router = renderBotWorkspace(['/arena/bot/bot-1/chat']);
 
     expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /performance/i }));
+    fireEvent.click(screen.getByRole('link', { name: /agent/i }));
 
     expect(await findWorkspace('workspace-performance')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/performance');
+  });
+
+  it('returns from chat focus mode to the agent section that opened it', async () => {
+    const router = renderBotWorkspace(['/arena/bot/bot-1/portfolio']);
+
+    expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('link', { name: /chat/i }));
+
+    expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/arena/bot/bot-1/chat');
+
+    fireEvent.click(screen.getByRole('link', { name: /agent/i }));
+
+    expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/arena/bot/bot-1/portfolio');
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+
+    expect(router.state.location.pathname).toBe('/arena/bot/bot-1/portfolio');
+  });
+
+  it('preserves alias route tokens when returning from chat focus mode', async () => {
+    const router = renderBotWorkspace(['/arena/bot/sandbox-1/portfolio']);
+
+    expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('link', { name: /chat/i }));
+
+    expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/arena/bot/sandbox-1/chat');
+
+    fireEvent.click(screen.getByRole('link', { name: /agent/i }));
+
+    expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/arena/bot/sandbox-1/portfolio');
+  });
+
+  it('returns from traces focus mode to the agent section that opened it', async () => {
+    const router = renderBotWorkspace(['/arena/bot/bot-1/portfolio']);
+
+    expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('link', { name: /traces/i }));
+
+    expect(await findWorkspace('workspace-runs')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/arena/bot/bot-1/runs');
+
+    fireEvent.click(screen.getByRole('link', { name: /agent/i }));
+
+    expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/arena/bot/bot-1/portfolio');
   });
 
   it('redirects legacy query tabs into route-native sections without leaving stale tab state', async () => {
@@ -274,7 +339,7 @@ describe('bot workspace routing', () => {
 
     expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/chat');
-    expect(screen.getByRole('button', { name: /chat/i })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: /chat/i })).toHaveAttribute('aria-current', 'page');
   });
 
   it('persists operations panel changes in the route query string', async () => {

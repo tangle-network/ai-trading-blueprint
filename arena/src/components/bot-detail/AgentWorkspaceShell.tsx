@@ -12,7 +12,6 @@ import { getBotStrategyChainId } from '~/lib/utils/botStrategy';
 import { networks } from '~/lib/contracts/chains';
 import { HEADER_RETURN_PERCENT_COPY } from './metricCopy';
 import {
-  WorkspaceMetric,
   WorkspaceNavStrip,
   type WorkspaceNavItem,
 } from './shared/WorkspacePrimitives';
@@ -26,7 +25,9 @@ interface AgentWorkspaceShellProps {
   displayName: string;
   activeSection: AgentWorkspaceSection;
   navItems: AgentWorkspaceNavItem[];
-  onSectionChange: (value: AgentWorkspaceSection) => void;
+  buildSectionHref: (value: AgentWorkspaceSection) => string;
+  buildSectionState?: (value: AgentWorkspaceSection) => unknown;
+  backHref?: string;
   focusMode?: boolean;
   children: ReactNode;
 }
@@ -63,7 +64,9 @@ export function AgentWorkspaceShell({
   displayName,
   activeSection,
   navItems,
-  onSectionChange,
+  buildSectionHref,
+  buildSectionState,
+  backHref,
   focusMode = false,
   children,
 }: AgentWorkspaceShellProps) {
@@ -126,6 +129,7 @@ export function AgentWorkspaceShell({
   };
 
   const tradeCount = Math.max(summary.tradeCount ?? 0, bot.totalTrades ?? 0);
+  const focusNavItems = navItems.filter((item) => item.value === 'runs' || item.value === 'chat');
   const copyOperatorAddress = () => {
     if (!navigator.clipboard) return;
     void navigator.clipboard.writeText(bot.operatorAddress).then(() => {
@@ -157,13 +161,13 @@ export function AgentWorkspaceShell({
       title: 'Maximum drawdown over sampled account value history.',
     },
     {
-      label: 'Executions',
+      label: 'Trades',
       value: tradeCount > 0 ? tradeCount.toLocaleString() : '—',
       color: '',
-      title: 'Largest observed execution count from live metrics, trade ledger, and operator summary.',
+      title: 'Live metric total; falls back to the operator summary when metrics are unavailable.',
     },
     {
-      label: 'NAV',
+      label: 'Account',
       value: formatPortfolioValue(summary.portfolioValue),
       color: '',
       title: 'Latest priced account value, falling back to the latest account snapshot when portfolio pricing is unavailable.',
@@ -177,37 +181,50 @@ export function AgentWorkspaceShell({
           <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 px-3 py-2 shadow-[0_12px_28px_rgba(0,0,0,0.12)] backdrop-blur-xl">
             <div className="flex min-w-0 items-center gap-2">
               <Link
-                to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
+                to={backHref ?? `/arena/bot/${encodeURIComponent(bot.id)}/performance`}
+                replace
                 className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/58 px-2.5 font-display text-sm font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-                aria-label="Back to agent performance"
-                title="Back to agent performance"
+                aria-label="Back to agent"
+                title="Back to agent"
               >
                 <span className="i-ph:arrow-left text-base" aria-hidden="true" />
                 <span className="hidden sm:inline">Agent</span>
               </Link>
-              <WorkspaceNavStrip
-                items={navItems}
-                activeValue={activeSection}
-                onSelect={onSectionChange}
-                ariaLabel="Agent focus navigation"
-                className="ml-auto min-w-0 border-0 bg-transparent p-0"
-                buttonClassName="h-9 rounded-lg"
-              />
+              {focusNavItems.length > 0 && (
+                <WorkspaceNavStrip
+                  items={focusNavItems}
+                  activeValue={activeSection}
+                  getHref={buildSectionHref}
+                  getState={buildSectionState}
+                  ariaLabel="Agent focus navigation"
+                  className="ml-auto min-w-0 border-0 bg-transparent p-0"
+                  buttonClassName="h-9 rounded-lg"
+                />
+              )}
             </div>
           </div>
         )}
 
         {!focusMode && (
-          <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/76 px-4 py-2">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex min-w-0 items-center gap-2.5">
+          <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/82 px-3 py-2 backdrop-blur-xl">
+            <div className="mx-auto flex w-full max-w-[1500px] items-center gap-3">
+              <Link
+                to="/"
+                className="hidden h-9 shrink-0 items-center gap-1.5 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/58 px-2.5 font-display text-sm font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 lg:inline-flex"
+                aria-label="Back to arena leaderboard"
+                title="Back to arena leaderboard"
+              >
+                <span className="i-ph:arrow-left text-base" aria-hidden="true" />
+                Arena
+              </Link>
+              <div className="flex min-w-[260px] max-w-[360px] items-center gap-2.5">
                 <Identicon address={bot.operatorAddress as Address} size={28} />
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
-                    <h1 className="truncate font-display text-lg font-semibold text-arena-elements-textPrimary">
+                    <h1 className="truncate font-display text-base font-semibold text-arena-elements-textPrimary">
                       {title}
                     </h1>
-                    <div className="hidden shrink-0 items-center overflow-hidden rounded-md border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 font-data text-xs text-arena-elements-textTertiary sm:inline-flex">
+                    <div className="hidden shrink-0 items-center overflow-hidden rounded-md border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 font-data text-[11px] text-arena-elements-textTertiary sm:inline-flex">
                       <code className="px-2 py-1" title={bot.operatorAddress}>
                         {formatCompactAddress(bot.operatorAddress)}
                       </code>
@@ -234,7 +251,7 @@ export function AgentWorkspaceShell({
                       )}
                     </div>
                   </div>
-                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5">
                     <Badge variant={botStatusBadgeVariant(bot.status)}>{botStatusLabel(bot.status)}</Badge>
                     <Badge variant="accent">{formatStrategyType(bot.strategyType)}</Badge>
                     {bot.verificationState === 'unverified' && <Badge variant="outline">Unverified</Badge>}
@@ -245,16 +262,29 @@ export function AgentWorkspaceShell({
                 </div>
               </div>
 
+              <WorkspaceNavStrip
+                items={navItems}
+                activeValue={activeSection}
+                getHref={buildSectionHref}
+                getState={buildSectionState}
+                ariaLabel="Agent workspace sections"
+                className="min-w-0 flex-1 justify-center border-0 bg-transparent p-0"
+                buttonClassName="h-9 rounded-lg px-2.5"
+              />
+
               <Tooltip.Provider delayDuration={120}>
-                <div className="hidden shrink-0 grid-cols-5 gap-1.5 sm:grid">
+                <div className="hidden shrink-0 items-center gap-4 2xl:flex">
                   {metrics.map((metric) => (
                       <Tooltip.Root key={metric.label}>
                         <Tooltip.Trigger asChild>
-                          <WorkspaceMetric
-                            label={metric.label}
-                            value={metric.value}
-                            valueClassName={metric.color}
-                          />
+                          <div className="min-w-[64px]">
+                            <div className="truncate font-data text-[10px] font-semibold uppercase text-arena-elements-textTertiary">
+                              {metric.label}
+                            </div>
+                            <div className={`mt-0.5 truncate font-data text-sm font-bold text-arena-elements-textPrimary ${metric.color}`}>
+                              {metric.value}
+                            </div>
+                          </div>
                       </Tooltip.Trigger>
                       {metric.title && (
                         <Tooltip.Portal>
@@ -274,19 +304,13 @@ export function AgentWorkspaceShell({
                 </div>
               </Tooltip.Provider>
             </div>
-            <WorkspaceNavStrip
-              items={navItems}
-              activeValue={activeSection}
-              onSelect={onSectionChange}
-              ariaLabel="Agent workspace sections"
-              className="mt-2 border-0 bg-transparent p-0 pb-0.5"
-              buttonClassName="rounded-lg"
-            />
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-hidden p-2 sm:p-3">
-          {children}
+        <div className={focusMode ? 'min-h-0 flex-1 overflow-hidden p-0' : 'min-h-0 flex-1 overflow-hidden p-2 sm:p-3'}>
+          <div className={focusMode ? 'h-full min-h-0' : 'mx-auto h-full min-h-0 w-full max-w-[1500px]'}>
+            {children}
+          </div>
         </div>
       </section>
     </div>

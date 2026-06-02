@@ -734,7 +734,8 @@ export function RunsTab({
     completed: runs.filter((run) => run.status === "completed").length,
     failed: runs.filter((run) => run.status === "failed" || run.status === "interrupted").length,
   }), [runs]);
-  const showRunsSidebar = runs.length > 1 || Boolean(runsQuery.hasNextPage);
+  const showRunsSidebar = !immersive && (runs.length > 1 || Boolean(runsQuery.hasNextPage));
+  const showDecisionInspector = !immersive;
 
   const runsErrorMessage = extractRunsErrorMessage(
     runsQuery.error instanceof Error ? runsQuery.error.message : null,
@@ -910,16 +911,20 @@ export function RunsTab({
 
             <div
               className={`min-h-0 flex-1 bg-arena-elements-background-depth-1/15 ${
-                isStackedLayout ? "flex flex-col" : "grid grid-cols-[minmax(0,1fr)_340px]"
+                !showDecisionInspector
+                  ? ""
+                  : isStackedLayout
+                    ? "flex flex-col"
+                    : "grid grid-cols-[minmax(0,1fr)_340px]"
               }`}
             >
-              {isStackedLayout && (
+              {showDecisionInspector && isStackedLayout && (
                 <DecisionInspector
                   item={selectedDecisionItem}
                   className="max-h-80 border-b border-arena-elements-dividerColor/50"
                 />
               )}
-              <div className={isStackedLayout ? "min-h-0 min-w-0 flex-1" : "min-h-0 min-w-0"}>
+              <div className={showDecisionInspector && isStackedLayout ? "min-h-0 min-w-0 flex-1" : "min-h-0 min-w-0"}>
                 {shouldShowTraceReplay ? (
                   <ChatTranscript
                     messages={stream.messages}
@@ -932,7 +937,7 @@ export function RunsTab({
                   <RunDetailPanel run={activeRun} />
                 ) : null}
               </div>
-              {!isStackedLayout && (
+              {showDecisionInspector && !isStackedLayout && (
                 <DecisionInspector
                   item={selectedDecisionItem}
                   className="border-l border-arena-elements-dividerColor/50"

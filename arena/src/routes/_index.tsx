@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
-import type { Address } from 'viem';
 import { useAccount } from 'wagmi';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
@@ -10,91 +9,17 @@ import { FilterBar } from '~/components/arena/FilterBar';
 import { LeaderboardTable } from '~/components/arena/LeaderboardTable';
 import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
 import { PlatformVolumeChart } from '~/components/arena/PlatformVolumeChart';
-import { Badge, Identicon } from '@tangle-network/blueprint-ui/components';
-import { SparklineChart } from '~/components/arena/SparklineChart';
 import { SkeletonCard } from '~/components/ui/Skeleton';
-import { strategyColors } from '~/lib/constants/strategyColors';
-import type { Bot } from '~/lib/types/bot';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
-import { botStatusBadgeVariant, botStatusLabel, formatNumber } from '~/lib/format';
+import { formatNumber } from '~/lib/format';
+import { rankLeaderboardBots } from '~/lib/leaderboardRanking';
 
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
 ];
-
-function BotCard({ bot, rank }: { bot: Bot; rank: number }) {
-  return (
-    <Link
-      to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
-      className="glass-card rounded-xl p-5 hover:border-violet-500/20 transition-all duration-200 block"
-    >
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="text-sm font-data font-bold text-arena-elements-textTertiary w-5 shrink-0">
-            {rank}
-          </span>
-          <Identicon address={bot.operatorAddress as Address} size={32} />
-          <div className="min-w-0">
-            <div className="font-display font-semibold text-base truncate">{bot.name}</div>
-            <div className="text-xs font-data text-arena-elements-textTertiary truncate">
-              {bot.operatorAddress.slice(0, 6)}...{bot.operatorAddress.slice(-4)}
-            </div>
-          </div>
-        </div>
-        <Badge variant={botStatusBadgeVariant(bot.status)} className="text-xs shrink-0">
-          {botStatusLabel(bot.status)}
-        </Badge>
-        {bot.verificationState === 'unverified' && (
-          <Badge variant="outline" className="text-xs shrink-0">
-            Unverified
-          </Badge>
-        )}
-      </div>
-
-      <div className="flex items-end justify-between gap-3">
-        <div className="space-y-2">
-          <div>
-            {bot.pnlPercent !== 0 ? (
-              <span className={`font-data font-bold text-xl ${bot.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'}`}>
-                {bot.pnlPercent >= 0 ? '+' : ''}{bot.pnlPercent.toFixed(1)}%
-              </span>
-            ) : (
-              <span className="font-data text-xl text-arena-elements-textTertiary">&mdash;</span>
-            )}
-          </div>
-          <div className="flex items-center gap-3 text-xs font-data text-arena-elements-textSecondary">
-            {bot.tvl > 0 && <span>${bot.tvl >= 1000 ? `${(bot.tvl / 1000).toFixed(0)}K` : bot.tvl.toFixed(0)} NAV</span>}
-            {bot.totalTrades > 0 && <span>{bot.totalTrades} executions</span>}
-            {bot.sharpeRatio > 0 && <span>{bot.sharpeRatio.toFixed(1)} Sharpe</span>}
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge variant={strategyColors[bot.strategyType] ?? 'default'} className="text-xs">{bot.strategyType}</Badge>
-            {bot.avgValidatorScore > 0 && (
-              <span className={`text-xs font-data font-bold px-1.5 py-0.5 rounded ${
-                bot.avgValidatorScore >= 85 ? 'bg-emerald-700/10 dark:bg-emerald-500/10 text-arena-elements-icon-success' :
-                bot.avgValidatorScore >= 70 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' : 'bg-crimson-500/10 text-crimson-600 dark:text-crimson-400'
-              }`}>{bot.avgValidatorScore} Risk</span>
-            )}
-          </div>
-        </div>
-        <div className="shrink-0">
-          <SparklineChart data={bot.sparklineData} positive={bot.pnlPercent >= 0} width={100} height={40} />
-        </div>
-      </div>
-
-      {bot.vaultAddress && bot.vaultAddress !== '0x0000000000000000000000000000000000000000' && (
-        <div className="mt-3 pt-3 border-t border-arena-elements-dividerColor/50">
-          <div className="text-xs font-data text-arena-elements-textTertiary truncate">
-            Vault: {bot.vaultAddress}
-          </div>
-        </div>
-      )}
-    </Link>
-  );
-}
 
 function formatCompactUsd(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '—';
@@ -116,7 +41,6 @@ function formatCompactUsd(value: number): string {
 export default function IndexPage() {
   const { isConnected } = useAccount();
   const [search, setSearch] = useState('');
-  const [viewMode, setViewMode] = useState<'table' | 'cards'>('cards');
   useTradingRouteAutoAuth({
     enabled: isConnected && HAS_TRADING_OPERATOR_API,
     routeKey: 'leaderboard',
@@ -151,30 +75,38 @@ export default function IndexPage() {
       bot.operatorAddress.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const sorted = [...filteredBots].sort((a, b) => b.pnlPercent - a.pnlPercent);
+  const sorted = rankLeaderboardBots(filteredBots);
 
   const totalTrades = leaderboardBots.reduce((sum, b) => sum + b.totalTrades, 0);
+  const visibleTrades = sorted.reduce((sum, b) => sum + b.totalTrades, 0);
   const { series: homeVolumeSeries } = usePlatformVolumeSeries(leaderboardBots, '30d');
-  const platformTradeCount = homeVolumeSeries.summary.totalTradeCount || totalTrades;
-  const scoredBots = leaderboardBots.filter((bot) => bot.avgValidatorScore > 0);
-  const avgScore = scoredBots.length > 0
-    ? Math.round(scoredBots.reduce((sum, b) => sum + b.avgValidatorScore, 0) / scoredBots.length)
-    : 0;
+  const hasPlatformTradeCount = homeVolumeSeries.summary.totalTradeCount > 0;
+  const platformTradeCount = hasPlatformTradeCount
+    ? homeVolumeSeries.summary.totalTradeCount
+    : totalTrades;
   const activeAgents = leaderboardBots.filter((bot) => bot.status === 'active').length;
+  const scoredAgents = leaderboardBots.filter((bot) => bot.avgValidatorScore > 0);
+  const avgRiskScore = scoredAgents.length > 0
+    ? Math.round(scoredAgents.reduce((sum, bot) => sum + bot.avgValidatorScore, 0) / scoredAgents.length)
+    : null;
   const cloudStats = [
-    { label: 'Connected Agents', value: leaderboardBots.length.toLocaleString(), sublabel: `${activeAgents} active` },
+    { label: 'Agents', value: leaderboardBots.length.toLocaleString(), sublabel: `${activeAgents} active` },
     {
-      label: '30D Notional',
+      label: 'Notional',
       value: formatCompactUsd(homeVolumeSeries.summary.totalUsd),
-      sublabel: 'connected operators',
+      sublabel: '30D connected operators',
     },
-    { label: '30D Executions', value: platformTradeCount > 0 ? platformTradeCount.toLocaleString() : '—', sublabel: 'priced + unpriced' },
-    { label: 'Avg Risk Score', value: avgScore > 0 ? `${avgScore}` : '—', sublabel: scoredBots.length > 0 ? `${scoredBots.length} scored` : 'awaiting validators' },
+    {
+      label: hasPlatformTradeCount ? '30D Trades' : 'All-Time Trades',
+      value: platformTradeCount > 0 ? platformTradeCount.toLocaleString() : '—',
+      sublabel: hasPlatformTradeCount ? 'priced + unpriced' : 'operator totals',
+    },
+    { label: 'Risk Score', value: avgRiskScore != null ? avgRiskScore.toLocaleString() : '—', sublabel: scoredAgents.length > 0 ? 'validator average' : 'awaiting validation' },
   ];
 
   return (
-    <div className="mx-auto max-w-[1440px] px-4 py-4 sm:px-6">
-      <section className="mb-4 grid items-start gap-3 xl:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)]">
+    <div className="mx-auto max-w-[1500px] px-4 py-4 sm:px-6">
+      <section className="mb-4 grid items-stretch gap-3 xl:grid-cols-[minmax(0,0.68fr)_minmax(0,1.32fr)]">
         <div className="rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/48 p-4">
           <div className="min-w-0">
             <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -184,19 +116,13 @@ export default function IndexPage() {
                   {isOnChain ? 'Live Operator Data' : 'Live Data'}
                 </span>
               </div>
-              <span className="rounded border border-amber-500/20 bg-amber-500/8 px-2 py-1 text-xs font-data font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
-                Self-Improving
-              </span>
-              <span className="rounded border border-violet-500/20 bg-violet-500/8 px-2 py-1 text-xs font-data font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
-                Risk-Gated
-              </span>
             </div>
             <div className="mt-3">
               <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
-                AI Trading Cloud
+                AI Trading Arena
               </h1>
               <p className="mt-1 max-w-2xl text-sm text-arena-elements-textSecondary sm:text-base">
-                Live capital, volume, executions, and agent decisions.
+                Live agent volume, trades, returns, and decision traces from connected operators.
               </p>
             </div>
             <div className="mt-4 flex shrink-0 flex-wrap items-center gap-2">
@@ -205,14 +131,7 @@ export default function IndexPage() {
                 className="inline-flex h-9 items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-3 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
               >
                 <span className="i-ph:plus-bold text-xs" />
-                Deploy
-              </Link>
-              <Link
-                to="/create"
-                className="inline-flex h-9 items-center gap-2 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60 px-3 text-sm font-display font-medium text-arena-elements-textPrimary transition-colors hover:bg-arena-elements-item-backgroundHover"
-              >
-                <span className="i-ph:chat-circle-dots text-sm" />
-                Design Agent
+                Deploy Agent
               </Link>
             </div>
           </div>
@@ -238,53 +157,33 @@ export default function IndexPage() {
         </div>
       </section>
 
-      <section className="mb-5 grid min-h-[440px] gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="mb-5 grid min-h-[480px] gap-3 xl:grid-cols-[minmax(0,1fr)_540px]">
         <PlatformVolumeChart
           bots={leaderboardBots}
           variant="command"
-          className="min-h-[440px]"
+          className="min-h-[480px]"
         />
         <LatestAgentTrades
           bots={leaderboardBots}
           variant="panel"
-          limit={8}
-          className="min-h-[440px]"
+          limit={20}
+          className="min-h-[480px]"
         />
       </section>
 
-      <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="font-display text-2xl font-bold tracking-tight">Arena</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Leaderboard</h2>
           <div className="mt-1 flex items-center gap-5 text-sm font-data text-arena-elements-textSecondary">
-            <span><span className="font-semibold text-arena-elements-textPrimary">{leaderboardBots.length}</span> agents</span>
-            {totalTrades > 0 && <span><span className="font-semibold text-arena-elements-textPrimary">{totalTrades.toLocaleString()}</span> executions</span>}
+            <span><span className="font-semibold text-arena-elements-textPrimary">{sorted.length}</span> agents</span>
+            {visibleTrades > 0 && <span><span className="font-semibold text-arena-elements-textPrimary">{visibleTrades.toLocaleString()}</span> trades</span>}
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {/* View toggle */}
-          <div className="flex items-center gap-0.5 glass-card rounded-lg p-1">
-            <button
-              onClick={() => setViewMode('cards')}
-              className={`p-2 rounded-md transition-all ${viewMode === 'cards' ? 'bg-violet-500/10 text-violet-700 dark:text-violet-400' : 'text-arena-elements-textTertiary hover:text-arena-elements-textSecondary'}`}
-              title="Card view"
-            >
-              <div className="i-ph:squares-four text-base" />
-            </button>
-            <button
-              onClick={() => setViewMode('table')}
-              className={`p-2 rounded-md transition-all ${viewMode === 'table' ? 'bg-violet-500/10 text-violet-700 dark:text-violet-400' : 'text-arena-elements-textTertiary hover:text-arena-elements-textSecondary'}`}
-              title="Table view"
-            >
-              <div className="i-ph:list text-base" />
-            </button>
-          </div>
-        </div>
+        <FilterBar
+          search={search}
+          onSearchChange={setSearch}
+        />
       </div>
-
-      <FilterBar
-        search={search}
-        onSearchChange={setSearch}
-      />
 
       <OperatorSessionBanner />
 
@@ -307,7 +206,7 @@ export default function IndexPage() {
             description="Tangle's AI Trading Arena lets you provision and operate autonomous trading agents on-chain. Connect a wallet to deploy your first agent or follow live performance."
             bullets={[
               'Provision AI trading agents with one click',
-              'Watch real-time returns, executions, and risk scores',
+              'Watch real-time returns, trades, and risk scores',
               'Stake against the operators you trust',
               'Configure secrets once your service is live',
             ]}
@@ -326,14 +225,8 @@ export default function IndexPage() {
           </p>
         </div>
         )
-      ) : viewMode === 'table' ? (
-        <LeaderboardTable bots={sorted} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sorted.map((bot, i) => (
-            <BotCard key={bot.id} bot={bot} rank={i + 1} />
-          ))}
-        </div>
+        <LeaderboardTable bots={sorted} />
       )}
     </div>
   );

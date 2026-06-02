@@ -198,9 +198,9 @@ function resolveExecutionCount({
 }
 
 function executionCountLabel(source: ExecutionCountSource): string {
-  if (source === 'loaded-trades') return 'Loaded Executions';
-  if (source === 'none') return 'Executions';
-  return 'Total Executions';
+  if (source === 'loaded-trades') return 'Loaded Trades';
+  if (source === 'none') return 'Trades';
+  return 'Total Trades';
 }
 
 function executionCountSubvalue({ source, loaded, total }: { source: ExecutionCountSource; loaded: number; total: number | null }): string | null {
@@ -531,7 +531,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           subvaluePrefix: 'Low',
         },
         {
-          label: 'Volume',
+          label: 'Market Volume',
           value: formatChartNumber(marketVolumeValue),
           tone: 'text-arena-elements-textPrimary',
         },
@@ -560,7 +560,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           subvaluePrefix: '',
         },
         {
-          label: 'NAV High / Low',
+          label: 'Account High / Low',
           value: formatChartCurrency(chartHighValue),
           tone: 'text-arena-elements-textPrimary',
           subvalue: formatChartCurrency(chartLowValue),
@@ -614,7 +614,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     : 'Account Value (USDC)'}
                 </h2>
                 <span className="rounded-full border border-arena-elements-dividerColor/70 px-2 py-0.5 font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
-                  {effectiveChartMode === 'market' ? 'Price' : 'Account'}
+                  {effectiveChartMode === 'market' ? 'Market' : 'Account'}
                 </span>
               </div>
               {(lastCheckpointLabel || liveNavLabel) && (
@@ -643,7 +643,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     disabled={mode === 'market' && !hasMarketCandles}
                     onClick={() => setChartMode(mode)}
                   >
-                    {mode === 'market' ? 'Price' : 'Account'}
+                    {mode === 'market' ? 'Market' : 'Account'}
                   </button>
                 ))}
               </div>
@@ -727,9 +727,9 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   </div>
                   <div className="mt-5 grid gap-2 sm:grid-cols-3">
                     {[
-                      { label: 'Agent Executions', value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '0' },
+                      { label: 'Agent Trades', value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '0' },
                       { label: 'Strategy', value: bot.strategyType },
-                      { label: 'Market Feed', value: hasMarketCandles ? `${marketCandles.length}` : 'NAV pending' },
+                      { label: 'Market Feed', value: hasMarketCandles ? `${marketCandles.length}` : 'Account pending' },
                     ].map((item) => (
                       <div
                         key={item.label}
@@ -778,7 +778,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           ) : (
             <div className="glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl p-3">
               <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
-                <h3 className="font-display text-lg font-semibold">Decision Tape</h3>
+                <h3 className="font-display text-lg font-semibold">Recent Trades</h3>
                 <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
                   Last {Math.min(recentTradeTape.length, 6)}
                   {tradePage?.total != null
