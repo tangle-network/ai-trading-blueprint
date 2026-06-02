@@ -33,11 +33,11 @@ const SECTION_EXPECTATIONS = {
     ['Trade Ledger', 'No executions recorded'],
   ],
   runs: [
-    ['Autonomous Trace', 'No traces yet'],
-    ['Cycle', 'Autonomous traces', 'DONE', 'SKIP', 'TRADE'],
+    ['Trading Trace', 'No traces yet'],
+    ['Cycle', 'ETH Macro Scalper', 'COMPLETED', 'SKIP', 'TRADE'],
   ],
   chat: [
-    'Trading Agent',
+    'ETH Macro Scalper',
     ['Breakout retest', 'fast_backtest', 'Reasoning', 'Final outcome', 'No messages yet'],
   ],
   operations: ['Risk & Ops', 'Validation', 'Validator'],

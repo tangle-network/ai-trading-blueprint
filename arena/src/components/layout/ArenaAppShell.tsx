@@ -35,6 +35,7 @@ export function ArenaAppShell() {
   const { address } = useAccount();
   const { bots } = useBots();
   const isBotWorkspace = location.pathname.startsWith('/arena/bot/');
+  const isAgentFocusRoute = /^\/arena\/bot\/[^/]+\/(?:chat|runs)\/?$/.test(location.pathname);
   const previousIsBotWorkspace = useRef(isBotWorkspace);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isBotWorkspace);
   useEffect(() => {
@@ -74,7 +75,7 @@ export function ArenaAppShell() {
       <aside
         className={cn(
           'relative z-10 hidden shrink-0 flex-col border-r border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/86 shadow-[12px_0_38px_rgba(0,0,0,0.18)] backdrop-blur-xl transition-[width] duration-200 lg:flex',
-          sidebarCollapsed ? 'w-20' : 'w-64',
+          sidebarCollapsed ? (isAgentFocusRoute ? 'w-16' : 'w-20') : 'w-64',
         )}
       >
         <div className={cn(
@@ -194,32 +195,34 @@ export function ArenaAppShell() {
           </div>
         </div>
 
-        <div className="shrink-0 border-t border-arena-elements-dividerColor/70 p-2">
-          <div className={cn('mb-2 grid gap-1', sidebarCollapsed ? 'grid-cols-1' : 'grid-cols-2')}>
-            <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
-              {sidebarCollapsed ? (
-                <button
-                  type="button"
-                  onClick={() => setSidebarCollapsed(false)}
-                  className="inline-flex h-10 w-full items-center justify-center rounded-md text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-                  aria-label="Base Sepolia testnet"
-                  title="Base Sepolia testnet"
-                >
-                  <span className="i-ph:globe-hemisphere-west text-base" aria-hidden="true" />
-                </button>
-              ) : (
-                <ChainSwitcher />
-              )}
+        {!isAgentFocusRoute && (
+          <div className="shrink-0 border-t border-arena-elements-dividerColor/70 p-2">
+            <div className={cn('mb-2 grid gap-1', sidebarCollapsed ? 'grid-cols-1' : 'grid-cols-2')}>
+              <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
+                {sidebarCollapsed ? (
+                  <button
+                    type="button"
+                    onClick={() => setSidebarCollapsed(false)}
+                    className="inline-flex h-10 w-full items-center justify-center rounded-md text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                    aria-label="Base Sepolia testnet"
+                    title="Base Sepolia testnet"
+                  >
+                    <span className="i-ph:globe-hemisphere-west text-base" aria-hidden="true" />
+                  </button>
+                ) : (
+                  <ChainSwitcher />
+                )}
+              </div>
+              <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
+                <ThemeToggle />
+              </div>
             </div>
-            <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
-              <ThemeToggle />
+            <div className="mb-2">
+              <TxDropdown />
             </div>
+            {!sidebarCollapsed && <WalletButton />}
           </div>
-          <div className="mb-2">
-            <TxDropdown />
-          </div>
-          {!sidebarCollapsed && <WalletButton />}
-        </div>
+        )}
       </aside>
 
       <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">

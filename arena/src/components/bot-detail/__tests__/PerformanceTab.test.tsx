@@ -472,7 +472,7 @@ describe('PerformanceTab', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'ETH Price' })).toBeInTheDocument();
-    expect(screen.getByText('Price')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Price' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('Last Price')).toBeInTheDocument();
     expect(screen.getByText('30D Move')).toBeInTheDocument();
 	    expect(screen.getByText('Volume')).toBeInTheDocument();

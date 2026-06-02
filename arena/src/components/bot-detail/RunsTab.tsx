@@ -552,7 +552,7 @@ function RunDetailPanel({ run }: { run: BotRun }) {
             value={run.outputTokens.toString()}
           />
           <RunMetric label="Trace ID" value={run.traceId ?? "n/a"} />
-          <RunMetric label="Trace ID" value={run.runId} />
+          <RunMetric label="Run ID" value={run.runId} />
           <RunMetric
             label="Trace Replay"
             value={
@@ -749,6 +749,13 @@ export function RunsTab({
   const selectedDecisionId = activeRun ? `run:${activeRun.runId}` : undefined;
   const selectedDecisionItem =
     decisionItems.find((item) => item.id === selectedDecisionId) ?? decisionItems[0];
+  const runsBranding = useMemo<AgentBranding>(
+    () => ({
+      ...RUNS_BRANDING,
+      label: botName || RUNS_BRANDING.label,
+    }),
+    [botName],
+  );
   const headerTitle = activeRun ? getRunTitle(activeRun) : "Autonomous Trace";
   const headerSubtitle = activeRun
     ? `${getWorkflowKindDescription(activeRun.workflowKind)} • ${formatRunTimestamp(activeRun.startedAt)}`
@@ -918,7 +925,7 @@ export function RunsTab({
                     messages={stream.messages}
                     partMap={stream.partMap}
                     isStreaming={stream.isStreaming}
-                    branding={RUNS_BRANDING}
+                    branding={runsBranding}
                     placeholder="This trace is read only"
                   />
                 ) : activeRun ? (

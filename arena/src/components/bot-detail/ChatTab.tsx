@@ -568,6 +568,13 @@ export function ChatTab({
     : chatErrorMessage
       ? "error"
       : "idle";
+  const chatBranding = useMemo<AgentBranding>(
+    () => ({
+      ...TRADING_BRANDING,
+      label: botName || TRADING_BRANDING.label,
+    }),
+    [botName],
+  );
 
   const createSession = useCallback(
     async (title: string): Promise<Session> => {
@@ -694,6 +701,21 @@ export function ChatTab({
     [primarySessionId, sessions],
   );
   const showSessionSidebar = sessionItems.length > 1;
+  const chatHeaderTitle = activeSession
+    ? getSessionDisplayTitle(
+        {
+          id: activeSession.id,
+          title: normalizeSessionTitle(activeSession.title),
+          rawTitle: normalizeSessionTitle(activeSession.title),
+          subtitle: activeSession.id,
+        },
+        sessions.findIndex((session) => session.id === activeSession.id),
+        primarySessionId,
+      )
+    : botName || "Agent Chat";
+  const displayChatHeaderTitle = chatHeaderTitle === "Main Chat"
+    ? botName || chatHeaderTitle
+    : chatHeaderTitle;
 
   void operatorAddress;
 
@@ -790,20 +812,7 @@ export function ChatTab({
               <span className="i-ph:chat-circle-dots text-base text-violet-700 dark:text-violet-400" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-lg font-display font-medium text-arena-elements-textPrimary">
-                  {activeSession
-                    ? getSessionDisplayTitle(
-                        {
-                          id: activeSession.id,
-                          title: normalizeSessionTitle(activeSession.title),
-                          rawTitle: normalizeSessionTitle(activeSession.title),
-                          subtitle: activeSession.id,
-                        },
-                        sessions.findIndex(
-                          (session) => session.id === activeSession.id,
-                        ),
-                        primarySessionId,
-                      )
-                    : "Trading Agent"}
+                  {displayChatHeaderTitle}
                 </div>
                 {activeSession && (
                   <div className="truncate text-base font-data text-arena-elements-textTertiary">
@@ -860,7 +869,7 @@ export function ChatTab({
                 partMap={stream.partMap}
                 isStreaming={stream.isStreaming}
                 onSend={canWrite ? handleSend : undefined}
-                branding={TRADING_BRANDING}
+                branding={chatBranding}
                 placeholder={
                   stream.isStreaming
                     ? "Agent is working…"

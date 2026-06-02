@@ -552,7 +552,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   <button
                     key={mode}
                     type="button"
-                    className={`h-8 rounded-md px-3 text-sm font-data uppercase transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 disabled:cursor-not-allowed disabled:opacity-45 ${
+                    className={`h-8 rounded-md px-3 text-sm font-data transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 disabled:cursor-not-allowed disabled:opacity-45 ${
                       chartMode === mode
                         ? 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
                         : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
@@ -561,7 +561,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     disabled={mode === 'market' && !hasMarketCandles}
                     onClick={() => setChartMode(mode)}
                   >
-                    {mode === 'market' ? 'PRICE' : 'ACCOUNT'}
+                    {mode === 'market' ? 'Price' : 'Account'}
                   </button>
                 ))}
               </div>
@@ -673,7 +673,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             <Suspense
               fallback={
                 <div className="glass-card flex min-h-0 flex-1 flex-col justify-center rounded-xl p-4 text-center text-sm text-arena-elements-textTertiary">
-                  Loading copilot...
+                  Loading copilot…
                 </div>
               }
             >

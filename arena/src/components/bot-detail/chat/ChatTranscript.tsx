@@ -86,7 +86,10 @@ function AgentRunGroup({
   return (
     <div>
       <button
+        type="button"
         onClick={hasCollapsible ? onToggle : undefined}
+        aria-expanded={hasCollapsible ? !collapsed : undefined}
+        aria-label={hasCollapsible ? `${collapsed ? 'Expand' : 'Collapse'} ${branding.label} details` : undefined}
         className={cn(
           'w-full flex items-center gap-2 px-3 py-2 text-left rounded-lg transition-colors',
           branding.bgClass,
@@ -118,6 +121,7 @@ function AgentRunGroup({
               'w-3.5 h-3.5 text-arena-elements-textTertiary transition-transform shrink-0',
               !collapsed ? 'i-ph:caret-down' : 'i-ph:caret-right',
             )}
+            aria-hidden="true"
           />
         )}
       </button>
@@ -170,7 +174,7 @@ export function ChatTranscript({
   isStreaming,
   onSend,
   branding,
-  placeholder = 'Ask the agent anything...',
+  placeholder = 'Ask the agent anything…',
 }: {
   messages: AppSessionMessage[];
   partMap: Record<string, SessionPart[]>;
@@ -258,10 +262,12 @@ export function ChatTranscript({
       {!isAtBottom && (
         <div className="flex justify-center -mt-10 relative z-10">
           <button
+            type="button"
             onClick={scrollToBottom}
+            aria-label="Scroll to bottom"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/90 dark:bg-arena-elements-background-depth-3 border border-arena-elements-dividerColor shadow-lg text-xs text-arena-elements-textSecondary hover:bg-white dark:hover:bg-arena-elements-background-depth-2 transition-colors"
           >
-            <div className="i-ph:arrow-down w-3 h-3" />
+            <div className="i-ph:arrow-down w-3 h-3" aria-hidden="true" />
             Scroll to bottom
           </button>
         </div>
@@ -284,9 +290,10 @@ export function ChatTranscript({
             <button
               type="submit"
               disabled={isStreaming || !inputValue.trim()}
+              aria-label="Send Message"
               className="flex h-12 w-12 items-center justify-center rounded-lg bg-violet-600 transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-30"
             >
-              <div className="i-ph:paper-plane-tilt w-4 h-4 text-white" />
+              <div className="i-ph:paper-plane-tilt w-4 h-4 text-white" aria-hidden="true" />
             </button>
           </div>
         </form>

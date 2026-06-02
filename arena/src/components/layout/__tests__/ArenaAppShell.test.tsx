@@ -178,8 +178,10 @@ describe('ArenaAppShell', () => {
 	    const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
 
 	    expect(sidebar).not.toBeNull();
-	    expect(sidebar).toHaveClass('w-20');
+	    expect(sidebar).toHaveClass('w-16');
 	    expect(within(sidebar!).getByRole('link', { name: /arena/i })).toHaveAttribute('href', '/');
+	    expect(within(sidebar!).queryByRole('button', { name: /base sepolia testnet/i })).not.toBeInTheDocument();
+	    expect(within(sidebar!).queryByRole('button', { name: /transactions/i })).not.toBeInTheDocument();
 
 	    fireEvent.click(within(sidebar!).getByRole('button', { name: /expand sidebar/i }));
 
