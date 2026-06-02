@@ -100,7 +100,7 @@ describe("ChatTab", () => {
     }));
   });
 
-  it("uses the latest replayable autonomous run for public read-only chat", async () => {
+  it("routes public chat to the latest autonomous run telemetry", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({
         runs: [
@@ -139,9 +139,9 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByTestId("chat-transcript")).toHaveTextContent(
-      "read-visible",
-    );
+    expect((await screen.findAllByText("placed paper trade")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Trading Trace").length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
@@ -155,11 +155,12 @@ describe("ChatTab", () => {
       );
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:9201/api/bots/bot-1/runs?limit=25",
+      "http://localhost:9201/api/bots/bot-1/runs?limit=100",
+      expect.objectContaining({ headers: {} }),
     );
   });
 
-  it("keeps the public transcript visible without wallet authentication", async () => {
+  it("shows an empty run state instead of a blank public chat transcript", async () => {
     const { ChatTab } = await import("../ChatTab");
 
     render(
@@ -174,20 +175,17 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByTestId("chat-transcript")).toHaveTextContent(
-      "read-visible",
-    );
+    expect(await screen.findByText("No runs yet")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     expect(screen.queryByText(/chat stays disabled/i)).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
           token: null,
-          sessionId: "trading-bot-1",
-          historyPath:
-            "/session/sessions/trading-bot-1/messages?limit=200",
+          sessionId: "",
           streamEnabled: false,
-          enabled: true,
+          enabled: false,
         }),
       );
     });
@@ -239,7 +237,7 @@ describe("ChatTab", () => {
     expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
   });
 
-  it("does not show auth-only history errors to public readers", async () => {
+  it("does not show auth-only chat history errors to public readers", async () => {
     useBotSessionStreamMock.mockReturnValueOnce({
       messages: [],
       partMap: {},
@@ -264,7 +262,8 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect(await screen.findByText("No runs yet")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     expect(screen.queryByText("Failed")).not.toBeInTheDocument();
     expect(screen.queryByText("HTTP 401:")).not.toBeInTheDocument();
   });
@@ -286,9 +285,8 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByTestId("chat-transcript")).toHaveTextContent(
-      "read-visible",
-    );
+    expect(await screen.findByText("No runs yet")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /new chat/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /owner sign in/i })).not.toBeInTheDocument();
   });
@@ -361,12 +359,13 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect(await screen.findByText("Runs")).toBeInTheDocument();
     const shell = container.querySelector('[data-sandbox-ui="true"]');
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
+    expect(shell).not.toBeNull();
     expect(shell).toHaveClass("h-full");
     expect(shell).not.toHaveClass("glass-card");
     expect(shell).not.toHaveClass("rounded-xl");
-    expect(await screen.findByText("Sessions")).toBeInTheDocument();
     expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(
       0,
     );

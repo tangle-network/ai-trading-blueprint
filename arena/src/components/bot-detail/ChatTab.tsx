@@ -455,6 +455,7 @@ export function ChatTab({
     authenticate,
   } = useOperatorAuth(baseApiUrl);
   const canWrite = canCommand && isAuthenticated && Boolean(token);
+  const showPublicRunTelemetry = !canCommand;
 
   const primarySessionId = `trading-${botId}`;
   const [activeSessionId, setActiveSessionId] = useState(
@@ -478,7 +479,7 @@ export function ChatTab({
   const createMutation = useCreateSession(apiUrl, sessionToken);
   const publicRunsQuery = useQuery({
     queryKey: ["bot-chat-public-runs", apiUrl, botId],
-    enabled: !!apiUrl && !canWrite,
+    enabled: !!apiUrl && !canWrite && !showPublicRunTelemetry,
     queryFn: async () => {
       const response = await fetch(`${apiUrl}/runs?limit=25`);
       if (!response.ok) {
@@ -490,10 +491,10 @@ export function ChatTab({
   });
   const [selectedPublicRunId, setSelectedPublicRunId] = useState("");
   const publicReplayRuns = useMemo(() => {
-    if (canWrite) return null;
+    if (canWrite || showPublicRunTelemetry) return null;
     return publicRunsQuery.data?.runs.filter((run) => hasReplayableRunTrace(run)) ?? [];
-  }, [canWrite, publicRunsQuery.data]);
-  const publicRuns = !canWrite ? (publicRunsQuery.data?.runs ?? []) : [];
+  }, [canWrite, publicRunsQuery.data, showPublicRunTelemetry]);
+  const publicRuns = !canWrite && !showPublicRunTelemetry ? (publicRunsQuery.data?.runs ?? []) : [];
   const publicReplayRun = useMemo(() => {
     if (!publicReplayRuns) return null;
     return (
@@ -512,14 +513,16 @@ export function ChatTab({
     (session) => session.id === activeSessionId,
   );
   const publicReplaySessionId = buildRunReplaySessionId(publicReplayRun);
-  const streamSessionId = !canWrite
+  const streamSessionId = showPublicRunTelemetry
+    ? null
+    : !canWrite
     ? (publicReplaySessionId || primarySessionId)
     : hasKnownActiveSession
       ? activeSessionId
       : activeSessionId === primarySessionId
         ? (sessions[0]?.id ?? null)
         : activeSessionId || sessions[0]?.id || null;
-  const readOnlyHistoryPath = !canWrite && streamSessionId
+  const readOnlyHistoryPath = !canWrite && !showPublicRunTelemetry && streamSessionId
     ? (buildRunReplayHistoryPath(publicReplayRun) ??
       `/session/sessions/${encodeURIComponent(streamSessionId)}/messages?limit=200`)
     : undefined;
@@ -797,6 +800,19 @@ export function ChatTab({
           </Button>
         )}
       </div>
+    );
+  }
+
+  if (showPublicRunTelemetry) {
+    return (
+      <RunsTab
+        botId={botId}
+        botName={botName}
+        operatorApiUrl={operatorApiUrl}
+        operatorKind={operatorKind}
+        verificationState={verificationState}
+        immersive={immersive}
+      />
     );
   }
 

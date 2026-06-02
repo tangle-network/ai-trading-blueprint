@@ -36,8 +36,9 @@ const SECTION_EXPECTATIONS = {
     ['Reasoning', 'fast_backtest', 'Breakout retest'],
   ],
   chat: [
-    ['Reasoning', 'Final outcome', 'No messages yet'],
-    ['tool', 'tools', 'fast_backtest', 'hyperliquid_nav'],
+    ['Runs', 'Trading Trace'],
+    ['Reasoning', 'Final outcome', 'Run details', 'Workflow'],
+    ['tool', 'tools', 'fast_backtest', 'hyperliquid_nav', 'Transcript'],
   ],
   operations: ['Operations', 'Validation', 'Validator'],
 };
@@ -52,11 +53,13 @@ const LIVE_SECTION_EXPECTATIONS = {
   ],
   runs: [
     'Runs',
-    ['Reasoning', 'No runs yet', 'Final outcome', 'tool'],
+    ['Trading Trace', 'No runs yet'],
+    ['Run details', 'Run failed', 'Result', 'Error', 'Workflow', 'Decision', 'Transcript'],
   ],
   chat: [
-    'Chat',
-    ['Reasoning', 'Final outcome', 'No messages yet', 'tool', 'tools'],
+    ['Runs', 'Chat'],
+    ['Trading Trace', 'No runs yet'],
+    ['Run details', 'Run failed', 'Result', 'Error', 'Workflow', 'Decision', 'Transcript'],
   ],
   operations: [
     'Operations',
@@ -1108,7 +1111,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
         return {
           title: document.title,
           pathname: location.pathname,
-          bodyText: document.body.innerText.slice(0, 5000),
+          bodyText: document.body.innerText.slice(0, 20000),
           scrollHeight: scrolling.scrollHeight,
           clientHeight: scrolling.clientHeight,
           innerHeight: window.innerHeight,
