@@ -129,9 +129,10 @@ function formatTradeTime(timestamp: number): string {
 
 function formatChartNumber(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return '—';
+  const maximumFractionDigits = value >= 1000 ? 0 : 2;
   return formatNumber(value, {
-    maximumFractionDigits: value >= 1000 ? 0 : 2,
-    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+    maximumFractionDigits,
+    minimumFractionDigits: value >= 1000 || Number.isInteger(value) ? 0 : Math.min(2, maximumFractionDigits),
   });
 }
 

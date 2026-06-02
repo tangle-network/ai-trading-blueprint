@@ -445,21 +445,21 @@ describe('PerformanceTab', () => {
         timestamp: Date.parse('2026-04-23T10:00:00.000Z'),
         token: 'ETH',
         open: 3300,
-        high: 3320,
-        low: 3294,
-        close: 3315,
-        volume: 120,
-      },
+	        high: 3320,
+	        low: 3294,
+	        close: 3315,
+	        volume: 120.5,
+	      },
       {
         timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
         token: 'ETH',
         open: 3315,
-        high: 3332,
-        low: 3310,
-        close: 3324,
-        volume: 165,
-      },
-    ];
+	        high: 3332,
+	        low: 3310,
+	        close: 3324,
+	        volume: 1650.25,
+	      },
+	    ];
 
     render(
       <PerformanceTab
@@ -475,7 +475,8 @@ describe('PerformanceTab', () => {
     expect(screen.getByText('Market')).toBeInTheDocument();
     expect(screen.getByText('Last Price')).toBeInTheDocument();
     expect(screen.getByText('30D Move')).toBeInTheDocument();
-    expect(screen.getByText('Volume')).toBeInTheDocument();
+	    expect(screen.getByText('Volume')).toBeInTheDocument();
+	    expect(screen.getByText('1,771')).toBeInTheDocument();
     expect(screen.queryByText('Range PnL')).not.toBeInTheDocument();
     await waitFor(() => expect(lightweightChartMock.candleSeries.setData).toHaveBeenCalled());
     expect(lightweightChartMock.candleSeries.setData).toHaveBeenCalledWith(
@@ -484,12 +485,12 @@ describe('PerformanceTab', () => {
         expect.objectContaining({ open: 3315, high: 3332, low: 3310, close: 3324 }),
       ]),
     );
-    expect(lightweightChartMock.volumeSeries.setData).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({ value: 120 }),
-        expect.objectContaining({ value: 165 }),
-      ]),
-    );
+	    expect(lightweightChartMock.volumeSeries.setData).toHaveBeenCalledWith(
+	      expect.arrayContaining([
+	        expect.objectContaining({ value: 120.5 }),
+	        expect.objectContaining({ value: 1650.25 }),
+	      ]),
+	    );
     expect(lightweightChartMock.createSeriesMarkers).toHaveBeenCalledWith(
       lightweightChartMock.candleSeries,
       expect.arrayContaining([
