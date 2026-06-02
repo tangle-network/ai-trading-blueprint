@@ -5,15 +5,13 @@ import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } 
 import { ValidatorCard, SimulationDetail } from './shared/ValidatorComponents';
 import { AssetDisplay, TradeInstrumentDisplay } from './shared/AssetDisplay';
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
-import { getTradePairLabel } from '~/lib/types/trade';
 import type { Trade, TradeStatus } from '~/lib/types/trade';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import { countUsableValidatorSignatures, getTradeValidationDisplay } from '~/lib/tradeValidation';
 import { formatNumber } from '~/lib/format';
-import { buildDecisionItemFromTrade } from '~/lib/decisionFeed';
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
-import { DecisionInspector } from './shared/DecisionInspector';
+import { formatTradeModeLabel } from '~/lib/tradeDisplay';
 
 interface TradeHistoryTabProps {
   botId: string;
@@ -45,28 +43,41 @@ function explorerUrl(txHash: string, chainId?: number): string | null {
 }
 
 function TradeTableHead({ compact = false }: { compact?: boolean }) {
+  if (compact) {
+    return (
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead className="w-36 py-3 text-base">Time</TableHead>
+          <TableHead className="w-36 py-3 text-base">Trade</TableHead>
+          <TableHead className="py-3 text-base">Market</TableHead>
+          <TableHead className="w-40 py-3 text-right text-base">Size</TableHead>
+          <TableHead className="w-32 py-3 text-right text-base">USD</TableHead>
+          <TableHead className="w-28 py-3 text-right text-base">Mode</TableHead>
+        </TableRow>
+      </TableHeader>
+    );
+  }
+
   return (
     <TableHeader>
       <TableRow className="hover:bg-transparent">
-        <TableHead className={compact ? 'w-32 py-4 text-base' : 'w-44 py-4 text-base'}>Time</TableHead>
-        <TableHead className={compact ? 'w-40 py-4 text-base' : 'w-40 py-4 text-base'}>Decision</TableHead>
-        <TableHead className={compact ? 'py-4 text-base' : 'min-w-[420px] py-4 text-base'}>Market</TableHead>
-        {!compact && (
-          <>
-            <TableHead className="hidden py-4 text-right text-base sm:table-cell">Risk</TableHead>
-            <TableHead className="py-4 text-base">Reference</TableHead>
-            <TableHead className="py-4 text-base">Status</TableHead>
-          </>
-        )}
+        <TableHead className="w-44 py-4 text-base">Time</TableHead>
+        <TableHead className="w-40 py-4 text-base">Decision</TableHead>
+        <TableHead className="min-w-[420px] py-4 text-base">Market</TableHead>
+        <TableHead className="hidden py-4 text-right text-base sm:table-cell">Risk</TableHead>
+        <TableHead className="py-4 text-base">Reference</TableHead>
+        <TableHead className="py-4 text-base">Status</TableHead>
       </TableRow>
     </TableHeader>
   );
 }
 
-function formatTradePageCoverage(page: TradePage | undefined): string | null {
+function formatTradePageRange(page: TradePage | undefined): string | null {
   if (!page || page.loaded === 0) return null;
-  if (page.total != null) return `Showing ${page.loaded.toLocaleString()} of ${page.total.toLocaleString()}`;
-  return `${page.loaded.toLocaleString()} loaded`;
+  const start = page.offset + 1;
+  const end = page.offset + page.loaded;
+  if (page.total != null) return `${start.toLocaleString()}-${end.toLocaleString()} / ${page.total.toLocaleString()}`;
+  return `${start.toLocaleString()}-${end.toLocaleString()}`;
 }
 
 function truncateHash(hash: string): string {
@@ -79,7 +90,7 @@ function formatTradeAmount(amount: number): string {
 }
 
 function formatTradeCurrency(value?: number | null): string {
-  if (value == null || !Number.isFinite(value)) return 'Unavailable';
+  if (value == null || !Number.isFinite(value)) return '—';
   return `$${formatNumber(value, { maximumFractionDigits: 2 })}`;
 }
 
@@ -218,18 +229,18 @@ function renderExecutionRef(trade: Trade) {
 function renderHyperliquidTradeCell(trade: Trade) {
   const sizeLabel = hyperliquidSizeLabel(trade);
   const details = [
-    { label: 'Order', value: `${formatTradeAmount(trade.amountIn)} ${trade.tokenIn}` },
-    sizeLabel ? { label: 'Size', value: sizeLabel } : null,
-  ].filter((value): value is { label: string; value: string } => Boolean(value));
+    `${formatTradeAmount(trade.amountIn)} ${trade.tokenIn}`,
+    sizeLabel,
+  ].filter((value): value is string => Boolean(value));
 
   return (
     <div className="flex min-w-0 items-start gap-3">
-      <TradeInstrumentDisplay trade={trade} size="md" className="min-w-[10rem]" />
+      <TradeInstrumentDisplay trade={trade} size="md" showVenue={false} className="min-w-[10rem]" />
       <div className="min-w-0 flex-1 pt-0.5">
         <div className="flex flex-wrap gap-x-2 gap-y-1 text-base font-data leading-snug text-arena-elements-textSecondary">
           {details.map((detail) => (
-            <span key={`${detail.label}:${detail.value}`} className="break-words">
-              {detail.label}: {detail.value}
+            <span key={detail} className="break-words">
+              {detail}
             </span>
           ))}
         </div>
@@ -240,6 +251,16 @@ function renderHyperliquidTradeCell(trade: Trade) {
 
 function renderTradeInstrumentCell(trade: Trade, compact: boolean) {
   if (isHyperliquidTrade(trade)) {
+    if (compact) {
+      return (
+        <TradeInstrumentDisplay
+          trade={trade}
+          size="md"
+          showVenue={false}
+          labelClassName="max-w-full"
+        />
+      );
+    }
     return renderHyperliquidTradeCell(trade);
   }
 
@@ -248,6 +269,7 @@ function renderTradeInstrumentCell(trade: Trade, compact: boolean) {
       <TradeInstrumentDisplay
         trade={trade}
         size={compact ? 'md' : 'md'}
+        showVenue={!compact}
         labelClassName="max-w-full"
       />
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base font-data text-arena-elements-textSecondary">
@@ -256,6 +278,62 @@ function renderTradeInstrumentCell(trade: Trade, compact: boolean) {
         <span className="mx-1.5 text-arena-elements-textTertiary">→</span>
         <span>{formatTradeAmount(trade.amountOut)}</span>
         <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
+      </div>
+    </div>
+  );
+}
+
+function getTradeSizeLabel(trade: Trade): string {
+  return hyperliquidSizeLabel(trade) ?? `${formatTradeAmount(trade.amountIn)} ${trade.tokenIn}`;
+}
+
+function getModeToneClass(trade: Trade): string {
+  if (trade.status === 'failed' || trade.status === 'rejected') return 'text-crimson-600 dark:text-crimson-300';
+  if (trade.paperTrade || trade.status === 'paper') return 'text-arena-elements-textSecondary';
+  return 'text-emerald-600 dark:text-emerald-300';
+}
+
+function TradePager({
+  page,
+  onPrevious,
+  onNext,
+  className,
+}: {
+  page: TradePage | undefined;
+  onPrevious: () => void;
+  onNext: () => void;
+  className?: string;
+}) {
+  const range = formatTradePageRange(page);
+  const canPrevious = Boolean(page && page.offset > 0);
+  const canNext = Boolean(page && page.loaded > 0 && page.isCapped);
+
+  if (!range) return null;
+
+  return (
+    <div className={`flex items-center justify-end gap-2 ${className ?? ''}`}>
+      <span className="font-data text-sm tabular-nums text-arena-elements-textSecondary">
+        {range}
+      </span>
+      <div className="inline-flex overflow-hidden rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55">
+        <button
+          type="button"
+          onClick={onPrevious}
+          disabled={!canPrevious}
+          className="inline-flex h-8 w-8 items-center justify-center text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary disabled:pointer-events-none disabled:opacity-35"
+          aria-label="Previous trades page"
+        >
+          <span className="i-ph:caret-left-bold text-sm" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={onNext}
+          disabled={!canNext}
+          className="inline-flex h-8 w-8 items-center justify-center border-l border-arena-elements-dividerColor/70 text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary disabled:pointer-events-none disabled:opacity-35"
+          aria-label="Next trades page"
+        >
+          <span className="i-ph:caret-right-bold text-sm" aria-hidden="true" />
+        </button>
       </div>
     </div>
   );
@@ -299,6 +377,8 @@ export function TradeHistoryTab({
   assetMetadata,
   compact = false,
 }: TradeHistoryTabProps) {
+  const [pageIndex, setPageIndex] = useState(0);
+  const offset = pageIndex * TRADE_HISTORY_LIMIT;
   const {
     data: tradePage,
     isLoading,
@@ -309,34 +389,35 @@ export function TradeHistoryTab({
     operatorApiUrl,
     operatorKind,
     assetMetadata,
+    offset,
     refetchInterval: isLive ? 15_000 : false,
   });
   const trades = tradePage?.trades;
-  const coverageLabel = formatTradePageCoverage(tradePage);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const columnCount = compact ? 6 : 6;
+  const previousPage = () => {
+    setExpandedId(null);
+    setPageIndex((page) => Math.max(0, page - 1));
+  };
+  const nextPage = () => {
+    setExpandedId(null);
+    setPageIndex((page) => page + 1);
+  };
 
   if (isLoading) {
     return (
-      <>
-        <div className="flex items-center justify-end">
-          {coverageLabel && (
-            <span className="rounded-full border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55 px-3 py-1 text-sm font-data text-arena-elements-textSecondary">
-              {coverageLabel}
-            </span>
-          )}
-        </div>
-
-        <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
-          <Table className={compact ? 'min-w-full table-fixed' : 'min-w-[1120px]'}>
+      <div className={compact ? 'flex h-full min-h-0 flex-col gap-2' : 'space-y-3'}>
+        <div className={`${compact ? 'min-h-0 flex-1' : ''} overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36`}>
+          <Table className={compact ? 'min-w-[980px]' : 'min-w-[1120px]'}>
             <TradeTableHead compact={compact} />
             <TableBody>
               {Array.from({ length: 5 }).map((_, i) => (
-                <SkeletonTableRow key={i} cols={compact ? 3 : 6} />
+                <SkeletonTableRow key={i} cols={columnCount} />
               ))}
             </TableBody>
           </Table>
         </div>
-      </>
+      </div>
     );
   }
 
@@ -359,33 +440,29 @@ export function TradeHistoryTab({
   }
 
   return (
-    <div className="space-y-3">
+    <div className={compact ? 'relative flex h-full min-h-0 flex-col' : 'space-y-3'}>
       {verificationState === 'unverified' && (
         <UnverifiedDataNotice subject="trade history" />
       )}
 
-      {coverageLabel && (
-        <div className="flex items-center justify-end">
-          <span className="rounded-full border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55 px-3 py-1 text-sm font-data text-arena-elements-textSecondary">
-            {coverageLabel}
-          </span>
-        </div>
-      )}
+      <TradePager
+        page={tradePage}
+        onPrevious={previousPage}
+        onNext={nextPage}
+        className={compact ? 'absolute -top-[2.55rem] right-0 z-10' : undefined}
+      />
 
-      <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
-        <Table className={compact ? 'min-w-full table-fixed' : 'min-w-[1120px]'}>
+      <div className={`${compact ? 'min-h-0 flex-1 overflow-auto' : 'overflow-x-auto'} rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36`}>
+        <Table className={compact ? 'min-w-[980px]' : 'min-w-[1120px]'}>
           <TradeTableHead compact={compact} />
           <TableBody>
             {trades.map((trade) => {
             const responses = trade.validation?.responses ?? [];
             const signedCount = countUsableValidatorSignatures(responses);
             const validationDisplay = getTradeValidationDisplay(trade);
-            const pairLabel = isHyperliquidTrade(trade)
-              ? hyperliquidMarketLabel(trade)
-              : getTradePairLabel(trade);
             const hasValidation = responses.length > 0 || trade.validatorScore != null;
             const isExpanded = expandedId === trade.id;
-            const decisionItem = buildDecisionItemFromTrade(trade);
+            const fallbackReason = trade.validatorReasoning ?? trade.agentReasoning;
 
             return (
               <TableRow
@@ -405,12 +482,12 @@ export function TradeHistoryTab({
                   }
                 }}
               >
-              <TableCell className="py-4 align-top text-base font-data text-arena-elements-textTertiary" colSpan={isExpanded ? (compact ? 3 : 6) : undefined}>
+              <TableCell className={`${compact ? 'py-3' : 'py-4'} align-top text-base font-data text-arena-elements-textTertiary`} colSpan={isExpanded ? columnCount : undefined}>
                 {isExpanded ? (
                   /* Expanded view replaces the row */
-                  <div className="py-3">
+                  <div className="py-2">
                     {/* Trade summary header */}
-                    <div className="flex flex-wrap items-center gap-3 mb-4">
+                    <div className="mb-3 flex flex-wrap items-center gap-3">
                       <button
                         type="button"
                         onClick={() => setExpandedId(null)}
@@ -426,6 +503,9 @@ export function TradeHistoryTab({
                       <span className="text-base font-data text-arena-elements-textTertiary">
                         {formatTradeTimestamp(trade.timestamp)}
                       </span>
+                      <span className={`font-data text-base ${getModeToneClass(trade)}`}>
+                        {formatTradeModeLabel(trade)}
+                      </span>
                       {validationDisplay && (
                         <Badge variant={validationDisplay.badgeVariant} className="h-8 px-3 text-base">
                           {validationDisplay.label}
@@ -433,7 +513,7 @@ export function TradeHistoryTab({
                       )}
                     </div>
 
-                    <div className="mb-4 grid gap-3 md:grid-cols-4">
+                    <div className="mb-3 grid gap-2 md:grid-cols-4">
                       <TradeDetailMetric
                         label="Notional"
                         value={formatTradeCurrency(trade.notionalUsd)}
@@ -443,21 +523,16 @@ export function TradeHistoryTab({
                         value={trade.targetProtocol ?? trade.venue}
                       />
                       <TradeDetailMetric
-                        label="Execution"
+                        label="Fill"
                         value={trade.execution?.status ? formatExecutionStatus(trade.execution.status) : getStatusLabel(trade.status)}
                         tone={trade.status === 'failed' || trade.status === 'rejected' ? 'danger' : trade.status === 'executed' || trade.status === 'paper' ? 'success' : 'neutral'}
                       />
                       <TradeDetailMetric
-                        label="Validation"
-                        value={validationDisplay?.label ?? (hasValidation ? 'Pending detail' : 'Unavailable')}
+                        label="Checks"
+                        value={validationDisplay?.label ?? (hasValidation ? 'Pending' : '—')}
                         tone={validationDisplay?.badgeVariant === 'success' ? 'success' : validationDisplay?.badgeVariant === 'destructive' ? 'danger' : 'neutral'}
                       />
                     </div>
-
-                    <DecisionInspector
-                      item={decisionItem}
-                      className="mb-4 max-h-none rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/30"
-                    />
 
                     {isHyperliquidTrade(trade) ? (
                       <div className="mb-3 px-1">
@@ -481,9 +556,6 @@ export function TradeHistoryTab({
 
                     {trade.txHash && (
                       <div className="flex items-center gap-2 mb-4 px-1">
-                        <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                          {isHyperliquidTrade(trade) ? 'Exchange Ref' : 'Tx Hash'}
-                        </span>
                         {renderExecutionRef(trade)}
                       </div>
                     )}
@@ -495,42 +567,30 @@ export function TradeHistoryTab({
                     )}
 
                     {trade.execution && (
-                      <div className="mb-4 rounded-xl border border-arena-elements-border/60 bg-arena-elements-bg-surface/60 p-4">
-                        <div className="mb-3 text-base font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                          Fill Quality
-                        </div>
-                        <div className="grid gap-3 text-base text-arena-elements-textSecondary md:grid-cols-2">
-                          <div>
-                            <span className="text-arena-elements-textTertiary">Status:</span>{' '}
-                            {formatExecutionStatus(trade.execution.status)}
-                          </div>
+                      <div className="mb-4 rounded-lg border border-arena-elements-border/60 bg-arena-elements-bg-surface/60 p-3">
+                        <div className="grid gap-x-5 gap-y-2 text-base text-arena-elements-textSecondary md:grid-cols-3">
                           {trade.execution.clobOrderId && (
                             <div>
-                              <span className="text-arena-elements-textTertiary">CLOB order:</span>{' '}
                               <code className="font-data text-base">{trade.execution.clobOrderId}</code>
                             </div>
                           )}
                           {trade.execution.requestedPriceUsd != null && (
                             <div>
-                              <span className="text-arena-elements-textTertiary">Requested price:</span>{' '}
                               ${formatNumber(trade.execution.requestedPriceUsd, { maximumFractionDigits: 4 })}
                             </div>
                           )}
                           {trade.execution.filledPriceUsd != null && (
                             <div>
-                              <span className="text-arena-elements-textTertiary">Filled price:</span>{' '}
                               ${formatNumber(trade.execution.filledPriceUsd, { maximumFractionDigits: 4 })}
                             </div>
                           )}
                           {trade.execution.filledAmount != null && (
                             <div>
-                              <span className="text-arena-elements-textTertiary">Filled amount:</span>{' '}
                               {formatTradeAmount(trade.execution.filledAmount)}
                             </div>
                           )}
                           {trade.execution.slippageBps != null && (
                             <div>
-                              <span className="text-arena-elements-textTertiary">Slippage:</span>{' '}
                               {formatNumber(trade.execution.slippageBps, { maximumFractionDigits: 2 })} bps
                             </div>
                           )}
@@ -571,13 +631,13 @@ export function TradeHistoryTab({
                     )}
 
                     {/* Reasoning fallback */}
-                    {responses.length === 0 && trade.validatorReasoning && (
+                    {responses.length === 0 && fallbackReason && (
                       <div className="mt-2 px-1">
                         <div className="text-sm font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1">
                           Reasoning
                         </div>
                         <p className="text-base text-arena-elements-textSecondary leading-relaxed">
-                          {trade.validatorReasoning}
+                          {fallbackReason}
                         </p>
                       </div>
                     )}
@@ -585,18 +645,31 @@ export function TradeHistoryTab({
                 ) : (
                   /* Normal compact row content */
                   formatTradeTimestamp(trade.timestamp)
-                )}
+              )}
               </TableCell>
               {!isExpanded && (
                 <>
-                  <TableCell className="py-4 align-top">
+                  <TableCell className={compact ? 'py-3 align-top' : 'py-4 align-top'}>
                     <Badge variant={getActionVariant(trade.action)} className="h-8 px-3 text-base">
                       {getActionLabel(trade.action)}
                     </Badge>
                   </TableCell>
-                  <TableCell className={compact ? 'py-4 align-top font-display text-lg font-medium' : 'min-w-[420px] py-4 align-top font-display text-lg font-medium'}>
+                  <TableCell className={compact ? 'py-3 align-top font-display text-base font-medium' : 'min-w-[420px] py-4 align-top font-display text-lg font-medium'}>
                     {renderTradeInstrumentCell(trade, compact)}
                   </TableCell>
+                  {compact && (
+                    <>
+                      <TableCell className="py-3 text-right align-top font-data text-base text-arena-elements-textSecondary">
+                        {getTradeSizeLabel(trade)}
+                      </TableCell>
+                      <TableCell className="py-3 text-right align-top font-data text-base font-semibold text-arena-elements-textPrimary">
+                        {formatTradeCurrency(trade.notionalUsd)}
+                      </TableCell>
+                      <TableCell className={`py-3 text-right align-top font-data text-base ${getModeToneClass(trade)}`}>
+                        {formatTradeModeLabel(trade)}
+                      </TableCell>
+                    </>
+                  )}
                   {!compact && (
                     <>
                       <TableCell className="hidden py-4 text-right sm:table-cell">

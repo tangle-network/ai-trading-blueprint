@@ -2060,3 +2060,150 @@ Verification:
 - `pnpm --dir arena typecheck` passes.
 - `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-home-command-terminal-smoke-20260602-v2` passes.
 - Visual inspection of `.evolve/arena-home-command-terminal-smoke-20260602-v2/1280x800-home.png` confirms the chart, fill tape, and top-agent panel all fit in the first viewport and the fill tape no longer clips Market/USD.
+
+## 2026-06-02 Portfolio + Leaderboard Explorer Pass
+
+User-reported problems:
+
+- Portfolio felt like a 0-2/10 surface: card rail, mismatched tables, excessive labels, too many font sizes, and an executions panel with a meaningless `50 loaded` pill.
+- The fill detail presentation repeated paper/validation/execution concepts and made paper trades feel like prose instead of ledger entries.
+- The app needed a separate leaderboard/agent explorer instead of forcing Home to carry the full table.
+- Collapsed global sidebar leaked logo text; transaction dropdown could fall behind the page; the chain/footer cluster felt fragile.
+
+### Component Purpose Audit
+
+| Surface | Component | Purpose | Kept / Changed | Deletion rule |
+|---|---|---|---|---|
+| Global shell | `ArenaAppShell` | Product navigation and account controls | Kept, with `Leaderboard` route added and collapsed mark fixed to icon-only | Remove any nav item that is not a primary workflow |
+| Global shell | `TxDropdown` | Transaction inspection | Kept, now supports upward menu placement in the sidebar | Do not let popovers live behind workspace panes |
+| Home | `_index.tsx` | First-screen live market terminal | Kept as chart + fills + compact winners | Do not re-add the full leaderboard table to Home |
+| Leaderboard | `leaderboard.tsx` | Etherscan-style agent explorer | Added as separate route with platform volume, fill tape, metrics, full agent table | If it does not rank, inspect, or explain platform activity, it belongs elsewhere |
+| Leaderboard table | `LeaderboardTable` | Dense ranked agent list | Changed from large mixed-font table to explorer ledger | Remove medals/card styling that competes with the table |
+| Portfolio parent | `PortfolioWorkspace` | Current exposure + executions | Changed from side-by-side card/table mismatch to stacked ledgers | Portfolio should not use card rails for positions |
+| Positions | `PositionsTab` | Account strip + positions ledger | Added `workspaceLayout="ledger"` with dense tables | Labels must be table headers or compact metric labels only |
+| Executions | `TradeHistoryTab` | Paged execution ledger | Added offset pagination, visible size/USD/mode columns, simplified expanded row | Never show `loaded` copy or duplicate paper/validation prose |
+| Chart | `PerformanceTab` + chart components | Professional market/NAV terminal | Prior pass retained; no new change here | Trade count must come from trade ledger, not just metric checkpoints |
+| Runs/Chat | `RunsTab`, chat routes | Full transcripts/control conversation | Still needs session-list work; not addressed in this slice | Hide owner-only terminals rather than over-explaining access |
+
+### Leaderboard / Explorer Alternatives
+
+1. **Winner: Explorer Split**
+
+```text
+┌ metrics: 24H volume · fills · fills/hr · active ┐
+├ platform volume chart ┬ latest fills tape        │
+├───────────────────────┴─────────────────────────┤
+│ full ranked agent table                          │
+└──────────────────────────────────────────────────┘
+```
+
+Score: 9/10. It cleanly separates the homepage command terminal from the deeper explorer workflow. It also maps to Etherscan-style mental models: summary, chart, latest activity, full table.
+
+2. **Leaderboard-Only Table**
+
+```text
+┌ metrics ┐
+├ full table only ┤
+```
+
+Score: 6.5/10. Fast and simple, but it fails the product requirement to make platform volume and trading velocity obvious.
+
+3. **Trade-Tape-First Explorer**
+
+```text
+┌ latest fills full width ┐
+├ chart + table           ┤
+```
+
+Score: 7.5/10. Strong for activity, weak for ranking and operator comparison.
+
+4. **Analytics Dashboard**
+
+```text
+┌ volume ┬ trades/hr ┬ operators ┐
+├ charts everywhere              ┤
+└ table below                    ┘
+```
+
+Score: 6/10. Too dashboard-like and likely to reintroduce repeated labels and dead space.
+
+5. **Agent Cards Grid**
+
+```text
+┌ top agents cards ┐
+├ volume/tape      ┤
+```
+
+Score: 5/10. It looks less like a trading system and makes comparison worse.
+
+Selected implementation: Alternative 1.
+
+### Portfolio Alternatives
+
+1. **Winner: Stacked Ledger**
+
+```text
+┌ Portfolio: compact account strip + positions table ┐
+├ Executions: paged table with detail expansion       ┤
+└─────────────────────────────────────────────────────┘
+```
+
+Score: 9/10. Best use of width, aligned visual language, and no mismatch between cards and tables.
+
+2. **Two-Column Matching Tables**
+
+```text
+┌ positions table ┬ executions table ┐
+```
+
+Score: 7/10. Better than the old card rail, but too cramped at 1280px and still creates independent scroll conflicts.
+
+3. **Execution-First Portfolio**
+
+```text
+┌ executions large ┐
+├ positions small  ┤
+```
+
+Score: 7.5/10 for active scalpers, weaker for portfolio inspection.
+
+4. **Tabbed Positions / Executions**
+
+```text
+┌ internal tabs ┐
+├ table         ┤
+```
+
+Score: 6/10. Saves space but hides one half of the portfolio workflow.
+
+5. **Cards With Better Alignment**
+
+Score: 4/10. Still wrong primitive. Positions and fills are ledgers.
+
+Selected implementation: Alternative 1.
+
+Shipped in this slice:
+
+- Added `/leaderboard` as a separate route with 24H volume, fills, fills/hour, active-agent metric strip, platform volume chart, latest fill tape, and full ranked agent table.
+- Added `Leaderboard` to global navigation and linked Home to the new route.
+- Reworked `LeaderboardTable` into a dense explorer ledger with operator identicons, strategy, account, 30D return, Sharpe, drawdown, win rate, fill count, and state.
+- Extracted `formatCompactUsd` into `arena/src/lib/format.ts` for shared Home/Leaderboard formatting.
+- Changed `PortfolioWorkspace` to stacked ledgers.
+- Added `workspaceLayout="ledger"` to `PositionsTab`.
+- Wired `useBotTradePage` to existing backend `offset` support.
+- Replaced `TradeHistoryTab` coverage badges with range + prev/next pager.
+- Added size, USD, and mode columns to compact execution rows.
+- Removed the heavy decision inspector from expanded trade rows while preserving validator details, simulation detail, and real agent/validator reasoning.
+- Fixed collapsed sidebar branding to icon-only and opened the transaction dropdown upward from the sidebar footer.
+
+Verification:
+
+- `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/TradeHistoryTab.test.tsx src/components/bot-detail/__tests__/PositionsTab.test.tsx src/components/layout/__tests__/ArenaAppShell.test.tsx src/routes/__tests__/leaderboard.test.tsx src/routes/__tests__/index.test.tsx --reporter=dot` passes: 5 files, 42 tests.
+- `pnpm --dir arena typecheck` passes.
+- `pnpm --dir arena test` passes: 67 files, 386 tests.
+- `pnpm --dir arena build` passes. The existing `connectkit` / `TerminalTab` chunk warning remains unchanged.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-portfolio-leaderboard-smoke-20260602-v5` passes.
+- Visual inspection passed:
+  - `.evolve/arena-portfolio-leaderboard-smoke-20260602-v5/1440x900-leaderboard.png`: full explorer table fits with no horizontal clipping.
+  - `.evolve/arena-portfolio-leaderboard-smoke-20260602-v5/1280x800-leaderboard.png`: table remains readable in the tighter desktop viewport.
+  - `.evolve/arena-portfolio-leaderboard-smoke-20260602-v5/1440x900-portfolio.png`: portfolio and executions render as aligned ledgers with internal table scroll only.

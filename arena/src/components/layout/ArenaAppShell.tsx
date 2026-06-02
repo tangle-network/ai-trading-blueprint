@@ -7,6 +7,7 @@ import { WalletButton } from './WalletButton';
 
 const primaryNavItems = [
   { label: 'Home', href: '/', icon: 'i-ph:trophy' },
+  { label: 'Leaderboard', href: '/leaderboard', icon: 'i-ph:table' },
   { label: 'My Agents', href: '/dashboard', icon: 'i-ph:house' },
   { label: 'Deploy', href: '/provision', icon: 'i-ph:rocket-launch' },
   { label: 'Create', href: '/create', icon: 'i-ph:chat-circle-dots' },
@@ -91,7 +92,7 @@ function DesktopArenaSidebar({
   return (
     <aside
       className={cn(
-        'relative z-10 hidden shrink-0 flex-col border-r border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 transition-[width] duration-200 lg:flex',
+        'relative z-40 hidden shrink-0 flex-col border-r border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 transition-[width] duration-200 lg:flex',
         sidebarCollapsed ? 'w-16' : 'w-64',
       )}
     >
@@ -108,7 +109,7 @@ function DesktopArenaSidebar({
           aria-label={sidebarCollapsed ? 'AI Trading Arena' : undefined}
           title={sidebarCollapsed ? 'AI Trading Arena' : undefined}
         >
-          <TangleLogo label={sidebarCollapsed ? undefined : 'Arena'} />
+          {sidebarCollapsed ? <TangleMark /> : <TangleLogo label="Arena" />}
         </Link>
         {!sidebarCollapsed && (
           <SidebarIconButton
@@ -183,7 +184,7 @@ function DesktopArenaSidebar({
                 <ThemeToggle />
               </div>
               <div className="[&>div>button]:h-10 [&>div>button]:w-10 [&>div>button]:rounded-xl [&>div>button]:border-0 [&>div>button]:bg-transparent [&>div>button]:p-0">
-                <TxDropdown align="start" />
+                <TxDropdown align="start" side="up" />
               </div>
             </div>
             <WalletButton />
@@ -191,6 +192,17 @@ function DesktopArenaSidebar({
         )}
       </div>
     </aside>
+  );
+}
+
+function TangleMark() {
+  return (
+    <img
+      src="/favicon.svg"
+      alt=""
+      className="h-8 w-8 rounded-md"
+      aria-hidden="true"
+    />
   );
 }
 

@@ -23,15 +23,15 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
     isError: mockTradesIsError,
     error: mockTradesError,
   }),
-  useBotTradePage: () => ({
+  useBotTradePage: (_botId: string, _botName: string, limit = 50, options: { offset?: number } = {}) => ({
     data: {
       trades: mockTrades,
       total: mockTradeTotal,
       loaded: mockTrades.length,
-      limit: 50,
-      offset: 0,
+      limit,
+      offset: options.offset ?? 0,
       hasTotal: mockTradeTotal != null,
-      isCapped: mockTradeTotal != null ? mockTrades.length < mockTradeTotal : false,
+      isCapped: mockTradeTotal != null ? (options.offset ?? 0) + mockTrades.length < mockTradeTotal : false,
       legacyArray: mockTradeTotal == null,
     },
     isLoading: false,
@@ -130,7 +130,7 @@ describe('TradeHistoryTab', () => {
     expect(screen.queryByText('$2,000')).not.toBeInTheDocument();
   });
 
-  it('shows loaded rows against the trade ledger total when available', () => {
+  it('paginates loaded rows against the trade ledger total when available', () => {
     setTrades([
       makeTrade({ id: 'trade-1' }),
       makeTrade({ id: 'trade-2', action: 'sell' }),
@@ -139,10 +139,10 @@ describe('TradeHistoryTab', () => {
 
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
 
-    expect(screen.getByText('Showing 2 of 12')).toBeInTheDocument();
+    expect(screen.getByText('1-2 / 12')).toBeInTheDocument();
   });
 
-  it('labels legacy array responses as loaded rows only', () => {
+  it('shows a page range for legacy array responses without loaded copy', () => {
     setTrades([
       makeTrade({ id: 'trade-1' }),
       makeTrade({ id: 'trade-2', action: 'sell' }),
@@ -150,7 +150,8 @@ describe('TradeHistoryTab', () => {
 
     render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
 
-    expect(screen.getByText('2 loaded')).toBeInTheDocument();
+    expect(screen.getByText('1-2')).toBeInTheDocument();
+    expect(screen.queryByText(/loaded/i)).not.toBeInTheDocument();
   });
 
   it('keeps read-only trades visible when operator verification is pending', () => {
@@ -265,11 +266,11 @@ describe('TradeHistoryTab', () => {
     await user.click(row);
     expect(screen.getByText('Notional')).toBeInTheDocument();
 
-    await user.click(screen.getAllByText('Execution')[0].closest('div')!);
+    await user.click(screen.getByText('Route').closest('div')!);
     expect(screen.queryByText('Notional')).not.toBeInTheDocument();
   });
 
-  it('expands trades without validator data to show decision provenance', async () => {
+  it('expands trades without validator data to show the agent reason', async () => {
     const user = userEvent.setup();
     setTrades([
       makeTrade({
@@ -283,7 +284,7 @@ describe('TradeHistoryTab', () => {
     const row = screen.getByText('BUY').closest('tr')!;
     await user.click(row);
 
-    expect(screen.getByRole('complementary', { name: /decision inspector/i })).toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: /decision inspector/i })).not.toBeInTheDocument();
     expect(screen.getAllByText('No validator detail, but the agent reason is present.').length).toBeGreaterThan(0);
   });
 
@@ -578,8 +579,8 @@ describe('TradeHistoryTab', () => {
     expect(screen.getByText('LONG')).toBeInTheDocument();
     expect(screen.getByText('ETH-PERP')).toBeInTheDocument();
     expect(screen.getByText('HL accepted')).toBeInTheDocument();
-    expect(screen.getByText(/Order: 10.9348 USDC/)).toBeInTheDocument();
-    expect(screen.getByText(/Size: 0.0052 ETH/)).toBeInTheDocument();
+    expect(screen.getByText('10.9348 USDC')).toBeInTheDocument();
+    expect(screen.getAllByText('0.0052 ETH').length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText('USDC/USDC')).not.toBeInTheDocument();
     expect(screen.queryByText(/→/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Collateral:/)).not.toBeInTheDocument();
@@ -610,7 +611,7 @@ describe('TradeHistoryTab', () => {
 
     expect(screen.getByText('LONG')).toBeInTheDocument();
     expect(screen.getByText('HL rejected')).toBeInTheDocument();
-    expect(screen.getByText(/Order: 11 USDC/)).toBeInTheDocument();
+    expect(screen.getByText('11 USDC')).toBeInTheDocument();
     expect(screen.queryByText('Hyperliquid perp')).not.toBeInTheDocument();
     expect(screen.queryByText('Perp order')).not.toBeInTheDocument();
     expect(screen.queryByText(/Collateral:/)).not.toBeInTheDocument();

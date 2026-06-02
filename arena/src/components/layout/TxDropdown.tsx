@@ -91,7 +91,7 @@ function TxRow({ tx }: { tx: TrackedTx }) {
   );
 }
 
-export function TxDropdown({ align = 'end' }: { align?: 'start' | 'end' } = {}) {
+export function TxDropdown({ align = 'end', side = 'down' }: { align?: 'start' | 'end'; side?: 'up' | 'down' } = {}) {
   useTxWatcher();
   useProvisionWatcher();
 
@@ -121,7 +121,7 @@ export function TxDropdown({ align = 'end' }: { align?: 'start' | 'end' } = {}) 
       </button>
 
       {open && (
-        <div className={`absolute ${align === 'start' ? 'left-0' : 'right-0'} top-full mt-2 w-[min(24rem,calc(100vw-2rem))] glass-card-strong rounded-xl border border-arena-elements-dividerColor/50 z-50 shadow-xl overflow-hidden`}>
+        <div className={`absolute ${align === 'start' ? 'left-0' : 'right-0'} ${side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} w-[min(24rem,calc(100vw-2rem))] glass-card-strong rounded-xl border border-arena-elements-dividerColor/50 z-50 shadow-xl overflow-hidden`}>
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-arena-elements-dividerColor/50">
             <div className="flex items-center gap-2">

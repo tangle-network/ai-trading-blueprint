@@ -138,6 +138,23 @@ export function formatNumber(value: number, options: FormatNumberOptions = {}): 
   }).format(displayValue);
 }
 
+export function formatCompactUsd(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '—';
+  if (value >= 1_000_000) {
+    return `$${formatNumber(value / 1_000_000, {
+      maximumFractionDigits: 2,
+      minimumFractionDigits: value >= 10_000_000 ? 1 : 2,
+    })}M`;
+  }
+  if (value >= 1_000) {
+    return `$${formatNumber(value / 1_000, {
+      maximumFractionDigits: 1,
+      minimumFractionDigits: value >= 10_000 ? 0 : 1,
+    })}K`;
+  }
+  return `$${formatNumber(value, { maximumFractionDigits: 2 })}`;
+}
+
 export function botStatusLabel(status: BotStatus): string {
   switch (status) {
     case 'active':

@@ -28,7 +28,7 @@ const SECTION_EXPECTATIONS = {
   ],
   portfolio: [
     'Portfolio',
-    ['Account Equity', 'Account Value'],
+    ['Equity', 'Value'],
     ['Executions', 'No executions recorded'],
   ],
   runs: [
@@ -48,7 +48,7 @@ const LIVE_SECTION_EXPECTATIONS = {
   ],
   portfolio: [
     'Portfolio',
-    ['Positions', 'Executions', 'No executions recorded', 'Account Equity', 'Account Value'],
+    ['Market', 'Executions', 'No executions recorded', 'Equity', 'Value'],
   ],
   runs: [
     'Runs',
@@ -64,6 +64,7 @@ const LIVE_SECTION_EXPECTATIONS = {
   ],
 };
 const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Arena', 'Volume', 'Fills', 'Top agents', 'ETH Macro Scalper'];
+const FIXTURE_LEADERBOARD_EXPECTATIONS = ['Leaderboard', '24H Volume', 'Fills/Hr', 'ETH Macro Scalper', 'Agents'];
 
 function parseArgs(argv) {
   const args = {
@@ -1200,6 +1201,49 @@ async function assertFixtureHomeDashboard(page, baseUrl, { screenshotDir = '' } 
   }
 }
 
+async function assertFixtureLeaderboardDashboard(page, baseUrl, { screenshotDir = '' } = {}) {
+  const failures = [];
+
+  for (const viewport of VIEWPORTS) {
+    await setViewport(page, viewport);
+    await navigate(page, withPath(baseUrl, '/leaderboard'));
+    let metrics;
+    try {
+      metrics = await waitFor(async () => {
+        const nextMetrics = await evaluate(page, `(() => {
+          const scrolling = document.scrollingElement || document.documentElement;
+          return {
+            pathname: location.pathname,
+            bodyText: document.body.innerText.slice(0, 5000),
+            scrollHeight: scrolling.scrollHeight,
+            innerHeight: window.innerHeight,
+          };
+        })()`);
+        return nextMetrics.pathname.endsWith('/leaderboard')
+          && textIncludes(nextMetrics.bodyText, FIXTURE_LEADERBOARD_EXPECTATIONS)
+          ? nextMetrics
+          : false;
+      }, { timeoutMs: 12_000, intervalMs: 250 });
+    } catch {
+      const debugMetrics = await evaluate(page, `(() => ({
+        pathname: location.pathname,
+        bodyText: document.body.innerText.slice(0, 900),
+      }))()`);
+      failures.push(`${viewport.width}x${viewport.height} leaderboard: timed out waiting for ${JSON.stringify(FIXTURE_LEADERBOARD_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
+      continue;
+    }
+
+    if (/Unexpected Application Error/i.test(metrics.bodyText)) {
+      failures.push(`${viewport.width}x${viewport.height} leaderboard: route rendered an error state`);
+    }
+    await captureScreenshot(page, screenshotDir, viewport, 'leaderboard');
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Leaderboard dashboard smoke failed:\n${failures.map((failure) => `- ${failure}`).join('\n')}`);
+  }
+}
+
 async function clickNav(page, label) {
   const clicked = await waitFor(() => evaluate(page, `(async () => {
     const normalize = (value) => value.replace(/\\s+/g, ' ').trim().toLowerCase();
@@ -1397,6 +1441,9 @@ async function main() {
     }
     if (args.fixture && !args.ownerPerformance) {
       await assertFixtureHomeDashboard(page, args.url, {
+        screenshotDir: args.screenshotDir,
+      });
+      await assertFixtureLeaderboardDashboard(page, args.url, {
         screenshotDir: args.screenshotDir,
       });
     }

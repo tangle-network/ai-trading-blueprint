@@ -3,7 +3,7 @@ import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { SparklineChart } from './SparklineChart';
-import { botStatusLabel } from '~/lib/format';
+import { botStatusLabel, formatCompactUsd, formatNumber, STRATEGY_SHORT, truncateAddress } from '~/lib/format';
 import { rankLeaderboardBots } from '~/lib/leaderboardRanking';
 
 interface LeaderboardTableProps {
@@ -11,15 +11,19 @@ interface LeaderboardTableProps {
 }
 
 function RankCell({ rank }: { rank: number }) {
-  if (rank <= 3) {
-    const cls = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : 'rank-3';
-    return <div className={`rank-medal ${cls}`}>{rank}</div>;
-  }
   return (
-    <span className="font-data text-sm text-arena-elements-textTertiary font-medium">
+    <span className="font-data text-sm font-semibold text-arena-elements-textTertiary">
       {rank}
     </span>
   );
+}
+
+function formatPercent(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return '—';
+  return `${value > 0 ? '+' : ''}${formatNumber(value, {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 1,
+  })}%`;
 }
 
 export function LeaderboardTable({ bots }: LeaderboardTableProps) {
@@ -27,23 +31,26 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
   const sorted = rankLeaderboardBots(bots);
 
   return (
-    <Table>
+    <Table className="w-full table-fixed">
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="w-14">#</TableHead>
-          <TableHead>Agent</TableHead>
-          <TableHead className="hidden lg:table-cell">Chart</TableHead>
-          <TableHead className="text-right">Return</TableHead>
-          <TableHead className="text-right hidden sm:table-cell">Sharpe</TableHead>
-          <TableHead className="text-right hidden md:table-cell">Max DD</TableHead>
-          <TableHead className="text-right hidden lg:table-cell">Account</TableHead>
-          <TableHead className="text-right hidden sm:table-cell">Trades</TableHead>
-          <TableHead className="hidden lg:table-cell">Status</TableHead>
+          <TableHead className="w-11 py-3 text-base">#</TableHead>
+          <TableHead className="w-[18%] py-3 text-base">Agent</TableHead>
+          <TableHead className="w-[15%] py-3 text-base">Operator</TableHead>
+          <TableHead className="w-[10%] py-3 text-base">Strategy</TableHead>
+          <TableHead className="w-[9%] py-3 text-right text-base">Account</TableHead>
+          <TableHead className="w-[7%] py-3 text-right text-base">30D</TableHead>
+          <TableHead className="w-[7%] py-3 text-right text-base">Sharpe</TableHead>
+          <TableHead className="w-[6%] py-3 text-right text-base">DD</TableHead>
+          <TableHead className="w-[6%] py-3 text-right text-base">Win</TableHead>
+          <TableHead className="w-[7%] py-3 text-right text-base">Fills</TableHead>
+          <TableHead className="w-[9%] py-3 text-right text-base">State</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {sorted.map((bot, index) => {
           const href = `/arena/bot/${encodeURIComponent(bot.id)}/performance`;
+          const positive = bot.pnlPercent >= 0;
           return (
           <TableRow
             key={bot.id}
@@ -59,52 +66,52 @@ export function LeaderboardTable({ bots }: LeaderboardTableProps) {
               }
             }}
           >
-            <TableCell>
+            <TableCell className="py-3">
               <RankCell rank={index + 1} />
             </TableCell>
-            <TableCell>
+            <TableCell className="min-w-0 py-3">
               <Link
                 to={href}
-                className="font-display text-lg font-semibold hover:text-violet-700 transition-colors duration-200 dark:hover:text-violet-300"
+                className="block truncate font-display text-base font-semibold text-arena-elements-textPrimary transition-colors duration-200 hover:text-violet-700 dark:hover:text-violet-300"
               >
                 {bot.name}
               </Link>
-              <div className="flex items-center gap-1.5 text-sm font-data text-arena-elements-textTertiary mt-0.5">
-                <Identicon address={bot.operatorAddress as Address} size={14} />
-                {bot.operatorAddress.slice(0, 6)}...{bot.operatorAddress.slice(-4)}
+              <div className="mt-1 w-24">
+                <SparklineChart data={bot.sparklineData} positive={positive} width={90} height={24} />
               </div>
             </TableCell>
-            <TableCell className="hidden lg:table-cell">
-              <SparklineChart data={bot.sparklineData} positive={bot.pnlPercent >= 0} />
+            <TableCell className="min-w-0 py-3">
+              <div className="flex min-w-0 items-center gap-2 font-data text-base text-arena-elements-textSecondary">
+                <Identicon address={bot.operatorAddress as Address} size={22} />
+                <span className="truncate">{truncateAddress(bot.operatorAddress)}</span>
+              </div>
             </TableCell>
-            <TableCell className="text-right">
-              {bot.pnlPercent !== 0 ? (
-                <span className={`font-data font-bold text-lg ${
-                  bot.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'
-                }`}>
-                  {bot.pnlPercent >= 0 ? '+' : ''}{bot.pnlPercent.toFixed(1)}%
-                </span>
-              ) : (
-                <span className="font-data text-base text-arena-elements-textTertiary">—</span>
-              )}
+            <TableCell className="truncate py-3 font-data text-base text-arena-elements-textSecondary">
+              {STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}
             </TableCell>
-            <TableCell className="text-right font-data text-lg hidden sm:table-cell">
-              {bot.sharpeRatio !== 0 ? bot.sharpeRatio.toFixed(1) : <span className="text-arena-elements-textTertiary">—</span>}
+            <TableCell className="py-3 text-right font-data text-base text-arena-elements-textPrimary">
+              {bot.tvl > 0 ? formatCompactUsd(bot.tvl) : '—'}
             </TableCell>
-            <TableCell className="text-right font-data text-lg hidden md:table-cell">
+            <TableCell className={`py-3 text-right font-data text-base font-bold ${bot.pnlPercent === 0 ? 'text-arena-elements-textTertiary' : positive ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'}`}>
+              {formatPercent(bot.pnlPercent)}
+            </TableCell>
+            <TableCell className="py-3 text-right font-data text-base text-arena-elements-textPrimary">
+              {bot.sharpeRatio !== 0 ? formatNumber(bot.sharpeRatio, { maximumFractionDigits: 1 }) : '—'}
+            </TableCell>
+            <TableCell className="py-3 text-right font-data text-base">
               {bot.maxDrawdown !== 0 ? (
-                <span className="text-arena-elements-icon-error">{bot.maxDrawdown.toFixed(1)}%</span>
+                <span className="text-arena-elements-icon-error">{formatNumber(bot.maxDrawdown, { maximumFractionDigits: 1 })}%</span>
               ) : (
                 <span className="text-arena-elements-textTertiary">—</span>
               )}
             </TableCell>
-            <TableCell className="text-right font-data text-lg hidden lg:table-cell">
-              {bot.tvl > 0 ? `$${(bot.tvl / 1000).toFixed(0)}K` : <span className="text-arena-elements-textTertiary">—</span>}
+            <TableCell className="py-3 text-right font-data text-base text-arena-elements-textPrimary">
+              {bot.winRate !== 0 ? `${formatNumber(bot.winRate, { maximumFractionDigits: 0 })}%` : '—'}
             </TableCell>
-            <TableCell className="text-right font-data text-lg hidden sm:table-cell">
+            <TableCell className="py-3 text-right font-data text-base text-arena-elements-textPrimary">
               {bot.totalTrades > 0 ? bot.totalTrades.toLocaleString() : <span className="text-arena-elements-textTertiary">—</span>}
             </TableCell>
-            <TableCell className="hidden lg:table-cell text-sm text-arena-elements-textSecondary">
+            <TableCell className="py-3 text-right text-sm text-arena-elements-textSecondary">
               {botStatusLabel(bot.status)}
             </TableCell>
           </TableRow>

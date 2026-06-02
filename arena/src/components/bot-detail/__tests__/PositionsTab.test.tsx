@@ -241,13 +241,13 @@ describe('PositionsTab', () => {
 
     render(<PositionsTab botId="bot-1" status="active" operatorApiUrl="/operator-api" operatorKind="cloud" />);
 
-    expect(screen.getByText('Account Equity')).toBeInTheDocument();
-    expect(screen.getAllByText('Margin Usage').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole('columnheader', { name: 'Position' })).toBeInTheDocument();
+    expect(screen.getByText('Equity')).toBeInTheDocument();
+    expect(screen.getAllByText('Margin').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole('columnheader', { name: 'Market' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Notional' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Margin Used' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Margin' })).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Weight' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('columnheader', { name: 'Current' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Price' })).not.toBeInTheDocument();
     expect(screen.getByText('ETH Perp')).toBeInTheDocument();
     expect(screen.getByText('Long')).toBeInTheDocument();
     expect(screen.getByText('0.026 ETH')).toBeInTheDocument();

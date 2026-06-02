@@ -15,7 +15,7 @@ import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
-import { formatNumber, STRATEGY_SHORT, botStatusLabel } from '~/lib/format';
+import { formatCompactUsd, formatNumber, STRATEGY_SHORT, botStatusLabel } from '~/lib/format';
 import { rankLeaderboardBots } from '~/lib/leaderboardRanking';
 import { isPublicLeaderboardBot } from '~/lib/botVisibility';
 import type { Bot } from '~/lib/types/bot';
@@ -23,23 +23,6 @@ import type { Bot } from '~/lib/types/bot';
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
 ];
-
-function formatCompactUsd(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '—';
-  if (value >= 1_000_000) {
-    return `$${formatNumber(value / 1_000_000, {
-      maximumFractionDigits: 2,
-      minimumFractionDigits: value >= 10_000_000 ? 1 : 2,
-    })}M`;
-  }
-  if (value >= 1_000) {
-    return `$${formatNumber(value / 1_000, {
-      maximumFractionDigits: 1,
-      minimumFractionDigits: value >= 10_000 ? 0 : 1,
-    })}K`;
-  }
-  return `$${formatNumber(value, { maximumFractionDigits: 2 })}`;
-}
 
 function formatSignedPercent(value: number): string {
   return `${value > 0 ? '+' : ''}${formatNumber(value, {
@@ -197,13 +180,22 @@ export default function IndexPage() {
             <HeaderMetric value={formatCompactUsd(homeVolumeSeries.summary.totalUsd)} label="30D Volume" />
             <HeaderMetric value={platformTradeCount > 0 ? platformTradeCount.toLocaleString() : '—'} label={hasPlatformTradeCount ? '30D Fills' : 'Fills'} />
           </div>
-          <Link
-            to="/provision"
-            className="inline-flex h-9 w-fit shrink-0 items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-3 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
-          >
-            <span className="i-ph:plus-bold text-xs" />
-            Deploy Agent
-          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              to="/leaderboard"
+              className="inline-flex h-9 w-fit items-center gap-2 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55 px-3 text-sm font-display font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary"
+            >
+              <span className="i-ph:table text-sm" />
+              Leaderboard
+            </Link>
+            <Link
+              to="/provision"
+              className="inline-flex h-9 w-fit items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-3 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+            >
+              <span className="i-ph:plus-bold text-xs" />
+              Deploy Agent
+            </Link>
+          </div>
         </div>
       </section>
 

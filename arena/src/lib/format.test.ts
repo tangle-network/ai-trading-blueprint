@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatNumber } from './format';
+import { formatCompactUsd, formatNumber } from './format';
 
 describe('formatNumber', () => {
   it('caps fraction digits without padding trailing zeroes', () => {
@@ -16,5 +16,15 @@ describe('formatNumber', () => {
     expect(formatNumber(-0, { maximumFractionDigits: 2 })).toBe('0');
     expect(formatNumber(-0.004, { maximumFractionDigits: 2 })).toBe('0');
     expect(formatNumber(-0.04, { maximumFractionDigits: 1 })).toBe('0');
+  });
+});
+
+describe('formatCompactUsd', () => {
+  it('formats compact positive USD values and hides missing notional', () => {
+    expect(formatCompactUsd(0)).toBe('—');
+    expect(formatCompactUsd(Number.NaN)).toBe('—');
+    expect(formatCompactUsd(913.123)).toBe('$913.12');
+    expect(formatCompactUsd(43_200)).toBe('$43.2K');
+    expect(formatCompactUsd(1_250_000)).toBe('$1.25M');
   });
 });

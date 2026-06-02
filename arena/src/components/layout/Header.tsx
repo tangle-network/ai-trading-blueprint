@@ -6,8 +6,9 @@ import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
 
 const navItems = [
-  { label: 'Leaderboard', href: '/' },
-  { label: 'Home', href: '/dashboard' },
+  { label: 'Home', href: '/' },
+  { label: 'Leaderboard', href: '/leaderboard' },
+  { label: 'My Agents', href: '/dashboard' },
   { label: 'Deploy', href: '/provision' },
 ];
 

@@ -640,6 +640,7 @@ interface BotApiQueryOptions {
   operatorKind?: BotOperatorKind;
   chainId?: number;
   assetMetadata?: TokenMetadata[];
+  offset?: number;
 }
 
 export function useBotTradePage(
@@ -652,20 +653,21 @@ export function useBotTradePage(
   const auth = useOperatorAuth(apiUrl);
   const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
+  const offset = Math.max(0, Math.floor(options.offset ?? 0));
   const needsAuth = fleetReadRequiresAuth(deploymentKind);
   const authKey = needsAuth ? auth.authCacheKey : 'public';
 
   return useQuery<TradePage>({
-    queryKey: ['bot-trade-page', apiUrl, botId, limit, deploymentKind, options.chainId, options.assetMetadata, authKey],
+    queryKey: ['bot-trade-page', apiUrl, botId, limit, offset, deploymentKind, options.chainId, options.assetMetadata, authKey],
     queryFn: async () => {
-      const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=${limit}`;
+      const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=${limit}&offset=${offset}`;
       const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(
         apiUrl,
         auth,
         path,
         { auth: needsAuth },
       );
-      return mapApiTradePage(data, botName, options.chainId, options.assetMetadata ?? [], limit);
+      return mapApiTradePage(data, botName, options.chainId, options.assetMetadata ?? [], limit, offset);
     },
     staleTime: 15_000,
     refetchOnMount: 'always',
