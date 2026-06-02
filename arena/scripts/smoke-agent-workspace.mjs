@@ -1150,18 +1150,32 @@ async function assertCollapsibleRails(page, baseUrl, botId) {
     return /Performance|Market|NAV/i.test(bodyText);
   }, { timeoutMs: 12_000, intervalMs: 250 });
 
-  const globalWidthExpression = `(() => document.querySelector('aside')?.getBoundingClientRect().width ?? 0)()`;
-  const global = await assertRailWidthChange(
-    page,
-    'Collapse sidebar',
-    globalWidthExpression,
-    '((before, value) => before >= 220 && value <= 96)',
-  );
-  if (global.after >= global.before) {
-    throw new Error(`Global sidebar did not collapse: ${global.before} -> ${global.after}`);
-  }
-  await clickButtonByLabel(page, 'Expand sidebar');
-}
+	  const globalWidthExpression = `(() => document.querySelector('aside')?.getBoundingClientRect().width ?? 0)()`;
+	  const initialGlobalWidth = await evaluate(page, globalWidthExpression);
+	  if (initialGlobalWidth <= 96) {
+	    const global = await assertRailWidthChange(
+	      page,
+	      'Expand sidebar',
+	      globalWidthExpression,
+	      '((before, value) => before <= 96 && value >= 220)',
+	    );
+	    if (global.after <= global.before) {
+	      throw new Error(`Global sidebar did not expand: ${global.before} -> ${global.after}`);
+	    }
+	    await clickButtonByLabel(page, 'Collapse sidebar');
+	  } else {
+	    const global = await assertRailWidthChange(
+	      page,
+	      'Collapse sidebar',
+	      globalWidthExpression,
+	      '((before, value) => before >= 220 && value <= 96)',
+	    );
+	    if (global.after >= global.before) {
+	      throw new Error(`Global sidebar did not collapse: ${global.before} -> ${global.after}`);
+	    }
+	    await clickButtonByLabel(page, 'Expand sidebar');
+	  }
+	}
 
 async function assertRouteNavigation(page, baseUrl, botId) {
   await setViewport(page, VIEWPORTS[0]);

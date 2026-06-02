@@ -47,6 +47,7 @@ interface HoverReadout {
 
 const SYNTHETIC_TIME_BASE_SECONDS = 1_700_000_000;
 const DENSE_MARKER_THRESHOLD = 32;
+const DENSE_MARKER_BUCKET_TARGET = 10;
 const markerTimeFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
@@ -108,24 +109,26 @@ function estimateValueAtTimestamp(preparedPoints: PreparedPoint[], timestampMs: 
 
 function prepareChartPoints(
   points: PerformanceChartPoint[],
-  tradeMarkers: TradeChartMarker[],
+  markerPlacements: MarkerPlacement[],
 ): PreparedPoint[] {
   const preparedPoints = prepareBaseChartPoints(points);
   const existingTimes = new Set(preparedPoints.map((point) => point.time));
 
-  for (const marker of tradeMarkers) {
-    if (!Number.isFinite(marker.timestampMs)) continue;
-    const time = Math.floor(marker.timestampMs / 1000) as UTCTimestamp;
+  for (const placement of markerPlacements) {
+    const time = placement.time;
     if (time <= 0 || existingTimes.has(time)) continue;
+    const timestampMs = time * 1000;
 
     existingTimes.add(time);
     preparedPoints.push({
       time,
       point: {
-        label: markerTimeFormatter.format(new Date(marker.timestampMs)),
-        tooltipLabel: marker.tooltip,
-        value: estimateValueAtTimestamp(preparedPoints, marker.timestampMs),
-        timestampMs: marker.timestampMs,
+        label: markerTimeFormatter.format(new Date(timestampMs)),
+        tooltipLabel: placement.count > 1
+          ? `${placement.marker.text} x${placement.count}`
+          : placement.marker.tooltip,
+        value: estimateValueAtTimestamp(preparedPoints, timestampMs),
+        timestampMs,
         kind: 'snapshot',
       },
     });
@@ -163,83 +166,203 @@ function toVolumeSeriesData(candles: MarketCandle[], chartTheme: ChartTheme): Hi
 
 function nearestMarketTime(marketTimes: UTCTimestamp[], timestampMs: number): UTCTimestamp | null {
   if (marketTimes.length === 0 || !Number.isFinite(timestampMs)) return null;
+  const firstTime = marketTimes[0];
+  const lastTime = marketTimes[marketTimes.length - 1];
+  if (firstTime == null || lastTime == null) return null;
   const target = Math.floor(timestampMs / 1000);
-  let nearest = marketTimes[0];
-  let bestDistance = Math.abs(nearest - target);
+  let low = 0;
+  let high = marketTimes.length - 1;
 
-  for (const time of marketTimes) {
-    const distance = Math.abs(time - target);
-    if (distance >= bestDistance) continue;
-    nearest = time;
-    bestDistance = distance;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const time = marketTimes[middle];
+    if (time === target) return time;
+    if (time < target) {
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
   }
 
-  return nearest;
+  const previous = marketTimes[Math.max(0, high)] ?? firstTime;
+  const next = marketTimes[Math.min(marketTimes.length - 1, low)] ?? lastTime;
+  return Math.abs(previous - target) <= Math.abs(next - target) ? previous : next;
+}
+
+interface MarkerCandidate {
+  marker: TradeChartMarker;
+  time: UTCTimestamp;
+}
+
+interface MarkerPlacement {
+  id: string;
+  marker: TradeChartMarker;
+  time: UTCTimestamp;
+  count: number;
+  members: TradeChartMarker[];
+}
+
+function markerSide(marker: TradeChartMarker): 'buy' | 'sell' | 'other' {
+  if (marker.position === 'belowBar' || marker.shape === 'arrowUp') return 'buy';
+  if (marker.position === 'aboveBar' || marker.shape === 'arrowDown') return 'sell';
+  return 'other';
+}
+
+function placementId(marker: TradeChartMarker, time: UTCTimestamp, count: number): string {
+  return `${marker.id}-${time}-${count}`;
+}
+
+function exactMarkerPlacements(candidates: MarkerCandidate[]): MarkerPlacement[] {
+  const groups = new Map<string, MarkerPlacement>();
+
+  for (const candidate of candidates) {
+    const key = [
+      candidate.time,
+      candidate.marker.position,
+      candidate.marker.shape,
+      candidate.marker.color,
+      candidate.marker.text,
+    ].join(':');
+    const group = groups.get(key);
+    if (group) {
+      group.count += 1;
+      group.members.push(candidate.marker);
+      group.id = placementId(group.marker, group.time, group.count);
+      continue;
+    }
+    groups.set(key, {
+      id: placementId(candidate.marker, candidate.time, 1),
+      marker: candidate.marker,
+      time: candidate.time,
+      count: 1,
+      members: [candidate.marker],
+    });
+  }
+
+  return Array.from(groups.values());
+}
+
+function denseMarkerPlacements(candidates: MarkerCandidate[]): MarkerPlacement[] {
+  if (candidates.length === 0) return [];
+
+  const sorted = [...candidates].sort((left, right) => left.time - right.time);
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  if (!first || !last) return [];
+  const minTime = first.time;
+  const maxTime = last.time;
+  const bucketCount = Math.min(
+    DENSE_MARKER_BUCKET_TARGET,
+    Math.max(1, Math.ceil(Math.sqrt(sorted.length))),
+  );
+  const bucketSpan = Math.max(1, Math.ceil((maxTime - minTime + 1) / bucketCount));
+  const groups = new Map<string, MarkerCandidate[]>();
+
+  for (const candidate of sorted) {
+    const bucket = Math.floor((candidate.time - minTime) / bucketSpan);
+    const key = `${bucket}:${markerSide(candidate.marker)}`;
+    const group = groups.get(key);
+    if (group) {
+      group.push(candidate);
+    } else {
+      groups.set(key, [candidate]);
+    }
+  }
+
+  return Array.from(groups.values()).map((group) => {
+    const middle = group[Math.floor(group.length / 2)];
+    if (!middle) throw new Error('Dense marker group unexpectedly empty');
+    return {
+      id: placementId(middle.marker, middle.time, group.length),
+      marker: middle.marker,
+      time: middle.time,
+      count: group.length,
+      members: group.map((candidate) => candidate.marker),
+    };
+  });
+}
+
+function markerPlacements(candidates: MarkerCandidate[], dense: boolean): MarkerPlacement[] {
+  return (dense ? denseMarkerPlacements(candidates) : exactMarkerPlacements(candidates))
+    .sort((left, right) => left.time - right.time);
+}
+
+function toMarkerLabel(marker: TradeChartMarker, count: number, dense: boolean): string {
+  if (count > 1) return `${marker.text} x${count}`;
+  return dense ? '' : marker.text;
+}
+
+function toMarkerSize(count: number, dense: boolean, denseSingletonSize: number): number {
+  if (!dense) return count > 1 ? 1.7 : 1.35;
+  if (count === 1) return denseSingletonSize;
+  return Math.min(1.55, 0.95 + Math.log2(count + 1) * 0.18);
+}
+
+function toSeriesMarkerPlacements(
+  tradeMarkers: TradeChartMarker[],
+): MarkerPlacement[] {
+  const dense = tradeMarkers.length > DENSE_MARKER_THRESHOLD;
+  const candidates = tradeMarkers
+    .filter((marker) => Number.isFinite(marker.timestampMs))
+    .map((marker) => ({
+      marker,
+      time: Math.floor(marker.timestampMs / 1000) as UTCTimestamp,
+    }));
+
+  return markerPlacements(candidates, dense);
+}
+
+function toMarketMarkerPlacements(
+  tradeMarkers: TradeChartMarker[],
+  marketCandles: MarketCandle[],
+): MarkerPlacement[] {
+  const dense = tradeMarkers.length > DENSE_MARKER_THRESHOLD;
+  const marketTimes = marketCandles
+    .map((candle) => Math.floor(candle.timestamp / 1000) as UTCTimestamp)
+    .sort((left, right) => left - right);
+  const candidates = tradeMarkers.flatMap((marker) => {
+    const time = nearestMarketTime(marketTimes, marker.timestampMs);
+    return time == null ? [] : [{ marker, time }];
+  });
+
+  return markerPlacements(candidates, dense);
 }
 
 function toSeriesMarkers(
-  tradeMarkers: TradeChartMarker[],
+  placements: MarkerPlacement[],
+  {
+    dense,
+    denseSingletonSize,
+  }: {
+    dense: boolean;
+    denseSingletonSize: number;
+  },
 ): Array<SeriesMarker<Time>> {
-  const dense = tradeMarkers.length > DENSE_MARKER_THRESHOLD;
-  const groups = new Map<string, { marker: TradeChartMarker; time: UTCTimestamp; count: number }>();
-
-  for (const marker of tradeMarkers) {
-    if (!Number.isFinite(marker.timestampMs)) continue;
-    const time = Math.floor(marker.timestampMs / 1000) as UTCTimestamp;
-    const key = `${time}:${marker.position}:${marker.shape}:${marker.color}:${marker.text}`;
-    const group = groups.get(key);
-    if (group) {
-      group.count += 1;
-      continue;
-    }
-    groups.set(key, { marker, time, count: 1 });
-  }
-
-  return Array.from(groups.values())
-    .sort((left, right) => left.time - right.time)
-    .map(({ marker, time, count }) => ({
-      id: `${marker.id}-${time}-${count}`,
-      time,
-      position: marker.position,
-      shape: marker.shape,
-      color: marker.color,
-      text: dense && count === 1 ? '' : count > 1 ? `${marker.text} x${count}` : marker.text,
-      size: dense ? count > 1 ? 1.25 : 0.78 : count > 1 ? 1.7 : 1.35,
-    }));
+  return placements.map(({ id, marker, time, count }) => ({
+    id,
+    time,
+    position: marker.position,
+    shape: marker.shape,
+    color: marker.color,
+    text: toMarkerLabel(marker, count, dense),
+    size: toMarkerSize(count, dense, denseSingletonSize),
+  }));
 }
 
-function toMarketSeriesMarkers(
-  tradeMarkers: TradeChartMarker[],
-  marketCandles: MarketCandle[],
-): Array<SeriesMarker<Time>> {
-  const dense = tradeMarkers.length > DENSE_MARKER_THRESHOLD;
-  const marketTimes = marketCandles.map((candle) =>
-    Math.floor(candle.timestamp / 1000) as UTCTimestamp);
-  const groups = new Map<string, { marker: TradeChartMarker; time: UTCTimestamp; count: number }>();
-
-  for (const marker of tradeMarkers) {
-    const time = nearestMarketTime(marketTimes, marker.timestampMs);
-    if (time == null) continue;
-    const key = `${time}:${marker.position}:${marker.shape}:${marker.color}:${marker.text}`;
-    const group = groups.get(key);
-    if (group) {
-      group.count += 1;
-      continue;
-    }
-    groups.set(key, { marker, time, count: 1 });
-  }
-
-  return Array.from(groups.values())
-    .sort((left, right) => left.time - right.time)
-    .map(({ marker, time, count }) => ({
-      id: `${marker.id}-${time}-${count}`,
-      time,
-      position: marker.position,
-      shape: marker.shape,
-      color: marker.color,
-      text: dense && count === 1 ? '' : count > 1 ? `${marker.text} x${count}` : marker.text,
-      size: dense ? count > 1 ? 1.3 : 0.82 : count > 1 ? 1.8 : 1.45,
-    }));
+function markerPlacementDetail(placement: MarkerPlacement): string {
+  const startTimestamp = Math.min(...placement.members.map((marker) => marker.timestampMs));
+  const endTimestamp = Math.max(...placement.members.map((marker) => marker.timestampMs));
+  const timeRange = startTimestamp === endTimestamp
+    ? markerTimeFormatter.format(new Date(startTimestamp))
+    : `${markerTimeFormatter.format(new Date(startTimestamp))} - ${markerTimeFormatter.format(new Date(endTimestamp))}`;
+  const sample = placement.members
+    .slice(0, 3)
+    .map((marker) => marker.tooltip)
+    .join(' · ');
+  const remainder = placement.members.length > 3
+    ? ` · +${placement.members.length - 3} more`
+    : '';
+  return `${timeRange} · ${sample}${remainder}`;
 }
 
 function formatMarketReadout(candle: MarketCandle): string {
@@ -257,9 +380,14 @@ export function TradingPerformanceChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverReadout, setHoverReadout] = useState<HoverReadout | null>(null);
   const activeMode = mode === 'market' && marketCandles.length > 0 ? 'market' : 'nav';
+  const denseTradeMarkers = tradeMarkers.length > DENSE_MARKER_THRESHOLD;
+  const navMarkerPlacements = useMemo(
+    () => toSeriesMarkerPlacements(tradeMarkers),
+    [tradeMarkers],
+  );
   const preparedPoints = useMemo(
-    () => prepareChartPoints(points, tradeMarkers),
-    [points, tradeMarkers],
+    () => prepareChartPoints(points, navMarkerPlacements),
+    [navMarkerPlacements, points],
   );
   const latestPoint = preparedPoints[preparedPoints.length - 1]?.point ?? null;
   const firstPoint = preparedPoints[0]?.point ?? null;
@@ -267,8 +395,11 @@ export function TradingPerformanceChart({
   const lineColor = positive ? chartTheme.positive : chartTheme.negative;
   const fillTopColor = positive ? chartTheme.positiveGradientStart : chartTheme.negativeGradientStart;
   const chartMarkers = useMemo(
-    () => toSeriesMarkers(tradeMarkers),
-    [tradeMarkers],
+    () => toSeriesMarkers(navMarkerPlacements, {
+      dense: denseTradeMarkers,
+      denseSingletonSize: 0.72,
+    }),
+    [denseTradeMarkers, navMarkerPlacements],
   );
   const marketSeriesData = useMemo(
     () => toMarketSeriesData(marketCandles),
@@ -278,9 +409,23 @@ export function TradingPerformanceChart({
     () => toVolumeSeriesData(marketCandles, chartTheme),
     [chartTheme, marketCandles],
   );
-  const marketMarkers = useMemo(
-    () => toMarketSeriesMarkers(tradeMarkers, marketCandles),
+  const marketMarkerPlacements = useMemo(
+    () => toMarketMarkerPlacements(tradeMarkers, marketCandles),
     [marketCandles, tradeMarkers],
+  );
+  const marketMarkers = useMemo(
+    () => toSeriesMarkers(marketMarkerPlacements, {
+      dense: denseTradeMarkers,
+      denseSingletonSize: 0.78,
+    }),
+    [denseTradeMarkers, marketMarkerPlacements],
+  );
+  const markerReadoutsById = useMemo(
+    () => new Map(
+      (activeMode === 'market' ? marketMarkerPlacements : navMarkerPlacements)
+        .map((placement) => [placement.id, placement]),
+    ),
+    [activeMode, marketMarkerPlacements, navMarkerPlacements],
   );
 
   useEffect(() => {
@@ -299,10 +444,11 @@ export function TradingPerformanceChart({
         String(preparedPoint.time),
         preparedPoint.point,
       ]));
-      const candleByTime = new Map(marketCandles.map((candle) => [
-        String(Math.floor(candle.timestamp / 1000)),
-        candle,
-      ]));
+	      const candleByTime = new Map(marketCandles.map((candle) => [
+	        String(Math.floor(candle.timestamp / 1000)),
+	        candle,
+	      ]));
+	      const placementById = markerReadoutsById;
       const chart = charts.createChart(containerRef.current, {
         autoSize: true,
         height: containerRef.current.clientHeight || 520,
@@ -439,7 +585,31 @@ export function TradingPerformanceChart({
           return;
         }
 
-        const key = timeKey(param.time);
+	        const hoveredObjectId = (param as {
+	          hoveredObjectId?: string;
+	          hoveredInfo?: { objectId?: string };
+	        }).hoveredInfo?.objectId ?? (param as { hoveredObjectId?: string }).hoveredObjectId;
+	        const markerPlacement = hoveredObjectId ? placementById.get(hoveredObjectId) : null;
+	        if (markerPlacement) {
+	          const placementKey = String(markerPlacement.time);
+	          const candle = candleByTime.get(placementKey);
+	          const point = pointByTime.get(placementKey);
+	          const value = activeMode === 'market'
+	            ? candle?.close
+	            : point?.value;
+	          if (value != null) {
+	            setHoverReadout({
+	              label: markerPlacement.count > 1
+	                ? `${markerPlacement.marker.text} x${markerPlacement.count}`
+	                : markerPlacement.marker.tooltip,
+	              value,
+	              detail: markerPlacementDetail(markerPlacement),
+	            });
+	            return;
+	          }
+	        }
+
+	        const key = timeKey(param.time);
         if (activeMode === 'market') {
           const candle = candleByTime.get(key);
           if (!candle) {
@@ -488,10 +658,11 @@ export function TradingPerformanceChart({
     chartTheme.tooltipBg,
     fillTopColor,
     lineColor,
-    marketCandles,
-    marketLabel,
-    marketMarkers,
-    marketSeriesData,
+	    marketCandles,
+	    marketLabel,
+	    marketMarkers,
+	    markerReadoutsById,
+	    marketSeriesData,
     preparedPoints,
     volumeSeriesData,
   ]);

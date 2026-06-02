@@ -37,6 +37,9 @@ export function isBotOwnedByWallet(
   },
 ): boolean {
   if (isBotCallableByWallet(bot, walletAddress)) return true;
+  const wallet = normalizeAddress(walletAddress);
+  const operator = normalizeAddress(bot.operatorAddress);
+  if (wallet && operator && wallet === operator) return true;
 
   const serviceIds = new Set(services.map((service) => service.serviceId));
   if (serviceIds.has(bot.serviceId)) return true;

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bot } from '~/lib/types/bot';
@@ -70,12 +70,13 @@ function makeBot(overrides: Partial<Bot>): Bot {
 function renderShell(path = '/dashboard') {
   render(
     <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route element={<ArenaAppShell />}>
-          <Route path="/dashboard" element={<div>Dashboard body</div>} />
-          <Route path="/" element={<div>Leaderboard body</div>} />
-        </Route>
-      </Routes>
+	      <Routes>
+	        <Route element={<ArenaAppShell />}>
+	          <Route path="/dashboard" element={<div>Dashboard body</div>} />
+	          <Route path="/" element={<div>Leaderboard body</div>} />
+	          <Route path="/arena/bot/:id/:section" element={<div>Agent body</div>} />
+	        </Route>
+	      </Routes>
     </MemoryRouter>,
   );
 }
@@ -87,7 +88,7 @@ describe('ArenaAppShell', () => {
     hoisted.bots = [];
   });
 
-  it('only pins agents submitted by the connected wallet in the command sidebar', () => {
+	  it('only pins agents submitted by the connected wallet in the command sidebar', () => {
     hoisted.bots = [
       makeBot({
         id: 'mine',
@@ -112,9 +113,36 @@ describe('ArenaAppShell', () => {
     expect(within(sidebar!).getByText('Callable Agent')).toBeInTheDocument();
     expect(within(sidebar!).queryByText('Public Fleet Agent')).not.toBeInTheDocument();
     expect(within(sidebar!).getByRole('link', { name: /fleet/i })).toHaveAttribute('href', '/');
-  });
+	  });
 
-  it('does not show public fleet agents as callable before a wallet is connected', () => {
+	  it('filters wallet relevance before slicing the sidebar roster', () => {
+	    hoisted.bots = [
+	      ...Array.from({ length: 8 }, (_, index) => makeBot({
+	        id: `public-${index}`,
+	        name: `Public Agent ${index + 1}`,
+	        submitterAddress: '0x2222222222222222222222222222222222222222',
+	        pnlPercent: 100 - index,
+	        totalTrades: 20,
+	      })),
+	      makeBot({
+	        id: 'mine-low-pnl',
+	        name: 'My Low PnL Agent',
+	        submitterAddress: '0x1111111111111111111111111111111111111111',
+	        pnlPercent: -12,
+	        totalTrades: 1,
+	      }),
+	    ];
+
+	    renderShell();
+
+	    const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
+
+	    expect(sidebar).not.toBeNull();
+	    expect(within(sidebar!).getByText('My Low PnL Agent')).toBeInTheDocument();
+	    expect(within(sidebar!).queryByText('Public Agent 1')).not.toBeInTheDocument();
+	  });
+
+	  it('does not show public fleet agents as callable before a wallet is connected', () => {
     hoisted.account.address = undefined;
     hoisted.account.isConnected = false;
     hoisted.bots = [
@@ -132,6 +160,30 @@ describe('ArenaAppShell', () => {
 
     expect(sidebar).not.toBeNull();
     expect(within(sidebar!).queryByText('Public Fleet Agent')).not.toBeInTheDocument();
-    expect(within(sidebar!).getByText('Connect to pin callable agents.')).toBeInTheDocument();
-  });
-});
+	    expect(within(sidebar!).queryByText(/callable agents/i)).not.toBeInTheDocument();
+	    expect(within(sidebar!).getByRole('link', { name: /leaderboard/i })).toHaveAttribute('href', '/');
+	  });
+
+	  it('starts collapsed in agent workspaces and keeps the fleet route accessible', () => {
+	    hoisted.bots = [
+	      makeBot({
+	        id: 'mine',
+	        name: 'Callable Agent',
+	        submitterAddress: '0x1111111111111111111111111111111111111111',
+	      }),
+	    ];
+
+	    renderShell('/arena/bot/mine/chat');
+
+	    const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
+
+	    expect(sidebar).not.toBeNull();
+	    expect(sidebar).toHaveClass('w-20');
+	    expect(within(sidebar!).getByRole('link', { name: /leaderboard/i })).toHaveAttribute('href', '/');
+
+	    fireEvent.click(within(sidebar!).getByRole('button', { name: /expand sidebar/i }));
+
+	    expect(sidebar).toHaveClass('w-64');
+	    expect(within(sidebar!).getByText('Callable Agent')).toBeInTheDocument();
+	  });
+	});

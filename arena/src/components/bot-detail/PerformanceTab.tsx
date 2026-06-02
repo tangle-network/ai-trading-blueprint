@@ -665,10 +665,11 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           ) : (
           <div className="glass-card flex min-h-0 flex-1 flex-col rounded-xl p-3">
             <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
-              <h3 className="font-display text-lg font-semibold">Trade Tape</h3>
-              <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
-                Last {Math.min(recentTradeTape.length, 6)}
-              </span>
+	              <h3 className="font-display text-lg font-semibold">Trade Tape</h3>
+	              <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
+	                Last {Math.min(recentTradeTape.length, 6)}
+	                {trades && trades.length > recentTradeTape.length ? ` of ${trades.length}` : ''}
+	              </span>
             </div>
             {recentTradeTape.length > 0 ? (
               <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">

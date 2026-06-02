@@ -348,7 +348,7 @@ describe('PerformanceTab', () => {
     );
   });
 
-  it('does not collapse dense trade history onto sparse metric checkpoints', async () => {
+  it('clusters dense trade markers without collapsing trade timing onto sparse metric checkpoints', async () => {
     mockMetrics = [
       {
         timestamp: '2026-04-23T10:00:00.000Z',
@@ -378,12 +378,15 @@ describe('PerformanceTab', () => {
     await waitFor(() => expect(lightweightChartMock.createSeriesMarkers).toHaveBeenCalled());
     const markerCall = lightweightChartMock.createSeriesMarkers.mock.calls[0];
     const markers = markerCall[1] as Array<{ text?: string; time: number }>;
-    expect(markers).toHaveLength(49);
-    expect(new Set(markers.map((marker) => marker.time)).size).toBe(49);
+    expect(markers.length).toBeGreaterThan(2);
+    expect(markers.length).toBeLessThan(49);
+    expect(markers.some((marker) => /^BUY x\d+$/.test(marker.text ?? ''))).toBe(true);
+    expect(markers.some((marker) => /^SELL x\d+$/.test(marker.text ?? ''))).toBe(true);
 
-    const seriesData = lightweightChartMock.areaSeries.setData.mock.calls[0][0] as Array<{ time: number; value: number }>;
-    expect(seriesData.length).toBeGreaterThan(2);
-  });
+	    const seriesData = lightweightChartMock.areaSeries.setData.mock.calls[0][0] as Array<{ time: number; value: number }>;
+	    expect(seriesData.length).toBeGreaterThan(2);
+	    expect(seriesData.length).toBeLessThanOrEqual(2 + markers.length);
+	  });
 
   it('uses loaded trade rows when checkpoint trade count is stale', () => {
     mockMetrics = [
@@ -406,10 +409,11 @@ describe('PerformanceTab', () => {
       timestamp: Date.parse(`2026-04-23T10:${String(index + 5).padStart(2, '0')}:00.000Z`),
     }));
 
-    render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
+	    render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
 
-    expect(screen.getByText('12')).toBeInTheDocument();
-  });
+	    expect(screen.getByText('12')).toBeInTheDocument();
+	    expect(screen.getByText('Last 6 of 12')).toBeInTheDocument();
+	  });
 
   it('renders real market candles and volume when OHLCV exists for the traded venue', async () => {
     mockMetrics = [

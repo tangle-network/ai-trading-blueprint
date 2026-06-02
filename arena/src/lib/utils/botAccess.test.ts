@@ -39,7 +39,7 @@ describe('botAccess', () => {
     expect(isBotCallableByWallet(makeBot({ submitterAddress: undefined }), '0x1111111111111111111111111111111111111111')).toBe(false);
   });
 
-  it('keeps broader ownership separate from call permission', () => {
+	  it('keeps broader ownership separate from call permission', () => {
     const bot = makeBot({
       serviceId: 7,
       submitterAddress: '0x2222222222222222222222222222222222222222',
@@ -52,10 +52,24 @@ describe('botAccess', () => {
         serviceId: 7,
         vaultAddresses: [],
       }],
-    })).toBe(true);
-  });
+	    })).toBe(true);
+	  });
 
-  it('requires authoritative operator data before exposing command surfaces', () => {
+	  it('treats direct operator address matches as relevant without making them callable', () => {
+	    const wallet = '0x1111111111111111111111111111111111111111';
+	    const bot = makeBot({
+	      operatorAddress: wallet,
+	      submitterAddress: '0x2222222222222222222222222222222222222222',
+	      source: 'operator',
+	      verificationState: 'authoritative',
+	    });
+
+	    expect(isBotOwnedByWallet(bot, { walletAddress: wallet })).toBe(true);
+	    expect(isBotCallableByWallet(bot, wallet)).toBe(false);
+	    expect(isBotCommandableByWallet(bot, wallet)).toBe(false);
+	  });
+
+	  it('requires authoritative operator data before exposing command surfaces', () => {
     const wallet = '0x1111111111111111111111111111111111111111';
     const bot = makeBot({
       submitterAddress: wallet,

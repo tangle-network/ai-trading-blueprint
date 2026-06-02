@@ -1,12 +1,12 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Address } from 'viem';
 import { useAccount } from 'wagmi';
 import { ChainSwitcher, Identicon, TangleLogo, ThemeToggle } from '@tangle-network/blueprint-ui/components';
 import { cn } from '@tangle-network/blueprint-ui';
 import { useBots } from '~/lib/hooks/useBots';
 import { botStatusLabel, formatNumber } from '~/lib/format';
-import { isBotCallableByWallet } from '~/lib/utils/botAccess';
+import { isBotOwnedByWallet } from '~/lib/utils/botAccess';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
 
@@ -32,29 +32,35 @@ function formatReturn(value: number) {
 
 export function ArenaAppShell() {
   const location = useLocation();
-  const { address, isConnected } = useAccount();
+  const { address } = useAccount();
   const { bots } = useBots();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const activeAgents = bots
+  const isBotWorkspace = location.pathname.startsWith('/arena/bot/');
+  const previousIsBotWorkspace = useRef(isBotWorkspace);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(isBotWorkspace);
+  useEffect(() => {
+    if (!previousIsBotWorkspace.current && isBotWorkspace) {
+      setSidebarCollapsed(true);
+    }
+    previousIsBotWorkspace.current = isBotWorkspace;
+  }, [isBotWorkspace]);
+
+  const eligibleAgents = bots
     .filter((bot) => bot.verificationState !== 'unverified')
-    .filter((bot) => bot.status === 'active' || bot.status === 'paused' || bot.totalTrades > 0)
-    .sort((a, b) => {
-      if (a.status === 'active' && b.status !== 'active') return -1;
-      if (b.status === 'active' && a.status !== 'active') return 1;
-      return b.pnlPercent - a.pnlPercent;
-    })
-    .slice(0, 8);
-  const callableAgents = address
-    ? activeAgents
-      .filter((bot) => isBotCallableByWallet(bot, address))
+    .filter((bot) => bot.status === 'active' || bot.status === 'paused' || bot.totalTrades > 0);
+  const walletAgents = address
+    ? eligibleAgents
+      .filter((bot) => isBotOwnedByWallet(bot, { walletAddress: address }))
+      .sort((a, b) => {
+        if (a.status === 'active' && b.status !== 'active') return -1;
+        if (b.status === 'active' && a.status !== 'active') return 1;
+        return b.pnlPercent - a.pnlPercent;
+      })
       .slice(0, 8)
     : [];
-  const agentSections = callableAgents.length > 0
-    ? [{ label: 'My Agents', bots: callableAgents }]
+  const agentSections = walletAgents.length > 0
+    ? [{ label: 'My Agents', bots: walletAgents }]
     : [];
-  const emptyAgentMessage = isConnected
-    ? 'No callable agents for this wallet.'
-    : 'Connect to pin callable agents.';
+  const showAgentRoster = agentSections.length > 0;
 
   return (
     <div className="bp-tone-arena flex h-[100dvh] overflow-hidden bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
@@ -102,9 +108,10 @@ export function ArenaAppShell() {
                   active
                     ? 'bg-violet-500/14 text-arena-elements-textPrimary'
                     : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary',
-                )}
-                title={sidebarCollapsed ? item.label : undefined}
-              >
+	                )}
+	                title={sidebarCollapsed ? item.label : undefined}
+	                aria-label={sidebarCollapsed ? item.label : undefined}
+	              >
                 <span className={`${item.icon} text-base ${active ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary'}`} aria-hidden="true" />
                 {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
               </NavLink>
@@ -113,10 +120,10 @@ export function ArenaAppShell() {
         </nav>
 
         <div className="flex min-h-0 flex-1 flex-col border-t border-arena-elements-dividerColor/60 px-2 py-3">
-          {!sidebarCollapsed && (
+          {!sidebarCollapsed && showAgentRoster && (
             <div className="mb-2 flex items-center justify-between px-2">
               <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-                Agents
+                My agents
               </div>
               <Link
                 to="/"
@@ -127,14 +134,7 @@ export function ArenaAppShell() {
             </div>
           )}
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
-            {agentSections.length === 0 ? (
-              <div className={cn(
-                'rounded-lg border border-dashed border-arena-elements-dividerColor/70 text-xs text-arena-elements-textTertiary',
-                sidebarCollapsed ? 'px-2 py-3 text-center' : 'px-3 py-4',
-              )}>
-                {emptyAgentMessage}
-              </div>
-            ) : agentSections.map((section) => (
+            {agentSections.map((section) => (
               <div key={section.label} className="space-y-1">
                 {!sidebarCollapsed && (
                   <div className="px-2 pb-1 pt-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary first:pt-0">
@@ -154,9 +154,10 @@ export function ArenaAppShell() {
                         selected
                           ? 'border-violet-500/28 bg-violet-500/12'
                           : 'border-transparent hover:border-arena-elements-dividerColor/70 hover:bg-arena-elements-item-backgroundHover',
-                      )}
-                      title={sidebarCollapsed ? `${section.label}: ${bot.name}` : undefined}
-                    >
+	                      )}
+	                      title={sidebarCollapsed ? `${section.label}: ${bot.name}` : undefined}
+	                      aria-label={sidebarCollapsed ? `${section.label}: ${bot.name}` : undefined}
+	                    >
                       <Identicon address={bot.operatorAddress as Address} size={sidebarCollapsed ? 28 : 26} />
                       {!sidebarCollapsed && (
                         <>
