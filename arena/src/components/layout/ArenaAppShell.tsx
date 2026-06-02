@@ -197,7 +197,19 @@ export function ArenaAppShell() {
         <div className="shrink-0 border-t border-arena-elements-dividerColor/70 p-2">
           <div className={cn('mb-2 grid gap-1', sidebarCollapsed ? 'grid-cols-1' : 'grid-cols-2')}>
             <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
-              <ChainSwitcher />
+              {sidebarCollapsed ? (
+                <button
+                  type="button"
+                  onClick={() => setSidebarCollapsed(false)}
+                  className="inline-flex h-10 w-full items-center justify-center rounded-md text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                  aria-label="Base Sepolia testnet"
+                  title="Base Sepolia testnet"
+                >
+                  <span className="i-ph:globe-hemisphere-west text-base" aria-hidden="true" />
+                </button>
+              ) : (
+                <ChainSwitcher />
+              )}
             </div>
             <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
               <ThemeToggle />

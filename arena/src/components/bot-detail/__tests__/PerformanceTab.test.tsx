@@ -470,7 +470,7 @@ describe('PerformanceTab', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { name: 'ETH' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'ETH market' })).toBeInTheDocument();
     expect(screen.getByText('Market')).toBeInTheDocument();
     expect(screen.getByText('Last Price')).toBeInTheDocument();
     expect(screen.getByText('30D Move')).toBeInTheDocument();

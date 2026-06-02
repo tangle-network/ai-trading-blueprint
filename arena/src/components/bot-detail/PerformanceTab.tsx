@@ -498,7 +498,9 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="font-display text-xl font-bold tracking-tight">
-                  {marketCandleToken ?? PERFORMANCE_SECTION_COPY.title}
+                  {effectiveChartMode === 'market' && marketCandleToken
+                    ? `${marketCandleToken} market`
+                    : 'NAV in USDC'}
                 </h2>
                 <span className="rounded-full border border-arena-elements-dividerColor/70 px-2 py-0.5 font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
                   {effectiveChartMode === 'market' ? 'Market' : 'NAV'}
