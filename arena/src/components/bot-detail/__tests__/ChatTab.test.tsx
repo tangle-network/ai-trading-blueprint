@@ -270,4 +270,27 @@ describe("ChatTab", () => {
     );
     expect(screen.getByRole("button", { name: /new chat/i })).toBeInTheDocument();
   });
+
+  it("uses a full-height shell without card chrome in immersive mode", async () => {
+    const { ChatTab } = await import("../ChatTab");
+
+    const { container } = render(
+      <ChatTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorAddress="0x0000000000000000000000000000000000000001"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+        immersive
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    const shell = container.querySelector('[data-sandbox-ui="true"]');
+    expect(shell).toHaveClass("h-full");
+    expect(shell).not.toHaveClass("glass-card");
+    expect(shell).not.toHaveClass("rounded-xl");
+  });
 });

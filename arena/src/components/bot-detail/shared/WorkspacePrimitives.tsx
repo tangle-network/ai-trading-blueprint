@@ -22,6 +22,7 @@ interface WorkspaceNavStripProps<Value extends string> {
   className?: string;
   buttonClassName?: string;
   itemClassName?: string;
+  iconOnly?: boolean;
 }
 
 export function WorkspaceNavStrip<Value extends string>({
@@ -34,6 +35,7 @@ export function WorkspaceNavStrip<Value extends string>({
   className,
   buttonClassName,
   itemClassName,
+  iconOnly = false,
 }: WorkspaceNavStripProps<Value>) {
   return (
     <nav
@@ -65,7 +67,7 @@ export function WorkspaceNavStrip<Value extends string>({
               )}
               aria-hidden="true"
             />
-            <span>{item.label}</span>
+            <span className={iconOnly ? 'sr-only' : undefined}>{item.label}</span>
             {item.badge}
           </>
         );
@@ -77,6 +79,8 @@ export function WorkspaceNavStrip<Value extends string>({
             to={href}
             state={getState?.(item.value)}
             aria-current={selected ? 'page' : undefined}
+            aria-label={iconOnly ? item.label : undefined}
+            title={iconOnly ? item.label : undefined}
             className={itemClass}
             onClick={() => onSelect?.(item.value)}
           >
@@ -88,6 +92,8 @@ export function WorkspaceNavStrip<Value extends string>({
             type="button"
             onClick={() => onSelect?.(item.value)}
             aria-current={selected ? 'page' : undefined}
+            aria-label={iconOnly ? item.label : undefined}
+            title={iconOnly ? item.label : undefined}
             className={itemClass}
           >
             {content}

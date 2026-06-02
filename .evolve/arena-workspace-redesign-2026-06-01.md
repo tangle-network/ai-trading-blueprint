@@ -1640,3 +1640,45 @@ Rejected alternatives:
 - Auth-scope all operator bot sync: would break public leaderboard, latest trades, and platform volume.
 - Re-add a callable-agent list in the sidebar: worsens the three-sidebar problem and repeats the original confusion.
 - Hide owned services if no commandable bots are visible: loses useful service/provision state.
+
+## 2026-06-02 Focus + Data Semantics Audit
+
+Fan-out findings applied in this tranche:
+
+- Navigation: agent routes already hide the global sidebar, but focus pages still felt layered because the route header, chat/run header, and transcript chrome all stacked. `Risk & Ops` remains the largest nested-nav surface and should be split or collapsed next.
+- Data semantics: displayed trade count mixed metrics snapshots, roster values, and trade-ledger totals. The ledger total is the only honest count for visible executions.
+- Density/performance: focus chat/runs should be full-height shells, not cards inside cards; portfolio should avoid nested page scroll; trade instruments should render through one shared component.
+
+Implementation selected:
+
+1. Make chat/runs focus mode use a floating icon control cluster instead of a layout-consuming top bar.
+2. Hide the internal chat/run headers and decision strip in immersive mode so the transcript owns the viewport.
+3. Flatten Portfolio into two fixed-height panels with stable scroll gutters: `Portfolio` and `Executions`.
+4. Reuse `TradeInstrumentDisplay` in Trade History for token pairs, Hyperliquid perps, and prediction markets.
+5. Make `/trades.total` canonical for displayed trade count; metrics/roster counts are fallbacks only.
+
+Shipped changes:
+
+- `AgentWorkspaceShell` focus controls are now icon-only with accessible labels.
+- `ChatTab` and `RunsTab` immersive shells no longer render `glass-card` / rounded outer chrome and no longer show the extra decision strip.
+- `PortfolioWorkspace` now keeps panel headers fixed and scrolls only the data bodies.
+- `TradeHistoryTab` uses the shared instrument renderer and no longer labels historical Hyperliquid rows as `USDC/USDC`; unknown Hyperliquid assets fall back to `Hyperliquid`.
+- `useBotEnrichment` now prefers trade ledger totals over stale/synthetic metric counts.
+- `smoke-agent-workspace.mjs` now validates the new `Executions` label and clicks icon-only focus controls by accessible name/title.
+
+Verification:
+
+- Focused suite passes: `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/TradeHistoryTab.test.tsx src/routes/__tests__/bot-workspace-routing.test.tsx src/components/bot-detail/shared/__tests__/WorkspacePrimitives.test.tsx src/lib/hooks/useBotEnrichment.test.ts src/components/bot-detail/__tests__/ChatTab.test.tsx src/components/bot-detail/__tests__/RunsTab.test.tsx --reporter=dot` (6 files, 55 tests).
+- Full arena test passes: `pnpm --dir arena test -- --reporter=dot` (65 files, 378 tests).
+- `pnpm --dir arena typecheck` passes.
+- `pnpm --dir arena build` passes with the pre-existing large ConnectKit chunk warning.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-focus-scope-smoke-20260602` passes and captures 1440x900 / 1280x800 screenshots for home, performance, portfolio, runs, chat, and operations.
+- `git diff --check` passes.
+
+Still open:
+
+- Split or simplify `Risk & Ops`; it is still top-level tab plus nested tab bar.
+- URL-sync selected run/session state so browser history is meaningful within trace/chat surfaces.
+- Memoize trade rows/transcript markdown and remove expensive table/glass paint layers in the next performance tranche.
+- Reconcile current account value across performance, portfolio, and leaderboard using live portfolio state where possible.
+- Whitelist/redact public run/trade fields if public bot state should not expose strategy reasoning or endpoint topology.

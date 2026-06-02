@@ -58,7 +58,7 @@ export function getHyperliquidSizeLabel(trade: Trade): string | null {
 
 export function getTradeMarketLabel(trade: Trade): string {
   if (trade.targetProtocol === 'hyperliquid') {
-    return getHyperliquidMarketLabel(trade) ?? getTradePairLabel(trade);
+    return getHyperliquidMarketLabel(trade) ?? 'Hyperliquid';
   }
   return getTradePairLabel(trade);
 }

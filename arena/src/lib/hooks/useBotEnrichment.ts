@@ -58,6 +58,20 @@ function toNonNegativeCount(value: number | string | null | undefined): number |
   return Math.floor(parsed);
 }
 
+export function resolveCanonicalTradeCount({
+  ledgerCount,
+  metricsCount,
+  rosterCount,
+}: {
+  ledgerCount?: number | null;
+  metricsCount?: number | null;
+  rosterCount?: number | null;
+}): number | null {
+  if (ledgerCount != null) return ledgerCount;
+  if (metricsCount != null) return metricsCount;
+  return rosterCount ?? null;
+}
+
 export function normalizeTradeHistoryCount(data: unknown): number | null {
   if (Array.isArray(data)) return data.length;
   if (!data || typeof data !== 'object') return null;
@@ -255,7 +269,11 @@ export function useBotEnrichment(
         pnlPercent: Math.round(pnlPercent * 10) / 10,
         pnlAbsolute: Math.round(pnlAbsolute),
         maxDrawdown: Math.round(maxDrawdown * 10) / 10,
-        totalTrades: Math.max(latest.trade_count, tradeCountResults[qi]?.data ?? 0),
+        totalTrades: resolveCanonicalTradeCount({
+          ledgerCount: tradeCountResults[qi]?.data,
+          metricsCount: latest.trade_count,
+          rosterCount: enrichedBots[botIndex].totalTrades,
+        }) ?? enrichedBots[botIndex].totalTrades,
         sparklineData,
       };
     }
@@ -266,7 +284,7 @@ export function useBotEnrichment(
       const botIndex = enrichable.indices[qi];
       enrichedBots[botIndex] = {
         ...enrichedBots[botIndex],
-        totalTrades: Math.max(enrichedBots[botIndex].totalTrades, tradeCount),
+        totalTrades: tradeCount,
       };
     }
     for (let qi = 0; qi < portfolioResults.length; qi++) {

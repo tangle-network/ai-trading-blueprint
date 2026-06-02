@@ -29,11 +29,11 @@ const SECTION_EXPECTATIONS = {
   portfolio: [
     'Portfolio',
     ['Account Equity', 'Account Value'],
-    ['Trade History', 'No executions recorded'],
+    ['Executions', 'No executions recorded'],
   ],
   runs: [
-    ['Trading Trace', 'No traces yet'],
-    ['Cycle', 'Signal', 'COMPLETED', 'SKIP', 'TRADE'],
+    ['ETH Macro Scalper', 'No traces yet'],
+    ['Reasoning', 'fast_backtest', 'Breakout retest'],
   ],
   chat: [
     ['Reasoning', 'Final outcome', 'No messages yet'],
@@ -1179,7 +1179,11 @@ async function clickNav(page, label) {
     const normalize = (value) => value.replace(/\\s+/g, ' ').trim().toLowerCase();
     const target = normalize(${JSON.stringify(label)});
     const candidates = Array.from(document.querySelectorAll('button, a'));
-    const element = candidates.find((item) => normalize(item.textContent || '') === target);
+    const element = candidates.find((item) =>
+      normalize(item.textContent || '') === target
+      || normalize(item.getAttribute('aria-label') || '') === target
+      || normalize(item.getAttribute('title') || '') === target
+    );
     if (!element) return false;
     element.click();
     return true;
@@ -1280,14 +1284,14 @@ async function assertRouteNavigation(page, baseUrl, botId) {
     const pathname = await evaluate(page, 'location.pathname');
     return pathname.endsWith('/chat');
   });
-  await clickNav(page, 'Agent');
+  await clickNav(page, 'Back to agent');
   await waitFor(async () => {
     const pathname = await evaluate(page, 'location.pathname');
     return pathname.endsWith('/portfolio');
   });
 
   await navigate(page, withPath(baseUrl, `/arena/bot/${encodeURIComponent(botId)}/chat`));
-  await clickNav(page, 'Agent');
+  await clickNav(page, 'Back to agent');
   await waitFor(async () => {
     const pathname = await evaluate(page, 'location.pathname');
     return pathname.endsWith('/performance');

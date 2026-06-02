@@ -3,7 +3,7 @@ import { m, AnimatePresence } from 'framer-motion';
 import { useBotTradePage, type TradePage } from '~/lib/hooks/useBotApi';
 import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { ValidatorCard, SimulationDetail } from './shared/ValidatorComponents';
-import { AssetDisplay, AssetPairDisplay } from './shared/AssetDisplay';
+import { AssetDisplay, TradeInstrumentDisplay } from './shared/AssetDisplay';
 import { SkeletonTableRow } from '~/components/ui/Skeleton';
 import { getTradePairLabel } from '~/lib/types/trade';
 import type { Trade, TradeStatus } from '~/lib/types/trade';
@@ -216,10 +216,6 @@ function renderExecutionRef(trade: Trade) {
 }
 
 function renderHyperliquidTradeCell(trade: Trade) {
-  const marketLabel = hyperliquidMarketLabel(trade);
-  const assetLabel = trade.hyperliquidMetadata?.asset?.trim().toUpperCase()
-    || trade.tokenIn.trim().toUpperCase()
-    || 'HL';
   const sizeLabel = hyperliquidSizeLabel(trade);
   const details = [
     { label: 'Order', value: `${formatTradeAmount(trade.amountIn)} ${trade.tokenIn}` },
@@ -228,18 +224,8 @@ function renderHyperliquidTradeCell(trade: Trade) {
 
   return (
     <div className="flex min-w-0 items-start gap-3">
-      <span
-        aria-hidden="true"
-        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-100 text-xs font-data font-semibold text-sky-700 ring-1 ring-black/5 dark:bg-sky-500/20 dark:text-sky-200 dark:ring-white/10"
-      >
-        {assetLabel.slice(0, 3)}
-      </span>
-      <div className="min-w-0 space-y-1">
-        {marketLabel && (
-          <div className="break-words font-display text-lg font-semibold leading-tight text-arena-elements-textPrimary">
-            {marketLabel}
-          </div>
-        )}
+      <TradeInstrumentDisplay trade={trade} size="md" className="min-w-[10rem]" />
+      <div className="min-w-0 flex-1 pt-0.5">
         <div className="flex flex-wrap gap-x-2 gap-y-1 text-base font-data leading-snug text-arena-elements-textSecondary">
           {details.map((detail) => (
             <span key={`${detail.label}:${detail.value}`} className="break-words">
@@ -247,6 +233,29 @@ function renderHyperliquidTradeCell(trade: Trade) {
             </span>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function renderTradeInstrumentCell(trade: Trade, compact: boolean) {
+  if (isHyperliquidTrade(trade)) {
+    return renderHyperliquidTradeCell(trade);
+  }
+
+  return (
+    <div className="space-y-2">
+      <TradeInstrumentDisplay
+        trade={trade}
+        size={compact ? 'md' : 'md'}
+        labelClassName="max-w-full"
+      />
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base font-data text-arena-elements-textSecondary">
+        <span>{formatTradeAmount(trade.amountIn)}</span>
+        <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
+        <span className="mx-1.5 text-arena-elements-textTertiary">→</span>
+        <span>{formatTradeAmount(trade.amountOut)}</span>
+        <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
       </div>
     </div>
   );
@@ -413,20 +422,7 @@ export function TradeHistoryTab({
                       <Badge variant={getActionVariant(trade.action)} className="h-8 px-3 text-base">
                         {getActionLabel(trade.action)}
                       </Badge>
-                      {isHyperliquidTrade(trade) && hyperliquidMarketLabel(trade) ? (
-                        <span className="text-lg font-display font-medium text-arena-elements-textPrimary">
-                          {hyperliquidMarketLabel(trade)}
-                        </span>
-                      ) : trade.targetProtocol === 'polymarket_clob' ? (
-                        <span
-                          className="text-lg font-display font-medium text-arena-elements-textPrimary"
-                          title={pairLabel ?? undefined}
-                        >
-                          {pairLabel}
-                        </span>
-                      ) : (
-                        <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} size="lg" />
-                      )}
+                      <TradeInstrumentDisplay trade={trade} size="md" />
                       <span className="text-base font-data text-arena-elements-textTertiary">
                         {formatTradeTimestamp(trade.timestamp)}
                       </span>
@@ -598,27 +594,8 @@ export function TradeHistoryTab({
                       {getActionLabel(trade.action)}
                     </Badge>
                   </TableCell>
-                  <TableCell className={compact ? 'py-4 align-top font-display text-lg font-medium' : 'min-w-[420px] py-4 align-top font-display text-lg font-medium'} title={pairLabel ?? undefined}>
-                    <div className="space-y-2">
-                      {isHyperliquidTrade(trade) ? (
-                        renderHyperliquidTradeCell(trade)
-                      ) : trade.targetProtocol === 'polymarket_clob' ? (
-                        <div className="max-w-[520px] whitespace-normal text-lg font-semibold leading-snug text-arena-elements-textPrimary">
-                          {pairLabel}
-                        </div>
-                      ) : (
-                        <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} size={compact ? 'md' : 'lg'} />
-                      )}
-                      {!isHyperliquidTrade(trade) && (
-                        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base font-data text-arena-elements-textSecondary">
-                          <span>{formatTradeAmount(trade.amountIn)}</span>
-                          <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
-                          <span className="mx-1.5 text-arena-elements-textTertiary">→</span>
-                          <span>{formatTradeAmount(trade.amountOut)}</span>
-                          <AssetDisplay asset={trade.assetOut} compact preferSymbol showSecondary={false} />
-                        </div>
-                      )}
-                    </div>
+                  <TableCell className={compact ? 'py-4 align-top font-display text-lg font-medium' : 'min-w-[420px] py-4 align-top font-display text-lg font-medium'}>
+                    {renderTradeInstrumentCell(trade, compact)}
                   </TableCell>
                   {!compact && (
                     <>

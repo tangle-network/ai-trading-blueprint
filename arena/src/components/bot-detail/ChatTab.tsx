@@ -767,7 +767,9 @@ export function ChatTab({
     <div
       data-sandbox-ui="true"
       data-sandbox-theme="vault"
-      className="arena-chat-shell glass-card rounded-xl overflow-hidden"
+      className={immersive
+        ? "arena-chat-shell h-full overflow-hidden bg-arena-elements-background-depth-1"
+        : "arena-chat-shell glass-card rounded-xl overflow-hidden"}
       style={immersive
         ? { height: "100%", minHeight: 0 }
         : {
@@ -808,33 +810,35 @@ export function ChatTab({
         )}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 px-5 py-3 bg-arena-elements-background-depth-1/25">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <span className="i-ph:chat-circle-dots text-base text-violet-700 dark:text-violet-400" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-lg font-display font-medium text-arena-elements-textPrimary">
-                  {displayChatHeaderTitle}
-                </div>
-                {activeSession && (
-                  <div className="truncate text-base font-data text-arena-elements-textTertiary">
-                    {truncateMiddle(activeSession.id, 20, 8)}
+          {!immersive && (
+            <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 px-5 py-3 bg-arena-elements-background-depth-1/25">
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <span className="i-ph:chat-circle-dots text-base text-violet-700 dark:text-violet-400" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-lg font-display font-medium text-arena-elements-textPrimary">
+                    {displayChatHeaderTitle}
                   </div>
-                )}
+                  {activeSession && (
+                    <div className="truncate text-base font-data text-arena-elements-textTertiary">
+                      {truncateMiddle(activeSession.id, 20, 8)}
+                    </div>
+                  )}
+                </div>
               </div>
+              {canWrite && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void createSession("New Chat");
+                  }}
+                  className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/50 px-3 text-sm font-display font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                >
+                  <span className="i-ph:plus text-base" aria-hidden="true" />
+                  <span className="hidden sm:inline">New Chat</span>
+                </button>
+              )}
             </div>
-            {canWrite && (
-              <button
-                type="button"
-                onClick={() => {
-                  void createSession("New Chat");
-                }}
-                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/50 px-3 text-sm font-display font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-              >
-                <span className="i-ph:plus text-base" aria-hidden="true" />
-                <span className="hidden sm:inline">New Chat</span>
-              </button>
-            )}
-          </div>
+          )}
 
           <ChatRunBanner
             isStreaming={stream.isStreaming}
@@ -843,11 +847,13 @@ export function ChatTab({
             isAborting={isAborting}
           />
 
-          <DecisionActivityStrip
-            items={decisionItems}
-            selectedId={selectedDecisionItem?.id}
-            onSelect={(item) => setSelectedPublicRunId(item.sourceId)}
-          />
+          {!immersive && decisionItems.length > 0 && (
+            <DecisionActivityStrip
+              items={decisionItems}
+              selectedId={selectedDecisionItem?.id}
+              onSelect={(item) => setSelectedPublicRunId(item.sourceId)}
+            />
+          )}
 
           <div
             className={`min-h-0 flex-1 bg-arena-elements-background-depth-1/15 ${

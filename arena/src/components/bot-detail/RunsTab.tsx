@@ -838,7 +838,9 @@ export function RunsTab({
       <div
         data-sandbox-ui="true"
         data-sandbox-theme="vault"
-        className="arena-chat-shell glass-card overflow-hidden rounded-xl"
+        className={immersive
+          ? "arena-chat-shell h-full overflow-hidden bg-arena-elements-background-depth-1"
+          : "arena-chat-shell glass-card overflow-hidden rounded-xl"}
         style={
           immersive
             ? { height: "100%", minHeight: 0 }
@@ -867,35 +869,37 @@ export function RunsTab({
           )}
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 px-4 py-3">
-              <div className="flex min-w-0 flex-1 items-center gap-3">
-                <span className="i-ph:robot text-base text-amber-700 dark:text-amber-300" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-base font-display font-medium text-arena-elements-textPrimary">
-                    {headerTitle}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="truncate text-sm font-data text-arena-elements-textTertiary">
-                      {headerSubtitle}
+            {!immersive && (
+              <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 px-4 py-3">
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <span className="i-ph:robot text-base text-amber-700 dark:text-amber-300" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-base font-display font-medium text-arena-elements-textPrimary">
+                      {headerTitle}
                     </div>
-                    <span
-                      className={`rounded-full border px-2 py-0.5 text-xs font-data ${getStatusBadgeClass(activeRun?.status ?? "failed")}`}
-                    >
-                      {getStatusLabel(activeRun?.status ?? "failed")}
-                    </span>
-                  </div>
-                  {activeRun && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      <RunMetricPill label="Signal" value={getRunSignalLabel(activeRun)} />
-                      <RunMetricPill label="Cycle" value={activeRun.runId} />
-                      <RunMetricPill label="Duration" value={formatDuration(activeRun.durationMs)} />
-                      <RunMetricPill label="Tokens" value={getRunTokenLabel(activeRun)} />
-                      <RunMetricPill label="Trace" value={activeRun.traceId ? "captured" : "summary"} />
+                    <div className="flex items-center gap-2">
+                      <div className="truncate text-sm font-data text-arena-elements-textTertiary">
+                        {headerSubtitle}
+                      </div>
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-xs font-data ${getStatusBadgeClass(activeRun?.status ?? "failed")}`}
+                      >
+                        {getStatusLabel(activeRun?.status ?? "failed")}
+                      </span>
                     </div>
-                  )}
+                    {activeRun && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <RunMetricPill label="Signal" value={getRunSignalLabel(activeRun)} />
+                        <RunMetricPill label="Cycle" value={activeRun.runId} />
+                        <RunMetricPill label="Duration" value={formatDuration(activeRun.durationMs)} />
+                        <RunMetricPill label="Tokens" value={getRunTokenLabel(activeRun)} />
+                        <RunMetricPill label="Trace" value={activeRun.traceId ? "captured" : "summary"} />
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             <RunsBanner
               run={activeRun}
@@ -903,11 +907,13 @@ export function RunsTab({
               error={streamErrorMessage}
             />
 
-            <DecisionActivityStrip
-              items={decisionItems}
-              selectedId={selectedDecisionItem?.id}
-              onSelect={(item) => setActiveRunId(item.sourceId)}
-            />
+            {!immersive && decisionItems.length > 0 && (
+              <DecisionActivityStrip
+                items={decisionItems}
+                selectedId={selectedDecisionItem?.id}
+                onSelect={(item) => setActiveRunId(item.sourceId)}
+              />
+            )}
 
             <div
               className={`min-h-0 flex-1 bg-arena-elements-background-depth-1/15 ${

@@ -178,17 +178,16 @@ export function AgentWorkspaceShell({
     <div className="flex h-full min-h-0 overflow-hidden">
       <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         {focusMode && (
-          <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 px-3 py-2 shadow-[0_12px_28px_rgba(0,0,0,0.12)] backdrop-blur-xl">
-            <div className="flex min-w-0 items-center gap-2">
+          <div className="pointer-events-none absolute left-2 right-2 top-2 z-30 flex min-w-0 items-start justify-between gap-2">
+            <div className="pointer-events-auto flex min-w-0 items-center gap-1.5 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/90 p-1 shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-xl">
               <Link
                 to={backHref ?? `/arena/bot/${encodeURIComponent(bot.id)}/performance`}
                 replace
-                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/58 px-2.5 font-display text-sm font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-display text-sm font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
                 aria-label="Back to agent"
                 title="Back to agent"
               >
                 <span className="i-ph:arrow-left text-base" aria-hidden="true" />
-                <span className="hidden sm:inline">Agent</span>
               </Link>
               {focusNavItems.length > 0 && (
                 <WorkspaceNavStrip
@@ -197,8 +196,9 @@ export function AgentWorkspaceShell({
                   getHref={buildSectionHref}
                   getState={buildSectionState}
                   ariaLabel="Agent focus navigation"
-                  className="ml-auto min-w-0 border-0 bg-transparent p-0"
-                  buttonClassName="h-9 rounded-lg"
+                  className="min-w-0 border-0 bg-transparent p-0"
+                  buttonClassName="h-9 rounded-lg px-2"
+                  iconOnly
                 />
               )}
             </div>

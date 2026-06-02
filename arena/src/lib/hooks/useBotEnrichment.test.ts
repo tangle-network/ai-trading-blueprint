@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeTradeHistoryCount, portfolioTvlUsd } from './useBotEnrichment';
+import {
+  normalizeTradeHistoryCount,
+  portfolioTvlUsd,
+  resolveCanonicalTradeCount,
+} from './useBotEnrichment';
 
 describe('portfolioTvlUsd', () => {
   it('returns the priced USD vault value instead of raw vault units', () => {
@@ -28,5 +32,27 @@ describe('portfolioTvlUsd', () => {
       { id: 'trade-2' },
       { id: 'trade-3' },
     ])).toBe(3);
+  });
+
+  it('uses the trade ledger total as the canonical displayed trade count', () => {
+    expect(resolveCanonicalTradeCount({
+      ledgerCount: 4,
+      metricsCount: 9,
+      rosterCount: 12,
+    })).toBe(4);
+  });
+
+  it('falls back to metrics or roster counts when the trade ledger is unavailable', () => {
+    expect(resolveCanonicalTradeCount({
+      ledgerCount: null,
+      metricsCount: 9,
+      rosterCount: 12,
+    })).toBe(9);
+
+    expect(resolveCanonicalTradeCount({
+      ledgerCount: null,
+      metricsCount: null,
+      rosterCount: 12,
+    })).toBe(12);
   });
 });

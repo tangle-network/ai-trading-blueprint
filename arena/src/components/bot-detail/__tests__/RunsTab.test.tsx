@@ -589,4 +589,53 @@ describe("RunsTab", () => {
       );
     });
   });
+
+  it("uses a full-height shell without card chrome in immersive mode", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-immersive",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_849_924,
+              completed_at: 1_775_849_984,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 60_000,
+              input_tokens: 10,
+              output_tokens: 6,
+              result: "summary",
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    const { container } = render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+        immersive
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    const shell = container.querySelector('[data-sandbox-ui="true"]');
+    expect(shell).toHaveClass("h-full");
+    expect(shell).not.toHaveClass("glass-card");
+    expect(shell).not.toHaveClass("rounded-xl");
+    expect(screen.queryByRole("complementary", { name: /decision inspector/i })).not.toBeInTheDocument();
+  });
 });

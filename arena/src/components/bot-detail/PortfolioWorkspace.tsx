@@ -27,53 +27,51 @@ export function PortfolioWorkspace({
   assetMetadata,
 }: PortfolioWorkspaceProps) {
   return (
-    <div className="grid h-full min-h-0 gap-3 xl:grid-cols-[minmax(360px,0.86fr)_minmax(520px,1.14fr)]">
-      <section className="min-h-0 overflow-y-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/54 p-3">
-        <div className="mb-3 flex items-center justify-between gap-3">
+    <div className="grid h-full min-h-0 gap-2 xl:grid-cols-[minmax(380px,0.84fr)_minmax(560px,1.16fr)]">
+      <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/48">
+        <div className="shrink-0 border-b border-arena-elements-dividerColor/55 px-3 py-2">
           <div>
-            <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
+            <h2 className="font-display text-lg font-semibold tracking-tight text-arena-elements-textPrimary">
               Portfolio
             </h2>
-            <p className="text-sm text-arena-elements-textSecondary">
-              Cash, positions, margin, and open risk when available.
-            </p>
           </div>
         </div>
-        <PositionsTab
-          botId={botId}
-          status={status}
-          chainId={chainId}
-          operatorApiUrl={operatorApiUrl}
-          operatorKind={operatorKind}
-          verificationState={verificationState}
-          assetMetadata={assetMetadata}
-          workspace
-          workspaceLayout="rail"
-        />
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 [scrollbar-gutter:stable]">
+          <PositionsTab
+            botId={botId}
+            status={status}
+            chainId={chainId}
+            operatorApiUrl={operatorApiUrl}
+            operatorKind={operatorKind}
+            verificationState={verificationState}
+            assetMetadata={assetMetadata}
+            workspace
+            workspaceLayout="rail"
+          />
+        </div>
       </section>
 
-      <section className="min-h-0 overflow-y-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/54 p-3">
-        <div className="mb-3 flex items-center justify-between gap-3">
+      <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/48">
+        <div className="shrink-0 border-b border-arena-elements-dividerColor/55 px-3 py-2">
           <div>
-            <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-              Trade History
+            <h2 className="font-display text-lg font-semibold tracking-tight text-arena-elements-textPrimary">
+              Executions
             </h2>
-            <p className="text-sm text-arena-elements-textSecondary">
-              Trades with position, order, and execution details.
-            </p>
           </div>
         </div>
-        <TradeHistoryTab
-          botId={botId}
-          botName={botName}
-          isLive={isLive}
-          chainId={chainId}
-          operatorApiUrl={operatorApiUrl}
-          operatorKind={operatorKind}
-          verificationState={verificationState}
-          assetMetadata={assetMetadata}
-          compact
-        />
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 [scrollbar-gutter:stable]">
+          <TradeHistoryTab
+            botId={botId}
+            botName={botName}
+            isLive={isLive}
+            chainId={chainId}
+            operatorApiUrl={operatorApiUrl}
+            operatorKind={operatorKind}
+            verificationState={verificationState}
+            assetMetadata={assetMetadata}
+            compact
+          />
+        </div>
       </section>
     </div>
   );
