@@ -1,6 +1,6 @@
 import { Link, useNavigate } from 'react-router';
 import { isAddress, type Address } from 'viem';
-import { Badge, Identicon, Skeleton } from '@tangle-network/blueprint-ui/components';
+import { Identicon, Skeleton } from '@tangle-network/blueprint-ui/components';
 import { TradeInstrumentDisplay } from '~/components/bot-detail/shared/AssetDisplay';
 import { useLatestAgentTrades } from '~/lib/hooks/useBotApi';
 import type { Bot } from '~/lib/types/bot';
@@ -8,7 +8,6 @@ import type { Trade } from '~/lib/types/trade';
 import {
   formatTradeActionLabel,
   formatTradeAge,
-  formatTradeModeLabel,
   formatTradeUsd,
   getTradeActionPillClass,
 } from '~/lib/tradeDisplay';
@@ -49,16 +48,14 @@ export function LatestAgentTrades({
       aria-live="polite"
     >
       <div className="flex items-center justify-between gap-4 border-b border-arena-elements-dividerColor/60 px-4 py-3 sm:px-5">
-        <div>
-          <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-            Live Fill Tape
-          </h2>
-        </div>
-        <Badge variant="outline" className="font-data text-xs">
-          {trades.length > 0
-            ? `Last ${visibleTrades.length}`
-            : `${candidateCount} operator${candidateCount === 1 ? '' : 's'}`}
-        </Badge>
+        <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
+          Fills
+        </h2>
+        {trades.length === 0 && candidateCount > 0 && (
+          <span className="font-data text-xs text-arena-elements-textTertiary">
+            {candidateCount} source{candidateCount === 1 ? '' : 's'}
+          </span>
+        )}
       </div>
 
       {isLoading ? (
@@ -82,12 +79,12 @@ export function LatestAgentTrades({
           data-testid="live-fill-tape-scroll"
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
-          <div className="sticky top-0 z-10 grid grid-cols-[3.2rem_minmax(0,1fr)_4.75rem_minmax(8rem,1.15fr)_5.5rem] gap-3 border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/96 px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary backdrop-blur">
-            <span>Age</span>
+          <div className="sticky top-0 z-10 grid grid-cols-[4.25rem_minmax(9rem,0.9fr)_6.25rem_minmax(12rem,1.35fr)_6.75rem] gap-3 border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/96 px-3 py-2 text-xs font-medium text-arena-elements-textTertiary backdrop-blur">
+            <span>Time</span>
             <span>Agent</span>
-            <span>Action</span>
+            <span>Side</span>
             <span>Market</span>
-            <span className="text-right">Notional</span>
+            <span className="text-right">USD</span>
           </div>
           <div className="divide-y divide-arena-elements-dividerColor/50">
             {visibleTrades.map(({ trade, bot, botId, botName }) => {
@@ -98,7 +95,7 @@ export function LatestAgentTrades({
                 <button
                   key={`${botId}:${trade.id}`}
                   type="button"
-                  className="group grid w-full grid-cols-[3.2rem_minmax(0,1fr)_4.75rem_minmax(8rem,1.15fr)_5.5rem] items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                  className="group grid w-full grid-cols-[4.25rem_minmax(9rem,0.9fr)_6.25rem_minmax(12rem,1.35fr)_6.75rem] items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
                   aria-label={`Open ${agentName} performance`}
                   onClick={() => navigate(`/arena/bot/${encodeURIComponent(botId)}/performance`)}
                 >
@@ -118,18 +115,16 @@ export function LatestAgentTrades({
                       {agentName}
                     </span>
                   </span>
-                  <span className={`inline-flex h-8 items-center justify-center rounded-md px-2 font-data text-xs font-bold ${getTradeActionPillClass(trade.action)}`}>
+                  <span className={`inline-flex h-8 min-w-0 items-center justify-center rounded-md px-2 font-data text-xs font-bold ${getTradeActionPillClass(trade.action)}`}>
                     {formatTradeActionLabel(trade.action)}
                   </span>
                   <span className="min-w-0">
                     <TradeInstrumentDisplay
                       trade={trade}
                       size="sm"
+                      showVenue={false}
                       labelClassName="max-w-full"
                     />
-                    <span className="mt-0.5 block truncate pl-8 font-data text-xs text-arena-elements-textSecondary">
-                      {formatTradeModeLabel(trade)}
-                    </span>
                   </span>
                   <span className="text-right font-data text-base font-semibold text-arena-elements-textPrimary">
                     {formatTradeUsd(trade.notionalUsd)}
@@ -203,6 +198,7 @@ export function LatestAgentTrades({
                       <TradeInstrumentDisplay
                         trade={trade}
                         size="md"
+                        showVenue={false}
                         labelClassName="max-w-[280px]"
                       />
                     </td>
@@ -210,7 +206,7 @@ export function LatestAgentTrades({
                       {formatTradeUsd(trade.notionalUsd)}
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textSecondary">
-                      {formatTradeModeLabel(trade)}
+                      {trade.paperTrade || trade.status === 'paper' ? 'Paper' : 'Live'}
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textSecondary">
                       {trade.status}

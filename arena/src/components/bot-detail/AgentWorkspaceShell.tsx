@@ -1,16 +1,14 @@
 import { Link } from 'react-router';
 import { useState, type ReactNode } from 'react';
-import * as Tooltip from '@radix-ui/react-tooltip';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
-import { Badge, Identicon } from '@tangle-network/blueprint-ui/components';
+import { Identicon } from '@tangle-network/blueprint-ui/components';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
-import { botStatusBadgeVariant, botStatusLabel, formatNumber, normalizeDisplayNumber } from '~/lib/format';
+import { botStatusLabel, formatNumber, normalizeDisplayNumber } from '~/lib/format';
 import { resolveBotDisplayName } from '~/lib/utils/botNames';
 import { getBotStrategyChainId } from '~/lib/utils/botStrategy';
 import { networks } from '~/lib/contracts/chains';
-import { HEADER_RETURN_PERCENT_COPY } from './metricCopy';
 import {
   WorkspaceNavStrip,
   type WorkspaceNavItem,
@@ -139,38 +137,33 @@ export function AgentWorkspaceShell({
   };
   const metrics = [
     {
-      label: HEADER_RETURN_PERCENT_COPY.label,
+      label: 'Return',
       value: formatSignedPercent(summary.pnlPercent),
       color: summary.pnlPercent == null
         ? ''
         : summary.pnlPercent >= 0
           ? 'text-arena-elements-icon-success'
           : 'text-arena-elements-icon-error',
-      title: HEADER_RETURN_PERCENT_COPY.title,
     },
     {
-      label: '30D Sharpe',
+      label: 'Sharpe',
       value: formatDecimal(summary.sharpeRatio),
       color: '',
-      title: 'Risk-adjusted return over sampled account value snapshots.',
     },
     {
-      label: 'Max Drawdown',
+      label: 'Max DD',
       value: formatPercent(summary.maxDrawdown),
       color: summary.maxDrawdown == null ? '' : 'text-crimson-400',
-      title: 'Maximum drawdown over sampled account value history.',
     },
     {
       label: 'Trades',
       value: tradeCount > 0 ? tradeCount.toLocaleString() : '—',
       color: '',
-      title: 'Live metric total; falls back to the operator summary when metrics are unavailable.',
     },
     {
       label: 'Account',
       value: formatPortfolioValue(summary.portfolioValue),
       color: '',
-      title: 'Latest priced account value, falling back to the latest account snapshot when portfolio pricing is unavailable.',
     },
   ];
 
@@ -206,7 +199,7 @@ export function AgentWorkspaceShell({
         )}
 
         {!focusMode && (
-          <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/82 px-3 py-2 backdrop-blur-xl">
+          <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1 px-3 py-2">
             <div className="mx-auto flex w-full max-w-[1500px] items-center gap-3">
               <Link
                 to="/"
@@ -217,14 +210,17 @@ export function AgentWorkspaceShell({
                 <span className="i-ph:arrow-left text-base" aria-hidden="true" />
                 Arena
               </Link>
-              <div className="flex min-w-[280px] max-w-[420px] items-center gap-3">
+              <div className="flex min-w-[240px] max-w-[380px] items-center gap-3">
                 <Identicon address={bot.operatorAddress as Address} size={34} />
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
                     <h1 className="truncate font-display text-lg font-bold tracking-tight text-arena-elements-textPrimary">
                       {title}
                     </h1>
-                    <Badge variant={botStatusBadgeVariant(bot.status)}>{botStatusLabel(bot.status)}</Badge>
+                    <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full border border-arena-elements-dividerColor/60 px-1.5 text-xs text-arena-elements-textSecondary">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+                      {botStatusLabel(bot.status)}
+                    </span>
                     <div className="hidden shrink-0 items-center overflow-hidden rounded-md border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 font-data text-[11px] text-arena-elements-textTertiary sm:inline-flex">
                       <code className="px-2 py-1" title={bot.operatorAddress}>
                         {formatCompactAddress(bot.operatorAddress)}
@@ -252,17 +248,19 @@ export function AgentWorkspaceShell({
                       )}
                     </div>
                   </div>
-                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5">
-                    <Badge variant="accent">{formatStrategyType(bot.strategyType)}</Badge>
-                    <Badge variant={bot.verificationState === 'unverified' ? 'outline' : 'success'}>
-                      {bot.verificationState === 'unverified' ? 'Unverified' : 'Verified operator'}
-                    </Badge>
-                    {bot.validationTrust && (
-                      <Badge variant="outline">{formatStrategyType(bot.validationTrust)}</Badge>
+                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-arena-elements-textTertiary">
+                    <span className="truncate">{formatStrategyType(bot.strategyType)}</span>
+                    <span aria-hidden="true">/</span>
+                    <span>{bot.paperTrade ? 'Paper' : 'Live'}</span>
+                    <span aria-hidden="true">/</span>
+                    <span className="truncate">{targetNetwork}</span>
+                    {bot.verificationState !== 'unverified' && (
+                      <span
+                        className="i-ph:seal-check-fill shrink-0 text-emerald-500"
+                        aria-label="Verified operator"
+                        title="Verified operator"
+                      />
                     )}
-                    <span className="font-data text-xs text-arena-elements-textTertiary">
-                      {bot.paperTrade ? 'Paper mode' : 'Live'} · {targetNetwork}
-                    </span>
                   </div>
                 </div>
               </div>
@@ -273,41 +271,23 @@ export function AgentWorkspaceShell({
                 getHref={buildSectionHref}
                 getState={buildSectionState}
                 ariaLabel="Agent workspace sections"
-                className="min-w-0 flex-1 justify-center border-0 bg-transparent p-0"
-                buttonClassName="h-9 rounded-lg px-2.5"
+                className="min-w-0 flex-1 border-0 bg-transparent p-0"
+                buttonClassName="h-10 rounded-lg px-3"
+                itemClassName="min-w-0 flex-1 justify-center"
               />
 
-              <Tooltip.Provider delayDuration={120}>
-                <div className="hidden shrink-0 items-center gap-3 min-[1360px]:flex">
-                  {metrics.map((metric) => (
-                      <Tooltip.Root key={metric.label}>
-                        <Tooltip.Trigger asChild>
-                          <div className="min-w-[58px]">
-                            <div className="truncate font-data text-[10px] font-semibold uppercase text-arena-elements-textTertiary">
-                              {metric.label}
-                            </div>
-                            <div className={`mt-0.5 truncate font-data text-sm font-bold text-arena-elements-textPrimary ${metric.color}`}>
-                              {metric.value}
-                            </div>
-                          </div>
-                      </Tooltip.Trigger>
-                      {metric.title && (
-                        <Tooltip.Portal>
-                          <Tooltip.Content
-                            side="bottom"
-                            align="end"
-                            sideOffset={8}
-                            className="z-50 max-w-[240px] rounded-lg border border-[var(--arena-elements-borderColor)] bg-[var(--arena-elements-bg-depth-2)] px-3 py-2 text-xs leading-relaxed text-arena-elements-textSecondary shadow-xl"
-                          >
-                            {metric.title}
-                            <Tooltip.Arrow className="fill-[var(--arena-elements-bg-depth-2)]" />
-                          </Tooltip.Content>
-                        </Tooltip.Portal>
-                      )}
-                    </Tooltip.Root>
-                  ))}
-                </div>
-              </Tooltip.Provider>
+              <div className="hidden shrink-0 items-center gap-3 min-[1360px]:flex">
+                {metrics.map((metric) => (
+                  <div key={metric.label} className="min-w-[58px]">
+                    <div className="truncate text-xs text-arena-elements-textTertiary">
+                      {metric.label}
+                    </div>
+                    <div className={`mt-0.5 truncate font-data text-sm font-bold text-arena-elements-textPrimary ${metric.color}`}>
+                      {metric.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}

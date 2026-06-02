@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AreaData, HistogramData, IChartApi, ISeriesApi, Time, UTCTimestamp } from 'lightweight-charts';
-import { Badge, Skeleton } from '@tangle-network/blueprint-ui/components';
+import { Skeleton } from '@tangle-network/blueprint-ui/components';
 import { loadLightweightCharts } from '~/components/bot-detail/lightweightChartRuntime';
 import { formatNumber } from '~/lib/format';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
@@ -20,8 +20,8 @@ interface PlatformVolumeChartProps {
 }
 
 const MODES: Array<{ value: PlatformVolumeMode; label: string; icon: string }> = [
-  { value: 'bucket', label: 'Daily Volume', icon: 'i-ph:chart-bar' },
-  { value: 'rolling7d', label: '7D Rolling', icon: 'i-ph:wave-sine' },
+  { value: 'bucket', label: 'Daily', icon: 'i-ph:chart-bar' },
+  { value: 'rolling7d', label: '7D', icon: 'i-ph:wave-sine' },
   { value: 'cumulative', label: 'Cumulative', icon: 'i-ph:trend-up' },
 ];
 
@@ -291,7 +291,7 @@ export function PlatformVolumeChart({
 }: PlatformVolumeChartProps) {
   const [range, setRange] = useState<PlatformVolumeRange>('30d');
   const [mode, setMode] = useState<PlatformVolumeMode>('bucket');
-  const { series, coverage, isLoading, isFetching } = usePlatformVolumeSeries(bots, range);
+  const { series, isLoading, isFetching } = usePlatformVolumeSeries(bots, range);
   const selectedRange = PLATFORM_VOLUME_RANGES.find((item) => item.value === range) ?? PLATFORM_VOLUME_RANGES[2];
   const modeLabel = mode === 'bucket' ? selectedRange.bucketLabel : MODES.find((item) => item.value === mode)?.label ?? 'Volume';
   const buckets = series.buckets;
@@ -299,41 +299,22 @@ export function PlatformVolumeChart({
   const latestValue = values[values.length - 1] ?? 0;
   const hasVolume = series.summary.totalUsd > 0;
   const isCommand = variant === 'command';
-  const operatorCoverage = coverage.candidateOperators > 0
-    ? `${coverage.fetchedOperators}/${coverage.candidateOperators} operators`
-    : 'No operators';
-  const summaryStats = [
-    { label: 'Live', value: formatUsd(series.summary.liveUsd) },
-    { label: 'Paper', value: formatUsd(series.summary.paperUsd) },
-    { label: 'Priced Trades', value: series.summary.pricedTradeCount.toLocaleString() },
-    { label: 'Coverage', value: operatorCoverage },
-  ];
 
   return (
-    <section className={`${isCommand ? 'h-full' : 'mb-4'} overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/46 ${className}`}>
+    <section className={`${isCommand ? 'flex h-full flex-col' : 'mb-4'} overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60 ${className}`}>
       <div className="flex flex-col gap-3 border-b border-arena-elements-dividerColor/60 px-4 py-3 sm:px-5 2xl:flex-row 2xl:items-center 2xl:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-              Platform Volume
+              Volume
             </h2>
-            <Badge variant="outline" className="font-data text-xs">
-              Coverage
-            </Badge>
-            {coverage.candidateOperators > 0 && (
-              <Badge variant="outline" className="font-data text-xs">
-                {operatorCoverage}
-              </Badge>
-            )}
             {isFetching && !isLoading && (
-              <Badge variant="secondary" className="font-data text-xs">
-                refreshing
-              </Badge>
+              <span
+                className="i-ph:arrows-clockwise text-sm text-arena-elements-textTertiary animate-spin"
+                aria-label="Refreshing volume"
+              />
             )}
           </div>
-          <p className="mt-1 text-sm text-arena-elements-textSecondary">
-            USD notional reported by trading operators.
-          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 2xl:justify-end">
@@ -391,15 +372,15 @@ export function PlatformVolumeChart({
         </div>
       </div>
 
-      <div className={`grid gap-0 ${isCommand ? '' : 'xl:grid-cols-[minmax(0,1fr)_280px]'}`}>
-        <div className={`${isCommand ? 'min-h-[318px]' : 'min-h-[292px]'} p-4 sm:p-5`}>
+      <div className={`grid gap-0 ${isCommand ? 'min-h-0 flex-1' : 'xl:grid-cols-[minmax(0,1fr)_220px]'}`}>
+        <div className={`${isCommand ? 'flex min-h-0 flex-col' : 'min-h-[292px]'} p-4 sm:p-5`}>
           {isLoading ? (
-            <Skeleton className={`${isCommand ? 'h-[286px]' : 'h-[260px]'} w-full`} />
+            <Skeleton className={`${isCommand ? 'min-h-0 flex-1' : 'h-[260px]'} w-full`} />
           ) : hasVolume ? (
-            <div className="h-full rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/54 p-3">
-              <div className="mb-3 flex items-start justify-between gap-4">
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="mb-2 flex items-start justify-between gap-4">
                 <div>
-                  <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                  <div className="text-xs font-medium text-arena-elements-textTertiary">
                     {modeLabel} (USD)
                   </div>
                   <div className="mt-1 font-data text-3xl font-bold tracking-tight text-arena-elements-textPrimary">
@@ -407,8 +388,8 @@ export function PlatformVolumeChart({
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-                    Total in range
+                  <div className="text-xs font-medium text-arena-elements-textTertiary">
+                    Total
                   </div>
                   <div className="mt-1 font-data text-xl font-bold text-arena-elements-textPrimary">
                     {formatUsd(series.summary.totalUsd)}
@@ -416,29 +397,11 @@ export function PlatformVolumeChart({
                 </div>
               </div>
 
-              {isCommand && (
-                <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {summaryStats.map((stat) => (
-                    <div
-                      key={stat.label}
-                      className="min-w-0 rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/44 px-2.5 py-2"
-                    >
-                      <div className="truncate font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-                        {stat.label}
-                      </div>
-                      <div className="mt-0.5 truncate font-data text-sm font-bold text-arena-elements-textPrimary">
-                        {stat.value}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
               <PlatformVolumeTradingChart
                 buckets={buckets}
                 mode={mode}
                 bucketMs={series.bucketMs}
-                heightClassName={isCommand ? 'h-[220px]' : 'h-[222px]'}
+                heightClassName={isCommand ? 'min-h-0 flex-1' : 'h-[222px]'}
               />
             </div>
           ) : (
@@ -453,9 +416,6 @@ export function PlatformVolumeChart({
                 <div className="i-ph:chart-bar text-3xl text-arena-elements-textTertiary mb-2 mx-auto" />
                 <p className="font-display text-base font-semibold text-arena-elements-textPrimary">
                   No priced volume
-                </p>
-                <p className="mt-1 text-sm text-arena-elements-textSecondary">
-                  Awaiting USD-valued trades.
                 </p>
               </div>
             </div>
@@ -483,32 +443,6 @@ export function PlatformVolumeChart({
                 </div>
               </div>
             ))}
-          </div>
-
-          <div className="mt-3 rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/36 px-3 py-2.5">
-            <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-              Coverage
-            </div>
-            <div className="mt-2 space-y-1.5 text-sm text-arena-elements-textSecondary">
-              <div className="flex items-center justify-between gap-3">
-                <span>Agents</span>
-                <span className="font-data text-arena-elements-textPrimary">
-                  {coverage.fetchedBots}/{coverage.candidateBots}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Operators</span>
-                <span className="font-data text-arena-elements-textPrimary">
-                  {coverage.fetchedOperators}/{coverage.candidateOperators}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>History</span>
-                <span className="font-data text-arena-elements-textPrimary">
-                  {selectedRange.fetchPages * 200}/bot
-                </span>
-              </div>
-            </div>
           </div>
         </aside>
       </div>

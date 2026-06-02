@@ -15,7 +15,6 @@ const hoisted = vi.hoisted(() => ({
 }));
 
 vi.mock('@tangle-network/blueprint-ui/components', () => ({
-  Badge: ({ children, className }: any) => <span className={className}>{children}</span>,
   Identicon: ({ address }: { address: string }) => <span>{address.slice(0, 6)}</span>,
   Skeleton: ({ className }: { className?: string }) => <div className={className} />,
 }));
@@ -110,6 +109,7 @@ describe('LatestAgentTrades', () => {
 
     expect(screen.getByTestId('live-fill-tape')).toHaveClass('overflow-hidden', 'h-full', 'min-h-0');
     expect(screen.getByTestId('live-fill-tape-scroll')).toHaveClass('overflow-y-auto', 'min-h-0', 'flex-1');
-    expect(screen.getByText('Last 20')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Fills' })).toBeInTheDocument();
+    expect(screen.queryByText('Last 20')).not.toBeInTheDocument();
   });
 });

@@ -6,8 +6,8 @@ import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
 
 const primaryNavItems = [
+  { label: 'Home', href: '/', icon: 'i-ph:trophy' },
   { label: 'My Agents', href: '/dashboard', icon: 'i-ph:house' },
-  { label: 'Leaderboard', href: '/', icon: 'i-ph:trophy' },
   { label: 'Deploy', href: '/provision', icon: 'i-ph:rocket-launch' },
   { label: 'Create', href: '/create', icon: 'i-ph:chat-circle-dots' },
 ];
@@ -32,7 +32,7 @@ export function ArenaAppShell() {
   }, [sidebarCollapsed]);
 
   return (
-    <div className="bp-tone-arena flex h-[100dvh] overflow-hidden bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
+    <div className="bp-tone-arena flex h-[100dvh] overflow-hidden bg-arena-elements-background-depth-1 text-arena-elements-textPrimary">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:rounded-lg focus:bg-violet-600 focus:text-white focus:text-sm focus:font-display focus:font-medium"
@@ -52,7 +52,7 @@ export function ArenaAppShell() {
         {!isBotWorkspace && (
           <div className="flex h-14 shrink-0 items-center justify-between border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 px-3 backdrop-blur-xl lg:hidden">
             <Link to="/" className="min-w-0">
-              <TangleLogo label="Trading Cloud" />
+              <TangleLogo label="Arena" />
             </Link>
             <div className="flex shrink-0 items-center gap-1.5">
               <ChainSwitcher />
@@ -91,7 +91,7 @@ function DesktopArenaSidebar({
   return (
     <aside
       className={cn(
-        'relative z-10 hidden shrink-0 flex-col border-r border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 shadow-[12px_0_38px_rgba(0,0,0,0.18)] backdrop-blur-xl transition-[width] duration-200 lg:flex',
+        'relative z-10 hidden shrink-0 flex-col border-r border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 transition-[width] duration-200 lg:flex',
         sidebarCollapsed ? 'w-16' : 'w-64',
       )}
     >
@@ -103,12 +103,12 @@ function DesktopArenaSidebar({
           to="/"
           className={cn(
             'inline-flex min-w-0 items-center rounded-xl transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60',
-            sidebarCollapsed ? 'h-10 w-10 justify-center overflow-hidden [&_span:not(:first-child)]:hidden' : 'px-1',
+            sidebarCollapsed ? 'h-10 w-10 justify-center' : 'px-1',
           )}
           aria-label={sidebarCollapsed ? 'AI Trading Arena' : undefined}
           title={sidebarCollapsed ? 'AI Trading Arena' : undefined}
         >
-          <TangleLogo label={sidebarCollapsed ? undefined : 'Trading Cloud'} />
+          <TangleLogo label={sidebarCollapsed ? undefined : 'Arena'} />
         </Link>
         {!sidebarCollapsed && (
           <SidebarIconButton
@@ -172,21 +172,18 @@ function DesktopArenaSidebar({
             <div className="flex h-11 w-11 items-center justify-center rounded-xl text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary [&>button]:h-10 [&>button]:w-10 [&>button]:rounded-xl">
               <ThemeToggle />
             </div>
-            <div className="[&>div>button]:h-11 [&>div>button]:w-11 [&>div>button]:rounded-xl [&>div>button]:border-0 [&>div>button]:bg-transparent [&>div>button]:p-0">
-              <TxDropdown />
-            </div>
           </>
         ) : (
           <>
-            <div className="flex items-center gap-2 rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/44 p-1.5">
-              <div className="min-w-0 flex-1 [&>div>button]:w-full">
+            <div className="grid grid-cols-[minmax(0,1fr)_2.5rem_2.5rem] items-center gap-1.5 rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/44 p-1.5">
+              <div className="min-w-0 [&>div>button]:w-full">
                 <ChainSwitcher />
               </div>
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary [&>button]:h-9 [&>button]:w-9 [&>button]:rounded-xl">
                 <ThemeToggle />
               </div>
               <div className="[&>div>button]:h-10 [&>div>button]:w-10 [&>div>button]:rounded-xl [&>div>button]:border-0 [&>div>button]:bg-transparent [&>div>button]:p-0">
-                <TxDropdown />
+                <TxDropdown align="start" />
               </div>
             </div>
             <WalletButton />

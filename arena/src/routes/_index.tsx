@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
+import type { Address } from 'viem';
 import { useAccount } from 'wagmi';
+import { Identicon } from '@tangle-network/blueprint-ui/components';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { usePlatformVolumeSeries } from '~/lib/hooks/useBotApi';
@@ -53,7 +55,7 @@ export default function IndexPage() {
     enabled: isConnected && HAS_TRADING_OPERATOR_API,
     routeKey: 'leaderboard',
   });
-  const { bots: rawBots, isLoading, isOnChain, operatorDataState } = useBots();
+  const { bots: rawBots, isLoading, operatorDataState } = useBots();
   const [enrichmentEnabled, setEnrichmentEnabled] = useState(false);
   useEffect(() => {
     const timer = window.setTimeout(() => setEnrichmentEnabled(true), 900);
@@ -74,117 +76,92 @@ export default function IndexPage() {
   const sorted = rankLeaderboardBots(filteredBots);
 
   const totalTrades = leaderboardBots.reduce((sum, b) => sum + b.totalTrades, 0);
-  const visibleTrades = sorted.reduce((sum, b) => sum + b.totalTrades, 0);
+  const leaderboardRows = sorted.slice(0, 10);
   const { series: homeVolumeSeries } = usePlatformVolumeSeries(leaderboardBots, '30d');
   const hasPlatformTradeCount = homeVolumeSeries.summary.totalTradeCount > 0;
   const platformTradeCount = hasPlatformTradeCount
     ? homeVolumeSeries.summary.totalTradeCount
     : totalTrades;
-  const activeAgents = leaderboardBots.filter((bot) => bot.status === 'active').length;
-  const scoredAgents = leaderboardBots.filter((bot) => bot.avgValidatorScore > 0);
-  const avgRiskScore = scoredAgents.length > 0
-    ? Math.round(scoredAgents.reduce((sum, bot) => sum + bot.avgValidatorScore, 0) / scoredAgents.length)
-    : null;
   const topReturnBot = leaderboardBots
     .filter((bot) => Number.isFinite(bot.pnlPercent))
     .sort((left, right) => right.pnlPercent - left.pnlPercent)[0];
   const mostActiveBot = leaderboardBots
     .filter((bot) => bot.totalTrades > 0)
     .sort((left, right) => right.totalTrades - left.totalTrades)[0];
-  const cloudStats = [
-    { label: 'Agents', value: leaderboardBots.length.toLocaleString(), sublabel: `${activeAgents} active` },
-    {
-      label: 'Notional',
-      value: formatCompactUsd(homeVolumeSeries.summary.totalUsd),
-      sublabel: '30D connected operators',
-    },
-    {
-      label: hasPlatformTradeCount ? '30D Trades' : 'All-Time Trades',
-      value: platformTradeCount > 0 ? platformTradeCount.toLocaleString() : '—',
-      sublabel: hasPlatformTradeCount ? 'priced + unpriced' : 'operator totals',
-    },
-    { label: 'Validator Score', value: avgRiskScore != null ? avgRiskScore.toLocaleString() : '—', sublabel: scoredAgents.length > 0 ? 'average approval' : 'awaiting validation' },
-  ];
-  const pulseStats = [
-    topReturnBot
-      ? {
-          label: 'Top Return',
-          value: formatSignedPercent(topReturnBot.pnlPercent),
-          sublabel: topReturnBot.name,
-          href: `/arena/bot/${encodeURIComponent(topReturnBot.id)}/performance`,
-        }
-      : { label: 'Top Return', value: '—', sublabel: 'awaiting PnL' },
-    mostActiveBot
-      ? {
-          label: 'Most Active',
-          value: mostActiveBot.totalTrades.toLocaleString(),
-          sublabel: mostActiveBot.name,
-          href: `/arena/bot/${encodeURIComponent(mostActiveBot.id)}/performance`,
-        }
-      : { label: 'Most Active', value: '—', sublabel: 'awaiting fills' },
-  ];
+  const showTopReturnBot = topReturnBot != null && Math.abs(topReturnBot.pnlPercent) >= 0.05;
+  const showMostActiveBot = mostActiveBot != null && mostActiveBot.totalTrades > 0;
 
   return (
     <div className="mx-auto max-w-[1500px] px-4 py-4 sm:px-6">
-      <section className="mb-3 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/48 px-4 py-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <div className="inline-flex items-center gap-1.5 rounded border border-emerald-700/20 bg-emerald-700/10 px-2 py-1 dark:border-emerald-500/20 dark:bg-emerald-500/10">
-              <div className="h-2 w-2 rounded-full bg-emerald-700 animate-glow-pulse dark:bg-emerald-400" />
-              <span className="text-xs font-data font-semibold uppercase tracking-wider text-arena-elements-icon-success">
-                {isOnChain ? 'Live Operators' : 'Live Data'}
-              </span>
-            </div>
-            <h1 className="font-display text-2xl font-bold tracking-tight">
-              Market Pulse
-            </h1>
-            <span className="text-sm text-arena-elements-textSecondary">
+      <section className="mb-3 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 px-4 py-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-700 animate-glow-pulse dark:bg-emerald-400" />
+            <h1 className="truncate font-display text-2xl font-bold tracking-tight">
               AI Trading Arena
-            </span>
+            </h1>
+          </div>
+          <div className="grid min-w-0 flex-1 grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-2">
+            <div className="min-w-0 rounded-lg border border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-1/40 px-3 py-2">
+              <div className="font-data text-xl font-bold leading-none text-arena-elements-textPrimary">
+                {leaderboardBots.length.toLocaleString()}
+              </div>
+              <div className="mt-1 truncate text-xs text-arena-elements-textSecondary">agents</div>
+            </div>
+            <div className="min-w-0 rounded-lg border border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-1/40 px-3 py-2">
+              <div className="font-data text-xl font-bold leading-none text-arena-elements-textPrimary">
+                {formatCompactUsd(homeVolumeSeries.summary.totalUsd)}
+              </div>
+              <div className="mt-1 truncate text-xs text-arena-elements-textSecondary">30D volume</div>
+            </div>
+            <div className="min-w-0 rounded-lg border border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-1/40 px-3 py-2">
+              <div className="font-data text-xl font-bold leading-none text-arena-elements-textPrimary">
+                {platformTradeCount > 0 ? platformTradeCount.toLocaleString() : '—'}
+              </div>
+              <div className="mt-1 truncate text-xs text-arena-elements-textSecondary">
+                {hasPlatformTradeCount ? '30D trades' : 'trades'}
+              </div>
+            </div>
+            {showTopReturnBot ? (
+              <Link
+                to={`/arena/bot/${encodeURIComponent(topReturnBot.id)}/performance`}
+                className="min-w-0 rounded-lg border border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-1/40 px-3 py-2 transition-colors hover:bg-arena-elements-item-backgroundHover"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <Identicon address={topReturnBot.operatorAddress as Address} size={22} />
+                  <div className="min-w-0">
+                    <div className="font-data text-lg font-bold leading-none text-arena-elements-icon-success">
+                      {formatSignedPercent(topReturnBot.pnlPercent)}
+                    </div>
+                    <div className="mt-1 truncate text-xs text-arena-elements-textSecondary">{topReturnBot.name}</div>
+                  </div>
+                </div>
+              </Link>
+            ) : null}
+            {showMostActiveBot ? (
+              <Link
+                to={`/arena/bot/${encodeURIComponent(mostActiveBot.id)}/performance`}
+                className="min-w-0 rounded-lg border border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-1/40 px-3 py-2 transition-colors hover:bg-arena-elements-item-backgroundHover"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <Identicon address={mostActiveBot.operatorAddress as Address} size={22} />
+                  <div className="min-w-0">
+                    <div className="font-data text-lg font-bold leading-none text-arena-elements-textPrimary">
+                      {mostActiveBot.totalTrades.toLocaleString()}
+                    </div>
+                    <div className="mt-1 truncate text-xs text-arena-elements-textSecondary">{mostActiveBot.name}</div>
+                  </div>
+                </div>
+              </Link>
+            ) : null}
           </div>
           <Link
             to="/provision"
-            className="inline-flex h-9 w-fit shrink-0 items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-3 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+            className="inline-flex h-10 w-fit shrink-0 items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-3 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
           >
             <span className="i-ph:plus-bold text-xs" />
             Deploy Agent
           </Link>
-        </div>
-
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
-          {[...cloudStats, ...pulseStats].map((stat) => {
-            const content = (
-              <>
-                <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                  {stat.label}
-                </div>
-                <div className="mt-1 truncate font-data text-2xl font-bold leading-none text-arena-elements-textPrimary">
-                  {stat.value}
-                </div>
-                <div className="mt-2 truncate text-sm text-arena-elements-textSecondary">
-                  {stat.sublabel}
-                </div>
-              </>
-            );
-
-            const href = 'href' in stat ? stat.href : undefined;
-            return href ? (
-              <Link
-                key={stat.label}
-                to={href}
-                className="min-w-0 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/44 px-4 py-3 transition-colors hover:bg-arena-elements-item-backgroundHover"
-              >
-                {content}
-              </Link>
-            ) : (
-              <div
-                key={stat.label}
-                className="min-w-0 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/44 px-4 py-3"
-              >
-                {content}
-              </div>
-            );
-          })}
         </div>
       </section>
 
@@ -207,11 +184,7 @@ export default function IndexPage() {
 
       <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="font-display text-2xl font-bold tracking-tight">Leaderboard</h2>
-          <div className="mt-1 flex items-center gap-5 text-sm font-data text-arena-elements-textSecondary">
-            <span><span className="font-semibold text-arena-elements-textPrimary">{sorted.length}</span> agents</span>
-            {visibleTrades > 0 && <span><span className="font-semibold text-arena-elements-textPrimary">{visibleTrades.toLocaleString()}</span> trades</span>}
-          </div>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Top agents</h2>
         </div>
         <FilterBar
           search={search}
@@ -237,18 +210,8 @@ export default function IndexPage() {
         ) : !isConnected ? (
           <ConnectWalletPanel
             title="Connect your wallet to get started"
-            description="Tangle's AI Trading Arena lets you provision and operate autonomous trading agents on-chain. Connect a wallet to deploy your first agent or follow live performance."
-            bullets={[
-              'Provision AI trading agents with one click',
-              'Watch real-time returns, trades, and risk scores',
-              'Stake against the operators you trust',
-              'Configure secrets once your service is live',
-            ]}
-            footnote={
-              <>
-                Just looking? The leaderboard will populate once agents are deployed.
-              </>
-            }
+            description="Connect a wallet to deploy an agent or follow live performance."
+            bullets={['Deploy an agent', 'Track returns and fills', 'Configure operator secrets']}
           />
         ) : (
         <div className="glass-card rounded-xl p-16 text-center">
@@ -260,7 +223,7 @@ export default function IndexPage() {
         </div>
         )
       ) : (
-        <LeaderboardTable bots={sorted} />
+        <LeaderboardTable bots={leaderboardRows} />
       )}
     </div>
   );

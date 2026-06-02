@@ -63,7 +63,7 @@ const LIVE_SECTION_EXPECTATIONS = {
     ['Validation', 'Validator', 'Controls', 'Terminal', 'Envelope'],
   ],
 };
-const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Arena', 'Platform Volume', 'Live Fill Tape', 'Leaderboard', 'ETH Macro Scalper'];
+const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Arena', 'Volume', 'Fills', 'Top agents', 'ETH Macro Scalper'];
 
 function parseArgs(argv) {
   const args = {
@@ -1265,7 +1265,7 @@ async function assertCollapsibleRails(page, baseUrl, botId) {
       })()`);
       return metrics.pathname.endsWith('/dashboard')
         && /My Agents/i.test(metrics.labels)
-        && /Leaderboard/i.test(metrics.labels)
+        && /Home/i.test(metrics.labels)
         && /Deploy/i.test(metrics.labels)
         ? metrics
         : false;
