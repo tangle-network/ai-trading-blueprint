@@ -843,6 +843,7 @@ function textIncludes(bodyText, expected) {
 async function discoverAgentId(page, baseUrl, allowEmpty) {
   await navigate(page, baseUrl);
   let href = null;
+  let debugMetrics = null;
   try {
     href = await waitFor(() => evaluate(page, `(() => {
     const links = Array.from(document.querySelectorAll('a[href*="/arena/bot/"]'))
@@ -851,13 +852,24 @@ async function discoverAgentId(page, baseUrl, allowEmpty) {
     return links.find((url) => /\\/arena\\/bot\\/[^/]+\\/performance(?:$|[?#])/.test(new URL(url).pathname))
       || links.find((url) => /\\/arena\\/bot\\/[^/]+/.test(new URL(url).pathname))
       || null;
-  })()`), { timeoutMs: 15_000, intervalMs: 250 });
+  })()`), { timeoutMs: 45_000, intervalMs: 250 });
   } catch {
+    debugMetrics = await evaluate(page, `(() => ({
+      pathname: location.pathname,
+      bodyText: document.body.innerText.slice(0, 1200),
+      links: Array.from(document.querySelectorAll('a[href*="/arena/bot/"]'))
+        .map((link) => link.getAttribute('href'))
+        .filter(Boolean)
+        .slice(0, 12),
+    }))()`).catch(() => null);
     href = null;
   }
 
   if (!href) {
-    const message = 'No rendered /arena/bot/:id link found. Run against a live app with agents or a fixture deployment.';
+    const debugSuffix = debugMetrics
+      ? ` body="${debugMetrics.bodyText}" links=${JSON.stringify(debugMetrics.links)}`
+      : '';
+    const message = `No rendered /arena/bot/:id link found. Run against a live app with agents or a fixture deployment.${debugSuffix}`;
     if (allowEmpty) {
       console.warn(`[arena-smoke] ${message}`);
       return null;
