@@ -381,7 +381,7 @@ export function OperationsWorkspace({
       {
         value: 'validation',
         label: 'Validation',
-        description: 'Validator evidence and simulation traces',
+        description: 'Validator evidence and simulation results',
         icon: 'i-ph:shield-check',
       },
       {
@@ -523,7 +523,7 @@ export function OperationsWorkspace({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-              Risk & Ops
+              Operations
             </div>
             <h2 className="mt-0.5 truncate font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
               {activeItem?.label ?? 'Runtime State'}

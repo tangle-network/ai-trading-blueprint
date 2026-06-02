@@ -1682,3 +1682,23 @@ Still open:
 - Memoize trade rows/transcript markdown and remove expensive table/glass paint layers in the next performance tranche.
 - Reconcile current account value across performance, portfolio, and leaderboard using live portfolio state where possible.
 - Whitelist/redact public run/trade fields if public bot state should not expose strategy reasoning or endpoint topology.
+
+## 2026-06-02 Workspace Language + Route Semantics Loop
+
+Decision: the product surface should call autonomous execution histories `Runs`, not `Traces`. `trace_id` remains a backend/audit field, but navigation, empty states, loading states, and owner-only copy should use the same word the user sees in the workspace.
+
+Shipped changes in this loop:
+
+- Workspace nav `Traces` -> `Runs`.
+- Workspace nav `Risk & Ops` -> `Operations`.
+- Runs sidebar, empty states, loading state, owner-only state, transcript placeholder, and no-transcript detail titles now use `Runs` / `run` language.
+- Operations validation copy now says simulation results instead of simulation traces.
+- Smoke expectations now enforce `Runs` and `Operations` visible copy.
+
+Route-stack decision:
+
+- Keep focus-mode `Back to agent` links as `replace`. Removing `replace` regresses browser history by sending the user back into full-screen Chat/Runs after they have already returned to the agent view.
+
+Verification:
+
+- `pnpm --dir arena exec vitest run src/routes/__tests__/bot-workspace-routing.test.tsx src/components/bot-detail/__tests__/RunsTab.test.tsx --reporter=dot` passes: 2 files, 18 tests.

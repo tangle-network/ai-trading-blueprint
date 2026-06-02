@@ -310,11 +310,11 @@ describe('bot workspace routing', () => {
     expect(router.state.location.pathname).toBe('/arena/bot/sandbox-1/portfolio');
   });
 
-  it('returns from traces focus mode to the agent section that opened it', async () => {
+  it('returns from runs focus mode to the agent section that opened it', async () => {
     const router = renderBotWorkspace(['/arena/bot/bot-1/portfolio']);
 
     expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('link', { name: /traces/i }));
+    fireEvent.click(screen.getByRole('link', { name: /runs/i }));
 
     expect(await findWorkspace('workspace-runs')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/runs');

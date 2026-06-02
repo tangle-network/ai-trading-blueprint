@@ -32,14 +32,14 @@ const SECTION_EXPECTATIONS = {
     ['Executions', 'No executions recorded'],
   ],
   runs: [
-    ['ETH Macro Scalper', 'No traces yet'],
+    ['ETH Macro Scalper', 'No runs yet'],
     ['Reasoning', 'fast_backtest', 'Breakout retest'],
   ],
   chat: [
     ['Reasoning', 'Final outcome', 'No messages yet'],
     ['tool', 'tools', 'fast_backtest', 'hyperliquid_nav'],
   ],
-  operations: ['Risk & Ops', 'Validation', 'Validator'],
+  operations: ['Operations', 'Validation', 'Validator'],
 };
 const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Arena', 'Platform Volume', 'Live Fill Tape', 'Leaderboard', 'ETH Macro Scalper'];
 
@@ -89,7 +89,7 @@ function printHelp() {
 
 Checks:
   - discovers a rendered /arena/bot/:id link
-  - verifies Performance, Portfolio, Traces, Chat, Risk & Ops do not body-scroll at 1440x900 and 1280x800
+  - verifies Performance, Portfolio, Runs, Chat, Operations do not body-scroll at 1440x900 and 1280x800
   - verifies browser-visible operator API health and CORS when the deployed build exposes an operator URL
   - verifies Portfolio -> Chat -> browser Back -> Portfolio
   - verifies Chat -> Performance changes route in one click
@@ -1091,7 +1091,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
       })()`);
         const expected = getSectionExpectations(section, { ownerPerformance });
         const hasExpectedText = textIncludes(nextMetrics.bodyText, expected);
-        const isStillLoading = /Loading bot data|Loading workspace|Loading autonomous traces/i.test(nextMetrics.bodyText);
+        const isStillLoading = /Loading bot data|Loading workspace|Loading autonomous runs/i.test(nextMetrics.bodyText);
         return hasExpectedText && !isStillLoading ? nextMetrics : false;
         }, { timeoutMs: 12_000, intervalMs: 250 });
       } catch {

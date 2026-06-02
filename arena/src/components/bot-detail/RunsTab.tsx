@@ -227,7 +227,7 @@ function RunsSidebar({
           {!collapsed && (
             <>
               <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
-                Traces
+                Runs
               </span>
               <span className="font-data text-sm text-arena-elements-textPrimary">
                 {summary.total}
@@ -239,8 +239,8 @@ function RunsSidebar({
               type="button"
               onClick={onToggleCollapsed}
               className="flex h-8 w-8 items-center justify-center rounded-md text-arena-elements-textTertiary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60"
-              title={collapsed ? "Expand traces" : "Collapse traces"}
-              aria-label={collapsed ? "Expand traces" : "Collapse traces"}
+              title={collapsed ? "Expand runs" : "Collapse runs"}
+              aria-label={collapsed ? "Expand runs" : "Collapse runs"}
             >
               <span className={collapsed ? "i-ph:caret-right-bold text-base" : "i-ph:caret-left-bold text-base"} />
             </button>
@@ -276,11 +276,11 @@ function RunsSidebar({
             : "min-h-0 flex-1 overflow-y-auto py-1"
         }
         tabIndex={0}
-        aria-label="Autonomous traces"
+        aria-label="Autonomous runs"
       >
         {runs.length === 0 ? (
           <div className={`${collapsed ? "px-2 text-center" : "px-4"} py-4 text-sm font-data text-arena-elements-textTertiary`}>
-            No autonomous traces yet
+            No autonomous runs yet
           </div>
         ) : (
           <>
@@ -459,24 +459,24 @@ function RunResultSummary({ result }: { result: string }) {
 function getNoTranscriptRunTitle(run: BotRun): string {
   if (run.error) {
     return run.status === "interrupted"
-      ? "Trace interrupted"
-      : "Trace failed before details were captured";
+      ? "Run interrupted"
+      : "Run failed before details were captured";
   }
 
   if (run.result) {
     switch (run.workflowKind) {
       case "trading":
-        return "Trading trace details";
+        return "Trading run details";
       case "research":
-        return "Research trace details";
+        return "Research run details";
       case "conversation":
-        return "Conversation trace details";
+        return "Conversation run details";
       default:
-        return "Trace details";
+        return "Run details";
     }
   }
 
-  return "Trace details unavailable";
+  return "Run details unavailable";
 }
 
 function RunDetailPanel({ run }: { run: BotRun }) {
@@ -511,7 +511,7 @@ function RunDetailPanel({ run }: { run: BotRun }) {
       <div
         className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
         tabIndex={0}
-        aria-label="Trace details"
+        aria-label="Run details"
       >
         {(run.error || run.result) && (
           <div className="mb-4 rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 p-4">
@@ -554,7 +554,7 @@ function RunDetailPanel({ run }: { run: BotRun }) {
           <RunMetric label="Trace ID" value={run.traceId ?? "n/a"} />
           <RunMetric label="Run ID" value={run.runId} />
           <RunMetric
-            label="Trace Replay"
+            label="Transcript"
             value={
               run.transcriptAvailable
                 ? "Full transcript"
@@ -762,14 +762,14 @@ export function RunsTab({
     ? `${getWorkflowKindDescription(activeRun.workflowKind)} • ${formatRunTimestamp(activeRun.startedAt)}`
     : "Execution history";
   if (operatorMeta && !operatorMeta.features.chat) {
-    return <UnsupportedFeatureCard feature="Traces" />;
+    return <UnsupportedFeatureCard feature="Runs" />;
   }
 
   if (!apiUrl) {
     return (
       <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
         <div className="i-ph:robot mx-auto mb-3 text-3xl text-arena-elements-textTertiary" />
-        Traces are not ready yet for this operator.
+        Runs are not ready yet for this operator.
       </div>
     );
   }
@@ -780,9 +780,9 @@ export function RunsTab({
         {verificationState === "unverified" && (
           <UnverifiedDataNotice subject="autonomous run history" />
         )}
-        <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
-          <div className="i-ph:arrow-clockwise mx-auto mb-3 animate-spin text-3xl text-arena-elements-textTertiary" />
-          Loading autonomous traces…
+          <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
+            <div className="i-ph:arrow-clockwise mx-auto mb-3 animate-spin text-3xl text-arena-elements-textTertiary" />
+          Loading autonomous runs…
         </div>
       </div>
     );
@@ -792,8 +792,8 @@ export function RunsTab({
     if (!isAuthenticated && isRunsAuthError(runsQuery.error)) {
       return (
         <OperatorAccessCard
-          title="Trace history owner-only"
-          description="This operator does not expose public trace summaries for this agent. Sign with the owner wallet to read the full trace history."
+          title="Run history owner-only"
+          description="This operator does not expose public run summaries for this agent. Sign with the owner wallet to read the full run history."
           apiUrl={baseApiUrl}
         />
       );
@@ -803,7 +803,7 @@ export function RunsTab({
       <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
         <div className="i-ph:warning-circle mx-auto mb-3 text-3xl text-crimson-500" />
         <p className="text-sm text-crimson-600 dark:text-crimson-300">
-          {runsErrorMessage ?? "Failed to load autonomous traces."}
+          {runsErrorMessage ?? "Failed to load autonomous runs."}
         </p>
       </div>
     );
@@ -818,10 +818,10 @@ export function RunsTab({
         <div className="flex h-full min-h-[360px] flex-col items-center justify-center rounded-xl border border-arena-elements-dividerColor bg-arena-elements-background-depth-1/45 p-6 text-center sm:p-8">
           <div className="i-ph:robot mx-auto mb-3 text-3xl text-amber-500" />
           <h3 className="mb-2 text-lg font-display font-semibold text-arena-elements-textPrimary">
-            No traces yet
+            No runs yet
           </h3>
           <p className="mx-auto max-w-xl text-sm text-arena-elements-textSecondary">
-            Autonomous traces will appear here once {botName} starts gathering
+            Autonomous runs will appear here once {botName} starts gathering
             data, reasoning through a cycle, and making decisions on its own.
           </p>
         </div>
@@ -937,7 +937,7 @@ export function RunsTab({
                     partMap={stream.partMap}
                     isStreaming={stream.isStreaming}
                     branding={runsBranding}
-                    placeholder="This trace is read only"
+                    placeholder="This run is read only"
                   />
                 ) : activeRun ? (
                   <RunDetailPanel run={activeRun} />
