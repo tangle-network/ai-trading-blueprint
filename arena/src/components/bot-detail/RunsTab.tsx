@@ -746,8 +746,12 @@ export function RunsTab({
     ? extractRunsErrorMessage(stream.error)
     : null;
   const traceReplayFailed = canReplayRunTrace && !canStreamTranscript && Boolean(stream.error);
+  const hasVisibleReplayMessages = stream.isStreaming || stream.messages.length > 0;
   const shouldShowTraceReplay =
-    (canStreamTranscript || canReplayRunTrace) && !traceReplayFailed && !streamErrorMessage;
+    (canStreamTranscript || canReplayRunTrace) &&
+    (canStreamTranscript || activeRun?.transcriptAvailable || hasVisibleReplayMessages) &&
+    !traceReplayFailed &&
+    !streamErrorMessage;
   const selectedDecisionId = activeRun ? `run:${activeRun.runId}` : undefined;
   const selectedDecisionItem =
     decisionItems.find((item) => item.id === selectedDecisionId) ?? decisionItems[0];

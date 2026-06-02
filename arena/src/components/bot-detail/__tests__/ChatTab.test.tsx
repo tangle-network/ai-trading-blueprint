@@ -193,6 +193,52 @@ describe("ChatTab", () => {
     });
   });
 
+  it("falls back to autonomous run telemetry when public chat has runs without replayable messages", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-summary-only",
+              workflow_id: 102,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_824_900,
+              completed_at: 1_775_824_901,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 1_000,
+              input_tokens: 0,
+              output_tokens: 0,
+              result: null,
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+    const { ChatTab } = await import("../ChatTab");
+
+    render(
+      <ChatTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorAddress="0x0000000000000000000000000000000000000001"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByText("Run details unavailable")).toBeInTheDocument();
+    expect(screen.getAllByText("Trading Trace").length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
+  });
+
   it("does not show auth-only history errors to public readers", async () => {
     useBotSessionStreamMock.mockReturnValueOnce({
       messages: [],

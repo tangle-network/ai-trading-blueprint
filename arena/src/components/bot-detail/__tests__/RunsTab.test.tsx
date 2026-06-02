@@ -180,7 +180,8 @@ describe("RunsTab", () => {
     expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(
       0,
     );
-    expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
+    expect(screen.getAllByText("latest result").length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -202,7 +203,7 @@ describe("RunsTab", () => {
       );
     });
     expect(await screen.findByText("Research Trace")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
+    expect(screen.getAllByText("latest result").length).toBeGreaterThan(0);
   });
 
   it("loads public fleet run summaries without wallet authentication", async () => {
@@ -251,7 +252,8 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect((await screen.findAllByText("public result")).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -312,7 +314,7 @@ describe("RunsTab", () => {
     );
 
     expect(await screen.findByText("Operator verification pending")).toBeInTheDocument();
-    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect((await screen.findAllByText("public result")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Runs unavailable")).not.toBeInTheDocument();
   });
 
@@ -362,7 +364,8 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect((await screen.findAllByText("instance public result")).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -472,7 +475,7 @@ describe("RunsTab", () => {
     });
     expect(screen.queryByText("Trading run details")).not.toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: /decision inspector/i })).toBeInTheDocument();
-    expect(screen.getByText("Decision")).toBeInTheDocument();
+    expect(screen.getAllByText("Decision").length).toBeGreaterThan(0);
     expect(screen.getAllByText("api-wallet-approval-not-verified").length).toBeGreaterThan(0);
     expect(screen.queryByText(/result_schema_version/)).not.toBeInTheDocument();
     expect(screen.queryByText("Transcript unavailable")).not.toBeInTheDocument();
@@ -524,7 +527,8 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect((await screen.findAllByText("TRADE")).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -636,13 +640,14 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect((await screen.findAllByText("rsi-oversold")).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     const shell = container.querySelector('[data-sandbox-ui="true"]');
     expect(shell).toHaveClass("h-full");
     expect(shell).not.toHaveClass("glass-card");
     expect(shell).not.toHaveClass("rounded-xl");
     expect(screen.getByLabelText("Autonomous runs")).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: /decision inspector/i })).toBeInTheDocument();
-    expect(screen.getByText("Decision")).toBeInTheDocument();
+    expect(screen.getAllByText("Decision").length).toBeGreaterThan(0);
   });
 });

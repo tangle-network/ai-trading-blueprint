@@ -35,6 +35,7 @@ import { buildDecisionItemsFromRuns } from "~/lib/decisionFeed";
 import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
 import { DecisionInspector } from "./shared/DecisionInspector";
+import { RunsTab } from "./RunsTab";
 
 interface ChatTabProps {
   botId: string;
@@ -492,6 +493,7 @@ export function ChatTab({
     if (canWrite) return null;
     return publicRunsQuery.data?.runs.filter((run) => hasReplayableRunTrace(run)) ?? [];
   }, [canWrite, publicRunsQuery.data]);
+  const publicRuns = !canWrite ? (publicRunsQuery.data?.runs ?? []) : [];
   const publicReplayRun = useMemo(() => {
     if (!publicReplayRuns) return null;
     return (
@@ -795,6 +797,24 @@ export function ChatTab({
           </Button>
         )}
       </div>
+    );
+  }
+
+  if (
+    !canWrite &&
+    !publicRunsQuery.isLoading &&
+    publicRuns.length > 0 &&
+    (!publicReplayRuns || publicReplayRuns.length === 0)
+  ) {
+    return (
+      <RunsTab
+        botId={botId}
+        botName={botName}
+        operatorApiUrl={operatorApiUrl}
+        operatorKind={operatorKind}
+        verificationState={verificationState}
+        immersive={immersive}
+      />
     );
   }
 

@@ -2433,3 +2433,34 @@ Verification so far:
   - `.evolve/arena-risky-ledger-pass-smoke-20260602-v3/1440x900-performance.png`: chart remains dominant; fills are compact rows with a selected-decision rationale strip instead of oversized cards.
   - `.evolve/arena-risky-ledger-pass-smoke-20260602-v3/1440x900-portfolio.png`: Portfolio is one coherent terminal workspace; no grey skeleton/metric slab leak.
   - `.evolve/arena-risky-ledger-pass-smoke-20260602-v3/1440x900-leaderboard.png`: agent row identity is readable after removing the decorative row sparkline.
+
+## 2026-06-02 Public Chat / Runs Fallback Pass
+
+Live verification problem:
+
+- Production Chat for `harness-canary4` still rendered a full-screen empty transcript for public users when the operator had recent runs but those runs were not replayable as chat messages.
+- Production Runs had fresh rows, but the smoke failed because the selected trace exposed summary telemetry instead of transcript words like Reasoning/tool/final outcome.
+
+Decision:
+
+- Chat should never become a blank "No messages yet" surface when public autonomous runs exist.
+- Reuse the Runs cockpit for public summary-only agents instead of building a second telemetry UI inside Chat.
+- Runs should render a ChatTranscript only when there is a real stream, a stored transcript session, or visible replay messages. Summary-only run results use the structured detail panel and decision inspector.
+
+Shipped in this slice:
+
+- Added Chat fallback from non-replayable public runs to the existing `RunsTab` cockpit.
+- Tightened `RunsTab` replay selection so summary-only result/error runs do not show an empty transcript.
+- Preserved the authenticated stored-session path for true transcript replay.
+- Added regression coverage for the exact live failure mode: public runs exist, none are replayable, Chat must show run telemetry instead of `No messages yet`.
+
+Verification:
+
+- `pnpm --dir arena typecheck` passes.
+- `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/ChatTab.test.tsx src/components/bot-detail/__tests__/RunsTab.test.tsx --reporter=dot` passes: 2 files, 15 tests.
+- `pnpm --dir arena exec vitest run --reporter=dot` passes: 67 files, 388 tests.
+- `pnpm --dir arena build` passes. Existing large-chunk warnings remain unchanged.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-chat-runs-fallback-smoke-20260602` passes.
+- Visual inspection passed:
+  - `.evolve/arena-chat-runs-fallback-smoke-20260602/1440x900-chat.png`: Chat shows sessions, transcript content, tool/reasoning rows, and decision inspector when replay data exists.
+  - The live `harness-canary4` failure mode is covered by the new ChatTab regression and will route to the Runs cockpit once deployed.
