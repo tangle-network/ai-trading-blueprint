@@ -174,23 +174,26 @@ export function AgentWorkspaceShell({
     <div className="flex h-full min-h-0 overflow-hidden">
       <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         {focusMode && (
-          <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex items-center gap-2">
-            <Link
-              to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
-              className="pointer-events-auto inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 px-2.5 font-display text-sm font-medium text-arena-elements-textSecondary shadow-xl backdrop-blur-xl transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-              aria-label="Back to agent performance"
-              title="Back to agent performance"
-            >
-              <span className="i-ph:arrow-left text-base" aria-hidden="true" />
-              <span className="hidden sm:inline">Agent</span>
-            </Link>
-            <WorkspaceNavStrip
-              items={navItems}
-              activeValue={activeSection}
-              onSelect={onSectionChange}
-              ariaLabel="Agent focus navigation"
-              className="pointer-events-auto ml-auto max-w-[calc(100%-3rem)] bg-arena-elements-background-depth-2/88 shadow-xl backdrop-blur-xl"
-            />
+          <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 px-3 py-2 shadow-[0_12px_28px_rgba(0,0,0,0.12)] backdrop-blur-xl">
+            <div className="flex min-w-0 items-center gap-2">
+              <Link
+                to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
+                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/58 px-2.5 font-display text-sm font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                aria-label="Back to agent performance"
+                title="Back to agent performance"
+              >
+                <span className="i-ph:arrow-left text-base" aria-hidden="true" />
+                <span className="hidden sm:inline">Agent</span>
+              </Link>
+              <WorkspaceNavStrip
+                items={navItems}
+                activeValue={activeSection}
+                onSelect={onSectionChange}
+                ariaLabel="Agent focus navigation"
+                className="ml-auto min-w-0 border-0 bg-transparent p-0"
+                buttonClassName="h-9 rounded-lg"
+              />
+            </div>
           </div>
         )}
 
