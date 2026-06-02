@@ -119,6 +119,7 @@ export function AgentWorkspaceShell({
     return `$${formatNumber(displayValue, { maximumFractionDigits: 0 })}`;
   };
 
+  const tradeCount = Math.max(summary.tradeCount ?? 0, bot.totalTrades ?? 0);
   const metrics = [
     {
       label: HEADER_RETURN_PERCENT_COPY.label,
@@ -142,7 +143,7 @@ export function AgentWorkspaceShell({
       color: summary.maxDrawdown == null ? '' : 'text-crimson-400',
       title: 'Maximum drawdown over sampled account value history.',
     },
-    { label: 'Trades', value: bot.totalTrades > 0 ? bot.totalTrades.toLocaleString() : '—', color: '' },
+    { label: 'Trades', value: tradeCount > 0 ? tradeCount.toLocaleString() : '—', color: '' },
     { label: 'Equity', value: formatPortfolioValue(summary.portfolioValue), color: '' },
   ];
 

@@ -27,6 +27,7 @@ export interface BotLiveSummary {
   pnlAbsolute: number | null;
   sharpeRatio: number | null;
   maxDrawdown: number | null;
+  tradeCount: number | null;
   winRate: number | null;
   portfolioValue: number | null;
   avgValidatorScore: number | null;
@@ -124,6 +125,9 @@ export function summarizeBotLiveData(
   const maxDrawdown = validSnapshots.length > 0
     ? roundTo(Math.max(...validSnapshots.map((snapshot) => snapshot.drawdown_pct)), 1)
     : null;
+  const maxSnapshotTradeCount = validSnapshots.length > 0
+    ? Math.max(...validSnapshots.map((snapshot) => snapshot.trade_count ?? 0))
+    : 0;
 
   const scores = validatorScores.filter((score): score is number => typeof score === 'number');
   const avgValidatorScore = scores.length > 0
@@ -142,6 +146,7 @@ export function summarizeBotLiveData(
     pnlAbsolute,
     sharpeRatio: computeSharpeRatio(validSnapshots),
     maxDrawdown,
+    tradeCount: maxSnapshotTradeCount > 0 ? maxSnapshotTradeCount : null,
     winRate: computeWinRate(validSnapshots),
     portfolioValue: typeof derivedPortfolioValue === 'number' && Number.isFinite(derivedPortfolioValue)
       ? roundTo(derivedPortfolioValue, 2)
@@ -204,6 +209,10 @@ export function useBotLiveSummary({
 
     return {
       ...summary,
+      tradeCount: Math.max(
+        summary.tradeCount ?? 0,
+        tradesQuery.data?.length ?? 0,
+      ) || null,
       portfolioValue: summary.portfolioValue,
       isLoading: metricsQuery.isLoading || portfolioQuery.isLoading || tradesQuery.isLoading,
     };

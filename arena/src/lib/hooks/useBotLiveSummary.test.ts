@@ -42,6 +42,7 @@ describe('summarizeBotLiveData', () => {
     expect(summary.pnlPercent).toBe(2);
     expect(summary.pnlAbsolute).toBe(200);
     expect(summary.maxDrawdown).toBe(2.4);
+    expect(summary.tradeCount).toBe(3);
     expect(summary.portfolioValue).toBe(10200);
     expect(summary.avgValidatorScore).toBe(90);
     expect(summary.sharpeRatio).not.toBeNull();
@@ -75,6 +76,7 @@ describe('summarizeBotLiveData', () => {
     expect(summary.pnlAbsolute).toBe(0);
     expect(summary.sharpeRatio).toBeNull();
     expect(summary.maxDrawdown).toBe(0);
+    expect(summary.tradeCount).toBeNull();
     expect(summary.portfolioValue).toBe(10000);
     expect(summary.avgValidatorScore).toBeNull();
     expect(summary.winRate).toBeNull();
@@ -99,6 +101,7 @@ describe('summarizeBotLiveData', () => {
     expect(summary.pnlAbsolute).toBe(19.36);
     expect(summary.pnlPercent).toBe(0.2);
     expect(summary.maxDrawdown).toBe(0);
+    expect(summary.tradeCount).toBe(1);
     expect(summary.portfolioValue).toBe(10019.36);
     expect(summary.avgValidatorScore).toBe(100);
     expect(summary.sharpeRatio).toBeNull();
@@ -227,6 +230,7 @@ describe('summarizeBotLiveData', () => {
 
     expect(summary.pnlPercent).toBe(1.4);
     expect(summary.maxDrawdown).toBe(0);
+    expect(summary.tradeCount).toBe(17);
     expect(summary.portfolioValue).toBeNull();
     expect(summary.winRate).toBe(100);
   });

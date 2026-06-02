@@ -22,6 +22,7 @@ const liveSummary = {
   pnlAbsolute: 167.04,
   sharpeRatio: 1.23,
   maxDrawdown: 2.4,
+  tradeCount: 12,
   winRate: null,
   portfolioValue: 10167.04,
   avgValidatorScore: 92,

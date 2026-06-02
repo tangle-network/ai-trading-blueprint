@@ -96,6 +96,7 @@ vi.mock('~/lib/hooks/useBotLiveSummary', () => ({
     pnlPercent: 3.2,
     sharpeRatio: 1.4,
     maxDrawdown: 2.1,
+    tradeCount: 12,
     portfolioValue: 1032,
   }),
 }));
@@ -215,6 +216,7 @@ describe('bot workspace routing', () => {
     const router = renderBotWorkspace(['/arena/bot/bot-1/performance']);
 
     expect(await findWorkspace('workspace-performance')).toBeInTheDocument();
+    expect(screen.getByText('12')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /chat/i }));
 
     expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
