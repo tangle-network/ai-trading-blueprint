@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
-import { useBotTrades } from '~/lib/hooks/useBotApi';
+import { useBotTradePage, type TradePage } from '~/lib/hooks/useBotApi';
 import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import { ValidatorCard, SimulationDetail } from './shared/ValidatorComponents';
 import { AssetDisplay, AssetPairDisplay } from './shared/AssetDisplay';
@@ -26,6 +26,8 @@ interface TradeHistoryTabProps {
   assetMetadata?: TokenMetadata[];
   compact?: boolean;
 }
+
+const TRADE_HISTORY_LIMIT = 50;
 
 const EXPLORER_URLS: Record<number, { name: string; base: string }> = {
   1: { name: 'Etherscan', base: 'https://etherscan.io/tx/' },
@@ -59,6 +61,12 @@ function TradeTableHead({ compact = false }: { compact?: boolean }) {
       </TableRow>
     </TableHeader>
   );
+}
+
+function formatTradePageCoverage(page: TradePage | undefined): string | null {
+  if (!page || page.loaded === 0) return null;
+  if (page.total != null) return `Showing ${page.loaded.toLocaleString()} of ${page.total.toLocaleString()}`;
+  return `${page.loaded.toLocaleString()} loaded`;
 }
 
 function truncateHash(hash: string): string {
@@ -282,27 +290,44 @@ export function TradeHistoryTab({
   assetMetadata,
   compact = false,
 }: TradeHistoryTabProps) {
-  const { data: trades, isLoading, isError, error } = useBotTrades(botId, botName, 50, {
+  const {
+    data: tradePage,
+    isLoading,
+    isError,
+    error,
+  } = useBotTradePage(botId, botName, TRADE_HISTORY_LIMIT, {
     chainId,
     operatorApiUrl,
     operatorKind,
     assetMetadata,
     refetchInterval: isLive ? 15_000 : false,
   });
+  const trades = tradePage?.trades;
+  const coverageLabel = formatTradePageCoverage(tradePage);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   if (isLoading) {
     return (
-      <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
-        <Table className={compact ? 'min-w-full table-fixed' : 'min-w-[1120px]'}>
-          <TradeTableHead compact={compact} />
-          <TableBody>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <SkeletonTableRow key={i} cols={compact ? 3 : 6} />
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      <>
+        <div className="flex items-center justify-end">
+          {coverageLabel && (
+            <span className="rounded-full border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55 px-3 py-1 text-sm font-data text-arena-elements-textSecondary">
+              {coverageLabel}
+            </span>
+          )}
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
+          <Table className={compact ? 'min-w-full table-fixed' : 'min-w-[1120px]'}>
+            <TradeTableHead compact={compact} />
+            <TableBody>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <SkeletonTableRow key={i} cols={compact ? 3 : 6} />
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </>
     );
   }
 
@@ -330,11 +355,19 @@ export function TradeHistoryTab({
         <UnverifiedDataNotice subject="trade history" />
       )}
 
+      {coverageLabel && (
+        <div className="flex items-center justify-end">
+          <span className="rounded-full border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55 px-3 py-1 text-sm font-data text-arena-elements-textSecondary">
+            {coverageLabel}
+          </span>
+        </div>
+      )}
+
       <div className="overflow-x-auto rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36">
-      <Table className={compact ? 'min-w-full table-fixed' : 'min-w-[1120px]'}>
-        <TradeTableHead compact={compact} />
-        <TableBody>
-          {trades.map((trade) => {
+        <Table className={compact ? 'min-w-full table-fixed' : 'min-w-[1120px]'}>
+          <TradeTableHead compact={compact} />
+          <TableBody>
+            {trades.map((trade) => {
             const responses = trade.validation?.responses ?? [];
             const signedCount = countUsableValidatorSignatures(responses);
             const validationDisplay = getTradeValidationDisplay(trade);
@@ -643,9 +676,9 @@ export function TradeHistoryTab({
               )}
               </TableRow>
             );
-          })}
-        </TableBody>
-      </Table>
+            })}
+          </TableBody>
+        </Table>
       </div>
     </div>
   );

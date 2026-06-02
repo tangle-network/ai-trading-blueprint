@@ -1,8 +1,65 @@
 import { describe, expect, it } from 'vitest';
-import { deriveTradeAmountOut, getTradeStatus, mapApiTrade } from './useBotApi';
+import { deriveTradeAmountOut, getTradeStatus, mapApiTrade, mapApiTradePage } from './useBotApi';
 import { protocolToVenue } from '~/lib/types/trade';
 
 describe('useBotApi trade mapping helpers', () => {
+  it('preserves trade pagination totals from the operator payload', () => {
+    const page = mapApiTradePage({
+      trades: [
+        {
+          id: 'trade-1',
+          bot_id: 'bot-1',
+          timestamp: '2026-04-07T00:00:00Z',
+          action: 'buy',
+          token_in: 'USDC',
+          token_out: 'WETH',
+          amount_in: '1000',
+          amount_out: '0.5',
+          min_amount_out: '0.49',
+          target_protocol: 'uniswap_v3',
+          paper_trade: true,
+          valuation_status: 'unpriced',
+        },
+      ],
+      total: 12,
+      limit: 1,
+      offset: 0,
+    }, 'Bot', undefined, [], 1);
+
+    expect(page.loaded).toBe(1);
+    expect(page.total).toBe(12);
+    expect(page.limit).toBe(1);
+    expect(page.offset).toBe(0);
+    expect(page.hasTotal).toBe(true);
+    expect(page.isCapped).toBe(true);
+    expect(page.legacyArray).toBe(false);
+  });
+
+  it('marks bare array trade responses as legacy loaded rows', () => {
+    const page = mapApiTradePage([
+      {
+        id: 'trade-1',
+        bot_id: 'bot-1',
+        timestamp: '2026-04-07T00:00:00Z',
+        action: 'buy',
+        token_in: 'USDC',
+        token_out: 'WETH',
+        amount_in: '1000',
+        amount_out: '0.5',
+        min_amount_out: '0.49',
+        target_protocol: 'uniswap_v3',
+        paper_trade: true,
+        valuation_status: 'unpriced',
+      },
+    ], 'Bot', undefined, [], 1);
+
+    expect(page.loaded).toBe(1);
+    expect(page.total).toBeNull();
+    expect(page.hasTotal).toBe(false);
+    expect(page.isCapped).toBe(true);
+    expect(page.legacyArray).toBe(true);
+  });
+
   it('uses backend execution valuation when the trade is priced', () => {
     const trade = mapApiTrade({
       id: 'trade-1',

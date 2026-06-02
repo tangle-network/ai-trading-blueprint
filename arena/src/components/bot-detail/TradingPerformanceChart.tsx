@@ -3,6 +3,11 @@ import type {
   AreaData,
   CandlestickData,
   HistogramData,
+  IChartApi,
+  IPriceLine,
+  ISeriesApi,
+  ISeriesMarkersPluginApi,
+  MouseEventParams,
   SeriesMarker,
   Time,
   UTCTimestamp,
@@ -43,6 +48,21 @@ interface HoverReadout {
   label: string;
   value: number;
   detail?: string;
+}
+
+type AreaSeriesApi = ISeriesApi<'Area'>;
+type CandleSeriesApi = ISeriesApi<'Candlestick'>;
+type VolumeSeriesApi = ISeriesApi<'Histogram'>;
+type MarkerApi = ISeriesMarkersPluginApi<Time>;
+
+interface ChartRuntime {
+  chart: IChartApi;
+  mode: 'nav' | 'market';
+  areaSeries?: AreaSeriesApi;
+  candleSeries?: CandleSeriesApi;
+  volumeSeries?: VolumeSeriesApi;
+  markerApi?: MarkerApi;
+  startPriceLine?: IPriceLine;
 }
 
 const SYNTHETIC_TIME_BASE_SECONDS = 1_700_000_000;
@@ -430,6 +450,32 @@ export function TradingPerformanceChart({
     ),
     [activeMode, marketMarkerPlacements, navMarkerPlacements],
   );
+  const navSeriesData = useMemo(() => toSeriesData(preparedPoints), [preparedPoints]);
+  const runtimeRef = useRef<ChartRuntime | null>(null);
+  const fitOnNextDataRef = useRef(false);
+  const pointByTimeRef = useRef(new Map<string, PerformanceChartPoint>());
+  const candleByTimeRef = useRef(new Map<string, MarketCandle>());
+  const markerReadoutsByIdRef = useRef(new Map<string, MarkerPlacement>());
+  const activeModeRef = useRef(activeMode);
+  const marketLabelRef = useRef<string | null | undefined>(marketLabel);
+  const firstMarketTimeRef = useRef<Time | undefined>(undefined);
+  const lastMarketTimeRef = useRef<Time | undefined>(undefined);
+
+  useEffect(() => {
+    activeModeRef.current = activeMode;
+    marketLabelRef.current = marketLabel;
+    pointByTimeRef.current = new Map(preparedPoints.map((preparedPoint) => [
+      String(preparedPoint.time),
+      preparedPoint.point,
+    ]));
+    candleByTimeRef.current = new Map(marketCandles.map((candle) => [
+      String(Math.floor(candle.timestamp / 1000)),
+      candle,
+    ]));
+    markerReadoutsByIdRef.current = markerReadoutsById;
+    firstMarketTimeRef.current = marketSeriesData[0]?.time;
+    lastMarketTimeRef.current = marketSeriesData[marketSeriesData.length - 1]?.time;
+  }, [activeMode, marketCandles, marketLabel, markerReadoutsById, marketSeriesData, preparedPoints]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -437,23 +483,11 @@ export function TradingPerformanceChart({
     if (activeMode === 'market' && marketSeriesData.length === 0) return;
 
     let cancelled = false;
-    let cleanup: (() => void) | null = null;
+    let crosshairHandler: ((param: MouseEventParams<Time>) => void) | null = null;
 
     void loadLightweightCharts().then((charts) => {
       if (cancelled || !containerRef.current) return;
 
-      const data = toSeriesData(preparedPoints);
-      const pointByTime = new Map(preparedPoints.map((preparedPoint) => [
-        String(preparedPoint.time),
-        preparedPoint.point,
-      ]));
-      const candleByTime = new Map(marketCandles.map((candle) => [
-        String(Math.floor(candle.timestamp / 1000)),
-        candle,
-      ]));
-      const firstMarketTime = marketSeriesData[0]?.time;
-      const lastMarketTime = marketSeriesData[marketSeriesData.length - 1]?.time;
-      const placementById = markerReadoutsById;
       const chart = charts.createChart(containerRef.current, {
         autoSize: true,
         height: containerRef.current.clientHeight || 520,
@@ -480,13 +514,13 @@ export function TradingPerformanceChart({
           timeVisible: true,
           secondsVisible: false,
           tickMarkFormatter: (time: Time) => {
-            if (activeMode === 'market' && (time === firstMarketTime || time === lastMarketTime)) {
+            if (activeModeRef.current === 'market' && (time === firstMarketTimeRef.current || time === lastMarketTimeRef.current)) {
               return '';
             }
             const key = timeKey(time);
-            const navPoint = pointByTime.get(key);
+            const navPoint = pointByTimeRef.current.get(key);
             if (navPoint) return navPoint.label;
-            const candle = candleByTime.get(key);
+            const candle = candleByTimeRef.current.get(key);
             return candle ? markerTimeFormatter.format(new Date(candle.timestamp)) : '';
           },
         },
@@ -519,6 +553,7 @@ export function TradingPerformanceChart({
         },
       });
 
+      let runtime: ChartRuntime;
       if (activeMode === 'market') {
         const candleSeries = chart.addSeries(charts.CandlestickSeries, {
           upColor: chartTheme.positive,
@@ -545,11 +580,16 @@ export function TradingPerformanceChart({
           scaleMargins: { top: 0.82, bottom: 0 },
           borderVisible: false,
         });
-        candleSeries.setData(marketSeriesData);
-        volumeSeries.setData(volumeSeriesData);
-        charts.createSeriesMarkers(candleSeries, marketMarkers, {
+        const markerApi = charts.createSeriesMarkers(candleSeries, [], {
           autoScale: true,
         });
+        runtime = {
+          chart,
+          mode: 'market',
+          candleSeries,
+          volumeSeries,
+          markerApi,
+        };
       } else {
         const areaSeries = chart.addSeries(charts.AreaSeries, {
           lineColor,
@@ -567,15 +607,34 @@ export function TradingPerformanceChart({
           priceLineWidth: 1,
           priceLineStyle: charts.LineStyle.Dashed,
         });
-
-        areaSeries.setData(data);
-        charts.createSeriesMarkers(areaSeries, chartMarkers, {
+        const markerApi = charts.createSeriesMarkers(areaSeries, [], {
           autoScale: true,
         });
+        runtime = {
+          chart,
+          mode: 'nav',
+          areaSeries,
+          markerApi,
+        };
+      }
 
-        if (data.length > 1) {
-          areaSeries.createPriceLine({
-            price: data[0].value,
+      runtimeRef.current = runtime;
+      fitOnNextDataRef.current = true;
+
+      if (runtime.mode === 'market' && runtime.candleSeries && runtime.volumeSeries) {
+        runtime.candleSeries.setData(marketSeriesData);
+        runtime.volumeSeries.setData(volumeSeriesData);
+        runtime.markerApi?.setMarkers(marketMarkers);
+        chart.timeScale().fitContent();
+        fitOnNextDataRef.current = false;
+      }
+
+      if (runtime.mode === 'nav' && runtime.areaSeries) {
+        runtime.areaSeries.setData(navSeriesData);
+        runtime.markerApi?.setMarkers(chartMarkers);
+        if (navSeriesData.length > 1) {
+          runtime.startPriceLine = runtime.areaSeries.createPriceLine({
+            price: navSeriesData[0].value,
             color: chartTheme.tickColor,
             lineWidth: 1,
             lineStyle: charts.LineStyle.Dashed,
@@ -583,56 +642,56 @@ export function TradingPerformanceChart({
             title: 'Start NAV',
           });
         }
+        chart.timeScale().fitContent();
+        fitOnNextDataRef.current = false;
       }
 
-      chart.timeScale().fitContent();
-
-      const crosshairHandler = (param: Parameters<typeof chart.subscribeCrosshairMove>[0] extends (value: infer T) => void ? T : never) => {
+      crosshairHandler = (param: MouseEventParams<Time>) => {
         if (!param.time) {
           setHoverReadout(null);
           return;
         }
 
-	        const hoveredObjectId = (param as {
-	          hoveredObjectId?: string;
-	          hoveredInfo?: { objectId?: string };
-	        }).hoveredInfo?.objectId ?? (param as { hoveredObjectId?: string }).hoveredObjectId;
-	        const markerPlacement = hoveredObjectId ? placementById.get(hoveredObjectId) : null;
-	        if (markerPlacement) {
-	          const placementKey = String(markerPlacement.time);
-	          const candle = candleByTime.get(placementKey);
-	          const point = pointByTime.get(placementKey);
-	          const value = activeMode === 'market'
-	            ? candle?.close
-	            : point?.value;
-	          if (value != null) {
-	            setHoverReadout({
-	              label: markerPlacement.count > 1
-	                ? `${markerPlacement.marker.text} x${markerPlacement.count}`
-	                : markerPlacement.marker.tooltip,
-	              value,
-	              detail: markerPlacementDetail(markerPlacement),
-	            });
-	            return;
-	          }
-	        }
+        const hoveredObjectId = (param as {
+          hoveredObjectId?: string;
+          hoveredInfo?: { objectId?: string };
+        }).hoveredInfo?.objectId ?? (param as { hoveredObjectId?: string }).hoveredObjectId;
+        const markerPlacement = hoveredObjectId ? markerReadoutsByIdRef.current.get(hoveredObjectId) : null;
+        if (markerPlacement) {
+          const placementKey = String(markerPlacement.time);
+          const candle = candleByTimeRef.current.get(placementKey);
+          const point = pointByTimeRef.current.get(placementKey);
+          const value = activeModeRef.current === 'market'
+            ? candle?.close
+            : point?.value;
+          if (value != null) {
+            setHoverReadout({
+              label: markerPlacement.count > 1
+                ? `${markerPlacement.marker.text} x${markerPlacement.count}`
+                : markerPlacement.marker.tooltip,
+              value,
+              detail: markerPlacementDetail(markerPlacement),
+            });
+            return;
+          }
+        }
 
-	        const key = timeKey(param.time);
-        if (activeMode === 'market') {
-          const candle = candleByTime.get(key);
+        const key = timeKey(param.time);
+        if (activeModeRef.current === 'market') {
+          const candle = candleByTimeRef.current.get(key);
           if (!candle) {
             setHoverReadout(null);
             return;
           }
           setHoverReadout({
-            label: marketLabel ?? candle.token,
+            label: marketLabelRef.current ?? candle.token,
             value: candle.close,
             detail: formatMarketReadout(candle),
           });
           return;
         }
 
-        const point = pointByTime.get(key);
+        const point = pointByTimeRef.current.get(key);
         if (!point) {
           setHoverReadout(null);
           return;
@@ -645,33 +704,103 @@ export function TradingPerformanceChart({
       };
 
       chart.subscribeCrosshairMove(crosshairHandler);
-
-      cleanup = () => {
-        chart.unsubscribeCrosshairMove(crosshairHandler);
-        chart.remove();
-      };
     });
 
     return () => {
       cancelled = true;
-      cleanup?.();
+      const runtime = runtimeRef.current;
+      if (runtime?.mode === activeMode) {
+        if (crosshairHandler) runtime.chart.unsubscribeCrosshairMove(crosshairHandler);
+        runtime.markerApi?.detach();
+        runtime.chart.remove();
+        runtimeRef.current = null;
+      }
     };
+  }, [
+    activeMode,
+    chartTheme.gridColor,
+    chartTheme.negative,
+    chartTheme.positive,
+    chartTheme.tickColor,
+    chartTheme.tooltipBg,
+  ]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime || runtime.mode !== 'nav' || !runtime.areaSeries) return;
+    if (navSeriesData.length === 0) return;
+
+    runtime.areaSeries.applyOptions({
+      lineColor,
+      topColor: fillTopColor,
+      bottomColor: chartTheme.gradientEnd,
+      crosshairMarkerBorderColor: chartTheme.hoverBorderColor,
+      crosshairMarkerBackgroundColor: lineColor,
+      priceLineColor: lineColor,
+    });
+    runtime.areaSeries.setData(navSeriesData);
+    runtime.markerApi?.setMarkers(chartMarkers);
+
+    if (runtime.startPriceLine) {
+      runtime.areaSeries.removePriceLine(runtime.startPriceLine);
+      runtime.startPriceLine = undefined;
+    }
+    if (navSeriesData.length > 1) {
+      runtime.startPriceLine = runtime.areaSeries.createPriceLine({
+        price: navSeriesData[0].value,
+        color: chartTheme.tickColor,
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: false,
+        title: 'Start NAV',
+      });
+    }
+
+    if (fitOnNextDataRef.current) {
+      runtime.chart.timeScale().fitContent();
+      fitOnNextDataRef.current = false;
+    }
   }, [
     activeMode,
     chartMarkers,
     chartTheme.gradientEnd,
-    chartTheme.gridColor,
     chartTheme.hoverBorderColor,
     chartTheme.tickColor,
-    chartTheme.tooltipBg,
     fillTopColor,
     lineColor,
-	    marketCandles,
-	    marketLabel,
-	    marketMarkers,
-	    markerReadoutsById,
-	    marketSeriesData,
-    preparedPoints,
+    navSeriesData,
+  ]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime || runtime.mode !== 'market' || !runtime.candleSeries || !runtime.volumeSeries) return;
+    if (marketSeriesData.length === 0) return;
+
+    runtime.candleSeries.applyOptions({
+      upColor: chartTheme.positive,
+      downColor: chartTheme.negative,
+      borderUpColor: chartTheme.positive,
+      borderDownColor: chartTheme.negative,
+      wickUpColor: chartTheme.positive,
+      wickDownColor: chartTheme.negative,
+      priceLineColor: marketSeriesData[marketSeriesData.length - 1].close >= marketSeriesData[0].open
+        ? chartTheme.positive
+        : chartTheme.negative,
+    });
+    runtime.candleSeries.setData(marketSeriesData);
+    runtime.volumeSeries.setData(volumeSeriesData);
+    runtime.markerApi?.setMarkers(marketMarkers);
+
+    if (fitOnNextDataRef.current) {
+      runtime.chart.timeScale().fitContent();
+      fitOnNextDataRef.current = false;
+    }
+  }, [
+    activeMode,
+    chartTheme.negative,
+    chartTheme.positive,
+    marketMarkers,
+    marketSeriesData,
     volumeSeriesData,
   ]);
 

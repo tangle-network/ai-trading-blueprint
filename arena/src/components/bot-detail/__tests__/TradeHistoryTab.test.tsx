@@ -12,12 +12,28 @@ mockFramerMotion();
 // ── Hook mocks ────────────────────────────────────────────────────────
 
 const mockTrades: Trade[] = [];
+let mockTradeTotal: number | null = null;
 let mockTradesIsError = false;
 let mockTradesError: unknown = null;
 
 vi.mock('~/lib/hooks/useBotApi', () => ({
   useBotTrades: () => ({
     data: mockTrades,
+    isLoading: false,
+    isError: mockTradesIsError,
+    error: mockTradesError,
+  }),
+  useBotTradePage: () => ({
+    data: {
+      trades: mockTrades,
+      total: mockTradeTotal,
+      loaded: mockTrades.length,
+      limit: 50,
+      offset: 0,
+      hasTotal: mockTradeTotal != null,
+      isCapped: mockTradeTotal != null ? mockTrades.length < mockTradeTotal : false,
+      legacyArray: mockTradeTotal == null,
+    },
     isLoading: false,
     isError: mockTradesIsError,
     error: mockTradesError,
@@ -71,6 +87,7 @@ function makeTrade(overrides: Partial<Trade> = {}): Trade {
 describe('TradeHistoryTab', () => {
   beforeEach(() => {
     setTrades([]);
+    mockTradeTotal = null;
     mockTradesIsError = false;
     mockTradesError = null;
   });
@@ -111,6 +128,29 @@ describe('TradeHistoryTab', () => {
     expect(screen.getAllByText('USDC').length).toBeGreaterThan(0);
     expect(screen.queryByText('Price')).not.toBeInTheDocument();
     expect(screen.queryByText('$2,000')).not.toBeInTheDocument();
+  });
+
+  it('shows loaded rows against the trade ledger total when available', () => {
+    setTrades([
+      makeTrade({ id: 'trade-1' }),
+      makeTrade({ id: 'trade-2', action: 'sell' }),
+    ]);
+    mockTradeTotal = 12;
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('Showing 2 of 12')).toBeInTheDocument();
+  });
+
+  it('labels legacy array responses as loaded rows only', () => {
+    setTrades([
+      makeTrade({ id: 'trade-1' }),
+      makeTrade({ id: 'trade-2', action: 'sell' }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByText('2 loaded')).toBeInTheDocument();
   });
 
   it('keeps read-only trades visible when operator verification is pending', () => {

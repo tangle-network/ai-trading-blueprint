@@ -3715,6 +3715,54 @@ fn extract_json_array(
     }
 }
 
+fn paginated_trade_payload(
+    trades: Vec<serde_json::Value>,
+    query: &TradeListQuery,
+) -> serde_json::Value {
+    let total = trades.len();
+    let limit = query.limit.unwrap_or(50).min(200);
+    let offset = query.offset.unwrap_or(0);
+    let page: Vec<_> = trades.into_iter().skip(offset).take(limit).collect();
+
+    json!({
+        "trades": page,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    })
+}
+
+fn normalize_trade_list_payload(
+    payload: serde_json::Value,
+    query: &TradeListQuery,
+) -> Result<serde_json::Value, String> {
+    match payload {
+        serde_json::Value::Array(trades) => Ok(paginated_trade_payload(trades, query)),
+        serde_json::Value::Object(mut map) => {
+            let visible_count = match map.get("trades") {
+                Some(serde_json::Value::Array(trades)) => trades.len(),
+                Some(_) => return Err("trading api field `trades` was not an array".to_string()),
+                None => return Err("trading api response missing `trades`".to_string()),
+            };
+            let explicit_total = ["total", "total_count", "count"]
+                .iter()
+                .find_map(|key| {
+                    map.get(*key)
+                        .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
+                })
+                .unwrap_or(0);
+            let total = explicit_total.max(visible_count as u64);
+            map.insert("total".to_string(), json!(total));
+            map.entry("limit".to_string())
+                .or_insert_with(|| json!(query.limit.unwrap_or(50).min(200)));
+            map.entry("offset".to_string())
+                .or_insert_with(|| json!(query.offset.unwrap_or(0)));
+            Ok(serde_json::Value::Object(map))
+        }
+        _ => Err("trading api response was not an array/object".to_string()),
+    }
+}
+
 fn deserialize_f64_from_string_or_number<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -5001,7 +5049,7 @@ async fn get_bot_metrics_history(
 async fn get_bot_trades(
     Path(bot_id): Path<String>,
     Query(query): Query<TradeListQuery>,
-) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
     let mut remote_query = Vec::new();
     if let Some(limit) = query.limit {
@@ -5012,17 +5060,26 @@ async fn get_bot_trades(
     }
 
     match fetch_trading_api_json(&bot, "/trades", &remote_query).await {
-        Ok(Some(payload)) => match extract_json_array(payload, "trades") {
-            Ok(trades) => Ok(Json(trades)),
+        Ok(Some(payload)) => match normalize_trade_list_payload(payload, &query) {
+            Ok(payload) => Ok(Json(payload)),
             Err(err) => {
                 tracing::warn!(bot_id = %bot.id, "invalid trading api trades payload: {err}");
-                Ok(Json(fallback_trade_history(&bot)))
+                Ok(Json(paginated_trade_payload(
+                    fallback_trade_history(&bot),
+                    &query,
+                )))
             }
         },
-        Ok(None) => Ok(Json(fallback_trade_history(&bot))),
+        Ok(None) => Ok(Json(paginated_trade_payload(
+            fallback_trade_history(&bot),
+            &query,
+        ))),
         Err(err) => {
             tracing::warn!(bot_id = %bot.id, "trading api trades request failed, using fallback: {err}");
-            Ok(Json(fallback_trade_history(&bot)))
+            Ok(Json(paginated_trade_payload(
+                fallback_trade_history(&bot),
+                &query,
+            )))
         }
     }
 }

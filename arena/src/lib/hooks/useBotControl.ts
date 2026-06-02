@@ -51,6 +51,7 @@ export function useBotControl(
     queryClient.invalidateQueries({ queryKey: ['bot-detail', apiUrl, botId] });
     queryClient.invalidateQueries({ queryKey: ['bot-metrics', apiUrl, botId] });
     queryClient.invalidateQueries({ queryKey: ['bot-trades', apiUrl, botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-trade-page', apiUrl, botId] });
     queryClient.invalidateQueries({ queryKey: ['bot-recent-validations', apiUrl, botId] });
     queryClient.invalidateQueries({ queryKey: ['bot-portfolio', apiUrl, botId] });
     queryClient.invalidateQueries({ queryKey: ['bot-enrichment', apiUrl, botId] });

@@ -12,10 +12,13 @@ mockFramerMotion();
 const lightweightChartMock = vi.hoisted(() => {
   const fitContent = vi.fn();
   const areaSeries = {
+    applyOptions: vi.fn(),
     createPriceLine: vi.fn(),
+    removePriceLine: vi.fn(),
     setData: vi.fn(),
   };
   const candleSeries = {
+    applyOptions: vi.fn(),
     setData: vi.fn(),
   };
   const volumeSeries = {
@@ -36,6 +39,11 @@ const lightweightChartMock = vi.hoisted(() => {
     timeScale: vi.fn(() => ({ fitContent })),
     unsubscribeCrosshairMove: vi.fn(),
   };
+  const markerApi = {
+    detach: vi.fn(),
+    markers: vi.fn(() => []),
+    setMarkers: vi.fn(),
+  };
 
   return {
     AreaSeries: 'AreaSeries',
@@ -49,8 +57,9 @@ const lightweightChartMock = vi.hoisted(() => {
     candleSeries,
     chart,
     createChart: vi.fn(() => chart),
-    createSeriesMarkers: vi.fn(),
+    createSeriesMarkers: vi.fn(() => markerApi),
     fitContent,
+    markerApi,
     priceScale,
     volumeSeries,
   };
@@ -76,6 +85,7 @@ let mockMetricsSummary: Record<string, number> | undefined = {
 };
 let mockPortfolio: Record<string, unknown> | undefined;
 let mockTrades: Trade[] = [];
+let mockTradeTotal: number | null = null;
 let mockMarketCandles: Array<{
   timestamp: number;
   token: string;
@@ -99,6 +109,18 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
   }),
   useBotTrades: () => ({
     data: mockTrades,
+  }),
+  useBotTradePage: () => ({
+    data: {
+      trades: mockTrades,
+      total: mockTradeTotal,
+      loaded: mockTrades.length,
+      limit: 100,
+      offset: 0,
+      hasTotal: mockTradeTotal != null,
+      isCapped: mockTradeTotal != null ? mockTrades.length < mockTradeTotal : false,
+      legacyArray: mockTradeTotal == null,
+    },
   }),
   useBotMarketCandles: () => ({
     data: mockMarketCandles,
@@ -220,11 +242,15 @@ describe('PerformanceTab', () => {
     metricsIsError = false;
     mockPortfolio = undefined;
     mockTrades = [];
+    mockTradeTotal = null;
     mockMarketCandles = [];
     operatorAuthMock.isAuthenticated = false;
     operatorAuthMock.token = null;
     lightweightChartMock.areaSeries.createPriceLine.mockClear();
+    lightweightChartMock.areaSeries.applyOptions.mockClear();
+    lightweightChartMock.areaSeries.removePriceLine.mockClear();
     lightweightChartMock.areaSeries.setData.mockClear();
+    lightweightChartMock.candleSeries.applyOptions.mockClear();
     lightweightChartMock.candleSeries.setData.mockClear();
     lightweightChartMock.chart.addSeries.mockClear();
     lightweightChartMock.chart.remove.mockClear();
@@ -235,6 +261,9 @@ describe('PerformanceTab', () => {
     lightweightChartMock.createChart.mockClear();
     lightweightChartMock.createSeriesMarkers.mockClear();
     lightweightChartMock.fitContent.mockClear();
+    lightweightChartMock.markerApi.detach.mockClear();
+    lightweightChartMock.markerApi.markers.mockClear();
+    lightweightChartMock.markerApi.setMarkers.mockClear();
     lightweightChartMock.priceScale.applyOptions.mockClear();
     lightweightChartMock.volumeSeries.setData.mockClear();
   });
@@ -339,13 +368,11 @@ describe('PerformanceTab', () => {
         expect.objectContaining({ value: 10020.55 }),
       ]),
     );
-    expect(lightweightChartMock.createSeriesMarkers).toHaveBeenCalledWith(
-      lightweightChartMock.areaSeries,
+    expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ text: 'BUY', shape: 'arrowUp', position: 'belowBar' }),
         expect.objectContaining({ text: 'SELL', shape: 'arrowDown', position: 'aboveBar' }),
       ]),
-      { autoScale: true },
     );
   });
 
@@ -376,9 +403,9 @@ describe('PerformanceTab', () => {
 
     render(<PerformanceTab bot={makeBot({ totalTrades: 49 })} isLive />);
 
-    await waitFor(() => expect(lightweightChartMock.createSeriesMarkers).toHaveBeenCalled());
-    const markerCall = lightweightChartMock.createSeriesMarkers.mock.calls[0];
-	    const markers = markerCall[1] as Array<{ text?: string; time: number }>;
+    await waitFor(() => expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenCalled());
+    const markerCall = lightweightChartMock.markerApi.setMarkers.mock.calls.at(-1);
+	    const markers = markerCall?.[0] as Array<{ text?: string; time: number }>;
 	    expect(markers.length).toBeGreaterThan(2);
 	    expect(markers.length).toBeLessThan(49);
 	    expect(markers.every((marker) => !/BUY|SELL/.test(marker.text ?? ''))).toBe(true);
@@ -387,6 +414,62 @@ describe('PerformanceTab', () => {
 	    expect(seriesData.length).toBeGreaterThan(2);
 	    expect(seriesData.length).toBeLessThanOrEqual(2 + markers.length);
 	  });
+
+  it('updates TradingView data in place on refresh without recreating the chart', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockTrades = [
+      makeTrade({
+        id: 'buy-1',
+        action: 'buy',
+        timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
+      }),
+    ];
+
+    const { rerender } = render(<PerformanceTab bot={makeBot()} isLive />);
+
+    await waitFor(() => expect(lightweightChartMock.createChart).toHaveBeenCalledTimes(1));
+    expect(lightweightChartMock.areaSeries.setData).toHaveBeenCalledTimes(1);
+
+    mockMetrics = [
+      ...(mockMetrics ?? []),
+      {
+        timestamp: '2026-04-23T10:05:00.000Z',
+        account_value_usd: 10025,
+        realized_pnl: 25,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 2,
+      },
+    ];
+    mockTrades = [
+      ...mockTrades,
+      makeTrade({
+        id: 'sell-1',
+        action: 'sell',
+        timestamp: Date.parse('2026-04-23T10:05:00.000Z'),
+      }),
+    ];
+
+    rerender(<PerformanceTab bot={makeBot()} isLive />);
+
+    await waitFor(() => expect(lightweightChartMock.areaSeries.setData).toHaveBeenCalledTimes(2));
+    expect(lightweightChartMock.createChart).toHaveBeenCalledTimes(1);
+    expect(lightweightChartMock.chart.remove).not.toHaveBeenCalled();
+    expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ text: 'SELL', shape: 'arrowDown', position: 'aboveBar' }),
+      ]),
+    );
+  });
 
   it('uses loaded trade rows when checkpoint trade count is stale', () => {
     mockMetrics = [
@@ -412,8 +495,39 @@ describe('PerformanceTab', () => {
 	    render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
 
 	    expect(screen.getByText('12')).toBeInTheDocument();
-	    expect(screen.getByText('Last 6 of 12')).toBeInTheDocument();
+	    expect(screen.getByText('Loaded Executions')).toBeInTheDocument();
+	    expect(screen.getByText('Last 6 of 12 loaded')).toBeInTheDocument();
 	  });
+
+  it('uses trade-page totals separately from loaded marker rows', () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockMetricsSummary = {
+      portfolio_value_usd: 10000,
+      total_pnl: 0,
+      trade_count: 1,
+    };
+    mockTrades = Array.from({ length: 6 }, (_, index) => makeTrade({
+      id: `trade-${index + 1}`,
+      timestamp: Date.parse(`2026-04-23T10:${String(index + 5).padStart(2, '0')}:00.000Z`),
+    }));
+    mockTradeTotal = 110;
+
+    render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
+
+    expect(screen.getByText('Total Executions')).toBeInTheDocument();
+    expect(screen.getByText('110')).toBeInTheDocument();
+    expect(screen.getByText('6 loaded')).toBeInTheDocument();
+    expect(screen.getByText('Last 6 of 110')).toBeInTheDocument();
+  });
 
   it('renders real market candles and volume when OHLCV exists for the traded venue', async () => {
     mockMetrics = [
@@ -491,12 +605,10 @@ describe('PerformanceTab', () => {
 	        expect.objectContaining({ value: 1650.25 }),
 	      ]),
 	    );
-    expect(lightweightChartMock.createSeriesMarkers).toHaveBeenCalledWith(
-      lightweightChartMock.candleSeries,
+    expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ text: '', shape: 'arrowUp', position: 'belowBar' }),
       ]),
-      { autoScale: true },
     );
   });
 

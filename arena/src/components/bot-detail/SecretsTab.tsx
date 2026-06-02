@@ -122,6 +122,7 @@ export function SecretsTab({ bot }: SecretsTabProps) {
     queryClient.invalidateQueries({ queryKey: ['bot-detail', apiUrl, bot.id] });
     queryClient.invalidateQueries({ queryKey: ['bot-metrics', apiUrl, bot.id] });
     queryClient.invalidateQueries({ queryKey: ['bot-trades', apiUrl, bot.id] });
+    queryClient.invalidateQueries({ queryKey: ['bot-trade-page', apiUrl, bot.id] });
     queryClient.invalidateQueries({ queryKey: ['bot-recent-validations', apiUrl, bot.id] });
     queryClient.invalidateQueries({ queryKey: ['bot-portfolio', apiUrl, bot.id] });
     queryClient.invalidateQueries({ queryKey: ['bot-enrichment', apiUrl, bot.id] });

@@ -8,7 +8,7 @@ import {
   useBotMetrics,
   useBotMetricsSummary,
   useBotPortfolio,
-  useBotTrades,
+  useBotTradePage,
 } from '~/lib/hooks/useBotApi';
 import { Skeleton } from '~/components/ui/Skeleton';
 import { formatNumber } from '~/lib/format';
@@ -33,6 +33,7 @@ const PerformanceCopilotPanel = lazy(() =>
 
 type PerformanceRange = '1d' | '7d' | '30d' | '6m' | '1y';
 type PerformanceChartMode = 'market' | 'nav';
+type ExecutionCountSource = 'trade-total' | 'metric-total' | 'loaded-trades' | 'none';
 
 const PERFORMANCE_RANGES: Array<{ value: PerformanceRange; label: string; days: number }> = [
   { value: '1d', label: '1D', days: 1 },
@@ -136,6 +137,76 @@ function formatChartNumber(value: number | null): string {
     maximumFractionDigits,
     minimumFractionDigits: value >= 1000 || Number.isInteger(value) ? 0 : Math.min(2, maximumFractionDigits),
   });
+}
+
+function resolveExecutionCount({
+  metricCount,
+  summaryCount,
+  rosterCount,
+  loadedTrades,
+  tradeTotal,
+}: {
+  metricCount?: number | null;
+  summaryCount?: number | null;
+  rosterCount?: number | null;
+  loadedTrades: number;
+  tradeTotal?: number | null;
+}): { value: number; source: ExecutionCountSource; loaded: number; total: number | null } {
+  if (tradeTotal != null && tradeTotal > 0) {
+    return {
+      value: tradeTotal,
+      source: 'trade-total',
+      loaded: loadedTrades,
+      total: tradeTotal,
+    };
+  }
+
+  const bestMetricCount = Math.max(metricCount ?? 0, summaryCount ?? 0, rosterCount ?? 0);
+  if (loadedTrades > bestMetricCount) {
+    return {
+      value: loadedTrades,
+      source: 'loaded-trades',
+      loaded: loadedTrades,
+      total: null,
+    };
+  }
+
+  if (bestMetricCount > 0) {
+    return {
+      value: bestMetricCount,
+      source: 'metric-total',
+      loaded: loadedTrades,
+      total: null,
+    };
+  }
+
+  if (loadedTrades > 0) {
+    return {
+      value: loadedTrades,
+      source: 'loaded-trades',
+      loaded: loadedTrades,
+      total: null,
+    };
+  }
+
+  return {
+    value: 0,
+    source: 'none',
+    loaded: loadedTrades,
+    total: null,
+  };
+}
+
+function executionCountLabel(source: ExecutionCountSource): string {
+  if (source === 'loaded-trades') return 'Loaded Executions';
+  if (source === 'none') return 'Executions';
+  return 'Total Executions';
+}
+
+function executionCountSubvalue({ source, loaded, total }: { source: ExecutionCountSource; loaded: number; total: number | null }): string | null {
+  if (total != null && loaded > 0 && loaded < total) return `${loaded.toLocaleString()} loaded`;
+  if (source === 'metric-total' && loaded > 0) return `${loaded.toLocaleString()} ledger rows`;
+  return null;
 }
 
 function isSellSideAction(action: Trade['action']): boolean {
@@ -271,12 +342,13 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 30_000 : false,
   });
-  const { data: trades } = useBotTrades(bot.id, bot.name, TRADE_MARKER_LOOKBACK_LIMIT, {
+  const { data: tradePage } = useBotTradePage(bot.id, bot.name, TRADE_MARKER_LOOKBACK_LIMIT, {
     chainId: bot.chainId,
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 30_000 : false,
   });
+  const trades = tradePage?.trades;
   const marketCandleToken = useMemo(
     () => inferMarketCandleToken(bot, trades),
     [bot, trades],
@@ -358,12 +430,16 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const effectiveChartMode = chartMode === 'market' && hasMarketCandles ? 'market' : 'nav';
   const chartIsRenderable = chartPoints.length > 0 || hasMarketCandles;
 
-  const totalTradesValue = Math.max(
-    latestRenderableMetric?.trade_count ?? 0,
-    metricsSummary?.trade_count ?? 0,
-    bot.totalTrades ?? 0,
-    trades?.length ?? 0,
-  );
+  const executionCount = resolveExecutionCount({
+    metricCount: latestRenderableMetric?.trade_count,
+    summaryCount: metricsSummary?.trade_count,
+    rosterCount: bot.totalTrades,
+    loadedTrades: tradePage?.loaded ?? trades?.length ?? 0,
+    tradeTotal: tradePage?.total,
+  });
+  const totalTradesValue = executionCount.value;
+  const executionStatLabel = executionCountLabel(executionCount.source);
+  const executionStatSubvalue = executionCountSubvalue(executionCount);
   const firstChartPoint = chartPoints[0] ?? null;
   const latestChartPoint = chartPoints[chartPoints.length - 1] ?? null;
   const latestChartValue = latestChartPoint?.value ?? null;
@@ -441,15 +517,18 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           tone: marketMoveTone,
         },
         {
-          label: 'Executions',
+          label: executionStatLabel,
           value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
           tone: 'text-arena-elements-textPrimary',
+          subvalue: executionStatSubvalue,
+          subvaluePrefix: '',
         },
         {
           label: 'Price High / Low',
           value: formatChartCurrency(marketHighValue),
           tone: 'text-arena-elements-textPrimary',
           subvalue: formatChartCurrency(marketLowValue),
+          subvaluePrefix: 'Low',
         },
         {
           label: 'Volume',
@@ -474,15 +553,18 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           tone: chartReturnTone,
         },
         {
-          label: 'Executions',
+          label: executionStatLabel,
           value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
           tone: 'text-arena-elements-textPrimary',
+          subvalue: executionStatSubvalue,
+          subvaluePrefix: '',
         },
         {
           label: 'NAV High / Low',
           value: formatChartCurrency(chartHighValue),
           tone: 'text-arena-elements-textPrimary',
           subvalue: formatChartCurrency(chartLowValue),
+          subvaluePrefix: 'Low',
         },
       ] as const;
 
@@ -601,9 +683,9 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                 <div className={`mt-1 truncate font-data text-base font-bold leading-none ${stat.tone}`}>
                   {stat.value}
                 </div>
-                {'subvalue' in stat && (
+                {'subvalue' in stat && stat.subvalue && (
                   <div className="mt-1 truncate font-data text-xs text-arena-elements-textTertiary">
-                    Low {stat.subvalue}
+                    {stat.subvaluePrefix ? `${stat.subvaluePrefix} ` : ''}{stat.subvalue}
                   </div>
                 )}
               </div>
@@ -699,7 +781,11 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                 <h3 className="font-display text-lg font-semibold">Decision Tape</h3>
                 <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
                   Last {Math.min(recentTradeTape.length, 6)}
-                  {trades && trades.length > recentTradeTape.length ? ` of ${trades.length}` : ''}
+                  {tradePage?.total != null
+                    ? ` of ${tradePage.total.toLocaleString()}`
+                    : trades && trades.length > recentTradeTape.length
+                      ? ` of ${trades.length.toLocaleString()} loaded`
+                      : ''}
                 </span>
               </div>
               <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(190px,0.95fr)] gap-3">

@@ -1400,7 +1400,10 @@ async fn test_metrics_and_trades() {
     assert_eq!(response.status(), 200);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json.is_array());
+    assert!(json["trades"].is_array());
+    assert!(json["total"].is_number());
+    assert!(json["limit"].is_number());
+    assert_eq!(json["offset"], 0);
 
     // GET /api/bot/portfolio/state
     let response = app()
@@ -1453,9 +1456,11 @@ async fn test_metrics_and_trades_prefer_remote_trading_api_payload() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(
-        json[0]["validation"]["responses"][0]["reasoning"],
+        json["trades"][0]["validation"]["responses"][0]["reasoning"],
         "trade looks safe"
     );
+    assert_eq!(json["total"], 1);
+    assert_eq!(json["offset"], 0);
 
     let response = app()
         .oneshot(

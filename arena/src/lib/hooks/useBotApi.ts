@@ -125,6 +125,11 @@ type TradeAmountOutInput = {
 
 interface ApiTradeListResponse {
   trades: ApiTrade[];
+  total?: number | string | null;
+  total_count?: number | string | null;
+  count?: number | string | null;
+  limit?: number | string | null;
+  offset?: number | string | null;
 }
 
 interface ApiCandle {
@@ -485,8 +490,91 @@ function extractStrategyModuleId(signal: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
+export interface TradePage {
+  trades: Trade[];
+  total: number | null;
+  loaded: number;
+  limit: number;
+  offset: number;
+  hasTotal: boolean;
+  isCapped: boolean;
+  legacyArray: boolean;
+}
+
+interface NormalizedApiTradePage {
+  trades: ApiTrade[];
+  total: number | null;
+  limit: number;
+  offset: number;
+  legacyArray: boolean;
+}
+
+function toNonNegativeInteger(value: number | string | null | undefined): number | null {
+  if (value == null) return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.floor(parsed);
+}
+
+function normalizeTradePage(
+  data: ApiTrade[] | ApiTradeListResponse,
+  requestedLimit: number,
+  requestedOffset = 0,
+): NormalizedApiTradePage {
+  if (Array.isArray(data)) {
+    return {
+      trades: data,
+      total: null,
+      limit: requestedLimit,
+      offset: requestedOffset,
+      legacyArray: true,
+    };
+  }
+
+  const trades = Array.isArray(data.trades) ? data.trades : [];
+  const offset = toNonNegativeInteger(data.offset) ?? requestedOffset;
+  const limit = toNonNegativeInteger(data.limit) ?? requestedLimit;
+  const explicitTotal = toNonNegativeInteger(data.total)
+    ?? toNonNegativeInteger(data.total_count)
+    ?? toNonNegativeInteger(data.count);
+  const visibleFloor = offset + trades.length;
+
+  return {
+    trades,
+    total: explicitTotal == null ? null : Math.max(explicitTotal, visibleFloor),
+    limit,
+    offset,
+    legacyArray: false,
+  };
+}
+
+export function mapApiTradePage(
+  data: ApiTrade[] | ApiTradeListResponse,
+  botName: string,
+  fallbackChainId: number | undefined,
+  assetMetadata: TokenMetadata[],
+  requestedLimit: number,
+  requestedOffset = 0,
+): TradePage {
+  const page = normalizeTradePage(data, requestedLimit, requestedOffset);
+  const trades = page.trades.map((t) => mapApiTrade(t, botName, fallbackChainId, assetMetadata));
+  const loaded = trades.length;
+  const hasTotal = page.total != null;
+
+  return {
+    trades,
+    total: page.total,
+    loaded,
+    limit: page.limit,
+    offset: page.offset,
+    hasTotal,
+    isCapped: hasTotal ? page.offset + loaded < page.total! : page.legacyArray && loaded >= page.limit,
+    legacyArray: page.legacyArray,
+  };
+}
+
 function normalizeTrades(data: ApiTrade[] | ApiTradeListResponse): ApiTrade[] {
-  return Array.isArray(data) ? data : data.trades;
+  return normalizeTradePage(data, Number.MAX_SAFE_INTEGER).trades;
 }
 
 function normalizeCandles(data: ApiCandle[] | ApiCandleListResponse): MarketCandle[] {
@@ -549,7 +637,7 @@ interface BotApiQueryOptions {
   assetMetadata?: TokenMetadata[];
 }
 
-export function useBotTrades(
+export function useBotTradePage(
   botId: string,
   botName: string = '',
   limit = 50,
@@ -562,8 +650,8 @@ export function useBotTrades(
   const needsAuth = fleetReadRequiresAuth(deploymentKind);
   const authKey = needsAuth ? auth.authCacheKey : 'public';
 
-  return useQuery<Trade[]>({
-    queryKey: ['bot-trades', apiUrl, botId, limit, deploymentKind, options.chainId, options.assetMetadata, authKey],
+  return useQuery<TradePage>({
+    queryKey: ['bot-trade-page', apiUrl, botId, limit, deploymentKind, options.chainId, options.assetMetadata, authKey],
     queryFn: async () => {
       const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=${limit}`;
       const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(
@@ -572,13 +660,26 @@ export function useBotTrades(
         path,
         { auth: needsAuth },
       );
-      return normalizeTrades(data).map((t) => mapApiTrade(t, botName, options.chainId, options.assetMetadata));
+      return mapApiTradePage(data, botName, options.chainId, options.assetMetadata ?? [], limit);
     },
     staleTime: 15_000,
     refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
   });
+}
+
+export function useBotTrades(
+  botId: string,
+  botName: string = '',
+  limit = 50,
+  options: BotApiQueryOptions = {},
+) {
+  const query = useBotTradePage(botId, botName, limit, options);
+  return {
+    ...query,
+    data: query.data?.trades,
+  };
 }
 
 export interface LatestAgentTrade {
