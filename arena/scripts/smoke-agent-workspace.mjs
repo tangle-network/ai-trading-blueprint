@@ -41,6 +41,28 @@ const SECTION_EXPECTATIONS = {
   ],
   operations: ['Operations', 'Validation', 'Validator'],
 };
+const LIVE_SECTION_EXPECTATIONS = {
+  performance: [
+    ['Market', 'Account', 'Price', 'Performance'],
+    ['Execution Inspector', 'Latest Trades', 'Copilot', 'Awaiting first checkpoint'],
+  ],
+  portfolio: [
+    'Portfolio',
+    ['Positions', 'Executions', 'No executions recorded', 'Account Equity', 'Account Value'],
+  ],
+  runs: [
+    'Runs',
+    ['Reasoning', 'No runs yet', 'Final outcome', 'tool'],
+  ],
+  chat: [
+    'Chat',
+    ['Reasoning', 'Final outcome', 'No messages yet', 'tool', 'tools'],
+  ],
+  operations: [
+    'Operations',
+    ['Validation', 'Validator', 'Controls', 'Terminal', 'Envelope'],
+  ],
+};
 const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Arena', 'Platform Volume', 'Live Fill Tape', 'Leaderboard', 'ETH Macro Scalper'];
 
 function parseArgs(argv) {
@@ -1053,14 +1075,18 @@ async function captureScreenshot(page, screenshotDir, viewport, section, suffix 
   await writeFile(path.join(screenshotDir, filename), Buffer.from(result.data, 'base64'));
 }
 
-function getSectionExpectations(section, { ownerPerformance = false } = {}) {
+function getSectionExpectations(section, { fixture = false, ownerPerformance = false } = {}) {
   if (ownerPerformance && section === 'performance') {
     return ['Price', 'ETH', 'Copilot'];
+  }
+  if (!fixture) {
+    return LIVE_SECTION_EXPECTATIONS[section] ?? [];
   }
   return SECTION_EXPECTATIONS[section] ?? [];
 }
 
 async function assertWorkspaceFits(page, baseUrl, botId, {
+  fixture = false,
   ownerPerformance = false,
   screenshotDir = '',
 } = {}) {
@@ -1089,7 +1115,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
           mainClientHeight: main?.clientHeight ?? 0,
         };
       })()`);
-        const expected = getSectionExpectations(section, { ownerPerformance });
+        const expected = getSectionExpectations(section, { fixture, ownerPerformance });
         const hasExpectedText = textIncludes(nextMetrics.bodyText, expected);
         const isStillLoading = /Loading bot data|Loading workspace|Loading autonomous runs/i.test(nextMetrics.bodyText);
         return hasExpectedText && !isStillLoading ? nextMetrics : false;
@@ -1104,7 +1130,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
             innerHeight: window.innerHeight,
           };
         })()`);
-        failures.push(`${viewport.width}x${viewport.height} ${section}: timed out waiting for ${JSON.stringify(getSectionExpectations(section, { ownerPerformance }))}; body="${debugMetrics.bodyText}"`);
+        failures.push(`${viewport.width}x${viewport.height} ${section}: timed out waiting for ${JSON.stringify(getSectionExpectations(section, { fixture, ownerPerformance }))}; body="${debugMetrics.bodyText}"`);
         continue;
       }
 
@@ -1117,7 +1143,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
       if (/Bot Not Found|Unexpected Application Error/i.test(metrics.bodyText)) {
         failures.push(`${viewport.width}x${viewport.height} ${section}: route rendered an error state`);
       }
-      for (const text of getSectionExpectations(section, { ownerPerformance })) {
+      for (const text of getSectionExpectations(section, { fixture, ownerPerformance })) {
         if (!textIncludes(metrics.bodyText, [text])) {
           failures.push(`${viewport.width}x${viewport.height} ${section}: missing expected text "${text}"`);
         }
@@ -1375,6 +1401,7 @@ async function main() {
       });
     }
     await assertWorkspaceFits(page, args.url, botId, {
+      fixture: args.fixture,
       ownerPerformance: args.ownerPerformance,
       screenshotDir: args.screenshotDir,
     });
