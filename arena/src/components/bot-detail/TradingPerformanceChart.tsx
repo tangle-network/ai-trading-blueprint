@@ -59,10 +59,12 @@ interface ChartRuntime {
   chart: IChartApi;
   mode: 'nav' | 'market';
   areaSeries?: AreaSeriesApi;
+  navPaneSeries?: AreaSeriesApi;
   candleSeries?: CandleSeriesApi;
   volumeSeries?: VolumeSeriesApi;
   markerApi?: MarkerApi;
   startPriceLine?: IPriceLine;
+  navPaneStartPriceLine?: IPriceLine;
 }
 
 const SYNTHETIC_TIME_BASE_SECONDS = 1_700_000_000;
@@ -402,6 +404,7 @@ export function TradingPerformanceChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverReadout, setHoverReadout] = useState<HoverReadout | null>(null);
   const activeMode = mode === 'market' && marketCandles.length > 0 ? 'market' : 'nav';
+  const hasIntegratedNavPane = activeMode === 'market' && points.length > 0;
   const denseTradeMarkers = tradeMarkers.length > DENSE_MARKER_THRESHOLD;
   const navMarkerPlacements = useMemo(
     () => toSeriesMarkerPlacements(tradeMarkers),
@@ -555,6 +558,11 @@ export function TradingPerformanceChart({
 
       let runtime: ChartRuntime;
       if (activeMode === 'market') {
+        const navPane = navSeriesData.length > 0 ? chart.addPane() : null;
+        if (navPane) {
+          chart.panes()[0]?.setStretchFactor(0.76);
+          navPane.setStretchFactor(0.24);
+        }
         const candleSeries = chart.addSeries(charts.CandlestickSeries, {
           upColor: chartTheme.positive,
           downColor: chartTheme.negative,
@@ -580,6 +588,20 @@ export function TradingPerformanceChart({
           scaleMargins: { top: 0.82, bottom: 0 },
           borderVisible: false,
         });
+        const navPaneSeries = navPane
+          ? chart.addSeries(charts.AreaSeries, {
+              lineColor,
+              topColor: fillTopColor,
+              bottomColor: chartTheme.gradientEnd,
+              lineWidth: 1,
+              crosshairMarkerVisible: true,
+              crosshairMarkerRadius: 3,
+              crosshairMarkerBorderColor: chartTheme.hoverBorderColor,
+              crosshairMarkerBackgroundColor: lineColor,
+              lastValueVisible: false,
+              priceLineVisible: false,
+            }, navPane.paneIndex())
+          : undefined;
         const markerApi = charts.createSeriesMarkers(candleSeries, [], {
           autoScale: true,
         });
@@ -588,6 +610,7 @@ export function TradingPerformanceChart({
           mode: 'market',
           candleSeries,
           volumeSeries,
+          navPaneSeries,
           markerApi,
         };
       } else {
@@ -624,6 +647,19 @@ export function TradingPerformanceChart({
       if (runtime.mode === 'market' && runtime.candleSeries && runtime.volumeSeries) {
         runtime.candleSeries.setData(marketSeriesData);
         runtime.volumeSeries.setData(volumeSeriesData);
+        if (runtime.navPaneSeries) {
+          runtime.navPaneSeries.setData(navSeriesData);
+          if (navSeriesData.length > 1) {
+            runtime.navPaneStartPriceLine = runtime.navPaneSeries.createPriceLine({
+              price: navSeriesData[0].value,
+              color: chartTheme.tickColor,
+              lineWidth: 1,
+              lineStyle: charts.LineStyle.Dashed,
+              axisLabelVisible: false,
+              title: 'Start NAV',
+            });
+          }
+        }
         runtime.markerApi?.setMarkers(marketMarkers);
         chart.timeScale().fitContent();
         fitOnNextDataRef.current = false;
@@ -719,10 +755,15 @@ export function TradingPerformanceChart({
   }, [
     activeMode,
     chartTheme.gridColor,
+    chartTheme.gradientEnd,
+    chartTheme.hoverBorderColor,
     chartTheme.negative,
     chartTheme.positive,
     chartTheme.tickColor,
     chartTheme.tooltipBg,
+    fillTopColor,
+    hasIntegratedNavPane,
+    lineColor,
   ]);
 
   useEffect(() => {
@@ -789,6 +830,31 @@ export function TradingPerformanceChart({
     });
     runtime.candleSeries.setData(marketSeriesData);
     runtime.volumeSeries.setData(volumeSeriesData);
+    if (runtime.navPaneSeries) {
+      runtime.navPaneSeries.applyOptions({
+        lineColor,
+        topColor: fillTopColor,
+        bottomColor: chartTheme.gradientEnd,
+        crosshairMarkerBorderColor: chartTheme.hoverBorderColor,
+        crosshairMarkerBackgroundColor: lineColor,
+      });
+      runtime.navPaneSeries.setData(navSeriesData);
+
+      if (runtime.navPaneStartPriceLine) {
+        runtime.navPaneSeries.removePriceLine(runtime.navPaneStartPriceLine);
+        runtime.navPaneStartPriceLine = undefined;
+      }
+      if (navSeriesData.length > 1) {
+        runtime.navPaneStartPriceLine = runtime.navPaneSeries.createPriceLine({
+          price: navSeriesData[0].value,
+          color: chartTheme.tickColor,
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: false,
+          title: 'Start NAV',
+        });
+      }
+    }
     runtime.markerApi?.setMarkers(marketMarkers);
 
     if (fitOnNextDataRef.current) {
@@ -797,10 +863,16 @@ export function TradingPerformanceChart({
     }
   }, [
     activeMode,
+    chartTheme.gradientEnd,
+    chartTheme.hoverBorderColor,
     chartTheme.negative,
     chartTheme.positive,
+    chartTheme.tickColor,
+    fillTopColor,
+    lineColor,
     marketMarkers,
     marketSeriesData,
+    navSeriesData,
     volumeSeriesData,
   ]);
 
@@ -834,6 +906,11 @@ export function TradingPerformanceChart({
               {readout.detail}
             </div>
           )}
+        </div>
+      )}
+      {activeMode === 'market' && navSeriesData.length > 0 && (
+        <div className="pointer-events-none absolute bottom-3 left-4 rounded-md border border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-1/72 px-2 py-1 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary backdrop-blur">
+          Account NAV / PnL
         </div>
       )}
       <a

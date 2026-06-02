@@ -24,7 +24,7 @@ const SECTION_EXPECTATIONS = {
   performance: [
     ['Market', 'Account', 'Price'],
     ['ETH', 'Performance', 'Awaiting first checkpoint'],
-    ['Recent Trades', 'Latest Trades', 'Copilot'],
+    ['Execution Tape', 'Latest Trades', 'Copilot'],
   ],
   portfolio: [
     'Portfolio',

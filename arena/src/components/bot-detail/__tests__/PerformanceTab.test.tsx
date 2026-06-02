@@ -24,16 +24,33 @@ const lightweightChartMock = vi.hoisted(() => {
   const volumeSeries = {
     setData: vi.fn(),
   };
+  const navPaneSeries = {
+    applyOptions: vi.fn(),
+    createPriceLine: vi.fn(),
+    removePriceLine: vi.fn(),
+    setData: vi.fn(),
+  };
   const priceScale = {
     applyOptions: vi.fn(),
   };
+  const pane0 = {
+    paneIndex: vi.fn(() => 0),
+    setStretchFactor: vi.fn(),
+  };
+  const pane1 = {
+    paneIndex: vi.fn(() => 1),
+    setStretchFactor: vi.fn(),
+  };
   const chart = {
-    addSeries: vi.fn((seriesType: string) => {
+    addPane: vi.fn(() => pane1),
+    addSeries: vi.fn((seriesType: string, _options?: unknown, paneIndex?: number) => {
       if (seriesType === 'CandlestickSeries') return candleSeries;
       if (seriesType === 'HistogramSeries') return volumeSeries;
+      if (paneIndex === 1) return navPaneSeries;
       return areaSeries;
     }),
     remove: vi.fn(),
+    panes: vi.fn(() => [pane0, pane1]),
     priceScale: vi.fn(() => priceScale),
     subscribeCrosshairMove: vi.fn(),
     timeScale: vi.fn(() => ({ fitContent })),
@@ -60,6 +77,9 @@ const lightweightChartMock = vi.hoisted(() => {
     createSeriesMarkers: vi.fn(() => markerApi),
     fitContent,
     markerApi,
+    navPaneSeries,
+    pane0,
+    pane1,
     priceScale,
     volumeSeries,
   };
@@ -261,8 +281,14 @@ describe('PerformanceTab', () => {
     lightweightChartMock.areaSeries.setData.mockClear();
     lightweightChartMock.candleSeries.applyOptions.mockClear();
     lightweightChartMock.candleSeries.setData.mockClear();
+    lightweightChartMock.navPaneSeries.applyOptions.mockClear();
+    lightweightChartMock.navPaneSeries.createPriceLine.mockClear();
+    lightweightChartMock.navPaneSeries.removePriceLine.mockClear();
+    lightweightChartMock.navPaneSeries.setData.mockClear();
+    lightweightChartMock.chart.addPane.mockClear();
     lightweightChartMock.chart.addSeries.mockClear();
     lightweightChartMock.chart.remove.mockClear();
+    lightweightChartMock.chart.panes.mockClear();
     lightweightChartMock.chart.priceScale.mockClear();
     lightweightChartMock.chart.subscribeCrosshairMove.mockClear();
     lightweightChartMock.chart.timeScale.mockClear();
@@ -273,6 +299,8 @@ describe('PerformanceTab', () => {
     lightweightChartMock.markerApi.detach.mockClear();
     lightweightChartMock.markerApi.markers.mockClear();
     lightweightChartMock.markerApi.setMarkers.mockClear();
+    lightweightChartMock.pane0.setStretchFactor.mockClear();
+    lightweightChartMock.pane1.setStretchFactor.mockClear();
     lightweightChartMock.priceScale.applyOptions.mockClear();
     lightweightChartMock.volumeSeries.setData.mockClear();
   });
@@ -505,7 +533,9 @@ describe('PerformanceTab', () => {
 
     expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.getByText('Loaded Trades')).toBeInTheDocument();
-    expect(screen.getByText('Last 6 of 12 loaded')).toBeInTheDocument();
+    expect(screen.getByText('Execution Tape')).toBeInTheDocument();
+    expect(screen.getByText('6 / 12')).toBeInTheDocument();
+    expect(screen.getByText('Fill Ledger')).toBeInTheDocument();
   });
 
   it('uses trade-page totals separately from loaded marker rows', () => {
@@ -535,7 +565,7 @@ describe('PerformanceTab', () => {
     expect(screen.getByText('Total Trades')).toBeInTheDocument();
     expect(screen.getByText('110')).toBeInTheDocument();
     expect(screen.getByText('6 loaded')).toBeInTheDocument();
-    expect(screen.getByText('Last 6 of 110')).toBeInTheDocument();
+    expect(screen.getByText('6 / 110')).toBeInTheDocument();
   });
 
   it('renders real market candles and volume when OHLCV exists for the traded venue', async () => {
@@ -614,6 +644,13 @@ describe('PerformanceTab', () => {
         expect.objectContaining({ value: 1650.25 }),
       ]),
     );
+    expect(lightweightChartMock.chart.addPane).toHaveBeenCalled();
+    expect(lightweightChartMock.navPaneSeries.setData).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ value: 10000 }),
+      ]),
+    );
+    expect(screen.getByText('Account NAV / PnL')).toBeInTheDocument();
     expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ text: '', shape: 'arrowUp', position: 'belowBar' }),
@@ -639,7 +676,7 @@ describe('PerformanceTab', () => {
     render(<PerformanceTab bot={makeBot()} isLive canCommand />);
 
     expect(await screen.findByText('Owner chart copilot')).toBeInTheDocument();
-    expect(screen.getByText('Recent Trades')).toBeInTheDocument();
+    expect(screen.getByText('Execution Tape')).toBeInTheDocument();
   });
 
   it('keeps authenticated non-commandable viewers on the public trade tape', async () => {
@@ -660,7 +697,7 @@ describe('PerformanceTab', () => {
     render(<PerformanceTab bot={makeBot()} isLive />);
 
     expect(screen.queryByText('Owner chart copilot')).not.toBeInTheDocument();
-    expect(await screen.findByText('Recent Trades')).toBeInTheDocument();
+    expect(await screen.findByText('Execution Tape')).toBeInTheDocument();
   });
 
   it('keeps the agent recent-trades rail stable while the trade ledger loads', async () => {
@@ -678,7 +715,7 @@ describe('PerformanceTab', () => {
 
     render(<PerformanceTab bot={makeBot()} isLive />);
 
-    expect(await screen.findByText('Recent Trades')).toBeInTheDocument();
+    expect(await screen.findByText('Execution Tape')).toBeInTheDocument();
     expect(screen.queryByText('Latest Trades')).not.toBeInTheDocument();
     expect(screen.getByText('Loading')).toBeInTheDocument();
   });

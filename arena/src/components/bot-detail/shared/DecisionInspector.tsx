@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type {
   DecisionFeedItem,
   DecisionFeedStage,
@@ -27,6 +28,8 @@ const toneIconClass: Record<DecisionFeedTone, string> = {
 interface DecisionInspectorProps {
   item: DecisionFeedItem | null | undefined;
   className?: string;
+  variant?: 'default' | 'terminal';
+  instrumentSlot?: ReactNode;
 }
 
 function StageRow({ stage }: { stage: DecisionFeedStage }) {
@@ -55,7 +58,16 @@ function StageRow({ stage }: { stage: DecisionFeedStage }) {
   );
 }
 
-export function DecisionInspector({ item, className }: DecisionInspectorProps) {
+function sourceLabel(source: DecisionFeedItem['source']): string {
+  return source === 'trade' ? 'Execution decision' : 'Agent run decision';
+}
+
+export function DecisionInspector({
+  item,
+  className,
+  variant = 'default',
+  instrumentSlot,
+}: DecisionInspectorProps) {
   if (!item) {
     return (
       <aside
@@ -70,6 +82,7 @@ export function DecisionInspector({ item, className }: DecisionInspectorProps) {
     );
   }
 
+  const isTerminal = variant === 'terminal';
   const primaryStats = [
     item.notionalLabel ? { label: 'Notional', value: item.notionalLabel } : null,
     item.venueLabel ? {
@@ -78,56 +91,116 @@ export function DecisionInspector({ item, className }: DecisionInspectorProps) {
     } : null,
     item.validationLabel ? { label: 'Validation', value: item.validationLabel } : null,
     item.executionLabel ? { label: 'Execution', value: item.executionLabel } : null,
-  ].filter((entry): entry is { label: string; value: string } => entry !== null);
+  ].filter((entry): entry is { label: string; value: string } => (
+    entry !== null && !(isTerminal && entry.label === 'Notional')
+  ));
   const capturedStages = item.stages.filter((stage) => stage.value !== 'Not captured' || Boolean(stage.detail));
 
   return (
     <aside
-        className={cx(
-        'flex min-h-0 flex-col overflow-y-auto bg-arena-elements-background-depth-2/24 p-4',
+      className={cx(
+        'flex min-h-0 flex-col overflow-y-auto bg-arena-elements-background-depth-2/24',
+        isTerminal ? 'p-3' : 'p-4',
         className,
       )}
       aria-label="Decision inspector"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h3 className="truncate text-base font-display font-semibold text-arena-elements-textPrimary">
+      <div className={cx(
+        'rounded-xl border border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/34',
+        isTerminal ? 'p-3' : 'border-0 bg-transparent p-0',
+      )}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="rounded-full border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/62 px-2 py-0.5 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                {sourceLabel(item.source)}
+              </span>
+              <span className={cx('rounded-full border px-2 py-0.5 font-data text-xs', toneBadgeClass[item.statusTone])}>
+                {item.statusLabel}
+              </span>
+            </div>
+            <h3 className={cx(
+              'mt-2 truncate font-display font-semibold tracking-tight text-arena-elements-textPrimary',
+              isTerminal ? 'text-2xl' : 'text-base',
+            )}>
               {item.actionLabel}
             </h3>
-            <span className={cx('rounded-full border px-2 py-0.5 font-data text-xs', toneBadgeClass[item.statusTone])}>
-              {item.statusLabel}
-            </span>
           </div>
-          <p className="mt-1 truncate font-data text-sm text-arena-elements-textSecondary">
-            {item.instrumentLabel}
+          <div className="shrink-0 pt-1 text-right">
+            <span className="font-data text-xs text-arena-elements-textTertiary">
+              {item.subtitle}
+            </span>
+            {isTerminal && item.notionalLabel && (
+              <div className="mt-2 font-data text-xl font-bold text-arena-elements-textPrimary">
+                {item.notionalLabel}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className={cx('mt-3', instrumentSlot ? 'min-w-0' : '')}>
+          {instrumentSlot ?? (
+            <p className={cx(
+              'truncate font-data text-arena-elements-textSecondary',
+              isTerminal ? 'text-base' : 'text-sm',
+            )}>
+              {item.instrumentLabel}
+            </p>
+          )}
+        </div>
+        {isTerminal && primaryStats.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {primaryStats.map((stat) => (
+              <span
+                key={stat.label}
+                className="max-w-full truncate rounded-full border border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-2/54 px-2 py-1 font-data text-[11px] text-arena-elements-textSecondary"
+                title={`${stat.label}: ${stat.value}`}
+              >
+                <span className="text-arena-elements-textTertiary">{stat.label}</span> {stat.value}
+              </span>
+            ))}
+          </div>
+        )}
+        {isTerminal && (
+          <div className="mt-3 rounded-lg border border-arena-elements-dividerColor/35 bg-arena-elements-background-depth-2/32 p-2.5">
+            <div className="text-[10px] font-display font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+              Thesis
+            </div>
+            <p className="mt-1 line-clamp-3 text-sm leading-5 text-arena-elements-textPrimary">
+              {item.reason}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {!isTerminal && (
+        <div className="mt-3 rounded-lg border border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/28 p-3">
+          <div className="text-xs font-display font-semibold uppercase text-arena-elements-textTertiary">
+            Agent Thesis
+          </div>
+          <p className="mt-2 text-sm leading-6 text-arena-elements-textPrimary">
+            {item.reason}
           </p>
         </div>
-        <span className="shrink-0 font-data text-xs text-arena-elements-textTertiary">
-          {item.subtitle}
-        </span>
-      </div>
+      )}
 
-      <div className="mt-4 rounded-lg border border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/28 p-3">
-        <div className="text-xs font-display font-semibold uppercase text-arena-elements-textTertiary">
-          Reason
-        </div>
-        <p className="mt-2 text-sm leading-6 text-arena-elements-textPrimary">
-          {item.reason}
-        </p>
-      </div>
-
-      {primaryStats.length > 0 && (
+      {primaryStats.length > 0 && !isTerminal && (
         <div className="mt-3 grid grid-cols-2 gap-2">
           {primaryStats.map((stat) => (
             <div
               key={stat.label}
-              className="rounded-lg border border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/25 px-3 py-2"
+              className={cx(
+                'rounded-lg border border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/25 px-3',
+                isTerminal ? 'py-2.5' : 'py-2',
+              )}
             >
               <div className="font-display text-[11px] font-semibold uppercase text-arena-elements-textTertiary">
                 {stat.label}
               </div>
-              <div className="mt-1 truncate font-data text-sm text-arena-elements-textPrimary">
+              <div className={cx(
+                'mt-1 truncate font-data text-arena-elements-textPrimary',
+                isTerminal ? 'text-base font-semibold' : 'text-sm',
+              )}>
                 {stat.value}
               </div>
             </div>
@@ -136,7 +209,7 @@ export function DecisionInspector({ item, className }: DecisionInspectorProps) {
       )}
 
       {capturedStages.length > 0 && (
-        <div className="mt-3 space-y-2">
+        <div className={cx('mt-3 grid gap-2', isTerminal ? 'grid-cols-1 min-[1440px]:grid-cols-2' : 'grid-cols-1')}>
           {capturedStages.map((stage) => (
             <StageRow key={stage.key} stage={stage} />
           ))}

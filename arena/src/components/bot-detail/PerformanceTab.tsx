@@ -269,6 +269,11 @@ function formatTradeMicrostructure(trade: Trade): string {
   return trade.paperTrade ? 'Paper fill' : formatTradeStatus(trade.execution?.status ?? trade.status);
 }
 
+function formatExecutionMode(trade: Trade): string {
+  if (trade.paperTrade || trade.status === 'paper') return 'Paper';
+  return trade.execution?.status ? formatTradeStatus(trade.execution.status) : formatTradeStatus(trade.status);
+}
+
 function buildTradeMarkers(
   trades: Trade[] | undefined,
   chartTheme: ReturnType<typeof useChartTheme>,
@@ -451,6 +456,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const selectedDecision = tradeDecisionItems.find((item) => item.id === selectedDecisionId)
     ?? tradeDecisionItems[0]
     ?? null;
+  const selectedTrade = selectedDecision?.source === 'trade'
+    ? recentTradeTape.find((trade) => `trade:${trade.id}` === selectedDecision.id) ?? recentTradeTape[0] ?? null
+    : recentTradeTape[0] ?? null;
+  const buyTapeCount = recentTradeTape.filter((trade) => isBuySideTradeAction(trade.action)).length;
+  const sellTapeCount = recentTradeTape.filter((trade) => isSellSideTradeAction(trade.action)).length;
+  const otherTapeCount = Math.max(0, recentTradeTape.length - buyTapeCount - sellTapeCount);
 
   useEffect(() => {
     if (tradeDecisionItems.length === 0) {
@@ -739,7 +750,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             <div className="glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl p-3">
               <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
                 <h3 className="font-display text-sm font-bold uppercase tracking-[0.12em] text-arena-elements-textPrimary">
-                  Recent Trades
+                  Execution Tape
                 </h3>
                 <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
                   Loading
@@ -768,33 +779,53 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           ) : (
             <div className="glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl p-3">
               <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
-                <h3 className="font-display text-sm font-bold uppercase tracking-[0.12em] text-arena-elements-textPrimary">
-                  Recent Trades
-                </h3>
+                <div>
+                  <h3 className="font-display text-sm font-bold uppercase tracking-[0.12em] text-arena-elements-textPrimary">
+                    Execution Tape
+                  </h3>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 font-data text-[11px] text-arena-elements-textTertiary">
+                    <span>{buyTapeCount} buy</span>
+                    <span className="text-arena-elements-dividerColor">/</span>
+                    <span>{sellTapeCount} sell</span>
+                    {otherTapeCount > 0 && (
+                      <>
+                        <span className="text-arena-elements-dividerColor">/</span>
+                        <span>{otherTapeCount} other</span>
+                      </>
+                    )}
+                  </div>
+                </div>
                 <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
-                  Last {Math.min(recentTradeTape.length, 6)}
+                  {Math.min(recentTradeTape.length, 6)}
                   {tradePage?.total != null
-                    ? ` of ${tradePage.total.toLocaleString()}`
+                    ? ` / ${tradePage.total.toLocaleString()}`
                     : trades && trades.length > recentTradeTape.length
-                      ? ` of ${trades.length.toLocaleString()} loaded`
+                      ? ` / ${trades.length.toLocaleString()}`
                       : ''}
                 </span>
               </div>
               <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,0.9fr)_minmax(210px,1fr)] gap-3">
                 <DecisionInspector
                   item={selectedDecision}
+                  variant="terminal"
+                  instrumentSlot={selectedTrade ? (
+                    <TradeInstrumentDisplay
+                      trade={selectedTrade}
+                      size="md"
+                      showVenue
+                      labelClassName="text-base"
+                    />
+                  ) : undefined}
                   className="rounded-xl border border-arena-elements-dividerColor/50"
                 />
                 <div
-                  className="min-h-0 overflow-y-auto rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/28"
+                  className="min-h-0 overflow-y-auto rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/28 p-2"
                   aria-label="Trade decisions"
                   tabIndex={0}
                 >
-                  <div className="grid grid-cols-[58px_60px_minmax(0,1fr)_82px] gap-2 border-b border-arena-elements-dividerColor/50 px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-                    <span>Time</span>
-                    <span>Side</span>
-                    <span>Instrument</span>
-                    <span className="text-right">Notional</span>
+                  <div className="mb-2 flex items-center justify-between gap-2 px-1 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                    <span>Fill Ledger</span>
+                    <span>Side / Market / Size</span>
                   </div>
                   {recentTradeTape.map((trade) => {
                     const decisionId = `trade:${trade.id}`;
@@ -804,32 +835,34 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                       <button
                         key={trade.id}
                         type="button"
-                        className={`grid w-full grid-cols-[58px_60px_minmax(0,1fr)_82px] items-center gap-2 border-b border-arena-elements-dividerColor/40 px-3 py-2.5 text-left transition-colors last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                        className={`mb-2 grid w-full grid-cols-[74px_minmax(0,1fr)_94px] items-center gap-2 rounded-xl border px-3 py-3 text-left transition-colors last:mb-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
                           isSelected
-                            ? 'bg-violet-500/10 shadow-[inset_3px_0_0_rgba(139,92,246,0.72)]'
-                            : 'hover:bg-arena-elements-item-backgroundHover'
+                            ? 'border-violet-500/45 bg-violet-500/10 shadow-[inset_3px_0_0_rgba(139,92,246,0.72)]'
+                            : 'border-arena-elements-dividerColor/42 bg-arena-elements-background-depth-1/22 hover:bg-arena-elements-item-backgroundHover'
                         }`}
                         aria-pressed={isSelected}
                         onClick={() => setSelectedDecisionId(decisionId)}
                       >
-                        <div className="font-data text-xs leading-tight text-arena-elements-textTertiary">
-                          {formatTradeTime(trade.timestamp)}
-                        </div>
-                        <div className={`font-data text-xs font-bold ${getTradeActionToneClass(trade.action)}`}>
-                          {formatTradeActionLabel(trade.action)}
+                        <div className="min-w-0">
+                          <div className={`inline-flex rounded-md border border-current/20 px-2 py-1 font-data text-[11px] font-bold uppercase ${getTradeActionToneClass(trade.action)}`}>
+                            {formatTradeActionLabel(trade.action)}
+                          </div>
+                          <div className="mt-1.5 truncate font-data text-[11px] text-arena-elements-textTertiary">
+                            {formatTradeTime(trade.timestamp)}
+                          </div>
                         </div>
                         <TradeInstrumentDisplay
                           trade={trade}
                           size="sm"
                           showVenue={false}
-                          labelClassName="max-w-[150px] text-[13px]"
+                          labelClassName="max-w-[170px] text-[14px]"
                         />
                         <div className="min-w-0 text-right">
-                          <div className="font-data text-sm font-semibold text-arena-elements-textPrimary">
+                          <div className="font-data text-base font-semibold text-arena-elements-textPrimary">
                             {formatTradeUsd(trade.notionalUsd)}
                           </div>
-                          <div className="truncate font-data text-[10px] uppercase tracking-wide text-arena-elements-textTertiary">
-                            {formatTradeMicrostructure(trade)}
+                          <div className="truncate font-data text-[10px] uppercase tracking-wide text-arena-elements-textTertiary" title={formatTradeMicrostructure(trade)}>
+                            {formatExecutionMode(trade)}
                           </div>
                         </div>
                       </button>
