@@ -36,7 +36,7 @@ const SECTION_EXPECTATIONS = {
     ['Trading Run', 'No runs yet'],
     ['Run ID', 'Autonomous activity', 'DONE', 'SKIP', 'TRADE'],
   ],
-  chat: ['Trading Agent', ['Breakout retest', 'No messages yet'], ['fast_backtest', 'Owner Sign In']],
+  chat: ['Trading Agent', ['Breakout retest', 'fast_backtest', 'No messages yet']],
   operations: ['Operations', 'Validation', 'Validator'],
 };
 const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Cloud', 'Platform Volume', 'Execution Tape', 'Leaderboard', 'ETH Macro Scalper'];
@@ -844,18 +844,83 @@ function textIncludes(bodyText, expected) {
   });
 }
 
+async function fetchText(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} for ${url}`);
+  }
+  return response.text();
+}
+
+async function discoverOperatorApiUrlFromBuild(baseUrl) {
+  const html = await fetchText(baseUrl);
+  const assetPaths = Array.from(html.matchAll(/(?:src|href)="([^"]*\/assets\/meta-[^"]+\.js)"/g))
+    .map((match) => match[1])
+    .filter(Boolean);
+
+  for (const assetPath of assetPaths) {
+    const assetUrl = new URL(assetPath, baseUrl).toString();
+    const source = await fetchText(assetUrl);
+    const urls = Array.from(source.matchAll(/https?:\/\/[^"',\s)]+/g))
+      .map((match) => match[0])
+      .filter((url) => !url.includes('fonts.googleapis.com') && !url.includes('fonts.gstatic.com'));
+    const operatorUrl = urls.find((url) => /sslip\.io|operator|api/i.test(url));
+    if (operatorUrl) {
+      return operatorUrl.replace(/\/+$/, '');
+    }
+  }
+
+  return null;
+}
+
+function parseBotIdFromHref(href) {
+  try {
+    const match = new URL(href).pathname.match(/\/arena\/bot\/([^/]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function chooseRecentlyTradedBotId(baseUrl, candidateIds) {
+  if (candidateIds.length === 0) return null;
+  const candidateSet = new Set(candidateIds);
+  let operatorApiUrl = null;
+  try {
+    operatorApiUrl = await discoverOperatorApiUrlFromBuild(baseUrl);
+  } catch {
+    operatorApiUrl = null;
+  }
+  if (!operatorApiUrl) return null;
+
+  try {
+    const payload = await fetchJson(`${operatorApiUrl}/api/platform/trades?limit=100`);
+    const trades = Array.isArray(payload?.trades) ? payload.trades : [];
+    const match = trades
+      .map((trade) => (typeof trade?.bot_id === 'string' ? trade.bot_id : null))
+      .find((botId) => botId && candidateSet.has(botId));
+    if (match) {
+      console.log(`[arena-smoke] selected recently traded bot ${match}`);
+      return match;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 async function discoverAgentId(page, baseUrl, allowEmpty) {
   await navigate(page, baseUrl);
-  let href = null;
+  let hrefs = [];
   let debugMetrics = null;
   try {
-    href = await waitFor(() => evaluate(page, `(() => {
+    hrefs = await waitFor(() => evaluate(page, `(() => {
     const links = Array.from(document.querySelectorAll('a[href*="/arena/bot/"]'))
       .map((link) => link.href)
       .filter(Boolean);
-    return links.find((url) => /\\/arena\\/bot\\/[^/]+\\/performance(?:$|[?#])/.test(new URL(url).pathname))
-      || links.find((url) => /\\/arena\\/bot\\/[^/]+/.test(new URL(url).pathname))
-      || null;
+    const uniqueLinks = Array.from(new Set(links));
+    return uniqueLinks.length > 0 ? uniqueLinks : null;
   })()`), { timeoutMs: 45_000, intervalMs: 250 });
   } catch {
     debugMetrics = await evaluate(page, `(() => ({
@@ -866,9 +931,20 @@ async function discoverAgentId(page, baseUrl, allowEmpty) {
         .filter(Boolean)
         .slice(0, 12),
     }))()`).catch(() => null);
-    href = null;
+    hrefs = [];
   }
 
+  const candidateIds = hrefs
+    .map((href) => parseBotIdFromHref(href))
+    .filter((botId) => typeof botId === 'string' && botId.length > 0);
+  const recentlyTradedBotId = await chooseRecentlyTradedBotId(baseUrl, candidateIds);
+  if (recentlyTradedBotId) {
+    return recentlyTradedBotId;
+  }
+
+  const href = hrefs.find((url) => /\/arena\/bot\/[^/]+\/performance(?:$|[?#])/.test(new URL(url).pathname))
+    || hrefs.find((url) => /\/arena\/bot\/[^/]+/.test(new URL(url).pathname))
+    || null;
   if (!href) {
     const debugSuffix = debugMetrics
       ? ` body="${debugMetrics.bodyText}" links=${JSON.stringify(debugMetrics.links)}`

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   useSessions,
   useCreateSession,
@@ -20,6 +21,13 @@ import {
   OperatorAccessCard,
   UnsupportedFeatureCard,
 } from "~/components/operator/OperatorAccessCard";
+import {
+  buildRunReplayHistoryPath,
+  buildRunReplaySessionId,
+  chooseDefaultRun,
+  hasReplayableRunTrace,
+  parseRunsResponse,
+} from "~/lib/botRuns";
 import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 
 interface ChatTabProps {
@@ -461,18 +469,38 @@ export function ChatTab({
   const deleteMutation = useDeleteSession(apiUrl, sessionToken);
   const renameMutation = useRenameSession(apiUrl, sessionToken);
   const createMutation = useCreateSession(apiUrl, sessionToken);
+  const publicRunsQuery = useQuery({
+    queryKey: ["bot-chat-public-runs", apiUrl, botId],
+    enabled: !!apiUrl && !canWrite,
+    queryFn: async () => {
+      const response = await fetch(`${apiUrl}/runs?limit=25`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      return parseRunsResponse(await response.json());
+    },
+    staleTime: 5_000,
+  });
+  const publicReplayRun = useMemo(() => {
+    if (canWrite) return null;
+    const replayableRuns =
+      publicRunsQuery.data?.runs.filter((run) => hasReplayableRunTrace(run)) ?? [];
+    return chooseDefaultRun(replayableRuns);
+  }, [canWrite, publicRunsQuery.data]);
   const hasKnownActiveSession = sessions.some(
     (session) => session.id === activeSessionId,
   );
-  const streamSessionId = hasKnownActiveSession
-    ? activeSessionId
-    : activeSessionId === primarySessionId
-      ? (sessions[0]?.id ?? (canWrite ? null : primarySessionId))
-      : activeSessionId ||
-        sessions[0]?.id ||
-        (canWrite ? null : primarySessionId);
+  const publicReplaySessionId = buildRunReplaySessionId(publicReplayRun);
+  const streamSessionId = !canWrite
+    ? (publicReplaySessionId || primarySessionId)
+    : hasKnownActiveSession
+      ? activeSessionId
+      : activeSessionId === primarySessionId
+        ? (sessions[0]?.id ?? null)
+        : activeSessionId || sessions[0]?.id || null;
   const readOnlyHistoryPath = !canWrite && streamSessionId
-    ? `/session/sessions/${encodeURIComponent(streamSessionId)}/messages?limit=200`
+    ? (buildRunReplayHistoryPath(publicReplayRun) ??
+      `/session/sessions/${encodeURIComponent(streamSessionId)}/messages?limit=200`)
     : undefined;
 
   useEffect(() => {

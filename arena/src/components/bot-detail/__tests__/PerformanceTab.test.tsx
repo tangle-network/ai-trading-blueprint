@@ -385,6 +385,32 @@ describe('PerformanceTab', () => {
     expect(seriesData.length).toBeGreaterThan(2);
   });
 
+  it('uses loaded trade rows when checkpoint trade count is stale', () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockMetricsSummary = {
+      portfolio_value_usd: 10000,
+      total_pnl: 0,
+      trade_count: 1,
+    };
+    mockTrades = Array.from({ length: 12 }, (_, index) => makeTrade({
+      id: `trade-${index + 1}`,
+      timestamp: Date.parse(`2026-04-23T10:${String(index + 5).padStart(2, '0')}:00.000Z`),
+    }));
+
+    render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
+
+    expect(screen.getByText('12')).toBeInTheDocument();
+  });
+
   it('renders real market candles and volume when OHLCV exists for the traded venue', async () => {
     mockMetrics = [
       {

@@ -298,7 +298,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const effectiveChartMode = chartMode === 'market' && hasMarketCandles ? 'market' : 'nav';
   const chartIsRenderable = chartPoints.length > 0 || hasMarketCandles;
 
-  const totalTradesValue = latestRenderableMetric?.trade_count ?? metricsSummary?.trade_count ?? bot.totalTrades;
+  const totalTradesValue = Math.max(
+    latestRenderableMetric?.trade_count ?? 0,
+    metricsSummary?.trade_count ?? 0,
+    bot.totalTrades ?? 0,
+    trades?.length ?? 0,
+  );
   const firstChartPoint = chartPoints[0] ?? null;
   const latestChartPoint = chartPoints[chartPoints.length - 1] ?? null;
   const latestChartValue = latestChartPoint?.value ?? null;
