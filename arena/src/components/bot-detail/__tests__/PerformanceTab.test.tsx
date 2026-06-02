@@ -479,10 +479,31 @@ describe('PerformanceTab', () => {
       },
     ];
 
-    render(<PerformanceTab bot={makeBot()} isLive />);
+    render(<PerformanceTab bot={makeBot()} isLive canCommand />);
 
     expect(await screen.findByText('Owner chart copilot')).toBeInTheDocument();
     expect(screen.queryByText('Trade Tape')).not.toBeInTheDocument();
+  });
+
+  it('keeps authenticated non-commandable viewers on the public trade tape', async () => {
+    operatorAuthMock.isAuthenticated = true;
+    operatorAuthMock.token = 'test-token';
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockTrades = [makeTrade({ id: 'trade-public' })];
+
+    render(<PerformanceTab bot={makeBot()} isLive />);
+
+    expect(screen.queryByText('Owner chart copilot')).not.toBeInTheDocument();
+    expect(await screen.findByText('Trade Tape')).toBeInTheDocument();
   });
 
   it('labels live NAV separately when it is newer than the latest checkpoint', () => {

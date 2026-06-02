@@ -1,5 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { Link } from 'react-router';
+import type { ReactNode } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
@@ -82,21 +81,6 @@ export function AgentWorkspaceShell({
     operatorKind: bot.operatorKind,
     chainId: bot.chainId,
   });
-  const [showAgentRail, setShowAgentRail] = useState(false);
-  const [agentRailCollapsed, setAgentRailCollapsed] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
-
-    const mediaQuery = window.matchMedia('(min-width: 1536px)');
-    const syncAgentRail = () => setShowAgentRail(mediaQuery.matches);
-
-    syncAgentRail();
-    mediaQuery.addEventListener('change', syncAgentRail);
-    return () => {
-      mediaQuery.removeEventListener('change', syncAgentRail);
-    };
-  }, []);
 
   const formatSignedPercent = (value: number | null) => {
     if (value == null) return '—';
@@ -162,114 +146,10 @@ export function AgentWorkspaceShell({
     { label: 'Equity', value: formatPortfolioValue(summary.portfolioValue), color: '' },
   ];
 
-  const trustItems = [
-    { label: 'Mode', value: bot.paperTrade ? 'Paper' : 'Live' },
-    { label: 'Network', value: targetNetwork },
-    { label: 'Capital', value: formatCapital(initialCapitalUsd) },
-    {
-      label: 'Max DD',
-      value: maxDrawdownLimit == null
-        ? '—'
-        : `${formatNumber(maxDrawdownLimit, { maximumFractionDigits: 1 })}%`,
-    },
-  ];
-
   return (
     <div className="flex h-full min-h-0 overflow-hidden">
-      {showAgentRail && (
-      <aside className={`hidden shrink-0 flex-col border-r border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/76 transition-[width] duration-200 2xl:flex ${agentRailCollapsed ? 'w-16' : 'w-56'}`}>
-        <div className={`border-b border-arena-elements-dividerColor/70 ${agentRailCollapsed ? 'p-2' : 'p-3'}`}>
-          <div className={`mb-3 flex items-center ${agentRailCollapsed ? 'justify-center' : 'justify-between gap-2'}`}>
-            {!agentRailCollapsed && (
-              <Link
-                to="/"
-                className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-arena-elements-textTertiary transition-colors hover:text-arena-elements-textPrimary"
-              >
-                <span className="i-ph:arrow-left text-sm" aria-hidden="true" />
-                Arena
-              </Link>
-            )}
-            <button
-              type="button"
-              onClick={() => setAgentRailCollapsed((collapsed) => !collapsed)}
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60 text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-              aria-label={agentRailCollapsed ? 'Expand agent rail' : 'Collapse agent rail'}
-              title={agentRailCollapsed ? 'Expand agent rail' : 'Collapse agent rail'}
-            >
-              <span className={agentRailCollapsed ? 'i-ph:caret-right-bold text-base' : 'i-ph:caret-left-bold text-base'} />
-            </button>
-          </div>
-          <div className={`flex items-center ${agentRailCollapsed ? 'justify-center' : 'gap-2.5'}`}>
-            <Identicon address={bot.operatorAddress as Address} size={agentRailCollapsed ? 30 : 34} />
-            {!agentRailCollapsed && (
-              <div className="min-w-0">
-                <div className="truncate font-display text-base font-semibold text-arena-elements-textPrimary">
-                  {title}
-                </div>
-                <code className="font-data text-xs text-arena-elements-textTertiary" title={bot.operatorAddress}>
-                  {formatCompactAddress(bot.operatorAddress)}
-                </code>
-              </div>
-            )}
-          </div>
-          {!agentRailCollapsed && (
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              <Badge variant={botStatusBadgeVariant(bot.status)}>{botStatusLabel(bot.status)}</Badge>
-              <Badge variant="accent">{bot.strategyType}</Badge>
-              {bot.verificationState === 'unverified' && <Badge variant="outline">Unverified</Badge>}
-            </div>
-          )}
-        </div>
-
-        <nav className="shrink-0 space-y-1 p-2" aria-label="Agent workspace sections">
-          {navItems.map((item) => {
-            const selected = item.value === activeSection;
-            return (
-              <button
-                key={item.value}
-                type="button"
-                onClick={() => onSectionChange(item.value)}
-                aria-current={selected ? 'page' : undefined}
-                title={agentRailCollapsed ? item.label : undefined}
-                className={`group flex h-10 w-full items-center rounded-lg text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${agentRailCollapsed ? 'justify-center px-0' : 'gap-2 px-3 text-left'} ${
-                  selected
-                    ? 'bg-violet-500/14 text-arena-elements-textPrimary'
-                    : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
-                }`}
-              >
-                <span className={`${item.icon} text-base ${selected ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary group-hover:text-arena-elements-textSecondary'}`} aria-hidden="true" />
-                {!agentRailCollapsed && (
-                  <>
-                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                    {item.badge}
-                  </>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-
-        {!agentRailCollapsed && (
-        <div className="mt-auto border-t border-arena-elements-dividerColor/70 p-3">
-          <div className="space-y-2">
-            {trustItems.map((item) => (
-              <div key={item.label} className="flex items-center justify-between gap-3 text-xs">
-                <span className="font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                  {item.label}
-                </span>
-                <span className="truncate text-right font-data text-arena-elements-textSecondary">
-                  {item.value}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-        )}
-      </aside>
-      )}
-
       <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        {focusMode && !showAgentRail && (
+        {focusMode && (
           <nav
             className="absolute right-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] gap-1 overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 p-1 shadow-xl backdrop-blur-xl"
             aria-label="Agent focus navigation"
@@ -305,24 +185,32 @@ export function AgentWorkspaceShell({
         {!focusMode && (
           <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/76 px-4 py-2">
             <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                {!showAgentRail ? (
-                  <div className="flex items-center gap-2">
-                    <Identicon address={bot.operatorAddress as Address} size={24} />
+              <div className="flex min-w-0 items-center gap-2.5">
+                <Identicon address={bot.operatorAddress as Address} size={28} />
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
                     <h1 className="truncate font-display text-lg font-semibold text-arena-elements-textPrimary">
                       {title}
                     </h1>
+                    <code className="hidden shrink-0 font-data text-xs text-arena-elements-textTertiary sm:block" title={bot.operatorAddress}>
+                      {formatCompactAddress(bot.operatorAddress)}
+                    </code>
                   </div>
-                ) : (
-                <div className="flex min-w-0 items-center gap-2">
-                  <h1 className="truncate font-display text-lg font-semibold text-arena-elements-textPrimary">
-                    {title}
-                  </h1>
-                  <span className="font-data text-xs text-arena-elements-textTertiary">
-                    {bot.paperTrade ? 'Paper' : 'Live'} · {targetNetwork}
-                  </span>
+                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+                    <Badge variant={botStatusBadgeVariant(bot.status)}>{botStatusLabel(bot.status)}</Badge>
+                    <Badge variant="accent">{bot.strategyType}</Badge>
+                    {bot.verificationState === 'unverified' && <Badge variant="outline">Unverified</Badge>}
+                    <span className="font-data text-xs text-arena-elements-textTertiary">
+                      {bot.paperTrade ? 'Paper' : 'Live'} · {targetNetwork}
+                    </span>
+                    <span className="hidden font-data text-xs text-arena-elements-textTertiary md:inline">
+                      Capital {formatCapital(initialCapitalUsd)}
+                    </span>
+                    <span className="hidden font-data text-xs text-arena-elements-textTertiary lg:inline">
+                      Max DD {maxDrawdownLimit == null ? '—' : `${formatNumber(maxDrawdownLimit, { maximumFractionDigits: 1 })}%`}
+                    </span>
+                  </div>
                 </div>
-                )}
               </div>
 
               <Tooltip.Provider delayDuration={120}>
@@ -357,7 +245,6 @@ export function AgentWorkspaceShell({
                 </div>
               </Tooltip.Provider>
             </div>
-            {!showAgentRail && (
             <nav
               className="mt-2 flex gap-1 overflow-x-auto pb-0.5"
               aria-label="Agent workspace sections"
@@ -388,7 +275,6 @@ export function AgentWorkspaceShell({
                 );
               })}
             </nav>
-            )}
           </div>
         )}
 

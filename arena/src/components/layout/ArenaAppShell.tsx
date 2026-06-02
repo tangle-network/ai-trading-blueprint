@@ -6,6 +6,7 @@ import { ChainSwitcher, Identicon, TangleLogo, ThemeToggle } from '@tangle-netwo
 import { cn } from '@tangle-network/blueprint-ui';
 import { useBots } from '~/lib/hooks/useBots';
 import { botStatusLabel, formatNumber } from '~/lib/format';
+import { isBotCallableByWallet } from '~/lib/utils/botAccess';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
 
@@ -43,24 +44,17 @@ export function ArenaAppShell() {
       return b.pnlPercent - a.pnlPercent;
     })
     .slice(0, 8);
-  const normalizedAddress = address?.toLowerCase() ?? null;
-  const ownedAgentIds = new Set(
-    normalizedAddress
-      ? activeAgents
-        .filter((bot) => bot.submitterAddress?.toLowerCase() === normalizedAddress)
-        .map((bot) => bot.id)
-      : [],
-  );
-  const ownedAgents = activeAgents.filter((bot) => ownedAgentIds.has(bot.id)).slice(0, 4);
-  const fleetAgents = (ownedAgents.length > 0
-    ? activeAgents.filter((bot) => !ownedAgentIds.has(bot.id))
-    : activeAgents).slice(0, ownedAgents.length > 0 ? 6 : 8);
-  const agentSections = ownedAgents.length > 0
-    ? [
-        { label: 'My Agents', bots: ownedAgents },
-        { label: 'Fleet', bots: fleetAgents },
-      ]
-    : [{ label: 'Fleet', bots: fleetAgents }];
+  const callableAgents = address
+    ? activeAgents
+      .filter((bot) => isBotCallableByWallet(bot, address))
+      .slice(0, 8)
+    : [];
+  const agentSections = callableAgents.length > 0
+    ? [{ label: 'My Agents', bots: callableAgents }]
+    : [];
+  const emptyAgentMessage = isConnected
+    ? 'No callable agents for this wallet.'
+    : 'Connect to pin callable agents.';
 
   return (
     <div className="bp-tone-arena flex h-[100dvh] overflow-hidden bg-arena-elements-background-depth-1 text-arena-elements-textPrimary bg-mesh bg-noise">
@@ -128,17 +122,17 @@ export function ArenaAppShell() {
                 to="/"
                 className="font-data text-[10px] uppercase tracking-wider text-arena-elements-textTertiary transition-colors hover:text-arena-elements-textPrimary"
               >
-                View all
+                Fleet
               </Link>
             </div>
           )}
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
-            {activeAgents.length === 0 ? (
+            {agentSections.length === 0 ? (
               <div className={cn(
                 'rounded-lg border border-dashed border-arena-elements-dividerColor/70 text-xs text-arena-elements-textTertiary',
                 sidebarCollapsed ? 'px-2 py-3 text-center' : 'px-3 py-4',
               )}>
-                {isConnected ? 'No active agents yet.' : 'Connect to load operator agents.'}
+                {emptyAgentMessage}
               </div>
             ) : agentSections.map((section) => (
               <div key={section.label} className="space-y-1">

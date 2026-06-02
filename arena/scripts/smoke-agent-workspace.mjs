@@ -36,7 +36,7 @@ const SECTION_EXPECTATIONS = {
     ['Trading Run', 'No runs yet'],
     ['Run ID', 'Autonomous activity', 'DONE', 'SKIP', 'TRADE'],
   ],
-  chat: ['Trading Agent', ['Breakout retest', 'No messages yet'], 'Owner Sign In'],
+  chat: ['Trading Agent', ['Breakout retest', 'No messages yet'], ['fast_backtest', 'Owner Sign In']],
   operations: ['Operations', 'Validation', 'Validator'],
 };
 const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Cloud', 'Platform Volume', 'Execution Tape', 'Leaderboard', 'ETH Macro Scalper'];
@@ -1075,11 +1075,6 @@ async function assertCollapsibleRails(page, baseUrl, botId) {
   }, { timeoutMs: 12_000, intervalMs: 250 });
 
   const globalWidthExpression = `(() => document.querySelector('aside')?.getBoundingClientRect().width ?? 0)()`;
-  const agentWidthExpression = `(() => {
-    const asides = Array.from(document.querySelectorAll('aside'));
-    return asides[1]?.getBoundingClientRect().width ?? 0;
-  })()`;
-
   const global = await assertRailWidthChange(
     page,
     'Collapse sidebar',
@@ -1090,17 +1085,6 @@ async function assertCollapsibleRails(page, baseUrl, botId) {
     throw new Error(`Global sidebar did not collapse: ${global.before} -> ${global.after}`);
   }
   await clickButtonByLabel(page, 'Expand sidebar');
-
-  const agent = await assertRailWidthChange(
-    page,
-    'Collapse agent rail',
-    agentWidthExpression,
-    '((before, value) => before >= 180 && value <= 80)',
-  );
-  if (agent.after >= agent.before) {
-    throw new Error(`Agent rail did not collapse: ${agent.before} -> ${agent.after}`);
-  }
-  await clickButtonByLabel(page, 'Expand agent rail');
 }
 
 async function assertRouteNavigation(page, baseUrl, botId) {

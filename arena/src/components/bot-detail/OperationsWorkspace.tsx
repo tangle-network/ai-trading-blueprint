@@ -24,6 +24,7 @@ interface OperationsWorkspaceProps {
   isHyperliquidPerpBot: boolean;
   assetMetadata?: TokenMetadata[];
   onConfigureSecrets?: () => void;
+  canCommand?: boolean;
 }
 
 interface PanelItem {
@@ -76,10 +77,6 @@ function OperationsPanelLoading({ label }: { label?: string }) {
 function shortAddress(value: string | null | undefined): string {
   if (!value) return 'n/a';
   return value.length > 12 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
-}
-
-function yesNo(value: boolean | null | undefined): string {
-  return value === true ? 'Yes' : value === false ? 'No' : 'Unknown';
 }
 
 function formatLastVerified(value: number | null | undefined): string {
@@ -208,19 +205,21 @@ function OperationsOverview({
   panels,
   hasTerminal,
   isHyperliquidPerpBot,
+  canCommand,
   onSelectPanel,
 }: {
   bot: Bot;
   panels: PanelItem[];
   hasTerminal: boolean;
   isHyperliquidPerpBot: boolean;
+  canCommand: boolean;
   onSelectPanel: (panel: OperationsPanel) => void;
 }) {
   const needsSecrets = bot.secretsConfigured === false || bot.status === 'needs_config';
   const envelopeMode = bot.validationTrust === 'envelope';
   const activePanelValues = new Set(panels.map((panel) => panel.value));
   const actionCards = [
-    needsSecrets
+    canCommand && needsSecrets && activePanelValues.has('secrets')
       ? {
           title: 'Configure Secrets',
           description: 'Provider keys are still required before the operator can run this agent.',
@@ -229,7 +228,7 @@ function OperationsOverview({
           panel: 'secrets' as OperationsPanel,
         }
       : null,
-    envelopeMode
+    canCommand && envelopeMode && activePanelValues.has('envelope')
       ? {
           title: 'Review Envelope',
           description: 'Execution is governed by a signed allowance and policy envelope.',
@@ -245,13 +244,15 @@ function OperationsOverview({
       tone: 'violet' as const,
       panel: 'validation' as OperationsPanel,
     },
-    {
-      title: 'Runtime Controls',
-      description: 'Change trading posture, trigger a run, or wind down the agent lifecycle.',
-      icon: 'i-ph:sliders-horizontal',
-      tone: bot.controlAvailable ? 'emerald' as const : 'neutral' as const,
-      panel: 'controls' as OperationsPanel,
-    },
+    canCommand && activePanelValues.has('controls')
+      ? {
+          title: 'Runtime Controls',
+          description: 'Change trading posture, trigger a run, or wind down the agent lifecycle.',
+          icon: 'i-ph:sliders-horizontal',
+          tone: bot.controlAvailable ? 'emerald' as const : 'neutral' as const,
+          panel: 'controls' as OperationsPanel,
+        }
+      : null,
     isHyperliquidPerpBot && activePanelValues.has('vault')
       ? {
           title: 'Vault Wiring',
@@ -261,7 +262,7 @@ function OperationsOverview({
           panel: 'vault' as OperationsPanel,
         }
       : null,
-    hasTerminal && activePanelValues.has('terminal')
+    canCommand && hasTerminal && activePanelValues.has('terminal')
       ? {
           title: 'Terminal Access',
           description: 'Open owner-only runtime logs and process inspection.',
@@ -289,8 +290,8 @@ function OperationsOverview({
         />
         <StatCard
           label="Control"
-          value={bot.controlAvailable ? 'Available' : 'Read-only'}
-          detail={`${operatorKindLabel(bot.operatorKind)} operator`}
+          value={canCommand && bot.controlAvailable ? 'Available' : 'Read-only'}
+          detail={canCommand ? `${operatorKindLabel(bot.operatorKind)} operator` : 'Public viewer'}
           icon="i-ph:sliders-horizontal"
         />
         <StatCard
@@ -352,38 +353,6 @@ function OperationsOverview({
         </aside>
       </div>
 
-      <section className="rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/44 p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-              Capabilities
-            </div>
-            <h3 className="mt-1 font-display text-lg font-semibold text-arena-elements-textPrimary">
-              Access and policy checks
-            </h3>
-          </div>
-        </div>
-        <div className="grid gap-2 md:grid-cols-3">
-          {[
-            { label: 'Terminal', value: yesNo(hasTerminal), icon: 'i-ph:terminal-window' },
-            { label: 'Hyperliquid Vault', value: yesNo(isHyperliquidPerpBot), icon: 'i-ph:bank' },
-            { label: 'Authoritative Data', value: bot.verificationState === 'authoritative' ? 'Yes' : 'No', icon: 'i-ph:seal-check' },
-          ].map((item) => (
-            <div
-              key={item.label}
-              className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/56 px-3 py-2.5"
-            >
-              <div className="flex items-center gap-2 text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                <span className={`${item.icon} text-sm`} aria-hidden="true" />
-                {item.label}
-              </div>
-              <div className="mt-1 font-data text-base font-bold text-arena-elements-textPrimary">
-                {item.value}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }
@@ -397,6 +366,7 @@ export function OperationsWorkspace({
   isHyperliquidPerpBot,
   assetMetadata,
   onConfigureSecrets,
+  canCommand = false,
 }: OperationsWorkspaceProps) {
   const panels = useMemo<PanelItem[]>(() => {
     const items: PanelItem[] = [
@@ -418,26 +388,31 @@ export function OperationsWorkspace({
         description: 'Self-improvement candidates and promotion state',
         icon: 'i-ph:git-branch',
       },
-      {
-        value: 'controls',
-        label: 'Controls',
-        description: 'Runtime posture, risk, and lifecycle actions',
-        icon: 'i-ph:sliders-horizontal',
-      },
-      {
-        value: 'envelope',
-        label: 'Envelope',
-        description: 'Signed execution policy and allowance guardrails',
-        icon: 'i-ph:signature',
-        badge: bot.secretsConfigured === false ? 'needed' : undefined,
-      },
-      {
-        value: 'secrets',
-        label: 'Secrets',
-        description: 'Owner-only provider keys and runtime environment',
-        icon: 'i-ph:key',
-      },
     ];
+
+    if (canCommand) {
+      items.push(
+        {
+          value: 'controls',
+          label: 'Controls',
+          description: 'Runtime posture, risk, and lifecycle actions',
+          icon: 'i-ph:sliders-horizontal',
+        },
+        {
+          value: 'envelope',
+          label: 'Envelope',
+          description: 'Signed execution policy and allowance guardrails',
+          icon: 'i-ph:signature',
+          badge: bot.validationTrust === 'envelope' ? 'policy' : undefined,
+        },
+        {
+          value: 'secrets',
+          label: 'Secrets',
+          description: 'Owner-only provider keys and runtime environment',
+          icon: 'i-ph:key',
+        },
+      );
+    }
 
     if (isHyperliquidPerpBot) {
       items.push({
@@ -448,7 +423,7 @@ export function OperationsWorkspace({
       });
     }
 
-    if (hasTerminal) {
+    if (canCommand && hasTerminal) {
       items.push({
         value: 'terminal',
         label: 'Terminal',
@@ -458,7 +433,7 @@ export function OperationsWorkspace({
     }
 
     return items;
-  }, [bot.secretsConfigured, hasTerminal, isHyperliquidPerpBot]);
+  }, [bot.validationTrust, canCommand, hasTerminal, isHyperliquidPerpBot]);
 
   const requestedPanel = isOperationsPanel(initialPanel) ? initialPanel : null;
   const [activePanel, setActivePanel] = useState<OperationsPanel>(
@@ -475,10 +450,13 @@ export function OperationsWorkspace({
     }
   }, [activePanel, panels]);
 
-  const activeItem = panels.find((panel) => panel.value === activePanel) ?? panels[0];
+  const effectiveActivePanel = panels.some((panel) => panel.value === activePanel)
+    ? activePanel
+    : panels[0]?.value ?? 'overview';
+  const activeItem = panels.find((panel) => panel.value === effectiveActivePanel) ?? panels[0];
 
   const content = (() => {
-    switch (activePanel) {
+    switch (effectiveActivePanel) {
       case 'overview':
         return (
           <OperationsOverview
@@ -486,6 +464,7 @@ export function OperationsWorkspace({
             panels={panels}
             hasTerminal={hasTerminal}
             isHyperliquidPerpBot={isHyperliquidPerpBot}
+            canCommand={canCommand}
             onSelectPanel={setActivePanel}
           />
         );
@@ -533,48 +512,46 @@ export function OperationsWorkspace({
   })();
 
   return (
-    <div className="grid h-full min-h-0 gap-3 xl:grid-cols-[240px_minmax(0,1fr)]">
-      <aside className="min-h-0 overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/64">
-        <div className="border-b border-arena-elements-dividerColor/70 px-4 py-3">
-          <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-            Operations
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/54">
+      <div className="shrink-0 border-b border-arena-elements-dividerColor/70 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+              Operations
+            </div>
+            <h2 className="mt-1 font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
+              Control Plane
+            </h2>
           </div>
-          <h2 className="mt-1 font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-            Control Plane
-          </h2>
-        </div>
-        <nav className="space-y-1 p-2" aria-label="Operations panels">
+          <nav
+            className="flex max-w-full gap-1 overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/58 p-1"
+            aria-label="Operations panels"
+          >
           {panels.map((panel) => {
-            const selected = panel.value === activePanel;
+            const selected = panel.value === effectiveActivePanel;
             return (
               <button
                 key={panel.value}
                 type="button"
                 onClick={() => setActivePanel(panel.value)}
                 aria-current={selected ? 'page' : undefined}
-                className={`group flex w-full items-start gap-2 rounded-lg px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
                   selected
                     ? 'bg-violet-500/14 text-arena-elements-textPrimary'
                     : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
                 }`}
               >
-                <span className={`${panel.icon} mt-0.5 text-base ${selected ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary'}`} aria-hidden="true" />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
-                    <span className="font-display text-sm font-semibold">{panel.label}</span>
-                    {panel.badge && <Badge variant="amber" className="text-[10px]">{panel.badge}</Badge>}
-                  </span>
-                  <span className="mt-0.5 block text-xs leading-snug text-arena-elements-textTertiary">
-                    {panel.description}
-                  </span>
-                </span>
+                <span className={`${panel.icon} text-base ${selected ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary'}`} aria-hidden="true" />
+                <span>{panel.label}</span>
+                {panel.badge && <Badge variant="amber" className="text-[10px]">{panel.badge}</Badge>}
               </button>
             );
           })}
-        </nav>
-      </aside>
+          </nav>
+        </div>
+      </div>
 
-      <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/54">
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {activeItem && (
           <div className="shrink-0 border-b border-arena-elements-dividerColor/70 px-4 py-3">
             <div className="flex items-center gap-2">

@@ -336,29 +336,6 @@ function hasReplayableRunTrace(run: BotRun | null): boolean {
   return Boolean(run && (run.transcriptAvailable || run.result || run.error));
 }
 
-function RunsStatus({ status }: { status: "idle" | "running" | "error" }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span
-        className={`h-2 w-2 rounded-full ${
-          status === "running"
-            ? "bg-amber-400 animate-pulse"
-            : status === "error"
-              ? "bg-crimson-400"
-              : "bg-emerald-700 dark:bg-emerald-400"
-        }`}
-      />
-      <span className="text-xs font-data text-arena-elements-textSecondary">
-        {status === "running"
-          ? "A bot run is in progress…"
-          : status === "error"
-            ? "Run transcript error"
-            : "Idle"}
-      </span>
-    </div>
-  );
-}
-
 function RunsBanner({
   run,
   isStreaming,
@@ -1021,7 +998,7 @@ export function RunsTab({
       ? false
       : window.innerWidth < (immersive ? 860 : 1100),
   );
-  const [runsSidebarCollapsed, setRunsSidebarCollapsed] = useState(false);
+  const [runsSidebarCollapsed, setRunsSidebarCollapsed] = useState(immersive);
   const runsCacheKey = `${baseApiUrl}::${botId}::runs`;
   const authKey = token ?? "anonymous";
 
@@ -1171,13 +1148,6 @@ export function RunsTab({
   const headerSubtitle = activeRun
     ? `${getWorkflowKindDescription(activeRun.workflowKind)} • ${formatRunTimestamp(activeRun.startedAt)}`
     : "Read-only execution history";
-  const runStatus =
-    activeRun?.status === "running"
-      ? "running"
-      : streamErrorMessage
-        ? "error"
-        : "idle";
-
   if (operatorMeta && !operatorMeta.features.chat) {
     return <UnsupportedFeatureCard feature="Runs" />;
   }
@@ -1334,9 +1304,6 @@ export function RunsTab({
               ) : null}
             </div>
 
-            <div className="border-t border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-4 py-3">
-              <RunsStatus status={runStatus} />
-            </div>
           </div>
         </div>
       </div>

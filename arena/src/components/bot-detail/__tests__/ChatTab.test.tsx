@@ -152,4 +152,52 @@ describe("ChatTab", () => {
     expect(screen.queryByText("Failed")).not.toBeInTheDocument();
     expect(screen.queryByText("HTTP 401:")).not.toBeInTheDocument();
   });
+
+  it("does not enable writes for authenticated non-commandable viewers", async () => {
+    authState.isAuthenticated = true;
+    authState.token = "owner-token";
+    const { ChatTab } = await import("../ChatTab");
+
+    render(
+      <ChatTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorAddress="0x0000000000000000000000000000000000000001"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByTestId("chat-transcript")).toHaveTextContent(
+      "read-visible",
+    );
+    expect(screen.queryByRole("button", { name: /new chat/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /owner sign in/i })).not.toBeInTheDocument();
+  });
+
+  it("enables writes for commandable authenticated viewers", async () => {
+    authState.isAuthenticated = true;
+    authState.token = "owner-token";
+    const { ChatTab } = await import("../ChatTab");
+
+    render(
+      <ChatTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorAddress="0x0000000000000000000000000000000000000001"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+        canCommand
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByTestId("chat-transcript")).toHaveTextContent(
+      "write-enabled",
+    );
+    expect(screen.getByRole("button", { name: /new chat/i })).toBeInTheDocument();
+  });
 });

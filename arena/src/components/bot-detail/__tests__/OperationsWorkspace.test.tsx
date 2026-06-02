@@ -84,6 +84,7 @@ describe('OperationsWorkspace', () => {
         isLive
         hasTerminal
         isHyperliquidPerpBot
+        canCommand
       />,
     );
 
@@ -104,6 +105,7 @@ describe('OperationsWorkspace', () => {
         isLive
         hasTerminal
         isHyperliquidPerpBot
+        canCommand
       />,
     );
 
@@ -111,5 +113,23 @@ describe('OperationsWorkspace', () => {
 
     expect(await screen.findByRole('heading', { name: 'Validation' })).toBeInTheDocument();
     expect(await screen.findByText('validation panel loaded')).toBeInTheDocument();
+  });
+
+  it('hides command-only operation panels for non-commandable viewers', () => {
+    render(
+      <OperationsWorkspace
+        bot={makeBot({ secretsConfigured: false, validationTrust: 'envelope' })}
+        botName="ETH Macro Scalper"
+        isLive
+        hasTerminal
+        isHyperliquidPerpBot
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Configure Secrets/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Runtime Controls/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Terminal/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Envelope/i })).not.toBeInTheDocument();
   });
 });

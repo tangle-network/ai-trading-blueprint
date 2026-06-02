@@ -43,6 +43,7 @@ import { resolveBotDisplayName } from '~/lib/utils/botNames';
 import { getBotStrategyChainId } from '~/lib/utils/botStrategy';
 import { tokenMetadataFromStrategyConfig } from '~/lib/assetUniverse';
 import { networks } from '~/lib/contracts/chains';
+import { isBotCommandableByWallet } from '~/lib/utils/botAccess';
 
 export const meta: MetaFunction = () => [{ title: 'Bot — AI Trading Arena' }];
 
@@ -425,11 +426,12 @@ export default function BotDetailPage() {
     bot.status === 'needs_config' || bot.secretsConfigured === false;
   const hasChat = operatorMeta?.features.chat === true;
   const hasTerminal = operatorMeta?.features.terminal === true;
+  const canCommandBot = isBotCommandableByWallet(bot, address);
 
   const renderWorkspace = () => {
     switch (activeSection) {
       case 'performance':
-        return <PerformanceTab bot={bot} isLive={botIsLive} />;
+        return <PerformanceTab bot={bot} isLive={botIsLive} canCommand={canCommandBot} />;
       case 'portfolio':
         return (
           <PortfolioWorkspace
@@ -474,6 +476,7 @@ export default function BotDetailPage() {
               requiresSecrets={needsSecrets}
               onConfigureSecrets={needsSecrets ? configureSecrets : undefined}
               immersive
+              canCommand={canCommandBot}
             />
           </ErrorBoundary>
         ) : (
@@ -492,6 +495,7 @@ export default function BotDetailPage() {
             isHyperliquidPerpBot={isHyperliquidPerpBot}
             assetMetadata={botAssetMetadata}
             onConfigureSecrets={needsSecrets ? configureSecrets : undefined}
+            canCommand={canCommandBot}
           />
         );
     }
@@ -518,13 +522,15 @@ export default function BotDetailPage() {
           workspace
         ) : (
           <div className="flex h-full min-h-0 flex-col gap-2">
-            <EnvelopeNeededBanner
-              bot={bot}
-              onSignEnvelope={() => {
-                if (!id) return;
-                navigate(buildSectionUrl(id, 'operations', 'envelope'));
-              }}
-            />
+            {canCommandBot && (
+              <EnvelopeNeededBanner
+                bot={bot}
+                onSignEnvelope={() => {
+                  if (!id) return;
+                  navigate(buildSectionUrl(id, 'operations', 'envelope'));
+                }}
+              />
+            )}
             <div className="min-h-0 flex-1 overflow-hidden">
               {workspace}
             </div>

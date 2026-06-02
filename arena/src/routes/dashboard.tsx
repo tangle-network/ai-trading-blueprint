@@ -23,10 +23,10 @@ import { ProvisionsBanner } from '~/components/home/ProvisionsBanner';
 import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
 import {
-  doesProvisionMatchBot,
   doesProvisionLikelyReferToBot,
   partitionProvisionsForBots,
 } from '~/lib/utils/botProvisionReconciliation';
+import { isBotOwnedByWallet } from '~/lib/utils/botAccess';
 import {
   ALL_TRADING_OPERATOR_API_URLS,
   getOperatorApiUrlForBlueprint,
@@ -117,30 +117,17 @@ export default function HomePage() {
   const [checkingId, setCheckingId] = useState<string | null>(null);
 
   // Derived data
-  const confirmedServiceIds = useMemo(
-    () => new Set(services.map((service) => service.serviceId)),
-    [services],
-  );
-  const confirmedServiceVaults = useMemo(() => new Set(
-    services.flatMap((service) => service.vaultAddresses).map((address) => address.toLowerCase()),
-  ), [services]);
-
   // Main dashboard bots are strict-authoritative only.
   const myBots = useMemo(() => {
-    const normalizedUserAddress = userAddress?.toLowerCase();
     return authoritativeBots.filter((b) => {
       if (b.status === 'archived') return false;
-      if (
-        normalizedUserAddress
-        && b.submitterAddress?.toLowerCase() === normalizedUserAddress
-      ) return true;
-      if (confirmedServiceIds.has(b.serviceId)) return true;
-      if (confirmedServiceVaults.has(b.vaultAddress.toLowerCase())) return true;
-      return myProvisions.some((provision) =>
-        provision.phase !== 'failed' && doesProvisionMatchBot(provision, b),
-      );
+      return isBotOwnedByWallet(b, {
+        walletAddress: userAddress,
+        services,
+        provisions: myProvisions,
+      });
     });
-  }, [authoritativeBots, confirmedServiceIds, confirmedServiceVaults, myProvisions, userAddress]);
+  }, [authoritativeBots, myProvisions, services, userAddress]);
   const visibleMyBots = myBots;
 
   // Bots grouped by service

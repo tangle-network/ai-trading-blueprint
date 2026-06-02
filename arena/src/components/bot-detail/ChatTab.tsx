@@ -32,6 +32,7 @@ interface ChatTabProps {
   requiresSecrets?: boolean;
   onConfigureSecrets?: () => void;
   immersive?: boolean;
+  canCommand?: boolean;
 }
 
 function extractChatErrorMessage(error: unknown): string | null {
@@ -423,6 +424,7 @@ export function ChatTab({
   requiresSecrets = false,
   onConfigureSecrets,
   immersive = false,
+  canCommand = false,
 }: ChatTabProps) {
   const baseApiUrl = operatorApiUrl ?? "";
   const { data: operatorMeta } = useOperatorMeta(baseApiUrl);
@@ -437,7 +439,7 @@ export function ChatTab({
     isAuthenticating,
     authenticate,
   } = useOperatorAuth(baseApiUrl);
-  const canWrite = isAuthenticated && Boolean(token);
+  const canWrite = canCommand && isAuthenticated && Boolean(token);
 
   const primarySessionId = `trading-${botId}`;
   const [activeSessionId, setActiveSessionId] = useState(
@@ -450,7 +452,7 @@ export function ChatTab({
       ? false
       : window.innerWidth < (immersive ? 860 : 1100),
   );
-  const [sessionSidebarCollapsed, setSessionSidebarCollapsed] = useState(false);
+  const [sessionSidebarCollapsed, setSessionSidebarCollapsed] = useState(immersive);
   const chatCacheKey = `${baseApiUrl}::${botId}`;
 
   const sessionToken = canWrite ? token : null;
@@ -647,7 +649,7 @@ export function ChatTab({
           ],
     [primarySessionId, sessions],
   );
-  const showSessionSidebar = canWrite || sessionItems.length > 1;
+  const showSessionSidebar = sessionItems.length > 1;
 
   void operatorAddress;
 
@@ -767,9 +769,16 @@ export function ChatTab({
               </div>
             </div>
             {canWrite && (
-              <span className="hidden rounded-full border border-violet-500/15 bg-violet-500/8 px-3 py-1.5 text-sm font-data text-violet-700 dark:text-violet-300 sm:inline-flex">
-                Operator relay
-              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  void createSession("New Chat");
+                }}
+                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/50 px-3 text-sm font-display font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+              >
+                <span className="i-ph:plus text-base" aria-hidden="true" />
+                <span className="hidden sm:inline">New Chat</span>
+              </button>
             )}
           </div>
 
@@ -795,6 +804,7 @@ export function ChatTab({
             />
           </div>
 
+          {(canWrite || canCommand) && (
           <div className="flex items-center gap-3 border-t border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-4 py-3">
             {canWrite ? (
               <AgentStatus
@@ -803,7 +813,7 @@ export function ChatTab({
                 isAborting={isAborting}
               />
             ) : null}
-            {!canWrite && (
+            {canCommand && !canWrite && (
               <Button
                 variant="outline"
                 size="sm"
@@ -815,6 +825,7 @@ export function ChatTab({
               </Button>
             )}
           </div>
+          )}
         </div>
       </div>
     </div>

@@ -191,9 +191,10 @@ function buildTradeMarkers(
 interface PerformanceTabProps {
   bot: Bot;
   isLive: boolean;
+  canCommand?: boolean;
 }
 
-export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
+export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceTabProps) {
   const chartTheme = useChartTheme();
   const operatorAuth = useOperatorAuth(bot.operatorApiUrl ?? '');
   const isHyperliquidPerpBot = bot.strategyType === 'hyperliquid_perp';
@@ -315,7 +316,7 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     ? Math.min(...chartPoints.map((point) => point.value))
     : null;
   const recentTradeTape = (trades ?? []).slice(0, 6);
-  const canUseCopilot = Boolean(operatorAuth.isAuthenticated && operatorAuth.token);
+  const canUseCopilot = Boolean(canCommand && operatorAuth.isAuthenticated && operatorAuth.token);
   const chartReturnTone = chartReturnValue == null
     ? 'text-arena-elements-textPrimary'
     : chartReturnValue >= 0
@@ -340,11 +341,6 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
     {
       label: 'Trades',
       value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
-      tone: 'text-arena-elements-textPrimary',
-    },
-    {
-      label: 'Candles',
-      value: hasMarketCandles ? marketCandles.length.toLocaleString() : '—',
       tone: 'text-arena-elements-textPrimary',
     },
     {
@@ -614,29 +610,6 @@ export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
           )
           )}
 
-          <div className="glass-card hidden shrink-0 rounded-xl p-3 min-[1280px]:block">
-            <h3 className="font-display text-lg font-semibold">Checkpoint Readout</h3>
-            <dl className="mt-3 space-y-2 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-arena-elements-textTertiary">First point</dt>
-                <dd className="font-data text-arena-elements-textPrimary">{firstChartPoint?.tooltipLabel ?? 'Unavailable'}</dd>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-arena-elements-textTertiary">Latest point</dt>
-                <dd className="font-data text-arena-elements-textPrimary">{latestChartPoint?.tooltipLabel ?? 'Unavailable'}</dd>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-arena-elements-textTertiary">Range PnL</dt>
-                <dd className={`font-data ${chartReturnTone}`}>
-                  {chartReturnValue == null ? '—' : formatChartCurrency(chartReturnValue)}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-arena-elements-textTertiary">Snapshots</dt>
-                <dd className="font-data text-arena-elements-textPrimary">{chartPoints.length}</dd>
-              </div>
-            </dl>
-          </div>
         </aside>
       </section>
     </div>
