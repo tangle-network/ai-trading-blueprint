@@ -469,6 +469,10 @@ describe('PerformanceTab', () => {
 
     expect(screen.getByRole('heading', { name: 'ETH' })).toBeInTheDocument();
     expect(screen.getByText('Market')).toBeInTheDocument();
+    expect(screen.getByText('Last Price')).toBeInTheDocument();
+    expect(screen.getByText('30D Move')).toBeInTheDocument();
+    expect(screen.getByText('Volume')).toBeInTheDocument();
+    expect(screen.queryByText('Range PnL')).not.toBeInTheDocument();
     await waitFor(() => expect(lightweightChartMock.candleSeries.setData).toHaveBeenCalled());
     expect(lightweightChartMock.candleSeries.setData).toHaveBeenCalledWith(
       expect.arrayContaining([

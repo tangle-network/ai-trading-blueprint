@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
@@ -7,7 +7,7 @@ import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useBotLiveSummary } from '~/lib/hooks/useBotLiveSummary';
 import { botStatusBadgeVariant, botStatusLabel, formatNumber, normalizeDisplayNumber } from '~/lib/format';
 import { resolveBotDisplayName } from '~/lib/utils/botNames';
-import { getBotStrategyChainId, readStrategyNumber } from '~/lib/utils/botStrategy';
+import { getBotStrategyChainId } from '~/lib/utils/botStrategy';
 import { networks } from '~/lib/contracts/chains';
 import { HEADER_RETURN_PERCENT_COPY } from './metricCopy';
 
@@ -30,22 +30,18 @@ interface AgentWorkspaceShellProps {
   children: ReactNode;
 }
 
-function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number | null {
-  const value = readStrategyNumber(
-    strategyConfig?.initial_capital_usd
-      ?? strategyConfig?.initial_capital
-      ?? strategyConfig?.cash_balance,
-  );
-  return value != null && value > 0 ? value : null;
-}
-
 function formatCompactAddress(value: string): string {
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
-function formatCapital(value: number | null): string {
-  if (value == null) return '—';
-  return `$${formatNumber(value, { maximumFractionDigits: value >= 1000 ? 0 : 2 })}`;
+function getExplorerAddressUrl(chainId: number | undefined, address: string): { label: string; url: string } | null {
+  if (chainId == null) return null;
+  const explorer = networks[chainId]?.chain.blockExplorers?.default;
+  if (!explorer?.url) return null;
+  return {
+    label: explorer.name,
+    url: `${explorer.url.replace(/\/$/, '')}/address/${address}`,
+  };
 }
 
 function cleanBotTitle(displayName: string) {
@@ -68,8 +64,6 @@ export function AgentWorkspaceShell({
     fallbackName: displayName,
     strategyType: detail?.strategy_type ?? bot.strategyType,
   }));
-  const initialCapitalUsd = readInitialCapitalUsd(bot.strategyConfig);
-  const maxDrawdownLimit = readStrategyNumber(bot.riskParams?.max_drawdown_pct);
   const targetChainId = getBotStrategyChainId(bot);
   const targetNetwork = targetChainId != null
     ? networks[targetChainId]?.label ?? `Chain ${targetChainId}`
@@ -81,6 +75,8 @@ export function AgentWorkspaceShell({
     operatorKind: bot.operatorKind,
     chainId: bot.chainId,
   });
+  const [addressCopied, setAddressCopied] = useState(false);
+  const explorerAddress = getExplorerAddressUrl(targetChainId ?? bot.chainId, bot.operatorAddress);
 
   const formatSignedPercent = (value: number | null) => {
     if (value == null) return '—';
@@ -120,6 +116,13 @@ export function AgentWorkspaceShell({
   };
 
   const tradeCount = Math.max(summary.tradeCount ?? 0, bot.totalTrades ?? 0);
+  const copyOperatorAddress = () => {
+    if (!navigator.clipboard) return;
+    void navigator.clipboard.writeText(bot.operatorAddress).then(() => {
+      setAddressCopied(true);
+      window.setTimeout(() => setAddressCopied(false), 1400);
+    });
+  };
   const metrics = [
     {
       label: HEADER_RETURN_PERCENT_COPY.label,
@@ -193,9 +196,32 @@ export function AgentWorkspaceShell({
                     <h1 className="truncate font-display text-lg font-semibold text-arena-elements-textPrimary">
                       {title}
                     </h1>
-                    <code className="hidden shrink-0 font-data text-xs text-arena-elements-textTertiary sm:block" title={bot.operatorAddress}>
-                      {formatCompactAddress(bot.operatorAddress)}
-                    </code>
+                    <div className="hidden shrink-0 items-center overflow-hidden rounded-md border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 font-data text-xs text-arena-elements-textTertiary sm:inline-flex">
+                      <code className="px-2 py-1" title={bot.operatorAddress}>
+                        {formatCompactAddress(bot.operatorAddress)}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={copyOperatorAddress}
+                        className="inline-flex h-7 w-7 items-center justify-center border-l border-arena-elements-dividerColor/60 text-arena-elements-textTertiary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                        aria-label={addressCopied ? 'Operator address copied' : 'Copy operator address'}
+                        title={addressCopied ? 'Copied' : 'Copy operator address'}
+                      >
+                        <span className={addressCopied ? 'i-ph:check text-sm text-emerald-500' : 'i-ph:copy text-sm'} aria-hidden="true" />
+                      </button>
+                      {explorerAddress && (
+                        <a
+                          href={explorerAddress.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex h-7 w-7 items-center justify-center border-l border-arena-elements-dividerColor/60 text-arena-elements-textTertiary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                          aria-label={`View operator address on ${explorerAddress.label}`}
+                          title={`View on ${explorerAddress.label}`}
+                        >
+                          <span className="i-ph:arrow-square-out text-sm" aria-hidden="true" />
+                        </a>
+                      )}
+                    </div>
                   </div>
                   <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
                     <Badge variant={botStatusBadgeVariant(bot.status)}>{botStatusLabel(bot.status)}</Badge>
@@ -203,12 +229,6 @@ export function AgentWorkspaceShell({
                     {bot.verificationState === 'unverified' && <Badge variant="outline">Unverified</Badge>}
                     <span className="font-data text-xs text-arena-elements-textTertiary">
                       {bot.paperTrade ? 'Paper' : 'Live'} · {targetNetwork}
-                    </span>
-                    <span className="hidden font-data text-xs text-arena-elements-textTertiary md:inline">
-                      Capital {formatCapital(initialCapitalUsd)}
-                    </span>
-                    <span className="hidden font-data text-xs text-arena-elements-textTertiary lg:inline">
-                      Max DD {maxDrawdownLimit == null ? '—' : `${formatNumber(maxDrawdownLimit, { maximumFractionDigits: 1 })}%`}
                     </span>
                   </div>
                 </div>

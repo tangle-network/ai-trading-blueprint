@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createWrapper } from '~/test/mocks';
 
 const hoisted = vi.hoisted(() => ({
   operatorAccessCardMock: vi.fn(({ title, description }: any) => (
@@ -95,7 +96,7 @@ describe('leaderboard auth-aware rendering', () => {
 
   it('enables trading auto-auth and passes trading operator URLs to the fallback card', async () => {
     const { default: IndexPage } = await import('../_index');
-    render(<IndexPage />);
+    render(<IndexPage />, { wrapper: createWrapper() });
 
     expect(hoisted.useTradingRouteAutoAuthMock).toHaveBeenCalledWith({
       enabled: true,

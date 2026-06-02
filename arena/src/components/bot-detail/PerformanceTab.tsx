@@ -18,6 +18,7 @@ import { buildPerformanceChartPoints } from './performanceChart';
 import { getTradePairLabel, type Trade } from '~/lib/types/trade';
 import { TradingPerformanceChart, type TradeChartMarker } from './TradingPerformanceChart';
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
+import { AssetPairDisplay } from './shared/AssetDisplay';
 import { PERFORMANCE_SECTION_COPY } from './metricCopy';
 
 const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
@@ -126,6 +127,14 @@ function formatTradeTime(timestamp: number): string {
   return freshnessTimestampFormatter.format(new Date(timestamp));
 }
 
+function formatChartNumber(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return formatNumber(value, {
+    maximumFractionDigits: value >= 1000 ? 0 : 2,
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+  });
+}
+
 function isSellSideAction(action: Trade['action']): boolean {
   return action === 'sell' || action === 'close_long' || action === 'close_short';
 }
@@ -186,6 +195,46 @@ function buildTradeMarkers(
       text: formatTradeMarkerText(trade),
     }))
     .sort((left, right) => left.timestampMs - right.timestampMs);
+}
+
+function hyperliquidTapeMarketLabel(trade: Trade): string | null {
+  const asset = trade.hyperliquidMetadata?.asset?.trim();
+  return asset ? `${asset.toUpperCase()}-PERP` : null;
+}
+
+function renderTradeTapeInstrument(trade: Trade) {
+  const hyperliquidMarket = trade.targetProtocol === 'hyperliquid'
+    ? hyperliquidTapeMarketLabel(trade)
+    : null;
+
+  if (hyperliquidMarket) {
+    return (
+      <div className="flex min-w-0 items-center gap-2">
+        <span
+          aria-hidden="true"
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-100 text-[10px] font-data font-bold text-sky-700 ring-1 ring-black/5 dark:bg-sky-500/20 dark:text-sky-200 dark:ring-white/10"
+        >
+          {hyperliquidMarket.slice(0, 3)}
+        </span>
+        <span className="truncate font-display text-base font-semibold text-arena-elements-textPrimary">
+          {hyperliquidMarket}
+        </span>
+      </div>
+    );
+  }
+
+  if (trade.targetProtocol === 'polymarket_clob') {
+    return (
+      <div
+        className="line-clamp-2 font-display text-base font-semibold leading-snug text-arena-elements-textPrimary"
+        title={getTradePairLabel(trade)}
+      >
+        {getTradePairLabel(trade)}
+      </div>
+    );
+  }
+
+  return <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} size="md" />;
 }
 
 interface PerformanceTabProps {
@@ -320,6 +369,23 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const chartLowValue = chartPoints.length > 0
     ? Math.min(...chartPoints.map((point) => point.value))
     : null;
+  const firstMarketCandle = marketCandles[0] ?? null;
+  const latestMarketCandle = marketCandles[marketCandles.length - 1] ?? null;
+  const marketMove = firstMarketCandle && latestMarketCandle
+    ? latestMarketCandle.close - firstMarketCandle.open
+    : null;
+  const marketMovePercent = marketMove != null && firstMarketCandle && firstMarketCandle.open > 0
+    ? (marketMove / firstMarketCandle.open) * 100
+    : null;
+  const marketHighValue = marketCandles.length > 0
+    ? Math.max(...marketCandles.map((candle) => candle.high))
+    : null;
+  const marketLowValue = marketCandles.length > 0
+    ? Math.min(...marketCandles.map((candle) => candle.low))
+    : null;
+  const marketVolumeValue = marketCandles.length > 0
+    ? marketCandles.reduce((sum, candle) => sum + candle.volume, 0)
+    : null;
   const recentTradeTape = (trades ?? []).slice(0, 6);
   const canUseCopilot = Boolean(canCommand && operatorAuth.isAuthenticated && operatorAuth.token);
   const chartReturnTone = chartReturnValue == null
@@ -327,34 +393,68 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     : chartReturnValue >= 0
       ? 'text-arena-elements-icon-success'
       : 'text-arena-elements-icon-error';
-  const chartStats = [
-    {
-      label: 'NAV',
-      value: formatChartCurrency(latestChartValue),
-      tone: 'text-arena-elements-textPrimary',
-    },
-    {
-      label: `${selectedRange.label} Return`,
-      value: formatSignedChartPercent(chartReturnPercent),
-      tone: chartReturnTone,
-    },
-    {
-      label: 'Range PnL',
-      value: chartReturnValue == null ? '—' : formatChartCurrency(chartReturnValue),
-      tone: chartReturnTone,
-    },
-    {
-      label: 'Trades',
-      value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
-      tone: 'text-arena-elements-textPrimary',
-    },
-    {
-      label: 'High / Low',
-      value: formatChartCurrency(chartHighValue),
-      tone: 'text-arena-elements-textPrimary',
-      subvalue: formatChartCurrency(chartLowValue),
-    },
-  ] as const;
+  const marketMoveTone = marketMove == null
+    ? 'text-arena-elements-textPrimary'
+    : marketMove >= 0
+      ? 'text-arena-elements-icon-success'
+      : 'text-arena-elements-icon-error';
+  const chartStats = effectiveChartMode === 'market'
+    ? [
+        {
+          label: 'Last Price',
+          value: formatChartCurrency(latestMarketCandle?.close ?? null),
+          tone: 'text-arena-elements-textPrimary',
+        },
+        {
+          label: `${selectedRange.label} Move`,
+          value: formatSignedChartPercent(marketMovePercent),
+          tone: marketMoveTone,
+        },
+        {
+          label: 'Fills',
+          value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
+          tone: 'text-arena-elements-textPrimary',
+        },
+        {
+          label: 'High / Low',
+          value: formatChartCurrency(marketHighValue),
+          tone: 'text-arena-elements-textPrimary',
+          subvalue: formatChartCurrency(marketLowValue),
+        },
+        {
+          label: 'Volume',
+          value: formatChartNumber(marketVolumeValue),
+          tone: 'text-arena-elements-textPrimary',
+        },
+      ] as const
+    : [
+        {
+          label: 'NAV',
+          value: formatChartCurrency(latestChartValue),
+          tone: 'text-arena-elements-textPrimary',
+        },
+        {
+          label: `${selectedRange.label} Return`,
+          value: formatSignedChartPercent(chartReturnPercent),
+          tone: chartReturnTone,
+        },
+        {
+          label: 'Range PnL',
+          value: chartReturnValue == null ? '—' : formatChartCurrency(chartReturnValue),
+          tone: chartReturnTone,
+        },
+        {
+          label: 'Trades',
+          value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
+          tone: 'text-arena-elements-textPrimary',
+        },
+        {
+          label: 'High / Low',
+          value: formatChartCurrency(chartHighValue),
+          tone: 'text-arena-elements-textPrimary',
+          subvalue: formatChartCurrency(chartLowValue),
+        },
+      ] as const;
 
   if (isLoading) {
     return (
@@ -457,16 +557,16 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             </div>
           </div>
 
-          <div className="mb-3 grid shrink-0 gap-2 sm:grid-cols-3 min-[1180px]:grid-cols-6 min-[1280px]:grid-cols-3 2xl:grid-cols-5">
+          <div className="mb-3 grid shrink-0 gap-2 sm:grid-cols-3 xl:grid-cols-5">
             {chartStats.map((stat) => (
               <div
                 key={stat.label}
-                className="min-h-[58px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/54 px-3 py-2 min-[1180px]:px-2.5 min-[1360px]:px-3"
+                className="min-h-[50px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/54 px-3 py-2"
               >
                 <div className="truncate text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
                   {stat.label}
                 </div>
-                <div className={`mt-1 truncate font-data text-lg font-bold leading-none ${stat.tone}`}>
+                <div className={`mt-1 truncate font-data text-base font-bold leading-none ${stat.tone}`}>
                   {stat.value}
                 </div>
                 {'subvalue' in stat && (
@@ -594,8 +694,8 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                           {formatTradeTime(trade.timestamp)}
                         </div>
                       </div>
-                      <div className="mt-1 truncate font-display text-base font-medium text-arena-elements-textPrimary">
-                        {getTradePairLabel(trade)}
+                      <div className="mt-2 min-w-0">
+                        {renderTradeTapeInstrument(trade)}
                       </div>
                       <div className="mt-1 font-data text-sm text-arena-elements-textSecondary">
                         {trade.notionalUsd != null && trade.notionalUsd > 0

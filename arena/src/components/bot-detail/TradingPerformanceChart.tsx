@@ -46,6 +46,7 @@ interface HoverReadout {
 }
 
 const SYNTHETIC_TIME_BASE_SECONDS = 1_700_000_000;
+const DENSE_MARKER_THRESHOLD = 32;
 const markerTimeFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
@@ -179,6 +180,7 @@ function nearestMarketTime(marketTimes: UTCTimestamp[], timestampMs: number): UT
 function toSeriesMarkers(
   tradeMarkers: TradeChartMarker[],
 ): Array<SeriesMarker<Time>> {
+  const dense = tradeMarkers.length > DENSE_MARKER_THRESHOLD;
   const groups = new Map<string, { marker: TradeChartMarker; time: UTCTimestamp; count: number }>();
 
   for (const marker of tradeMarkers) {
@@ -201,8 +203,8 @@ function toSeriesMarkers(
       position: marker.position,
       shape: marker.shape,
       color: marker.color,
-      text: count > 1 ? `${marker.text} x${count}` : marker.text,
-      size: count > 1 ? 1.7 : 1.35,
+      text: dense && count === 1 ? '' : count > 1 ? `${marker.text} x${count}` : marker.text,
+      size: dense ? count > 1 ? 1.25 : 0.78 : count > 1 ? 1.7 : 1.35,
     }));
 }
 
@@ -210,6 +212,7 @@ function toMarketSeriesMarkers(
   tradeMarkers: TradeChartMarker[],
   marketCandles: MarketCandle[],
 ): Array<SeriesMarker<Time>> {
+  const dense = tradeMarkers.length > DENSE_MARKER_THRESHOLD;
   const marketTimes = marketCandles.map((candle) =>
     Math.floor(candle.timestamp / 1000) as UTCTimestamp);
   const groups = new Map<string, { marker: TradeChartMarker; time: UTCTimestamp; count: number }>();
@@ -234,8 +237,8 @@ function toMarketSeriesMarkers(
       position: marker.position,
       shape: marker.shape,
       color: marker.color,
-      text: count > 1 ? `${marker.text} x${count}` : marker.text,
-      size: count > 1 ? 1.8 : 1.45,
+      text: dense && count === 1 ? '' : count > 1 ? `${marker.text} x${count}` : marker.text,
+      size: dense ? count > 1 ? 1.3 : 0.82 : count > 1 ? 1.8 : 1.45,
     }));
 }
 
@@ -529,7 +532,7 @@ export function TradingPerformanceChart({
         href="https://www.tradingview.com/lightweight-charts/"
         target="_blank"
         rel="noreferrer"
-        className="absolute bottom-3 right-4 rounded-full border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/72 px-2.5 py-1 font-data text-[10px] uppercase tracking-wider text-arena-elements-textTertiary transition-colors hover:text-arena-elements-textPrimary"
+        className="absolute bottom-2 right-3 rounded-sm bg-arena-elements-background-depth-1/45 px-1.5 py-0.5 font-data text-[9px] uppercase tracking-wider text-arena-elements-textTertiary/70 transition-colors hover:text-arena-elements-textPrimary"
       >
         Charts by TradingView
       </a>
