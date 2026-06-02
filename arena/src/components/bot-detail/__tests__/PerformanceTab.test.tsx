@@ -77,6 +77,11 @@ vi.mock('../PerformanceCopilotPanel', () => ({
   PerformanceCopilotPanel: () => <div>Owner chart copilot</div>,
 }));
 
+vi.mock('react-router', () => ({
+  Link: ({ children }: { children: unknown }) => children,
+  useNavigate: () => vi.fn(),
+}));
+
 let mockMetrics: Array<Record<string, unknown>> | undefined = [];
 let mockMetricsSummary: Record<string, number> | undefined = {
   portfolio_value_usd: 10000,
@@ -409,15 +414,15 @@ describe('PerformanceTab', () => {
 
     await waitFor(() => expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenCalled());
     const markerCall = lightweightChartMock.markerApi.setMarkers.mock.calls.at(-1);
-	    const markers = markerCall?.[0] as Array<{ text?: string; time: number }>;
-	    expect(markers.length).toBeGreaterThan(2);
-	    expect(markers.length).toBeLessThan(49);
-	    expect(markers.every((marker) => !/BUY|SELL/.test(marker.text ?? ''))).toBe(true);
+    const markers = markerCall?.[0] as Array<{ text?: string; time: number }>;
+    expect(markers.length).toBeGreaterThan(2);
+    expect(markers.length).toBeLessThan(49);
+    expect(markers.every((marker) => !/BUY|SELL/.test(marker.text ?? ''))).toBe(true);
 
-	    const seriesData = lightweightChartMock.areaSeries.setData.mock.calls[0][0] as Array<{ time: number; value: number }>;
-	    expect(seriesData.length).toBeGreaterThan(2);
-	    expect(seriesData.length).toBeLessThanOrEqual(2 + markers.length);
-	  });
+    const seriesData = lightweightChartMock.areaSeries.setData.mock.calls[0][0] as Array<{ time: number; value: number }>;
+    expect(seriesData.length).toBeGreaterThan(2);
+    expect(seriesData.length).toBeLessThanOrEqual(2 + markers.length);
+  });
 
   it('updates TradingView data in place on refresh without recreating the chart', async () => {
     mockMetrics = [
@@ -496,12 +501,12 @@ describe('PerformanceTab', () => {
       timestamp: Date.parse(`2026-04-23T10:${String(index + 5).padStart(2, '0')}:00.000Z`),
     }));
 
-	    render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
+    render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
 
-	    expect(screen.getByText('12')).toBeInTheDocument();
-	    expect(screen.getByText('Loaded Trades')).toBeInTheDocument();
-	    expect(screen.getByText('Last 6 of 12 loaded')).toBeInTheDocument();
-	  });
+    expect(screen.getByText('12')).toBeInTheDocument();
+    expect(screen.getByText('Loaded Trades')).toBeInTheDocument();
+    expect(screen.getByText('Last 6 of 12 loaded')).toBeInTheDocument();
+  });
 
   it('uses trade-page totals separately from loaded marker rows', () => {
     mockMetrics = [
@@ -591,10 +596,10 @@ describe('PerformanceTab', () => {
 
     expect(screen.getByRole('heading', { name: 'ETH Price' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Market' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText('Account Value')).toBeInTheDocument();
-    expect(screen.getByText('Range PnL')).toBeInTheDocument();
-    expect(screen.getByText('30D Return')).toBeInTheDocument();
     expect(screen.getByText('Last Price')).toBeInTheDocument();
+    expect(screen.getByText('30D High / Low')).toBeInTheDocument();
+    expect(screen.getByText('Volume')).toBeInTheDocument();
+    expect(screen.getByText('Range PnL')).toBeInTheDocument();
     expect(screen.getAllByText('$3,324').length).toBeGreaterThan(0);
     await waitFor(() => expect(lightweightChartMock.candleSeries.setData).toHaveBeenCalled());
     expect(lightweightChartMock.candleSeries.setData).toHaveBeenCalledWith(
@@ -616,7 +621,7 @@ describe('PerformanceTab', () => {
     );
   });
 
-  it('shows the owner copilot instead of the public trade tape when operator auth is active', async () => {
+  it('keeps execution evidence visible while showing the owner copilot', async () => {
     operatorAuthMock.isAuthenticated = true;
     operatorAuthMock.token = 'test-token';
     mockMetrics = [
@@ -629,11 +634,12 @@ describe('PerformanceTab', () => {
         trade_count: 1,
       },
     ];
+    mockTrades = [makeTrade({ id: 'owner-trade' })];
 
     render(<PerformanceTab bot={makeBot()} isLive canCommand />);
 
     expect(await screen.findByText('Owner chart copilot')).toBeInTheDocument();
-    expect(screen.queryByText('Trade Tape')).not.toBeInTheDocument();
+    expect(screen.getByText('Recent Trades')).toBeInTheDocument();
   });
 
   it('keeps authenticated non-commandable viewers on the public trade tape', async () => {

@@ -25,6 +25,7 @@ const botsState = {
 
 vi.mock('react-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
+  useNavigate: () => vi.fn(),
 }));
 
 vi.mock('wagmi', () => ({

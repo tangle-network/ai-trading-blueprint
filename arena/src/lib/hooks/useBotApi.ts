@@ -31,6 +31,11 @@ import {
   type PlatformVolumeRange,
   type PlatformVolumeSeries,
 } from '~/lib/platformVolume';
+import {
+  isPlatformVolumeCandidate,
+  selectLatestTradeFallbackBots,
+  shouldFetchOperatorFallback,
+} from '~/lib/botVisibility';
 
 interface ApiTrade {
   id: string;
@@ -752,24 +757,34 @@ export function useLatestAgentTrades(
 
   const fallbackAllOperators = operatorUrls.length === 0
     || (operatorResults.length > 0 && operatorResults.every((result) => result.isError));
+  const failedAggregateFingerprint = operatorResults.map((result, index) =>
+    result.isError ? operatorUrls[index] : '',
+  ).join('|');
+  const failedAggregateUrls = new Set(
+    operatorResults.flatMap((result, index) =>
+      result.isError && operatorUrls[index] ? [operatorUrls[index]] : [],
+    ),
+  );
 
   const candidates = useMemo(() => {
-    return bots
-      .filter((bot) =>
-        bot.verificationState === 'authoritative'
-        && !!bot.operatorApiUrl
-        && bot.status !== 'archived'
-        && bot.status !== 'unknown'
-        && (bot.totalTrades > 0 || bot.status === 'active' || bot.tradingActive === true),
-      )
-      .filter(() => fallbackAllOperators)
-      .slice(0, maxBots)
+    return selectLatestTradeFallbackBots(
+      bots,
+      failedAggregateUrls,
+      fallbackAllOperators,
+      maxBots,
+    )
       .map((bot) => ({
         bot,
         deploymentKind: getDeploymentKindForOperatorKind(bot.operatorKind),
         assetMetadata: tokenMetadataFromStrategyConfig(bot.strategyConfig),
       }));
-  }, [botFingerprint, bots, fallbackAllOperators, maxBots]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    botFingerprint,
+    bots,
+    failedAggregateFingerprint,
+    fallbackAllOperators,
+    maxBots,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const authByUrl = {
     cloud: useOperatorAuth(bots.find((bot) => bot.operatorKind === 'cloud')?.operatorApiUrl ?? ''),
@@ -963,17 +978,8 @@ export function usePlatformVolumeSeries(
 
   const candidates = useMemo(() => {
     return bots
-      .filter((bot) =>
-        bot.verificationState === 'authoritative'
-        && !!bot.operatorApiUrl
-        && !bot.id.startsWith('provision:')
-        && bot.status !== 'archived'
-        && bot.status !== 'unknown'
-        && (bot.totalTrades > 0 || bot.status === 'active' || bot.tradingActive === true),
-      )
-      .filter((bot) =>
-        fallbackAllOperators || failedAggregateUrls.has(bot.operatorApiUrl ?? ''),
-      )
+      .filter(isPlatformVolumeCandidate)
+      .filter((bot) => shouldFetchOperatorFallback(bot, failedAggregateUrls, fallbackAllOperators))
       .sort((left, right) => {
         if (right.totalTrades !== left.totalTrades) return right.totalTrades - left.totalTrades;
         if (left.status === 'active' && right.status !== 'active') return -1;
@@ -1106,14 +1112,7 @@ export function usePlatformVolumeSeries(
   const fetchedOperators = new Set([...aggregateFetchedOperatorUrls, ...fetchedOperatorUrls]);
   const fetchedBotCount = results.filter((result) => result.data).length;
   const coverage: PlatformVolumeCoverage = {
-    candidateBots: bots.filter((bot) =>
-      bot.verificationState === 'authoritative'
-      && !!bot.operatorApiUrl
-      && !bot.id.startsWith('provision:')
-      && bot.status !== 'archived'
-      && bot.status !== 'unknown'
-      && (bot.totalTrades > 0 || bot.status === 'active' || bot.tradingActive === true),
-    ).length,
+    candidateBots: bots.filter(isPlatformVolumeCandidate).length,
     fetchedBots: fetchedBotCount,
     candidateOperators: candidateOperators.size,
     fetchedOperators: fetchedOperators.size,

@@ -1,11 +1,19 @@
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { isAddress, type Address } from 'viem';
 import { Badge, Identicon, Skeleton } from '@tangle-network/blueprint-ui/components';
 import { AssetPairDisplay } from '~/components/bot-detail/shared/AssetDisplay';
-import { formatNumber } from '~/lib/format';
 import { useLatestAgentTrades } from '~/lib/hooks/useBotApi';
 import type { Bot } from '~/lib/types/bot';
-import { getTradePairLabel, VENUE_CONFIG, type Trade } from '~/lib/types/trade';
+import { VENUE_CONFIG, type Trade } from '~/lib/types/trade';
+import {
+  formatTradeActionLabel,
+  formatTradeAge,
+  formatTradeModeLabel,
+  formatTradeUsd,
+  getTradeActionPillClass,
+  getTradeInstrumentBadgeText,
+  getTradeMarketLabel,
+} from '~/lib/tradeDisplay';
 
 interface LatestAgentTradesProps {
   bots: Bot[];
@@ -15,59 +23,10 @@ interface LatestAgentTradesProps {
   variant?: 'standard' | 'panel';
 }
 
-function formatAge(timestamp: number): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
-}
-
-function formatNotional(value?: number | null): string {
-  if (value == null || !Number.isFinite(value) || value <= 0) return '—';
-  if (value >= 1000) return `$${formatNumber(value, { maximumFractionDigits: 0 })}`;
-  return `$${formatNumber(value, { maximumFractionDigits: 2 })}`;
-}
-
 function formatReference(trade: Trade): string {
   const ref = trade.txHash ?? trade.execution?.clobOrderId ?? trade.id;
   if (!ref) return '—';
   return ref.length > 14 ? `${ref.slice(0, 6)}...${ref.slice(-4)}` : ref;
-}
-
-function actionTone(action: Trade['action']): string {
-  if (action === 'buy' || action === 'open_long' || action === 'close_short') {
-    return 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
-  }
-  if (action === 'sell' || action === 'close_long' || action === 'open_short') {
-    return 'bg-crimson-500/10 text-crimson-700 dark:text-crimson-300';
-  }
-  return 'bg-violet-500/10 text-violet-700 dark:text-violet-300';
-}
-
-function actionLabel(action: Trade['action']): string {
-  if (action === 'open_long') return 'LONG';
-  if (action === 'close_long') return 'CLOSE LONG';
-  if (action === 'open_short') return 'SHORT';
-  if (action === 'close_short') return 'CLOSE SHORT';
-  return action.replace(/_/g, ' ').toUpperCase();
-}
-
-function marketLabel(trade: Trade): string | null {
-  if (trade.targetProtocol === 'hyperliquid') {
-    const asset = trade.hyperliquidMetadata?.asset?.trim();
-    return asset ? `${asset.toUpperCase()}-PERP` : getTradePairLabel(trade);
-  }
-  if (trade.targetProtocol === 'polymarket_clob') {
-    return getTradePairLabel(trade);
-  }
-  return null;
-}
-
-function modeLabel(trade: Trade): string {
-  return trade.paperTrade || trade.status === 'paper' ? 'Paper' : 'Live';
 }
 
 export function LatestAgentTrades({
@@ -77,6 +36,7 @@ export function LatestAgentTrades({
   limit,
   variant = 'standard',
 }: LatestAgentTradesProps) {
+  const navigate = useNavigate();
   const { trades, isLoading, candidateCount } = useLatestAgentTrades(bots, {
     enabled,
     limit: limit ?? 10,
@@ -92,7 +52,7 @@ export function LatestAgentTrades({
       <div className="flex items-center justify-between gap-4 border-b border-arena-elements-dividerColor/60 px-4 py-3 sm:px-5">
         <div>
           <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
-            Latest Trades
+            Live Fill Tape
           </h2>
         </div>
         <Badge variant="outline" className="font-data text-xs">
@@ -116,7 +76,7 @@ export function LatestAgentTrades({
         </div>
       ) : visibleTrades.length === 0 ? (
         <div className={`${isPanel ? 'flex min-h-0 flex-1 items-center justify-center' : 'px-5 py-10'} text-center text-sm text-arena-elements-textSecondary`}>
-          No recent trades reported by active agents.
+          No recent fills reported by active agents.
         </div>
       ) : (
         <div className={`${isPanel ? 'min-h-0 flex-1 overflow-auto' : 'overflow-x-auto'}`}>
@@ -136,16 +96,29 @@ export function LatestAgentTrades({
             <tbody>
               {visibleTrades.map(({ trade, bot, botId, botName }) => {
                 const venue = VENUE_CONFIG[trade.venue];
-                const label = marketLabel(trade);
+                const label = getTradeMarketLabel(trade);
                 const operatorAddress = bot?.operatorAddress;
                 const hasOperatorAddress = operatorAddress != null && isAddress(operatorAddress);
                 return (
                   <tr
                     key={`${botId}:${trade.id}`}
-                    className="group border-b border-arena-elements-dividerColor/50 transition-colors hover:bg-arena-elements-item-backgroundHover"
+                    className="group cursor-pointer border-b border-arena-elements-dividerColor/50 transition-colors hover:bg-arena-elements-item-backgroundHover"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${bot?.name ?? botName} performance`}
+                    onClick={() => navigate(`/arena/bot/${encodeURIComponent(botId)}/performance`)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        navigate(`/arena/bot/${encodeURIComponent(botId)}/performance`);
+                      }
+                    }}
                   >
-                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textTertiary">
-                      {formatAge(trade.timestamp)}
+                    <td
+                      className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textTertiary"
+                      title={new Date(trade.timestamp).toLocaleString()}
+                    >
+                      {formatTradeAge(trade.timestamp)}
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
                       <Link
@@ -163,15 +136,23 @@ export function LatestAgentTrades({
                       </Link>
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
-                      <span className={`inline-flex h-7 ${isPanel ? 'min-w-[4rem] px-2 text-[11px]' : 'min-w-[3.75rem] px-2'} items-center justify-center rounded-md font-data text-xs font-bold ${actionTone(trade.action)}`}>
-                        {actionLabel(trade.action)}
+                      <span className={`inline-flex h-7 ${isPanel ? 'min-w-[4rem] px-2 text-[11px]' : 'min-w-[3.75rem] px-2'} items-center justify-center rounded-md font-data text-xs font-bold ${getTradeActionPillClass(trade.action)}`}>
+                        {formatTradeActionLabel(trade.action)}
                       </span>
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
                       <div className="min-w-0">
                         {label ? (
-                          <div className={`${isPanel ? 'max-w-[126px]' : 'max-w-[240px]'} truncate font-display text-sm font-medium text-arena-elements-textPrimary`} title={label}>
-                            {label}
+                          <div className="flex min-w-0 items-center gap-2" title={label}>
+                            <span
+                              aria-hidden="true"
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-arena-elements-item-backgroundActive font-data text-[10px] font-bold text-arena-elements-textSecondary ring-1 ring-black/5 dark:ring-white/10"
+                            >
+                              {getTradeInstrumentBadgeText(trade)}
+                            </span>
+                            <span className={`${isPanel ? 'max-w-[120px]' : 'max-w-[240px]'} truncate font-display text-sm font-medium text-arena-elements-textPrimary`}>
+                              {label}
+                            </span>
                           </div>
                         ) : (
                           <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} size="md" />
@@ -183,17 +164,17 @@ export function LatestAgentTrades({
                           </span>
                           {isPanel && (
                             <span className="truncate">
-                              {modeLabel(trade)}
+                              {formatTradeModeLabel(trade)}
                             </span>
                           )}
                         </div>
                       </div>
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 text-right align-middle font-data text-base font-semibold text-arena-elements-textPrimary">
-                      {formatNotional(trade.notionalUsd)}
+                      {formatTradeUsd(trade.notionalUsd)}
                     </td>
                     <td className={`${isPanel ? 'hidden' : ''} border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textSecondary`}>
-                      {modeLabel(trade)}
+                      {formatTradeModeLabel(trade)}
                     </td>
                     <td className={`${isPanel ? 'hidden' : ''} border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textSecondary`}>
                       {trade.status}

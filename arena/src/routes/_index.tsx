@@ -16,6 +16,7 @@ import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/o
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 import { formatNumber } from '~/lib/format';
 import { rankLeaderboardBots } from '~/lib/leaderboardRanking';
+import { isPublicLeaderboardBot } from '~/lib/botVisibility';
 
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
@@ -38,6 +39,13 @@ function formatCompactUsd(value: number): string {
   return `$${formatNumber(value, { maximumFractionDigits: 2 })}`;
 }
 
+function formatSignedPercent(value: number): string {
+  return `${value > 0 ? '+' : ''}${formatNumber(value, {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 1,
+  })}%`;
+}
+
 export default function IndexPage() {
   const { isConnected } = useAccount();
   const [search, setSearch] = useState('');
@@ -53,19 +61,7 @@ export default function IndexPage() {
   }, []);
   const bots = useBotEnrichment(rawBots, { enabled: enrichmentEnabled });
 
-  // Leaderboard: only bots that are active or were previously active
-  const leaderboardBots = bots.filter((b) => {
-    if (b.verificationState === 'unverified') return false;
-    if (b.id.startsWith('provision:')) return false;
-    if (b.status === 'archived' || b.status === 'unknown' || b.status === 'needs_config') return false;
-    if (b.status === 'active') return true;
-    if (b.status === 'paused' || b.status === 'winding_down') return true;
-    if (b.status === 'stopped') {
-      // Only show stopped bots with evidence of prior activity
-      return (b.secretsConfigured === true || b.totalTrades > 0 || b.tvl > 0);
-    }
-    return false;
-  });
+  const leaderboardBots = bots.filter(isPublicLeaderboardBot);
 
   const filteredBots = leaderboardBots.filter(
     (bot) =>
@@ -89,6 +85,12 @@ export default function IndexPage() {
   const avgRiskScore = scoredAgents.length > 0
     ? Math.round(scoredAgents.reduce((sum, bot) => sum + bot.avgValidatorScore, 0) / scoredAgents.length)
     : null;
+  const topReturnBot = leaderboardBots
+    .filter((bot) => Number.isFinite(bot.pnlPercent))
+    .sort((left, right) => right.pnlPercent - left.pnlPercent)[0];
+  const mostActiveBot = leaderboardBots
+    .filter((bot) => bot.totalTrades > 0)
+    .sort((left, right) => right.totalTrades - left.totalTrades)[0];
   const cloudStats = [
     { label: 'Agents', value: leaderboardBots.length.toLocaleString(), sublabel: `${activeAgents} active` },
     {
@@ -101,59 +103,88 @@ export default function IndexPage() {
       value: platformTradeCount > 0 ? platformTradeCount.toLocaleString() : '—',
       sublabel: hasPlatformTradeCount ? 'priced + unpriced' : 'operator totals',
     },
-    { label: 'Risk Score', value: avgRiskScore != null ? avgRiskScore.toLocaleString() : '—', sublabel: scoredAgents.length > 0 ? 'validator average' : 'awaiting validation' },
+    { label: 'Validator Score', value: avgRiskScore != null ? avgRiskScore.toLocaleString() : '—', sublabel: scoredAgents.length > 0 ? 'average approval' : 'awaiting validation' },
+  ];
+  const pulseStats = [
+    topReturnBot
+      ? {
+          label: 'Top Return',
+          value: formatSignedPercent(topReturnBot.pnlPercent),
+          sublabel: topReturnBot.name,
+          href: `/arena/bot/${encodeURIComponent(topReturnBot.id)}/performance`,
+        }
+      : { label: 'Top Return', value: '—', sublabel: 'awaiting PnL' },
+    mostActiveBot
+      ? {
+          label: 'Most Active',
+          value: mostActiveBot.totalTrades.toLocaleString(),
+          sublabel: mostActiveBot.name,
+          href: `/arena/bot/${encodeURIComponent(mostActiveBot.id)}/performance`,
+        }
+      : { label: 'Most Active', value: '—', sublabel: 'awaiting fills' },
   ];
 
   return (
     <div className="mx-auto max-w-[1500px] px-4 py-4 sm:px-6">
-      <section className="mb-4 grid items-stretch gap-3 xl:grid-cols-[minmax(0,0.68fr)_minmax(0,1.32fr)]">
-        <div className="rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/48 p-4">
-          <div className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <div className="inline-flex items-center gap-1.5 rounded border border-emerald-700/20 bg-emerald-700/10 px-2 py-1 dark:border-emerald-500/20 dark:bg-emerald-500/10">
-                <div className="w-2 h-2 rounded-full bg-emerald-700 dark:bg-emerald-400 animate-glow-pulse" />
-                <span className="text-xs font-data font-semibold text-arena-elements-icon-success uppercase tracking-wider">
-                  {isOnChain ? 'Live Operator Data' : 'Live Data'}
-                </span>
-              </div>
+      <section className="mb-3 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/48 px-4 py-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <div className="inline-flex items-center gap-1.5 rounded border border-emerald-700/20 bg-emerald-700/10 px-2 py-1 dark:border-emerald-500/20 dark:bg-emerald-500/10">
+              <div className="h-2 w-2 rounded-full bg-emerald-700 animate-glow-pulse dark:bg-emerald-400" />
+              <span className="text-xs font-data font-semibold uppercase tracking-wider text-arena-elements-icon-success">
+                {isOnChain ? 'Live Operators' : 'Live Data'}
+              </span>
             </div>
-            <div className="mt-3">
-              <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
-                AI Trading Arena
-              </h1>
-              <p className="mt-1 max-w-2xl text-sm text-arena-elements-textSecondary sm:text-base">
-                Live agent volume, trades, returns, and decision traces from connected operators.
-              </p>
-            </div>
-            <div className="mt-4 flex shrink-0 flex-wrap items-center gap-2">
-              <Link
-                to="/provision"
-                className="inline-flex h-9 items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-3 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
-              >
-                <span className="i-ph:plus-bold text-xs" />
-                Deploy Agent
-              </Link>
-            </div>
+            <h1 className="font-display text-2xl font-bold tracking-tight">
+              Market Pulse
+            </h1>
+            <span className="text-sm text-arena-elements-textSecondary">
+              AI Trading Arena
+            </span>
           </div>
+          <Link
+            to="/provision"
+            className="inline-flex h-9 w-fit shrink-0 items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-3 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+          >
+            <span className="i-ph:plus-bold text-xs" />
+            Deploy Agent
+          </Link>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          {cloudStats.map((stat) => (
-            <div
-              key={stat.label}
-              className="rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/48 px-4 py-3"
-            >
-              <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                {stat.label}
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
+          {[...cloudStats, ...pulseStats].map((stat) => {
+            const content = (
+              <>
+                <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                  {stat.label}
+                </div>
+                <div className="mt-1 truncate font-data text-2xl font-bold leading-none text-arena-elements-textPrimary">
+                  {stat.value}
+                </div>
+                <div className="mt-2 truncate text-sm text-arena-elements-textSecondary">
+                  {stat.sublabel}
+                </div>
+              </>
+            );
+
+            const href = 'href' in stat ? stat.href : undefined;
+            return href ? (
+              <Link
+                key={stat.label}
+                to={href}
+                className="min-w-0 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/44 px-4 py-3 transition-colors hover:bg-arena-elements-item-backgroundHover"
+              >
+                {content}
+              </Link>
+            ) : (
+              <div
+                key={stat.label}
+                className="min-w-0 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/44 px-4 py-3"
+              >
+                {content}
               </div>
-              <div className="mt-1 font-data text-2xl font-bold leading-none text-arena-elements-textPrimary">
-                {stat.value}
-              </div>
-              <div className="mt-2 text-sm text-arena-elements-textSecondary">
-                {stat.sublabel}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

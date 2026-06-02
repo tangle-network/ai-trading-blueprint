@@ -41,7 +41,7 @@ const SECTION_EXPECTATIONS = {
   ],
   operations: ['Risk & Ops', 'Validation', 'Validator'],
 };
-const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Arena', 'Platform Volume', 'Latest Trades', 'Leaderboard', 'ETH Macro Scalper'];
+const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Arena', 'Platform Volume', 'Live Fill Tape', 'Leaderboard', 'ETH Macro Scalper'];
 
 function parseArgs(argv) {
   const args = {

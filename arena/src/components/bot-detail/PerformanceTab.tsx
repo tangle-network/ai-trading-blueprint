@@ -15,10 +15,19 @@ import { formatNumber } from '~/lib/format';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { readStrategyNumber } from '~/lib/utils/botStrategy';
 import { buildPerformanceChartPoints } from './performanceChart';
-import { getTradePairLabel, type Trade } from '~/lib/types/trade';
+import type { Trade } from '~/lib/types/trade';
+import {
+  formatTradeActionLabel,
+  formatTradeUsd,
+  getHyperliquidMarketLabel,
+  getTradeActionToneClass,
+  getTradeInstrumentBadgeText,
+  getTradeMarketLabel,
+  isBuySideTradeAction,
+  isSellSideTradeAction,
+} from '~/lib/tradeDisplay';
 import { TradingPerformanceChart, type TradeChartMarker } from './TradingPerformanceChart';
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
-import { AssetPairDisplay } from './shared/AssetDisplay';
 import { PERFORMANCE_SECTION_COPY } from './metricCopy';
 import { buildDecisionItemsFromTrades } from '~/lib/decisionFeed';
 import { DecisionInspector } from './shared/DecisionInspector';
@@ -209,38 +218,22 @@ function executionCountSubvalue({ source, loaded, total }: { source: ExecutionCo
   return null;
 }
 
-function isSellSideAction(action: Trade['action']): boolean {
-  return action === 'sell' || action === 'close_long' || action === 'open_short';
-}
-
-function isBuySideAction(action: Trade['action']): boolean {
-  return action === 'buy' || action === 'open_long' || action === 'close_short';
-}
-
 function tradeMarkerColor(trade: Trade, chartTheme: ReturnType<typeof useChartTheme>): string {
-  if (isSellSideAction(trade.action)) return chartTheme.negative;
-  if (isBuySideAction(trade.action)) return chartTheme.positive;
+  if (isSellSideTradeAction(trade.action)) return chartTheme.negative;
+  if (isBuySideTradeAction(trade.action)) return chartTheme.positive;
   return '#f59e0b';
 }
 
 function tradeMarkerShape(trade: Trade): TradeChartMarker['shape'] {
-  if (isSellSideAction(trade.action)) return 'arrowDown';
-  if (isBuySideAction(trade.action)) return 'arrowUp';
+  if (isSellSideTradeAction(trade.action)) return 'arrowDown';
+  if (isBuySideTradeAction(trade.action)) return 'arrowUp';
   return 'circle';
 }
 
 function tradeMarkerPosition(trade: Trade): TradeChartMarker['position'] {
-  if (isSellSideAction(trade.action)) return 'aboveBar';
-  if (isBuySideAction(trade.action)) return 'belowBar';
+  if (isSellSideTradeAction(trade.action)) return 'aboveBar';
+  if (isBuySideTradeAction(trade.action)) return 'belowBar';
   return 'inBar';
-}
-
-function formatTradeAction(action: Trade['action']): string {
-  if (action === 'open_long') return 'LONG';
-  if (action === 'close_long') return 'CLOSE LONG';
-  if (action === 'open_short') return 'SHORT';
-  if (action === 'close_short') return 'CLOSE SHORT';
-  return action.replace(/_/g, ' ').toUpperCase();
 }
 
 function formatTradeMarkerText(trade: Trade): string {
@@ -249,15 +242,15 @@ function formatTradeMarkerText(trade: Trade): string {
   if (trade.action === 'close_long' || trade.action === 'close_short') return 'CLOSE';
   if (trade.action === 'sell') return 'SELL';
   if (trade.action === 'buy') return 'BUY';
-  return formatTradeAction(trade.action);
+  return formatTradeActionLabel(trade.action);
 }
 
 function formatTradeMarkerTooltip(trade: Trade): string {
-  const pair = getTradePairLabel(trade);
+  const pair = getTradeMarketLabel(trade);
   const notional = trade.notionalUsd != null && trade.notionalUsd > 0
-    ? ` · $${formatNumber(trade.notionalUsd)}`
+    ? ` · ${formatTradeUsd(trade.notionalUsd)}`
     : '';
-  return `${formatTradeAction(trade.action)} ${pair}${notional}`;
+  return `${formatTradeActionLabel(trade.action)} ${pair}${notional}`;
 }
 
 function formatTradeStatus(value: string | null | undefined): string {
@@ -292,65 +285,6 @@ function buildTradeMarkers(
       text: formatTradeMarkerText(trade),
     }))
     .sort((left, right) => left.timestampMs - right.timestampMs);
-}
-
-function hyperliquidTapeMarketLabel(trade: Trade): string | null {
-  const asset = trade.hyperliquidMetadata?.asset?.trim();
-  return asset ? `${asset.toUpperCase()}-PERP` : null;
-}
-
-function renderTradeTapeInstrument(trade: Trade) {
-  const hyperliquidMarket = trade.targetProtocol === 'hyperliquid'
-    ? hyperliquidTapeMarketLabel(trade)
-    : null;
-
-  if (hyperliquidMarket) {
-    return (
-      <div className="flex min-w-0 items-center gap-2">
-        <span
-          aria-hidden="true"
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-100 text-[10px] font-data font-bold text-sky-700 ring-1 ring-black/5 dark:bg-sky-500/20 dark:text-sky-200 dark:ring-white/10"
-        >
-          {hyperliquidMarket.slice(0, 3)}
-        </span>
-        <span className="truncate font-display text-base font-semibold text-arena-elements-textPrimary">
-          {hyperliquidMarket}
-        </span>
-      </div>
-    );
-  }
-
-  if (trade.targetProtocol === 'polymarket_clob') {
-    return (
-      <div
-        className="line-clamp-2 font-display text-base font-semibold leading-snug text-arena-elements-textPrimary"
-        title={getTradePairLabel(trade)}
-      >
-        {getTradePairLabel(trade)}
-      </div>
-    );
-  }
-
-  return <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} size="md" />;
-}
-
-function compactTradeInstrumentLabel(trade: Trade): string {
-  const hyperliquidMarket = hyperliquidTapeMarketLabel(trade);
-  if (hyperliquidMarket) return hyperliquidMarket;
-
-  const perpToken = [trade.tokenIn, trade.tokenOut]
-    .find((token) => /perp/i.test(token));
-  if (perpToken) return perpToken.toUpperCase();
-
-  return getTradePairLabel(trade);
-}
-
-function compactInstrumentIcon(label: string): string {
-  return label
-    .replace(/-PERP$/i, '')
-    .replace(/\/.*$/, '')
-    .slice(0, 3)
-    .toUpperCase();
 }
 
 interface PerformanceTabProps {
@@ -500,6 +434,15 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const marketMovePercent = marketMove != null && firstMarketCandle && firstMarketCandle.open > 0
     ? (marketMove / firstMarketCandle.open) * 100
     : null;
+  const marketHighValue = marketCandles.length > 0
+    ? Math.max(...marketCandles.map((candle) => candle.high))
+    : null;
+  const marketLowValue = marketCandles.length > 0
+    ? Math.min(...marketCandles.map((candle) => candle.low))
+    : null;
+  const marketVolumeValue = marketCandles.length > 0
+    ? marketCandles.reduce((sum, candle) => sum + candle.volume, 0)
+    : null;
   const recentTradeTape = useMemo(() => (trades ?? []).slice(0, 6), [trades]);
   const tradeDecisionItems = useMemo(
     () => buildDecisionItemsFromTrades(recentTradeTape),
@@ -549,8 +492,22 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const chartStats = effectiveChartMode === 'market'
     ? [
         {
-          label: 'Account Value',
-          value: formatChartCurrency(accountValueForDisplay),
+          label: 'Last Price',
+          value: formatChartCurrency(latestMarketCandle?.close ?? null),
+          tone: marketMoveTone,
+          subvalue: formatSignedChartPercent(marketMovePercent),
+          subvaluePrefix: selectedRange.label,
+        },
+        {
+          label: `${selectedRange.label} High / Low`,
+          value: formatChartCurrency(marketHighValue),
+          tone: 'text-arena-elements-textPrimary',
+          subvalue: formatChartCurrency(marketLowValue),
+          subvaluePrefix: 'Low',
+        },
+        {
+          label: 'Volume',
+          value: formatChartNumber(marketVolumeValue),
           tone: 'text-arena-elements-textPrimary',
         },
         {
@@ -559,23 +516,11 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           tone: accountPnlTone,
         },
         {
-          label: `${selectedRange.label} Return`,
-          value: formatSignedChartPercent(accountReturnForDisplay),
-          tone: accountReturnTone,
-        },
-        {
           label: executionStatLabel,
           value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
           tone: 'text-arena-elements-textPrimary',
           subvalue: executionStatSubvalue,
           subvaluePrefix: '',
-        },
-        {
-          label: 'Last Price',
-          value: formatChartCurrency(latestMarketCandle?.close ?? null),
-          tone: marketMoveTone,
-          subvalue: formatSignedChartPercent(marketMovePercent),
-          subvaluePrefix: selectedRange.label,
         },
       ] as const
     : [
@@ -793,23 +738,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         </div>
 
         <aside className="flex min-h-0 flex-col overflow-hidden min-[1280px]:gap-3">
-          {canUseCopilot ? (
-            <Suspense
-              fallback={
-                <div className="glass-card flex min-h-0 flex-1 flex-col justify-center rounded-xl p-4 text-center text-sm text-arena-elements-textTertiary">
-                  Loading copilot…
-                </div>
-              }
-            >
-              <PerformanceCopilotPanel
-                botId={bot.id}
-                botName={bot.name}
-                operatorApiUrl={bot.operatorApiUrl}
-                operatorKind={bot.operatorKind}
-                token={operatorAuth.token as string}
-              />
-            </Suspense>
-          ) : tradePageIsPending ? (
+          {tradePageIsPending ? (
             <div className="glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl p-3">
               <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
                 <h3 className="font-display text-sm font-bold uppercase tracking-[0.12em] text-arena-elements-textPrimary">
@@ -871,19 +800,9 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     <span className="text-right">Notional</span>
                   </div>
                   {recentTradeTape.map((trade) => {
-                    const buySide = isBuySideAction(trade.action);
-                    const sellSide = isSellSideAction(trade.action);
                     const decisionId = `trade:${trade.id}`;
                     const isSelected = selectedDecision?.id === decisionId;
-                    const actionTone = buySide
-                      ? 'text-arena-elements-icon-success'
-                      : sellSide
-                        ? 'text-arena-elements-icon-error'
-                        : 'text-amber-600 dark:text-amber-300';
-                    const notionalLabel = trade.notionalUsd != null && trade.notionalUsd > 0
-                      ? formatChartCurrency(trade.notionalUsd)
-                      : '—';
-                    const instrumentLabel = compactTradeInstrumentLabel(trade);
+                    const instrumentLabel = getTradeMarketLabel(trade);
 
                     return (
                       <button
@@ -900,12 +819,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                         <div className="font-data text-xs leading-tight text-arena-elements-textTertiary">
                           {formatTradeTime(trade.timestamp)}
                         </div>
-                        <div className={`font-data text-xs font-bold ${actionTone}`}>
-                          {formatTradeAction(trade.action)}
+                        <div className={`font-data text-xs font-bold ${getTradeActionToneClass(trade.action)}`}>
+                          {formatTradeActionLabel(trade.action)}
                         </div>
                         <div className="flex min-w-0 items-center gap-2" title={instrumentLabel}>
                           <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-100 font-data text-[9px] font-bold text-sky-700 ring-1 ring-black/5 dark:bg-sky-500/20 dark:text-sky-200 dark:ring-white/10">
-                            {compactInstrumentIcon(instrumentLabel)}
+                            {getTradeInstrumentBadgeText(trade)}
                           </span>
                           <span className="truncate font-display text-[13px] font-semibold text-arena-elements-textPrimary">
                             {instrumentLabel}
@@ -913,7 +832,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                         </div>
                         <div className="min-w-0 text-right">
                           <div className="font-data text-sm font-semibold text-arena-elements-textPrimary">
-                            {notionalLabel}
+                            {formatTradeUsd(trade.notionalUsd)}
                           </div>
                           <div className="truncate font-data text-[10px] uppercase tracking-wide text-arena-elements-textTertiary">
                             {formatTradeMicrostructure(trade)}
@@ -924,6 +843,26 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   })}
                 </div>
               </div>
+            </div>
+          )}
+
+          {canUseCopilot && (
+            <div className="flex h-[260px] shrink-0 overflow-hidden">
+              <Suspense
+                fallback={
+                  <div className="glass-card flex min-h-0 flex-1 flex-col justify-center rounded-xl p-4 text-center text-sm text-arena-elements-textTertiary">
+                    Loading copilot…
+                  </div>
+                }
+              >
+                <PerformanceCopilotPanel
+                  botId={bot.id}
+                  botName={bot.name}
+                  operatorApiUrl={bot.operatorApiUrl}
+                  operatorKind={bot.operatorKind}
+                  token={operatorAuth.token as string}
+                />
+              </Suspense>
             </div>
           )}
 

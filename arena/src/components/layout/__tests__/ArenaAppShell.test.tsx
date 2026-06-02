@@ -43,13 +43,13 @@ vi.mock('../WalletButton', () => ({
 function renderShell(path = '/dashboard') {
   render(
     <MemoryRouter initialEntries={[path]}>
-	      <Routes>
-	        <Route element={<ArenaAppShell />}>
-	          <Route path="/dashboard" element={<div>Dashboard body</div>} />
-	          <Route path="/" element={<div>Leaderboard body</div>} />
-	          <Route path="/arena/bot/:id/:section" element={<div>Agent body</div>} />
-	        </Route>
-	      </Routes>
+      <Routes>
+        <Route element={<ArenaAppShell />}>
+          <Route path="/dashboard" element={<div>Dashboard body</div>} />
+          <Route path="/" element={<div>Leaderboard body</div>} />
+          <Route path="/arena/bot/:id/:section" element={<div>Agent body</div>} />
+        </Route>
+      </Routes>
     </MemoryRouter>,
   );
 }
@@ -60,20 +60,20 @@ describe('ArenaAppShell', () => {
     hoisted.account.isConnected = true;
   });
 
-	  it('keeps the desktop sidebar focused on product navigation instead of live agent rosters', () => {
+  it('keeps the desktop sidebar focused on product navigation instead of live agent rosters', () => {
     renderShell();
 
     const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
 
     expect(sidebar).not.toBeNull();
-    expect(within(sidebar!).getByRole('link', { name: /home/i })).toHaveAttribute('href', '/dashboard');
+    expect(within(sidebar!).getByRole('link', { name: /my agents/i })).toHaveAttribute('href', '/dashboard');
     expect(within(sidebar!).getByRole('link', { name: /leaderboard/i })).toHaveAttribute('href', '/');
     expect(within(sidebar!).getByRole('link', { name: /deploy/i })).toHaveAttribute('href', '/provision');
     expect(within(sidebar!).getByRole('link', { name: /create/i })).toHaveAttribute('href', '/create');
     expect(within(sidebar!).queryByText(/commandable/i)).not.toBeInTheDocument();
-	  });
+  });
 
-	  it('does not show public fleet agents as callable before a wallet is connected', () => {
+  it('does not show public fleet agents as callable before a wallet is connected', () => {
     hoisted.account.address = undefined;
     hoisted.account.isConnected = false;
 
@@ -82,22 +82,22 @@ describe('ArenaAppShell', () => {
     const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
 
     expect(sidebar).not.toBeNull();
-	    expect(within(sidebar!).queryByText(/callable agents/i)).not.toBeInTheDocument();
-	    expect(within(sidebar!).getByRole('link', { name: /leaderboard/i })).toHaveAttribute('href', '/');
-	  });
+    expect(within(sidebar!).queryByText(/callable agents/i)).not.toBeInTheDocument();
+    expect(within(sidebar!).getByRole('link', { name: /leaderboard/i })).toHaveAttribute('href', '/');
+  });
 
-	  it.each([
-	    '/arena/bot/mine/performance',
-	    '/arena/bot/mine/portfolio',
-	    '/arena/bot/mine/operations',
-	    '/arena/bot/mine/chat',
-	    '/arena/bot/mine/runs',
-	  ])('keeps agent workspace routes free of global navigation chrome: %s', (path) => {
-	    renderShell(path);
+  it.each([
+    '/arena/bot/mine/performance',
+    '/arena/bot/mine/portfolio',
+    '/arena/bot/mine/operations',
+    '/arena/bot/mine/chat',
+    '/arena/bot/mine/runs',
+  ])('keeps agent workspace routes free of global navigation chrome: %s', (path) => {
+    renderShell(path);
 
-	    expect(screen.queryByRole('navigation', { name: 'Arena navigation' })).not.toBeInTheDocument();
-	    expect(screen.queryByRole('button', { name: /base sepolia testnet/i })).not.toBeInTheDocument();
-	    expect(screen.queryByRole('button', { name: /transactions/i })).not.toBeInTheDocument();
-	    expect(screen.getByText('Agent body')).toBeInTheDocument();
-	  });
-	});
+    expect(screen.queryByRole('navigation', { name: 'Arena navigation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /base sepolia testnet/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /transactions/i })).not.toBeInTheDocument();
+    expect(screen.getByText('Agent body')).toBeInTheDocument();
+  });
+});

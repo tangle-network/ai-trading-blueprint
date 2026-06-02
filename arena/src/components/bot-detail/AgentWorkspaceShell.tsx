@@ -278,11 +278,11 @@ export function AgentWorkspaceShell({
               />
 
               <Tooltip.Provider delayDuration={120}>
-                <div className="hidden shrink-0 items-center gap-4 2xl:flex">
+                <div className="hidden shrink-0 items-center gap-3 min-[1360px]:flex">
                   {metrics.map((metric) => (
                       <Tooltip.Root key={metric.label}>
                         <Tooltip.Trigger asChild>
-                          <div className="min-w-[64px]">
+                          <div className="min-w-[58px]">
                             <div className="truncate font-data text-[10px] font-semibold uppercase text-arena-elements-textTertiary">
                               {metric.label}
                             </div>

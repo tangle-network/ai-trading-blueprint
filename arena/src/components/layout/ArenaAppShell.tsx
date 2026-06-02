@@ -6,7 +6,7 @@ import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
 
 const primaryNavItems = [
-  { label: 'Home', href: '/dashboard', icon: 'i-ph:house' },
+  { label: 'My Agents', href: '/dashboard', icon: 'i-ph:house' },
   { label: 'Leaderboard', href: '/', icon: 'i-ph:trophy' },
   { label: 'Deploy', href: '/provision', icon: 'i-ph:rocket-launch' },
   { label: 'Create', href: '/create', icon: 'i-ph:chat-circle-dots' },
