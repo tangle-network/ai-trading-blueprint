@@ -49,8 +49,8 @@ export function LatestAgentTrades({
       className={`${isBounded ? 'flex h-full min-h-0 flex-col overflow-hidden' : 'mb-6'} rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/42 ${className}`}
       aria-live="polite"
     >
-      <div className="flex items-center justify-between gap-4 border-b border-arena-elements-dividerColor/60 px-4 py-3 sm:px-5">
-        <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
+      <div className={`flex items-center justify-between gap-4 border-b border-arena-elements-dividerColor/60 px-4 sm:px-5 ${isExplorer ? 'py-2.5' : 'py-3'}`}>
+        <h2 className={`font-display font-semibold tracking-tight text-arena-elements-textPrimary ${isExplorer ? 'text-lg' : 'text-xl'}`}>
           {isExplorer ? 'Latest Fills' : 'Fills'}
         </h2>
         {trades.length === 0 && candidateCount > 0 && (
@@ -175,12 +175,12 @@ export function LatestAgentTrades({
                     }}
                   >
                     <td
-                      className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textTertiary"
+                      className="border-b border-arena-elements-dividerColor/45 px-4 py-2.5 align-middle font-data text-sm text-arena-elements-textTertiary"
                       title={new Date(trade.timestamp).toLocaleString()}
                     >
                       {formatTradeAge(trade.timestamp)}
                     </td>
-                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-2.5 align-middle">
                       <Link
                         to={`/arena/bot/${encodeURIComponent(botId)}/performance`}
                         className="flex min-w-0 items-center gap-2.5"
@@ -196,12 +196,12 @@ export function LatestAgentTrades({
                         </span>
                       </Link>
                     </td>
-                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-2.5 align-middle">
                       <span className={`inline-flex h-8 min-w-[4.75rem] items-center justify-center rounded-md px-2.5 font-data text-xs font-bold ${getTradeActionPillClass(trade.action)}`}>
                         {formatTradeActionLabel(trade.action)}
                       </span>
                     </td>
-                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-2.5 align-middle">
                       <TradeInstrumentDisplay
                         trade={trade}
                         size="md"
@@ -209,10 +209,10 @@ export function LatestAgentTrades({
                         labelClassName="max-w-[320px]"
                       />
                     </td>
-                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 text-right align-middle font-data text-base font-semibold text-arena-elements-textPrimary">
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-2.5 text-right align-middle font-data text-base font-semibold text-arena-elements-textPrimary">
                       {formatTradeUsd(trade.notionalUsd)}
                     </td>
-                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 text-right align-middle font-data text-sm text-arena-elements-textTertiary">
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-2.5 text-right align-middle font-data text-sm text-arena-elements-textTertiary">
                       {formatReference(trade)}
                     </td>
                   </tr>

@@ -2234,6 +2234,7 @@ Shipped in this slice:
 - Added a searchable agent table header on `/leaderboard`.
 - Added `LatestAgentTrades` `explorer` mode with a full-width ledger: Time, Agent, Fill, Market, USD, Ref. It intentionally omits the old Mode/Status columns that repeated paper/status concepts.
 - Converted compact fill-tape rows from JS-only buttons to real agent-performance links so Home remains crawlable and production smoke can discover live agents after the Top Agents preview was removed.
+- Tightened explorer-mode fill ledger header/row density after live screenshot review so the `/leaderboard` trade list shows more current activity in the first viewport.
 - Updated the browser smoke fixture expectations to defend the new Home/Explorer split.
 
 Verification:
@@ -2246,6 +2247,7 @@ Verification:
 - `pnpm --dir arena build` passes. Existing large-chunk warnings remain unchanged.
 - `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-agent-explorer-smoke-20260602` passes.
 - `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-agent-explorer-link-smoke-20260602` passes after the compact fill-tape link correction.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-agent-explorer-density-smoke-20260602` passes after the explorer fill-ledger density polish.
 - Visual inspection passed:
   - `.evolve/arena-agent-explorer-smoke-20260602/1440x900-home.png`: Home is now volume + fills, with no ranked-agent duplicate.
   - `.evolve/arena-agent-explorer-smoke-20260602/1440x900-leaderboard.png`: Agent Explorer shows full-width volume, latest fills, and agents ledgers with no horizontal squeeze.
