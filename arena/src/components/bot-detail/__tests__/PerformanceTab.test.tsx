@@ -615,6 +615,7 @@ describe('PerformanceTab', () => {
     expect(screen.getByRole('button', { name: 'Market' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Market' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'NAV' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByText('$10,000')[0]?.className).toContain('text-[#f6fefd]');
   });
 
   it('renders real market candles and volume when OHLCV exists for the traded venue', async () => {

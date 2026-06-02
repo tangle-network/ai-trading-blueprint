@@ -202,6 +202,13 @@ function executionCountSubvalue({ source, loaded, total }: { source: ExecutionCo
   return null;
 }
 
+function terminalStatValueClass(tone: string): string {
+  if (tone === 'text-arena-elements-icon-success' || tone === 'text-arena-elements-icon-error') {
+    return tone;
+  }
+  return 'text-[#f6fefd]';
+}
+
 function tradeMarkerColor(trade: Trade, chartTheme: ReturnType<typeof useChartTheme>): string {
   if (isSellSideTradeAction(trade.action)) return chartTheme.negative;
   if (isBuySideTradeAction(trade.action)) return chartTheme.positive;
@@ -623,7 +630,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   <div className="truncate font-data text-[11px] text-[#949e9c]">
                     {stat.shortLabel}
                   </div>
-                  <div className={`mt-1 truncate font-data text-[15px] font-semibold leading-none tabular-nums ${stat.tone === accountPnlTone || stat.tone === accountReturnTone || stat.tone === marketMoveTone ? stat.tone : 'text-[#f6fefd]'}`}>
+                  <div className={`mt-1 truncate font-data text-[15px] font-semibold leading-none tabular-nums ${terminalStatValueClass(stat.tone)}`}>
                     {stat.value}
                   </div>
                   {'subvalue' in stat && stat.subvalue && (

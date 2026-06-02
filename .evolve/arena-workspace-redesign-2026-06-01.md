@@ -1957,3 +1957,22 @@ Verification:
 - `pnpm --dir arena test` passes: 66 files, 383 tests.
 - `pnpm --dir arena typecheck` passes.
 - `pnpm --dir arena build` passes.
+
+## 2026-06-02 Hyperliquid Terminal Contrast Correction
+
+Live screenshot audit after `fix: align arena terminal live data` (`7fdbb1f`):
+
+- `.evolve/arena-production-terminal-count-mode-smoke-20260602-7fdbb1f/1280x800-performance.png` confirmed the mode fallback, fill count, and DEX-pair label fixes were live.
+- The same 1280px screenshot exposed one remaining theme leak: neutral terminal strip values such as account equity, fills, and high/low inherited the global light-theme primary text token inside the dark terminal shell.
+
+Shipped in this slice:
+
+- Terminal stat values now keep exchange-style success/error colors only for directional PnL/move values.
+- Neutral terminal stat values are forced to the terminal foreground color (`#f6fefd`) so light and dark page themes cannot reduce contrast inside the chart shell.
+- `PerformanceTab` regression coverage now asserts the NAV fallback button state and the terminal foreground class on neutral account stats.
+
+Verification:
+
+- `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/PerformanceTab.test.tsx src/components/bot-detail/shared/__tests__/AssetDisplay.test.tsx src/components/bot-detail/__tests__/performanceChart.test.ts --reporter=dot` passes: 3 files, 30 tests.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-performance-terminal-neutral-stats-smoke-20260602` passes.
+- Visual inspection of `.evolve/arena-performance-terminal-neutral-stats-smoke-20260602/1280x800-performance.png` confirms neutral terminal stats render bright inside the Hyperliquid-style chart shell.
