@@ -241,16 +241,20 @@ fn inner_workflow_tick_timeout() -> Duration {
     Duration::from_millis(timeout_ms)
 }
 
-fn generic_workflow_tick_enabled() -> bool {
-    std::env::var("TRADING_RUN_GENERIC_WORKFLOW_TICK")
-        .ok()
+fn generic_workflow_tick_enabled_from_value(value: Option<&str>) -> bool {
+    value
         .map(|value| {
             !matches!(
                 value.trim().to_ascii_lowercase().as_str(),
                 "0" | "false" | "no" | "off"
             )
         })
-        .unwrap_or(true)
+        .unwrap_or(false)
+}
+
+fn generic_workflow_tick_enabled() -> bool {
+    let value = std::env::var("TRADING_RUN_GENERIC_WORKFLOW_TICK").ok();
+    generic_workflow_tick_enabled_from_value(value.as_deref())
 }
 
 fn workflow_is_due(
@@ -767,9 +771,18 @@ async fn validate_fast_runs(response: &mut Value, all_bots: &[crate::state::Trad
             continue;
         }
 
-        let result_text = entry
-            .get("task")
-            .and_then(|task| task.get("result"))
+        let task = entry.get("task").unwrap_or(&Value::Null);
+        let already_failed_with_error = task.get("success").and_then(Value::as_bool) == Some(false)
+            && task
+                .get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|error| !error.trim().is_empty());
+        if already_failed_with_error {
+            continue;
+        }
+
+        let result_text = task
+            .get("result")
             .and_then(Value::as_str)
             .unwrap_or_default();
         let parsed: Value = match serde_json::from_str(result_text) {
@@ -904,8 +917,6 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
             "count": direct_executed.len(),
             "executed": direct_executed,
         });
-        validate_fast_runs(&mut direct_response, &runnable_bots).await;
-        persist_executed_run_history(&direct_response);
     }
 
     // 3. Run the generic LLM workflow runner only when explicitly enabled for
@@ -1043,6 +1054,19 @@ mod tests {
     }
 
     #[test]
+    fn generic_workflow_tick_is_explicit_opt_in() {
+        assert!(!generic_workflow_tick_enabled_from_value(None));
+        assert!(!generic_workflow_tick_enabled_from_value(Some("0")));
+        assert!(!generic_workflow_tick_enabled_from_value(Some("false")));
+        assert!(!generic_workflow_tick_enabled_from_value(Some(" no ")));
+        assert!(!generic_workflow_tick_enabled_from_value(Some("OFF")));
+
+        assert!(generic_workflow_tick_enabled_from_value(Some("1")));
+        assert!(generic_workflow_tick_enabled_from_value(Some("true")));
+        assert!(generic_workflow_tick_enabled_from_value(Some("yes")));
+    }
+
+    #[test]
     fn fast_tick_selection_includes_current_active_bot() {
         let bot_id = "trading-active-fast";
         let workflow_id = 42;
@@ -1081,6 +1105,57 @@ mod tests {
         assert!(paths.contains(&"/home/agent/tools/tick-common.js"));
         assert!(paths.contains(&"/home/agent/tools/tick-recipe-dsl.js"));
         assert!(paths.contains(&"/home/agent/tools/dex-mm-tick.js"));
+    }
+
+    #[tokio::test]
+    async fn validate_fast_runs_marks_successful_non_json_fast_tick() {
+        let bot_id = "trading-invalid-json-fast";
+        let workflow_id = 44;
+        let bots = vec![test_bot(bot_id, workflow_id)];
+        let mut response = json!({
+            "count": 1,
+            "executed": [{
+                "workflowId": workflow_id,
+                "name": format!("fast-tick-{bot_id}"),
+                "executedAt": 123,
+                "task": {
+                    "success": true,
+                    "result": "not json"
+                }
+            }]
+        });
+
+        validate_fast_runs(&mut response, &bots).await;
+
+        let task = &response["executed"][0]["task"];
+        assert_eq!(task["success"], false);
+        assert_eq!(task["error"], "Fast tick result was not deterministic JSON");
+    }
+
+    #[tokio::test]
+    async fn validate_fast_runs_preserves_existing_failed_direct_tick_error() {
+        let bot_id = "trading-preserve-direct-error";
+        let workflow_id = 45;
+        let bots = vec![test_bot(bot_id, workflow_id)];
+        let mut response = json!({
+            "count": 1,
+            "executed": [{
+                "workflowId": workflow_id,
+                "name": format!("fast-tick-{bot_id}"),
+                "executedAt": 123,
+                "task": {
+                    "success": false,
+                    "error": "sandbox lookup failed: missing sandbox",
+                    "result": ""
+                }
+            }]
+        });
+
+        validate_fast_runs(&mut response, &bots).await;
+
+        let task = &response["executed"][0]["task"];
+        assert_eq!(task["success"], false);
+        assert_eq!(task["error"], "sandbox lookup failed: missing sandbox");
     }
 
     #[test]
