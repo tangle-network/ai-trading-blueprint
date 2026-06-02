@@ -10,15 +10,15 @@ import { resolveBotDisplayName } from '~/lib/utils/botNames';
 import { getBotStrategyChainId } from '~/lib/utils/botStrategy';
 import { networks } from '~/lib/contracts/chains';
 import { HEADER_RETURN_PERCENT_COPY } from './metricCopy';
+import {
+  WorkspaceMetric,
+  WorkspaceNavStrip,
+  type WorkspaceNavItem,
+} from './shared/WorkspacePrimitives';
 
 export type AgentWorkspaceSection = 'performance' | 'portfolio' | 'runs' | 'chat' | 'operations';
 
-export interface AgentWorkspaceNavItem {
-  value: AgentWorkspaceSection;
-  label: string;
-  icon: string;
-  badge?: ReactNode;
-}
+export interface AgentWorkspaceNavItem extends WorkspaceNavItem<AgentWorkspaceSection> {}
 
 interface AgentWorkspaceShellProps {
   bot: Bot;
@@ -154,36 +154,13 @@ export function AgentWorkspaceShell({
     <div className="flex h-full min-h-0 overflow-hidden">
       <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         {focusMode && (
-          <nav
-            className="absolute right-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] gap-1 overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 p-1 shadow-xl backdrop-blur-xl"
-            aria-label="Agent focus navigation"
-          >
-            {navItems.map((item) => {
-              const selected = item.value === activeSection;
-              return (
-                <button
-                  key={item.value}
-                  type="button"
-                  onClick={() => onSectionChange(item.value)}
-                  aria-current={selected ? 'page' : undefined}
-                  className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
-                    selected
-                      ? 'bg-violet-500/14 text-arena-elements-textPrimary'
-                      : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
-                  }`}
-                >
-                  <span
-                    className={`${item.icon} text-base ${
-                      selected ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary'
-                    }`}
-                    aria-hidden="true"
-                  />
-                  <span>{item.label}</span>
-                  {item.badge}
-                </button>
-              );
-            })}
-          </nav>
+          <WorkspaceNavStrip
+            items={navItems}
+            activeValue={activeSection}
+            onSelect={onSectionChange}
+            ariaLabel="Agent focus navigation"
+            className="absolute right-3 top-3 z-20 max-w-[calc(100%-1.5rem)] bg-arena-elements-background-depth-2/88 shadow-xl backdrop-blur-xl"
+          />
         )}
 
         {!focusMode && (
@@ -237,16 +214,13 @@ export function AgentWorkspaceShell({
               <Tooltip.Provider delayDuration={120}>
                 <div className="hidden shrink-0 grid-cols-5 gap-1.5 sm:grid">
                   {metrics.map((metric) => (
-                    <Tooltip.Root key={metric.label}>
-                      <Tooltip.Trigger asChild>
-                        <div className="min-w-[78px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/62 px-2 py-1.5 md:min-w-[86px]">
-                          <div className="font-data text-[9px] font-medium uppercase tracking-wider text-arena-elements-textTertiary">
-                            {metric.label}
-                          </div>
-                          <div className={`mt-0.5 truncate font-data text-sm font-bold ${metric.color}`}>
-                            {metric.value}
-                          </div>
-                        </div>
+                      <Tooltip.Root key={metric.label}>
+                        <Tooltip.Trigger asChild>
+                          <WorkspaceMetric
+                            label={metric.label}
+                            value={metric.value}
+                            valueClassName={metric.color}
+                          />
                       </Tooltip.Trigger>
                       {metric.title && (
                         <Tooltip.Portal>
@@ -266,36 +240,14 @@ export function AgentWorkspaceShell({
                 </div>
               </Tooltip.Provider>
             </div>
-            <nav
-              className="mt-2 flex gap-1 overflow-x-auto pb-0.5"
-              aria-label="Agent workspace sections"
-            >
-              {navItems.map((item) => {
-                const selected = item.value === activeSection;
-                return (
-                  <button
-                    key={item.value}
-                    type="button"
-                    onClick={() => onSectionChange(item.value)}
-                    aria-current={selected ? 'page' : undefined}
-                    className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
-                      selected
-                        ? 'bg-violet-500/14 text-arena-elements-textPrimary'
-                        : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
-                    }`}
-                  >
-                    <span
-                      className={`${item.icon} text-base ${
-                        selected ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary'
-                      }`}
-                      aria-hidden="true"
-                    />
-                    <span>{item.label}</span>
-                    {item.badge}
-                  </button>
-                );
-              })}
-            </nav>
+            <WorkspaceNavStrip
+              items={navItems}
+              activeValue={activeSection}
+              onSelect={onSectionChange}
+              ariaLabel="Agent workspace sections"
+              className="mt-2 border-0 bg-transparent p-0 pb-0.5"
+              buttonClassName="rounded-lg"
+            />
           </div>
         )}
 
