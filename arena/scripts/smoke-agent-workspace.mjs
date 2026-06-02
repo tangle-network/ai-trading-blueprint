@@ -21,7 +21,11 @@ const FIXTURE_OWNER_TOKEN = 'fixture-owner-token';
 const FIXTURE_OWNER_AUTH_KEY = `arena.operator_auth.${FIXTURE_OPERATOR.toLowerCase()}::/operator-api`;
 
 const SECTION_EXPECTATIONS = {
-  performance: ['Market', 'ETH', 'Trade Tape'],
+  performance: [
+    ['Market', 'NAV'],
+    ['ETH', 'Performance', 'Awaiting first checkpoint'],
+    ['Trade Tape', 'Execution Tape', 'Copilot'],
+  ],
   portfolio: [
     'Exposure',
     'Positions Value',
@@ -30,7 +34,7 @@ const SECTION_EXPECTATIONS = {
   ],
   runs: [
     ['Trading Run', 'No runs yet'],
-    ['Run ID', 'Autonomous activity'],
+    ['Run ID', 'Autonomous activity', 'DONE', 'SKIP', 'TRADE'],
   ],
   chat: ['Trading Agent', ['Breakout retest', 'No messages yet'], 'Owner Sign In'],
   operations: ['Operations', 'Validation', 'Validator'],
