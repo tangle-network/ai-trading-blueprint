@@ -260,6 +260,22 @@ function formatTradeMarkerTooltip(trade: Trade): string {
   return `${formatTradeAction(trade.action)} ${pair}${notional}`;
 }
 
+function formatTradeStatus(value: string | null | undefined): string {
+  if (!value) return 'Pending';
+  return value.replace(/_/g, ' ').toUpperCase();
+}
+
+function formatTradeMicrostructure(trade: Trade): string {
+  if (trade.execution?.slippageBps != null) {
+    return `${formatNumber(trade.execution.slippageBps, { maximumFractionDigits: 1 })} bps slip`;
+  }
+  if (trade.gasUsed) return `Gas ${trade.gasUsed}`;
+  if (trade.validatorScore != null) {
+    return `Score ${formatNumber(trade.validatorScore, { maximumFractionDigits: 0 })}`;
+  }
+  return trade.paperTrade ? 'Paper fill' : formatTradeStatus(trade.execution?.status ?? trade.status);
+}
+
 function buildTradeMarkers(
   trades: Trade[] | undefined,
   chartTheme: ReturnType<typeof useChartTheme>,
@@ -316,6 +332,25 @@ function renderTradeTapeInstrument(trade: Trade) {
   }
 
   return <AssetPairDisplay left={trade.assetIn} right={trade.assetOut} size="md" />;
+}
+
+function compactTradeInstrumentLabel(trade: Trade): string {
+  const hyperliquidMarket = hyperliquidTapeMarketLabel(trade);
+  if (hyperliquidMarket) return hyperliquidMarket;
+
+  const perpToken = [trade.tokenIn, trade.tokenOut]
+    .find((token) => /perp/i.test(token));
+  if (perpToken) return perpToken.toUpperCase();
+
+  return getTradePairLabel(trade);
+}
+
+function compactInstrumentIcon(label: string): string {
+  return label
+    .replace(/-PERP$/i, '')
+    .replace(/\/.*$/, '')
+    .slice(0, 3)
+    .toUpperCase();
 }
 
 interface PerformanceTabProps {
@@ -464,15 +499,6 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const marketMovePercent = marketMove != null && firstMarketCandle && firstMarketCandle.open > 0
     ? (marketMove / firstMarketCandle.open) * 100
     : null;
-  const marketHighValue = marketCandles.length > 0
-    ? Math.max(...marketCandles.map((candle) => candle.high))
-    : null;
-  const marketLowValue = marketCandles.length > 0
-    ? Math.min(...marketCandles.map((candle) => candle.low))
-    : null;
-  const marketVolumeValue = marketCandles.length > 0
-    ? marketCandles.reduce((sum, candle) => sum + candle.volume, 0)
-    : null;
   const recentTradeTape = useMemo(() => (trades ?? []).slice(0, 6), [trades]);
   const tradeDecisionItems = useMemo(
     () => buildDecisionItemsFromTrades(recentTradeTape),
@@ -494,27 +520,47 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   }, [selectedDecisionId, tradeDecisionItems]);
 
   const canUseCopilot = Boolean(canCommand && operatorAuth.isAuthenticated && operatorAuth.token);
-  const chartReturnTone = chartReturnValue == null
-    ? 'text-arena-elements-textPrimary'
-    : chartReturnValue >= 0
-      ? 'text-arena-elements-icon-success'
-      : 'text-arena-elements-icon-error';
   const marketMoveTone = marketMove == null
     ? 'text-arena-elements-textPrimary'
     : marketMove >= 0
       ? 'text-arena-elements-icon-success'
       : 'text-arena-elements-icon-error';
+  const accountValueForDisplay = livePortfolio?.displayTotalValueUsd
+    ?? latestChartValue
+    ?? metricsSummary?.portfolio_value_usd
+    ?? null;
+  const accountPnlForDisplay = chartReturnValue
+    ?? metricsSummary?.total_pnl
+    ?? null;
+  const accountReturnForDisplay = chartReturnPercent
+    ?? bot.pnlPercent
+    ?? null;
+  const accountPnlTone = accountPnlForDisplay == null
+    ? 'text-arena-elements-textPrimary'
+    : accountPnlForDisplay >= 0
+      ? 'text-arena-elements-icon-success'
+      : 'text-arena-elements-icon-error';
+  const accountReturnTone = accountReturnForDisplay == null
+    ? 'text-arena-elements-textPrimary'
+    : accountReturnForDisplay >= 0
+      ? 'text-arena-elements-icon-success'
+      : 'text-arena-elements-icon-error';
   const chartStats = effectiveChartMode === 'market'
     ? [
         {
-          label: 'Last Price',
-          value: formatChartCurrency(latestMarketCandle?.close ?? null),
+          label: 'Account Value',
+          value: formatChartCurrency(accountValueForDisplay),
           tone: 'text-arena-elements-textPrimary',
         },
         {
-          label: `${selectedRange.label} Move`,
-          value: formatSignedChartPercent(marketMovePercent),
-          tone: marketMoveTone,
+          label: 'Range PnL',
+          value: accountPnlForDisplay == null ? '—' : formatChartCurrency(accountPnlForDisplay),
+          tone: accountPnlTone,
+        },
+        {
+          label: `${selectedRange.label} Return`,
+          value: formatSignedChartPercent(accountReturnForDisplay),
+          tone: accountReturnTone,
         },
         {
           label: executionStatLabel,
@@ -524,33 +570,28 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           subvaluePrefix: '',
         },
         {
-          label: 'Price High / Low',
-          value: formatChartCurrency(marketHighValue),
-          tone: 'text-arena-elements-textPrimary',
-          subvalue: formatChartCurrency(marketLowValue),
-          subvaluePrefix: 'Low',
-        },
-        {
-          label: 'Market Volume',
-          value: formatChartNumber(marketVolumeValue),
-          tone: 'text-arena-elements-textPrimary',
+          label: 'Last Price',
+          value: formatChartCurrency(latestMarketCandle?.close ?? null),
+          tone: marketMoveTone,
+          subvalue: formatSignedChartPercent(marketMovePercent),
+          subvaluePrefix: selectedRange.label,
         },
       ] as const
     : [
         {
           label: 'Account Value',
-          value: formatChartCurrency(latestChartValue),
+          value: formatChartCurrency(accountValueForDisplay),
           tone: 'text-arena-elements-textPrimary',
         },
         {
-          label: `${selectedRange.label} Return`,
-          value: formatSignedChartPercent(chartReturnPercent),
-          tone: chartReturnTone,
+          label: 'Range PnL',
+          value: accountPnlForDisplay == null ? '—' : formatChartCurrency(accountPnlForDisplay),
+          tone: accountPnlTone,
         },
         {
-          label: 'Range PnL',
-          value: chartReturnValue == null ? '—' : formatChartCurrency(chartReturnValue),
-          tone: chartReturnTone,
+          label: `${selectedRange.label} Return`,
+          value: formatSignedChartPercent(accountReturnForDisplay),
+          tone: accountReturnTone,
         },
         {
           label: executionStatLabel,
@@ -603,12 +644,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         <UnverifiedDataNotice subject="performance snapshots" />
       )}
 
-      <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(190px,25dvh)] gap-3 overflow-hidden min-[1280px]:grid-cols-[minmax(0,1fr)_320px] min-[1280px]:grid-rows-none min-[1440px]:grid-cols-[minmax(0,1fr)_340px]">
+      <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(190px,25dvh)] gap-3 overflow-hidden min-[1280px]:grid-cols-[minmax(0,1fr)_380px] min-[1280px]:grid-rows-none min-[1440px]:grid-cols-[minmax(0,1fr)_420px]">
         <div className="glass-card-strong flex min-h-0 flex-col overflow-hidden rounded-xl p-3 shadow-[0_24px_90px_rgba(0,0,0,0.22)]">
           <div className="mb-3 flex shrink-0 flex-col gap-3 min-[1180px]:flex-row min-[1180px]:items-start min-[1180px]:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="font-display text-xl font-bold tracking-tight">
+                <h2 className="font-display text-2xl font-bold tracking-tight">
                   {effectiveChartMode === 'market' && marketCandleToken
                     ? `${marketCandleToken} Price`
                     : 'Account Value (USDC)'}
@@ -778,7 +819,9 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           ) : (
             <div className="glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl p-3">
               <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
-                <h3 className="font-display text-lg font-semibold">Recent Trades</h3>
+                <h3 className="font-display text-sm font-bold uppercase tracking-[0.12em] text-arena-elements-textPrimary">
+                  Recent Trades
+                </h3>
                 <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
                   Last {Math.min(recentTradeTape.length, 6)}
                   {tradePage?.total != null
@@ -788,12 +831,22 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                       : ''}
                 </span>
               </div>
-              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(190px,0.95fr)] gap-3">
+              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,0.9fr)_minmax(210px,1fr)] gap-3">
                 <DecisionInspector
                   item={selectedDecision}
                   className="rounded-xl border border-arena-elements-dividerColor/50"
                 />
-                <div className="min-h-0 space-y-2 overflow-y-auto pr-1" aria-label="Trade decisions">
+                <div
+                  className="min-h-0 overflow-y-auto rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/28"
+                  aria-label="Trade decisions"
+                  tabIndex={0}
+                >
+                  <div className="grid grid-cols-[64px_76px_minmax(0,1fr)_88px] gap-2 border-b border-arena-elements-dividerColor/50 px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                    <span>Time</span>
+                    <span>Side</span>
+                    <span>Instrument</span>
+                    <span className="text-right">Notional</span>
+                  </div>
                   {recentTradeTape.map((trade) => {
                     const buySide = isBuySideAction(trade.action);
                     const sellSide = isSellSideAction(trade.action);
@@ -804,35 +857,45 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                       : sellSide
                         ? 'text-arena-elements-icon-error'
                         : 'text-amber-600 dark:text-amber-300';
+                    const notionalLabel = trade.notionalUsd != null && trade.notionalUsd > 0
+                      ? formatChartCurrency(trade.notionalUsd)
+                      : '—';
+                    const instrumentLabel = compactTradeInstrumentLabel(trade);
 
                     return (
                       <button
                         key={trade.id}
                         type="button"
-                        className={`w-full rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                        className={`grid w-full grid-cols-[64px_76px_minmax(0,1fr)_88px] items-center gap-2 border-b border-arena-elements-dividerColor/40 px-3 py-2.5 text-left transition-colors last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
                           isSelected
-                            ? 'border-violet-500/45 bg-violet-500/10 shadow-[inset_3px_0_0_rgba(139,92,246,0.72)]'
-                            : 'border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/40 hover:bg-arena-elements-item-backgroundHover'
+                            ? 'bg-violet-500/10 shadow-[inset_3px_0_0_rgba(139,92,246,0.72)]'
+                            : 'hover:bg-arena-elements-item-backgroundHover'
                         }`}
                         aria-pressed={isSelected}
                         onClick={() => setSelectedDecisionId(decisionId)}
                       >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className={`font-data text-sm font-bold ${actionTone}`}>
-                            {formatTradeAction(trade.action)}
+                        <div className="font-data text-xs leading-tight text-arena-elements-textTertiary">
+                          {formatTradeTime(trade.timestamp)}
+                        </div>
+                        <div className={`font-data text-xs font-bold ${actionTone}`}>
+                          {formatTradeAction(trade.action)}
+                        </div>
+                        <div className="flex min-w-0 items-center gap-2" title={instrumentLabel}>
+                          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-100 font-data text-[9px] font-bold text-sky-700 ring-1 ring-black/5 dark:bg-sky-500/20 dark:text-sky-200 dark:ring-white/10">
+                            {compactInstrumentIcon(instrumentLabel)}
+                          </span>
+                          <span className="truncate font-display text-sm font-semibold text-arena-elements-textPrimary">
+                            {instrumentLabel}
+                          </span>
+                        </div>
+                        <div className="min-w-0 text-right">
+                          <div className="font-data text-sm font-semibold text-arena-elements-textPrimary">
+                            {notionalLabel}
                           </div>
-                          <div className="font-data text-xs text-arena-elements-textTertiary">
-                            {formatTradeTime(trade.timestamp)}
+                          <div className="truncate font-data text-[10px] uppercase tracking-wide text-arena-elements-textTertiary">
+                            {formatTradeMicrostructure(trade)}
                           </div>
                         </div>
-                        <div className="mt-2 min-w-0">
-                          {renderTradeTapeInstrument(trade)}
-                        </div>
-                        {trade.notionalUsd != null && trade.notionalUsd > 0 && (
-                          <div className="mt-1 font-data text-sm text-arena-elements-textSecondary">
-                            {formatChartCurrency(trade.notionalUsd)}
-                          </div>
-                        )}
                       </button>
                     );
                   })}

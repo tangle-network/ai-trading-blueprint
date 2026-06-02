@@ -840,9 +840,9 @@ export function TradingPerformanceChart({
         href="https://www.tradingview.com/lightweight-charts/"
         target="_blank"
         rel="noreferrer"
-        className="absolute bottom-2 right-3 rounded-sm bg-arena-elements-background-depth-1/45 px-1.5 py-0.5 font-data text-[9px] uppercase tracking-wider text-arena-elements-textTertiary/70 transition-colors hover:text-arena-elements-textPrimary"
+        className="absolute bottom-2 right-3 rounded-sm bg-arena-elements-background-depth-1/35 px-1.5 py-0.5 font-data text-[8px] uppercase tracking-wider text-arena-elements-textTertiary/45 transition-colors hover:text-arena-elements-textSecondary"
       >
-        Charts by TradingView
+        Powered by TradingView
       </a>
     </div>
   );

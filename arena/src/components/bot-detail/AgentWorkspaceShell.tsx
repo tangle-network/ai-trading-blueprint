@@ -217,13 +217,14 @@ export function AgentWorkspaceShell({
                 <span className="i-ph:arrow-left text-base" aria-hidden="true" />
                 Arena
               </Link>
-              <div className="flex min-w-[260px] max-w-[360px] items-center gap-2.5">
-                <Identicon address={bot.operatorAddress as Address} size={28} />
+              <div className="flex min-w-[280px] max-w-[420px] items-center gap-3">
+                <Identicon address={bot.operatorAddress as Address} size={34} />
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
-                    <h1 className="truncate font-display text-base font-semibold text-arena-elements-textPrimary">
+                    <h1 className="truncate font-display text-lg font-bold tracking-tight text-arena-elements-textPrimary">
                       {title}
                     </h1>
+                    <Badge variant={botStatusBadgeVariant(bot.status)}>{botStatusLabel(bot.status)}</Badge>
                     <div className="hidden shrink-0 items-center overflow-hidden rounded-md border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 font-data text-[11px] text-arena-elements-textTertiary sm:inline-flex">
                       <code className="px-2 py-1" title={bot.operatorAddress}>
                         {formatCompactAddress(bot.operatorAddress)}
@@ -252,9 +253,13 @@ export function AgentWorkspaceShell({
                     </div>
                   </div>
                   <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5">
-                    <Badge variant={botStatusBadgeVariant(bot.status)}>{botStatusLabel(bot.status)}</Badge>
                     <Badge variant="accent">{formatStrategyType(bot.strategyType)}</Badge>
-                    {bot.verificationState === 'unverified' && <Badge variant="outline">Unverified</Badge>}
+                    <Badge variant={bot.verificationState === 'unverified' ? 'outline' : 'success'}>
+                      {bot.verificationState === 'unverified' ? 'Unverified' : 'Verified operator'}
+                    </Badge>
+                    {bot.validationTrust && (
+                      <Badge variant="outline">{formatStrategyType(bot.validationTrust)}</Badge>
+                    )}
                     <span className="font-data text-xs text-arena-elements-textTertiary">
                       {bot.paperTrade ? 'Paper mode' : 'Live'} · {targetNetwork}
                     </span>
