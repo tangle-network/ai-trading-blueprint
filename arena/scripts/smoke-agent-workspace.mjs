@@ -1112,7 +1112,7 @@ async function assertFixtureHomeDashboard(page, baseUrl, { screenshotDir = '' } 
 }
 
 async function clickNav(page, label) {
-  const clicked = await evaluate(page, `(async () => {
+  const clicked = await waitFor(() => evaluate(page, `(async () => {
     const normalize = (value) => value.replace(/\\s+/g, ' ').trim().toLowerCase();
     const target = normalize(${JSON.stringify(label)});
     const candidates = Array.from(document.querySelectorAll('button, a'));
@@ -1120,7 +1120,7 @@ async function clickNav(page, label) {
     if (!element) return false;
     element.click();
     return true;
-  })()`);
+  })()`), { timeoutMs: 8_000, intervalMs: 150 });
   if (!clicked) throw new Error(`Could not click workspace nav item: ${label}`);
 }
 
