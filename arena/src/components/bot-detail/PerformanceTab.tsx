@@ -19,7 +19,6 @@ import type { Trade } from '~/lib/types/trade';
 import {
   formatTradeActionLabel,
   formatTradeUsd,
-  getHyperliquidMarketLabel,
   getTradeActionToneClass,
   getTradeMarketLabel,
   isBuySideTradeAction,
@@ -565,6 +564,9 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           subvaluePrefix: 'Low',
         },
       ] as const;
+  const chartHeading = effectiveChartMode === 'market'
+    ? `${isHyperliquidPerpBot && marketCandleToken ? `${marketCandleToken}-PERP` : marketCandleToken ?? 'Market'} Terminal`
+    : 'Account Terminal';
 
   if (isLoading) {
     return (
@@ -607,9 +609,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="font-display text-2xl font-bold tracking-tight">
-                  {effectiveChartMode === 'market' && marketCandleToken
-                    ? `${marketCandleToken} Price`
-                    : 'Account Value (USDC)'}
+                  {chartHeading}
                 </h2>
               </div>
               {(lastCheckpointLabel || liveNavLabel) && (
@@ -750,7 +750,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             <div className="glass-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl p-3">
               <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
                 <h3 className="font-display text-sm font-bold uppercase tracking-[0.12em] text-arena-elements-textPrimary">
-                  Execution Tape
+                  Execution Inspector
                 </h3>
                 <span className="rounded-full border border-arena-elements-dividerColor/70 px-2.5 py-1 text-xs font-data text-arena-elements-textTertiary">
                   Loading
@@ -781,7 +781,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
               <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
                 <div>
                   <h3 className="font-display text-sm font-bold uppercase tracking-[0.12em] text-arena-elements-textPrimary">
-                    Execution Tape
+                    Execution Inspector
                   </h3>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5 font-data text-[11px] text-arena-elements-textTertiary">
                     <span>{buyTapeCount} buy</span>
@@ -820,12 +820,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                 />
                 <div
                   className="min-h-0 overflow-y-auto rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/28 p-2"
-                  aria-label="Trade decisions"
+                  aria-label="Recent fills"
                   tabIndex={0}
                 >
                   <div className="mb-2 flex items-center justify-between gap-2 px-1 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-                    <span>Fill Ledger</span>
-                    <span>Side / Market / Size</span>
+                    <span>Recent Fills</span>
+                    <span>Side / Instrument / Notional</span>
                   </div>
                   {recentTradeTape.map((trade) => {
                     const decisionId = `trade:${trade.id}`;

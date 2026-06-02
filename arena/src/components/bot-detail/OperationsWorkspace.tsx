@@ -3,7 +3,8 @@ import { Badge } from '@tangle-network/blueprint-ui/components';
 import type { Bot } from '~/lib/types/bot';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import { ErrorBoundary } from '~/components/ErrorBoundary';
-import { botStatusBadgeVariant, botStatusLabel } from '~/lib/format';
+import { botStatusBadgeVariant, botStatusLabel, formatNumber } from '~/lib/format';
+import { WorkspaceNavStrip } from './shared/WorkspacePrimitives';
 
 export type OperationsPanel =
   | 'overview'
@@ -201,6 +202,56 @@ function ActionCard({
   );
 }
 
+function readNumberField(record: Record<string, unknown> | undefined, keys: string[]): number | null {
+  if (!record) return null;
+  for (const key of keys) {
+    const raw = record[key];
+    const value = typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string'
+        ? Number.parseFloat(raw)
+        : null;
+    if (value != null && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function readPositionFraction(strategyConfig: Record<string, unknown> | undefined): number | null {
+  const sizing = strategyConfig?.position_sizing;
+  if (!sizing || typeof sizing !== 'object') return null;
+  return readNumberField(sizing as Record<string, unknown>, ['fraction', 'max_fraction', 'pct']);
+}
+
+function formatGuardrailPercent(value: number | null): string {
+  if (value == null) return 'Unset';
+  const percent = value > 0 && value <= 1 ? value * 100 : value;
+  return `${formatNumber(percent, { maximumFractionDigits: percent >= 10 ? 0 : 1 })}%`;
+}
+
+function GuardrailTile({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/34 px-3 py-2.5">
+      <div className="truncate font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+        {label}
+      </div>
+      <div className="mt-1 truncate font-data text-lg font-bold text-arena-elements-textPrimary">
+        {value}
+      </div>
+      <div className="mt-1 truncate text-sm text-arena-elements-textSecondary">
+        {detail}
+      </div>
+    </div>
+  );
+}
+
 function OperationsOverview({
   bot,
   panels,
@@ -219,6 +270,13 @@ function OperationsOverview({
   const needsSecrets = bot.secretsConfigured === false || bot.status === 'needs_config';
   const envelopeMode = bot.validationTrust === 'envelope';
   const activePanelValues = new Set(panels.map((panel) => panel.value));
+  const maxDrawdown = readNumberField(bot.riskParams, ['max_drawdown_pct', 'max_drawdown']);
+  const stopLoss = readNumberField(bot.riskParams, ['stop_loss_pct', 'stop_loss']);
+  const positionCap = readNumberField(bot.riskParams, ['max_position_size_pct', 'max_position_pct'])
+    ?? readPositionFraction(bot.strategyConfig);
+  const maxLifetime = bot.maxLifetimeDays != null && bot.maxLifetimeDays > 0
+    ? `${bot.maxLifetimeDays}d`
+    : 'Open';
   const actionCards = [
     canCommand && needsSecrets && activePanelValues.has('secrets')
       ? {
@@ -331,6 +389,39 @@ function OperationsOverview({
               />
             ))}
           </div>
+
+          <div className="mt-3 rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/24 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+                Guardrails
+              </div>
+              <span className="font-data text-xs text-arena-elements-textTertiary">
+                {runtimeModeLabel(bot)}
+              </span>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+              <GuardrailTile
+                label="Max DD"
+                value={formatGuardrailPercent(maxDrawdown)}
+                detail="loss ceiling"
+              />
+              <GuardrailTile
+                label="Position Cap"
+                value={formatGuardrailPercent(positionCap)}
+                detail="capital fraction"
+              />
+              <GuardrailTile
+                label="Stop Loss"
+                value={formatGuardrailPercent(stopLoss)}
+                detail="per position"
+              />
+              <GuardrailTile
+                label="Runtime"
+                value={maxLifetime}
+                detail={bot.windDownStartedAt ? 'wind-down started' : 'mandate window'}
+              />
+            </div>
+          </div>
         </section>
 
         <aside className="rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/44 p-4">
@@ -441,6 +532,15 @@ export function OperationsWorkspace({
   const [activePanel, setActivePanel] = useState<OperationsPanel>(
     requestedPanel ?? 'overview',
   );
+  const panelNavItems = useMemo(
+    () => panels.map((panel) => ({
+      value: panel.value,
+      label: panel.label,
+      icon: panel.icon,
+      badge: panel.badge ? <Badge variant="amber" className="text-[10px]">{panel.badge}</Badge> : undefined,
+    })),
+    [panels],
+  );
 
   useEffect(() => {
     if (requestedPanel) setActivePanel(requestedPanel);
@@ -534,31 +634,13 @@ export function OperationsWorkspace({
               </p>
             )}
           </div>
-          <nav
-            className="flex max-w-full gap-1 overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/58 p-1"
-            aria-label="Operations panels"
-          >
-          {panels.map((panel) => {
-            const selected = panel.value === effectiveActivePanel;
-            return (
-              <button
-                key={panel.value}
-                type="button"
-                onClick={() => selectPanel(panel.value)}
-                aria-current={selected ? 'page' : undefined}
-                className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
-                  selected
-                    ? 'bg-violet-500/14 text-arena-elements-textPrimary'
-                    : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
-                }`}
-              >
-                <span className={`${panel.icon} text-base ${selected ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary'}`} aria-hidden="true" />
-                <span>{panel.label}</span>
-                {panel.badge && <Badge variant="amber" className="text-[10px]">{panel.badge}</Badge>}
-              </button>
-            );
-          })}
-          </nav>
+          <WorkspaceNavStrip
+            items={panelNavItems}
+            activeValue={effectiveActivePanel}
+            onSelect={selectPanel}
+            ariaLabel="Operations panels"
+            buttonClassName="h-9"
+          />
         </div>
       </div>
 

@@ -44,7 +44,8 @@ export function LatestAgentTrades({
 
   return (
     <section
-      className={`${isPanel ? 'flex h-full min-h-0 flex-col' : 'mb-6'} rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/42 ${className}`}
+      data-testid="live-fill-tape"
+      className={`${isPanel ? 'flex h-full min-h-0 flex-col overflow-hidden' : 'mb-6'} rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/42 ${className}`}
       aria-live="polite"
     >
       <div className="flex items-center justify-between gap-4 border-b border-arena-elements-dividerColor/60 px-4 py-3 sm:px-5">
@@ -76,9 +77,71 @@ export function LatestAgentTrades({
         <div className={`${isPanel ? 'flex min-h-0 flex-1 items-center justify-center' : 'px-5 py-10'} text-center text-sm text-arena-elements-textSecondary`}>
           No recent fills reported by active agents.
         </div>
+      ) : isPanel ? (
+        <div
+          data-testid="live-fill-tape-scroll"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        >
+          <div className="sticky top-0 z-10 grid grid-cols-[3.2rem_minmax(0,1fr)_4.75rem_minmax(8rem,1.15fr)_5.5rem] gap-3 border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/96 px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary backdrop-blur">
+            <span>Age</span>
+            <span>Agent</span>
+            <span>Action</span>
+            <span>Market</span>
+            <span className="text-right">Notional</span>
+          </div>
+          <div className="divide-y divide-arena-elements-dividerColor/50">
+            {visibleTrades.map(({ trade, bot, botId, botName }) => {
+              const operatorAddress = bot?.operatorAddress;
+              const hasOperatorAddress = operatorAddress != null && isAddress(operatorAddress);
+              const agentName = bot?.name ?? botName;
+              return (
+                <button
+                  key={`${botId}:${trade.id}`}
+                  type="button"
+                  className="group grid w-full grid-cols-[3.2rem_minmax(0,1fr)_4.75rem_minmax(8rem,1.15fr)_5.5rem] items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                  aria-label={`Open ${agentName} performance`}
+                  onClick={() => navigate(`/arena/bot/${encodeURIComponent(botId)}/performance`)}
+                >
+                  <span
+                    className="font-data text-sm text-arena-elements-textTertiary"
+                    title={new Date(trade.timestamp).toLocaleString()}
+                  >
+                    {formatTradeAge(trade.timestamp)}
+                  </span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    {hasOperatorAddress ? (
+                      <Identicon address={operatorAddress as Address} size={22} />
+                    ) : (
+                      <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
+                    )}
+                    <span className="truncate font-display text-sm font-semibold text-arena-elements-textPrimary group-hover:text-violet-700 dark:group-hover:text-violet-300">
+                      {agentName}
+                    </span>
+                  </span>
+                  <span className={`inline-flex h-8 items-center justify-center rounded-md px-2 font-data text-xs font-bold ${getTradeActionPillClass(trade.action)}`}>
+                    {formatTradeActionLabel(trade.action)}
+                  </span>
+                  <span className="min-w-0">
+                    <TradeInstrumentDisplay
+                      trade={trade}
+                      size="sm"
+                      labelClassName="max-w-full"
+                    />
+                    <span className="mt-0.5 block truncate pl-8 font-data text-xs text-arena-elements-textSecondary">
+                      {formatTradeModeLabel(trade)}
+                    </span>
+                  </span>
+                  <span className="text-right font-data text-base font-semibold text-arena-elements-textPrimary">
+                    {formatTradeUsd(trade.notionalUsd)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       ) : (
-        <div className={`${isPanel ? 'min-h-0 flex-1 overflow-auto' : 'overflow-x-auto'}`}>
-          <table className={`w-full border-separate border-spacing-0 ${isPanel ? 'min-w-[500px] [&_td]:px-3 [&_th]:px-3' : 'min-w-[760px]'}`}>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] border-separate border-spacing-0">
             <thead className="sticky top-0 z-10 bg-arena-elements-background-depth-2/96 backdrop-blur">
               <tr className="border-b border-arena-elements-dividerColor/60">
                 <th className="px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Age</th>
@@ -86,9 +149,9 @@ export function LatestAgentTrades({
                 <th className="px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Action</th>
                 <th className="px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Market</th>
                 <th className="px-4 py-2 text-right font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Notional</th>
-                <th className={`${isPanel ? 'hidden' : ''} px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary`}>Mode</th>
-                <th className={`${isPanel ? 'hidden' : ''} px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary`}>Status</th>
-                <th className={`${isPanel ? 'hidden' : ''} px-4 py-2 text-right font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary`}>Ref</th>
+                <th className="px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Mode</th>
+                <th className="px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Status</th>
+                <th className="px-4 py-2 text-right font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Ref</th>
               </tr>
             </thead>
             <tbody>
@@ -126,38 +189,33 @@ export function LatestAgentTrades({
                         ) : (
                           <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
                         )}
-                        <span className={`${isPanel ? 'max-w-[126px]' : ''} truncate font-display text-sm font-semibold text-arena-elements-textPrimary group-hover:text-violet-700 dark:group-hover:text-violet-300`}>
+                        <span className="truncate font-display text-sm font-semibold text-arena-elements-textPrimary group-hover:text-violet-700 dark:group-hover:text-violet-300">
                           {bot?.name ?? botName}
                         </span>
                       </Link>
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
-                      <span className={`inline-flex h-8 ${isPanel ? 'min-w-[4.5rem] px-2.5 text-xs' : 'min-w-[4.25rem] px-2.5'} items-center justify-center rounded-md font-data font-bold ${getTradeActionPillClass(trade.action)}`}>
+                      <span className={`inline-flex h-8 min-w-[4.25rem] items-center justify-center rounded-md px-2.5 font-data font-bold ${getTradeActionPillClass(trade.action)}`}>
                         {formatTradeActionLabel(trade.action)}
                       </span>
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
                       <TradeInstrumentDisplay
                         trade={trade}
-                        size={isPanel ? 'sm' : 'md'}
-                        labelClassName={isPanel ? 'max-w-[150px]' : 'max-w-[280px]'}
+                        size="md"
+                        labelClassName="max-w-[280px]"
                       />
-                      {isPanel && (
-                        <div className="mt-0.5 truncate pl-8 font-data text-xs text-arena-elements-textSecondary">
-                          {formatTradeModeLabel(trade)}
-                        </div>
-                      )}
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 text-right align-middle font-data text-base font-semibold text-arena-elements-textPrimary">
                       {formatTradeUsd(trade.notionalUsd)}
                     </td>
-                    <td className={`${isPanel ? 'hidden' : ''} border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textSecondary`}>
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textSecondary">
                       {formatTradeModeLabel(trade)}
                     </td>
-                    <td className={`${isPanel ? 'hidden' : ''} border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textSecondary`}>
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textSecondary">
                       {trade.status}
                     </td>
-                    <td className={`${isPanel ? 'hidden' : ''} border-b border-arena-elements-dividerColor/45 px-4 py-3 text-right align-middle font-data text-sm text-arena-elements-textTertiary`}>
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 text-right align-middle font-data text-sm text-arena-elements-textTertiary">
                       {formatReference(trade)}
                     </td>
                   </tr>

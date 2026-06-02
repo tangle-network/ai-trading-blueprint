@@ -1702,3 +1702,130 @@ Route-stack decision:
 Verification:
 
 - `pnpm --dir arena exec vitest run src/routes/__tests__/bot-workspace-routing.test.tsx src/components/bot-detail/__tests__/RunsTab.test.tsx --reporter=dot` passes: 2 files, 18 tests.
+
+## 2026-06-02 Expert Trading Terminal Alternatives
+
+Reference research used for this pass:
+
+- Hyperliquid order books are price-time priority CLOBs with perp margin checks, so an agent terminal must expose execution sequence, fills, and margin/account state as first-class context: https://hyperliquid.gitbook.io/hyperliquid-docs/hypercore/order-book
+- Polymarket prices are probabilities and the order book/spread determines executable price, so prediction-market agents need probability, spread/depth, liquidity, outcome, and resolution context instead of generic token-pair UI: https://docs.polymarket.com/concepts/prices-orderbook
+- Coinbase Advanced positions itself around TradingView charting plus configurable widgets for split-second execution, which validates a terminal-style workspace over scattered dashboard cards: https://www.coinbase.com/advanced-trade
+- Kraken Pro exposes chart, order book, market trades, and order/position context in the trading interface; the market-trades feed uses direction/color as immediate execution signal: https://support.kraken.com/articles/kraken-pro-trading-interface-guide
+- IBKR Mosaic puts charts, watchlists, quote detail, order entry, portfolio, order monitor, and news in one customizable window, which is the right model for a serious multi-venue agent operator: https://www.ibkrguides.com/traderworkstation/mosaic-layout.htm
+- Lightweight Charts supports multi-pane/price-scale style work, markers, and chart synchronization primitives; we should extend the current chart instead of replacing it: https://www.tradingview.com/blog/en/announcing-lightweight-charts-3-0-19155/
+
+### Alternative 1 — Agent Terminal Cockpit
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Agent strip: name · mode · operator · account · return · DD · trades         │
+├──────────────────────────────────────────────────────────┬───────────────────┤
+│ Chart: venue candles + fill markers + volume             │ Execution         │
+│                                                          │ Inspector         │
+│ Lower pane: NAV / PnL / drawdown                         │ selected fill     │
+│                                                          │ recent fills      │
+│                                                          │ rationale         │
+├──────────────────────────────────────────────────────────┴───────────────────┤
+│ Compact rail: positions · open risk · live run status · promotion status      │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Rating: 9.4/10. Best default because it is closest to Hyperliquid/Kraken/Coinbase mental models while adding the agent-specific advantage: why the fill happened. It makes the interesting thing obvious: chart move, trade marker, selected decision, current account state.
+
+Tradeoff: requires disciplined right-rail hierarchy and strong fallbacks for agents without market candles.
+
+### Alternative 2 — Quant Mission Control
+
+```text
+┌─────────────────────────────┬────────────────────────────────────────────────┐
+│ Strategy state + promotion  │ Runs transcript / current reasoning cycle      │
+│ risk budget + drift         │                                                │
+├─────────────────────────────┼────────────────────────────────────────────────┤
+│ chart + executions          │ evaluator scores + self-improvement candidates │
+└─────────────────────────────┴────────────────────────────────────────────────┘
+```
+
+Rating: 8.7/10. Strong for self-improving agents and genetic orchestration, weaker for fast trading because price/execution is not always first.
+
+### Alternative 3 — Exchange Clone Pro
+
+```text
+┌─────────────┬────────────────────────────┬──────────────┐
+│ Markets     │ Chart                      │ Order book   │
+│ watchlist   │                            │ / depth      │
+├─────────────┴────────────────────────────┴──────────────┤
+│ Positions · orders · fills · agent logs                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+Rating: 8.1/10. Familiar to active traders, but our agents do not always expose a real order form/order book across all venues. It risks copying exchange furniture without exposing the agent edge.
+
+### Alternative 4 — Arena Intelligence Dashboard
+
+```text
+┌──────────────────────────────────────────────────────────┐
+│ Platform volume · latest trades · leaderboard             │
+├──────────────────────────────┬───────────────────────────┤
+│ selected agent preview       │ copilot / trade tape       │
+└──────────────────────────────┴───────────────────────────┘
+```
+
+Rating: 7.8/10. Best for discovery/homepage, not best for a selected agent. Keep this model for `/`, not `/arena/bot/:id/performance`.
+
+### Alternative 5 — Conversation-First Agent Room
+
+```text
+┌──────────────────────────────────────────────────────────┐
+│ Full transcript / chat / run playback                     │
+├──────────────────────────────┬───────────────────────────┤
+│ compact chart                │ compact portfolio          │
+└──────────────────────────────┴───────────────────────────┘
+```
+
+Rating: 7.2/10. Good for understanding long reasoning sessions, but too slow for trading unless the user explicitly enters Chat/Runs focus mode. We already moved Chat/Runs toward this.
+
+Selected direction: Alternative 1 for agent Performance, Alternative 2 for Operations, Alternative 4 for Home. Do not introduce another sidebar. Build professional terminal density inside the existing route-native shell.
+
+Immediate implementation rule:
+
+- Performance should have one right-rail concept: `Execution Inspector`. `Execution Tape` and `Fill Ledger` are the same mental object and must merge.
+- Operations should reuse shared workspace navigation primitives; no hand-rolled second nav that drifts from the main workspace system.
+- Chart work should extend the current Lightweight Charts runtime, preserving existing candle, marker, volume, and lower NAV pane behavior.
+
+Shipped in this tranche:
+
+- Performance chart heading now names the workspace like a terminal (`ETH-PERP Terminal` for Hyperliquid market mode, `Account Terminal` for NAV mode) instead of generic widget copy.
+- Performance right rail now has one concept: `Execution Inspector`.
+- The fill list inside that rail is `Recent Fills`, with `Side / Instrument / Notional`, not a separate `Fill Ledger`.
+- Operations panel navigation now uses the shared `WorkspaceNavStrip` primitive, removing duplicated tab styling and behavior.
+- Operations Overview now fills the safety cockpit with real guardrails: max drawdown, position cap, stop loss, and runtime window.
+
+Verification so far:
+
+- `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/PerformanceTab.test.tsx src/components/bot-detail/__tests__/OperationsWorkspace.test.tsx src/components/bot-detail/shared/__tests__/WorkspacePrimitives.test.tsx --reporter=dot` passes: 3 files, 21 tests.
+- `pnpm --dir arena typecheck` passes.
+
+## 2026-06-02 Sandbox Rail + Live Fill Tape Alignment Pass
+
+Source audit:
+
+- Reviewed `/home/drew/code/agent-dev-container/products/sandbox/web/src/layouts/DashboardLayout.tsx`, `src/globals.css`, `src/components/ThemeCustomizer.tsx`, and the sandbox UI package rail primitives before touching Arena shell code.
+- Reused the sandbox direction, not the package wholesale: compact icon rail density, single-purpose footer controls, direct active nav states, and bounded `h-screen` workspace behavior. Arena keeps its existing wallet, chain, transaction, route, and auth primitives.
+
+Shipped in this slice:
+
+- Global sidebar footer no longer wraps `ThemeToggle` in oversized card-like containers. Collapsed sidebar now uses a tight icon rail for expand, chain, theme, and transaction history. Expanded sidebar uses one compact footer control row plus wallet below it.
+- Desktop sidebar width tightened from `w-20` to `w-16` when collapsed, with 44px nav targets and sandbox-style active item treatment.
+- Homepage Market Pulse command row is now viewport-bounded and gives both primary siblings the same `h-full min-h-0` contract.
+- `Live Fill Tape` panel no longer tries to squeeze the full trade table into a 540px sibling. Panel mode renders a purpose-built vertical execution feed with sticky headers, internal `overflow-y-auto`, agent identity, action, instrument, mode, and notional. The full wide table remains available for the non-panel variant.
+- Smoke navigation assertions now inspect the actual sidebar nav DOM labels instead of brittle body-text matches, which survives collapsed/icon rail layout changes.
+
+Verification:
+
+- `pnpm --dir arena exec vitest run src/components/layout/__tests__/ArenaAppShell.test.tsx --reporter=dot` passes: 1 file, 8 tests.
+- `pnpm --dir arena exec vitest run src/components/arena/__tests__/LatestAgentTrades.test.tsx src/routes/__tests__/index.test.tsx --reporter=dot` passes: 2 files, 3 tests.
+- `pnpm --dir arena test -- --reporter=dot` passes: 66 files, 380 tests.
+- `pnpm --dir arena typecheck` passes.
+- `pnpm --dir arena build` passes.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-fill-tape-feed-smoke-20260602` passes.
+- Visual inspection of `.evolve/arena-fill-tape-feed-smoke-20260602/1440x900-home.png` and `1280x800-home.png` confirms the volume chart and fill tape share the same height, the fill tape scrolls internally, and there is no horizontal tape scrollbar.

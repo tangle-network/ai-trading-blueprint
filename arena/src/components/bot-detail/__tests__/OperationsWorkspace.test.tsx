@@ -61,8 +61,11 @@ function makeBot(overrides: Partial<Bot> = {}): Bot {
     lifecycleStatus: 'active',
     controlAvailable: true,
     tradingActive: true,
+    maxLifetimeDays: 30,
     secretsConfigured: false,
     submitterAddress: '0x3333333333333333333333333333333333333333',
+    strategyConfig: { position_sizing: { fraction: 0.12 } },
+    riskParams: { max_drawdown_pct: '5', stop_loss_pct: '1.8' },
     paperTrade: true,
     callId: 7,
     source: 'operator',
@@ -91,6 +94,15 @@ describe('OperationsWorkspace', () => {
     expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Safety and runtime map' })).toBeInTheDocument();
     expect(screen.getByText('Trading loop active')).toBeInTheDocument();
+    expect(screen.getByText('Guardrails')).toBeInTheDocument();
+    expect(screen.getByText('Max DD')).toBeInTheDocument();
+    expect(screen.getByText('5%')).toBeInTheDocument();
+    expect(screen.getByText('Position Cap')).toBeInTheDocument();
+    expect(screen.getByText('12%')).toBeInTheDocument();
+    expect(screen.getByText('Stop Loss')).toBeInTheDocument();
+    expect(screen.getByText('1.8%')).toBeInTheDocument();
+    expect(screen.getAllByText('Runtime').length).toBeGreaterThan(0);
+    expect(screen.getByText('30d')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Configure Secrets/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Review Envelope/i })).toBeInTheDocument();
     expect(screen.queryByText('Loading Validation')).not.toBeInTheDocument();

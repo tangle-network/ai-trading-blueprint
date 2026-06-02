@@ -10,6 +10,8 @@ const hoisted = vi.hoisted(() => ({
     </div>
   )),
   useTradingRouteAutoAuthMock: vi.fn(),
+  latestAgentTradesProps: [] as any[],
+  platformVolumeChartProps: [] as any[],
 }));
 
 const accountState = {
@@ -55,11 +57,17 @@ vi.mock('~/components/arena/LeaderboardTable', () => ({
 }));
 
 vi.mock('~/components/arena/LatestAgentTrades', () => ({
-  LatestAgentTrades: () => <div>latest trades</div>,
+  LatestAgentTrades: (props: any) => {
+    hoisted.latestAgentTradesProps.push(props);
+    return <div>latest trades</div>;
+  },
 }));
 
 vi.mock('~/components/arena/PlatformVolumeChart', () => ({
-  PlatformVolumeChart: () => <div>platform volume</div>,
+  PlatformVolumeChart: (props: any) => {
+    hoisted.platformVolumeChartProps.push(props);
+    return <div>platform volume</div>;
+  },
 }));
 
 vi.mock('~/components/arena/SparklineChart', () => ({
@@ -93,6 +101,8 @@ describe('leaderboard auth-aware rendering', () => {
     accountState.isConnected = true;
     hoisted.operatorAccessCardMock.mockClear();
     hoisted.useTradingRouteAutoAuthMock.mockClear();
+    hoisted.latestAgentTradesProps.length = 0;
+    hoisted.platformVolumeChartProps.length = 0;
   });
 
   it('enables trading auto-auth and passes trading operator URLs to the fallback card', async () => {
@@ -109,5 +119,24 @@ describe('leaderboard auth-aware rendering', () => {
       description: 'Authenticate to load operator-managed agents and live leaderboard metrics.',
     }));
     expect(screen.getByText('Operator authentication required')).toBeInTheDocument();
+  });
+
+  it('keeps platform volume and live fill tape on the same bounded command row', async () => {
+    const { default: IndexPage } = await import('../_index');
+    render(<IndexPage />, { wrapper: createWrapper() });
+
+    expect(screen.getByRole('region', { name: /platform volume and live fill tape/i })).toHaveClass(
+      'h-[min(620px,calc(100dvh-17rem))]',
+      'min-h-[480px]',
+    );
+    expect(hoisted.platformVolumeChartProps.at(-1)).toEqual(expect.objectContaining({
+      variant: 'command',
+      className: 'h-full min-h-0',
+    }));
+    expect(hoisted.latestAgentTradesProps.at(-1)).toEqual(expect.objectContaining({
+      variant: 'panel',
+      limit: 20,
+      className: 'h-full min-h-0',
+    }));
   });
 });

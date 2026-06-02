@@ -533,9 +533,11 @@ describe('PerformanceTab', () => {
 
     expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.getByText('Loaded Trades')).toBeInTheDocument();
-    expect(screen.getByText('Execution Tape')).toBeInTheDocument();
+    expect(screen.getByText('Execution Inspector')).toBeInTheDocument();
     expect(screen.getByText('6 / 12')).toBeInTheDocument();
-    expect(screen.getByText('Fill Ledger')).toBeInTheDocument();
+    expect(screen.getByText('Recent Fills')).toBeInTheDocument();
+    expect(screen.queryByText('Execution Tape')).not.toBeInTheDocument();
+    expect(screen.queryByText('Fill Ledger')).not.toBeInTheDocument();
   });
 
   it('uses trade-page totals separately from loaded marker rows', () => {
@@ -624,7 +626,7 @@ describe('PerformanceTab', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { name: 'ETH Price' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'ETH-PERP Terminal' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Market' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('Last Price')).toBeInTheDocument();
     expect(screen.getByText('30D High / Low')).toBeInTheDocument();
@@ -676,7 +678,7 @@ describe('PerformanceTab', () => {
     render(<PerformanceTab bot={makeBot()} isLive canCommand />);
 
     expect(await screen.findByText('Owner chart copilot')).toBeInTheDocument();
-    expect(screen.getByText('Execution Tape')).toBeInTheDocument();
+    expect(screen.getByText('Execution Inspector')).toBeInTheDocument();
   });
 
   it('keeps authenticated non-commandable viewers on the public trade tape', async () => {
@@ -697,7 +699,7 @@ describe('PerformanceTab', () => {
     render(<PerformanceTab bot={makeBot()} isLive />);
 
     expect(screen.queryByText('Owner chart copilot')).not.toBeInTheDocument();
-    expect(await screen.findByText('Execution Tape')).toBeInTheDocument();
+    expect(await screen.findByText('Execution Inspector')).toBeInTheDocument();
   });
 
   it('keeps the agent recent-trades rail stable while the trade ledger loads', async () => {
@@ -715,7 +717,7 @@ describe('PerformanceTab', () => {
 
     render(<PerformanceTab bot={makeBot()} isLive />);
 
-    expect(await screen.findByText('Execution Tape')).toBeInTheDocument();
+    expect(await screen.findByText('Execution Inspector')).toBeInTheDocument();
     expect(screen.queryByText('Latest Trades')).not.toBeInTheDocument();
     expect(screen.getByText('Loading')).toBeInTheDocument();
   });

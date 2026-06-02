@@ -24,7 +24,7 @@ const SECTION_EXPECTATIONS = {
   performance: [
     ['Market', 'Account', 'Price'],
     ['ETH', 'Performance', 'Awaiting first checkpoint'],
-    ['Execution Tape', 'Latest Trades', 'Copilot'],
+    ['Execution Inspector', 'Latest Trades', 'Copilot'],
   ],
   portfolio: [
     'Portfolio',
@@ -1220,10 +1220,38 @@ async function assertRailWidthChange(page, label, beforeExpression, predicateExp
 async function assertCollapsibleRails(page, baseUrl, botId) {
   await setViewport(page, { width: 1600, height: 900 });
   await navigate(page, withPath(baseUrl, '/dashboard'));
-  await waitFor(async () => {
-    const bodyText = await evaluate(page, 'document.body.innerText');
-    return /Home|My Agents|Deploy/i.test(bodyText);
-  }, { timeoutMs: 12_000, intervalMs: 250 });
+  try {
+    await waitFor(async () => {
+      const metrics = await evaluate(page, `(() => {
+        const nav = document.querySelector('nav[aria-label="Arena navigation"]');
+        const labels = Array.from(nav?.querySelectorAll('a, button') ?? [])
+          .map((element) => [
+            element.textContent,
+            element.getAttribute('aria-label'),
+            element.getAttribute('title'),
+          ].filter(Boolean).join(' '))
+          .join(' ');
+        return {
+          pathname: location.pathname,
+          labels,
+          bodyText: document.body.innerText.slice(0, 900),
+        };
+      })()`);
+      return metrics.pathname.endsWith('/dashboard')
+        && /My Agents/i.test(metrics.labels)
+        && /Leaderboard/i.test(metrics.labels)
+        && /Deploy/i.test(metrics.labels)
+        ? metrics
+        : false;
+    }, { timeoutMs: 12_000, intervalMs: 250 });
+  } catch (error) {
+    const debugMetrics = await evaluate(page, `(() => ({
+      pathname: location.pathname,
+      navText: document.querySelector('nav[aria-label="Arena navigation"]')?.textContent ?? '',
+      bodyText: document.body.innerText.slice(0, 900),
+    }))()`).catch(() => null);
+    throw new Error(`Dashboard sidebar did not render expected navigation: ${JSON.stringify(debugMetrics)}; ${error instanceof Error ? error.message : String(error)}`);
+  }
 
   const globalWidthExpression = `(() => document.querySelector('nav[aria-label="Arena navigation"]')?.closest('aside')?.getBoundingClientRect().width ?? 0)()`;
   const initialGlobalWidth = await evaluate(page, globalWidthExpression);
@@ -1252,10 +1280,23 @@ async function assertCollapsibleRails(page, baseUrl, botId) {
   }
 
   await navigate(page, withPath(baseUrl, `/arena/bot/${encodeURIComponent(botId)}/performance`));
-  await waitFor(async () => {
-    const bodyText = await evaluate(page, 'document.body.innerText');
-    return /Performance|Market|Account/i.test(bodyText);
-  }, { timeoutMs: 12_000, intervalMs: 250 });
+  try {
+    await waitFor(async () => {
+      const metrics = await evaluate(page, `(() => ({
+        pathname: location.pathname,
+        bodyText: document.body.innerText.slice(0, 1200),
+      }))()`);
+      return metrics.pathname.endsWith('/performance') && /Performance|Market|Account/i.test(metrics.bodyText)
+        ? metrics
+        : false;
+    }, { timeoutMs: 12_000, intervalMs: 250 });
+  } catch (error) {
+    const debugMetrics = await evaluate(page, `(() => ({
+      pathname: location.pathname,
+      bodyText: document.body.innerText.slice(0, 900),
+    }))()`).catch(() => null);
+    throw new Error(`Agent performance route did not settle after sidebar collapse check: ${JSON.stringify(debugMetrics)}; ${error instanceof Error ? error.message : String(error)}`);
+  }
 
   const hasGlobalAgentChrome = await evaluate(page, `Boolean(document.querySelector('nav[aria-label="Arena navigation"]'))`);
   if (hasGlobalAgentChrome) {

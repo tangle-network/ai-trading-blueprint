@@ -86,32 +86,46 @@ function DesktopArenaSidebar({
   sidebarCollapsed,
   setSidebarCollapsed,
 }: DesktopArenaSidebarProps) {
+  const toggleSidebar = () => setSidebarCollapsed((collapsed) => !collapsed);
+
   return (
     <aside
       className={cn(
-        'relative z-10 hidden shrink-0 flex-col border-r border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/86 shadow-[12px_0_38px_rgba(0,0,0,0.18)] backdrop-blur-xl transition-[width] duration-200 lg:flex',
-        sidebarCollapsed ? 'w-20' : 'w-64',
+        'relative z-10 hidden shrink-0 flex-col border-r border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 shadow-[12px_0_38px_rgba(0,0,0,0.18)] backdrop-blur-xl transition-[width] duration-200 lg:flex',
+        sidebarCollapsed ? 'w-16' : 'w-64',
       )}
     >
       <div className={cn(
-        'flex h-14 shrink-0 items-center gap-2 border-b border-arena-elements-dividerColor/70 px-3',
-        sidebarCollapsed ? 'justify-center' : 'justify-between',
+        'flex shrink-0 items-center border-b border-arena-elements-dividerColor/70',
+        sidebarCollapsed ? 'h-16 justify-center px-2' : 'h-14 justify-between gap-2 px-3',
       )}>
-        <Link to="/" className={cn('flex min-w-0 items-center', sidebarCollapsed && 'sr-only')}>
+        <Link
+          to="/"
+          className={cn(
+            'inline-flex min-w-0 items-center rounded-xl transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60',
+            sidebarCollapsed ? 'h-10 w-10 justify-center overflow-hidden [&_span:not(:first-child)]:hidden' : 'px-1',
+          )}
+          aria-label={sidebarCollapsed ? 'AI Trading Arena' : undefined}
+          title={sidebarCollapsed ? 'AI Trading Arena' : undefined}
+        >
           <TangleLogo label={sidebarCollapsed ? undefined : 'Trading Cloud'} />
         </Link>
-        <button
-          type="button"
-          onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
-          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/52 text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          <span className={sidebarCollapsed ? 'i-ph:caret-right-bold text-lg' : 'i-ph:caret-left-bold text-lg'} />
-        </button>
+        {!sidebarCollapsed && (
+          <SidebarIconButton
+            label="Collapse sidebar"
+            onClick={toggleSidebar}
+            icon="i-ph:caret-left-bold"
+          />
+        )}
       </div>
 
-      <nav className="shrink-0 space-y-1 px-2 py-3" aria-label="Arena navigation">
+      <nav
+        className={cn(
+          'shrink-0 space-y-1 py-3',
+          sidebarCollapsed ? 'px-2' : 'px-3',
+        )}
+        aria-label="Arena navigation"
+      >
         {primaryNavItems.map((item) => {
           const active = isNavActive(pathname, item.href);
           return (
@@ -119,16 +133,16 @@ function DesktopArenaSidebar({
               key={item.href}
               to={item.href}
               className={cn(
-                'flex h-10 items-center rounded-lg text-sm font-display font-medium transition-colors',
-                sidebarCollapsed ? 'justify-center px-0' : 'gap-2.5 px-3',
+                'group relative flex h-11 items-center rounded-xl text-sm font-display font-medium transition-all duration-150 active:scale-[0.98]',
+                sidebarCollapsed ? 'w-11 justify-center px-0' : 'gap-3 px-3',
                 active
-                  ? 'bg-violet-500/14 text-arena-elements-textPrimary'
+                  ? 'bg-violet-500/14 text-arena-elements-textPrimary shadow-[inset_0_0_0_1px_rgba(139,92,246,0.18)]'
                   : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary',
               )}
               title={sidebarCollapsed ? item.label : undefined}
               aria-label={sidebarCollapsed ? item.label : undefined}
             >
-              <span className={`${item.icon} text-base ${active ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary'}`} aria-hidden="true" />
+              <span className={`${item.icon} shrink-0 text-lg ${active ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary group-hover:text-arena-elements-textSecondary'}`} aria-hidden="true" />
               {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
             </NavLink>
           );
@@ -137,32 +151,68 @@ function DesktopArenaSidebar({
 
       <div className="min-h-0 flex-1 border-t border-arena-elements-dividerColor/60" />
 
-      <div className="shrink-0 border-t border-arena-elements-dividerColor/70 p-2">
-        <div className={cn('mb-2 grid gap-1', sidebarCollapsed ? 'grid-cols-1' : 'grid-cols-2')}>
-          <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
-            {sidebarCollapsed ? (
-              <button
-                type="button"
-                onClick={() => setSidebarCollapsed(false)}
-                className="inline-flex h-10 w-full items-center justify-center rounded-md text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
-                aria-label="Base Sepolia testnet"
-                title="Base Sepolia testnet"
-              >
-                <span className="i-ph:globe-hemisphere-west text-base" aria-hidden="true" />
-              </button>
-            ) : (
-              <ChainSwitcher />
-            )}
-          </div>
-          <div className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/50 p-1">
-            <ThemeToggle />
-          </div>
-        </div>
-        <div className="mb-2">
-          <TxDropdown />
-        </div>
-        {!sidebarCollapsed && <WalletButton />}
+      <div
+        className={cn(
+          'shrink-0 border-t border-arena-elements-dividerColor/70 p-2',
+          sidebarCollapsed ? 'flex flex-col items-center gap-1.5' : 'space-y-2',
+        )}
+      >
+        {sidebarCollapsed ? (
+          <>
+            <SidebarIconButton
+              label="Expand sidebar"
+              onClick={toggleSidebar}
+              icon="i-ph:caret-right-bold"
+            />
+            <SidebarIconButton
+              label="Base Sepolia testnet"
+              onClick={toggleSidebar}
+              icon="i-ph:globe-hemisphere-west"
+            />
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary [&>button]:h-10 [&>button]:w-10 [&>button]:rounded-xl">
+              <ThemeToggle />
+            </div>
+            <div className="[&>div>button]:h-11 [&>div>button]:w-11 [&>div>button]:rounded-xl [&>div>button]:border-0 [&>div>button]:bg-transparent [&>div>button]:p-0">
+              <TxDropdown />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/44 p-1.5">
+              <div className="min-w-0 flex-1 [&>div>button]:w-full">
+                <ChainSwitcher />
+              </div>
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary [&>button]:h-9 [&>button]:w-9 [&>button]:rounded-xl">
+                <ThemeToggle />
+              </div>
+              <div className="[&>div>button]:h-10 [&>div>button]:w-10 [&>div>button]:rounded-xl [&>div>button]:border-0 [&>div>button]:bg-transparent [&>div>button]:p-0">
+                <TxDropdown />
+              </div>
+            </div>
+            <WalletButton />
+          </>
+        )}
       </div>
     </aside>
+  );
+}
+
+interface SidebarIconButtonProps {
+  label: string;
+  icon: string;
+  onClick: () => void;
+}
+
+function SidebarIconButton({ label, icon, onClick }: SidebarIconButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-arena-elements-textSecondary transition-all duration-150 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+      aria-label={label}
+      title={label}
+    >
+      <span className={`${icon} text-lg`} aria-hidden="true" />
+    </button>
   );
 }

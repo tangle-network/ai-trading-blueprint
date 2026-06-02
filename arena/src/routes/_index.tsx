@@ -188,17 +188,20 @@ export default function IndexPage() {
         </div>
       </section>
 
-      <section className="mb-5 grid min-h-[480px] gap-3 xl:grid-cols-[minmax(0,1fr)_540px]">
+      <section
+        className="mb-5 grid h-[min(620px,calc(100dvh-17rem))] min-h-[480px] gap-3 xl:grid-cols-[minmax(0,1fr)_540px]"
+        aria-label="Platform volume and live fill tape"
+      >
         <PlatformVolumeChart
           bots={leaderboardBots}
           variant="command"
-          className="min-h-[480px]"
+          className="h-full min-h-0"
         />
         <LatestAgentTrades
           bots={leaderboardBots}
           variant="panel"
           limit={20}
-          className="min-h-[480px]"
+          className="h-full min-h-0"
         />
       </section>
 
