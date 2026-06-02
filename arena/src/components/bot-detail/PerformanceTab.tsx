@@ -169,29 +169,20 @@ function resolveExecutionCount({
     };
   }
 
-  const bestMetricCount = Math.max(metricCount ?? 0, summaryCount ?? 0, rosterCount ?? 0);
-  if (loadedTrades > bestMetricCount) {
-    return {
-      value: loadedTrades,
-      source: 'loaded-trades',
-      loaded: loadedTrades,
-      total: null,
-    };
-  }
-
-  if (bestMetricCount > 0) {
-    return {
-      value: bestMetricCount,
-      source: 'metric-total',
-      loaded: loadedTrades,
-      total: null,
-    };
-  }
-
   if (loadedTrades > 0) {
     return {
       value: loadedTrades,
       source: 'loaded-trades',
+      loaded: loadedTrades,
+      total: null,
+    };
+  }
+
+  const bestMetricCount = Math.max(metricCount ?? 0, summaryCount ?? 0, rosterCount ?? 0);
+  if (bestMetricCount > 0) {
+    return {
+      value: bestMetricCount,
+      source: 'metric-total',
       loaded: loadedTrades,
       total: null,
     };
@@ -655,11 +646,11 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     key={mode}
                     type="button"
                     className={`h-7 rounded-[4px] px-2.5 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 disabled:cursor-not-allowed disabled:opacity-45 ${
-                      chartMode === mode
+                      effectiveChartMode === mode
                         ? 'bg-[#50d2c1] text-[#04060c]'
                         : 'text-[#d2dad7] hover:bg-[#344148] hover:text-[#f6fefd]'
                     }`}
-                    aria-pressed={chartMode === mode}
+                    aria-pressed={effectiveChartMode === mode}
                     disabled={mode === 'market' && !hasMarketCandles}
                     onClick={() => setChartMode(mode)}
                   >
@@ -812,7 +803,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                       trade={selectedTrade}
                       size="md"
                       showVenue
-                      labelClassName="text-base"
+                      labelClassName="text-base !text-[#f6fefd]"
                     />
                   ) : undefined}
                   className="rounded-[5px] border border-[#273035] bg-[#0b1418]"
@@ -850,7 +841,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                           trade={trade}
                           size="sm"
                           showVenue={false}
-                          labelClassName="max-w-[150px] text-[14px] text-[#f6fefd]"
+                          labelClassName="max-w-[150px] text-[14px] !text-[#f6fefd]"
                         />
                         <div className="min-w-0 text-right">
                           <div className="font-data text-sm font-semibold tabular-nums text-[#f6fefd]">

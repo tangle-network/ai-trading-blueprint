@@ -36,6 +36,12 @@ describe('TradeInstrumentDisplay', () => {
     expect(container.querySelector('img[src="/token-icons/weth.svg"]')).not.toBeNull();
   });
 
+  it('applies custom label styling to DEX pair labels', () => {
+    render(<TradeInstrumentDisplay trade={makeTrade()} labelClassName="!text-[#f6fefd]" />);
+
+    expect(screen.getByText('USDC/WETH').className).toContain('!text-[#f6fefd]');
+  });
+
   it('renders Hyperliquid perps with market and size labels', () => {
     render(
       <TradeInstrumentDisplay

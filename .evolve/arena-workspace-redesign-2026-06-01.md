@@ -1919,3 +1919,41 @@ Verification:
 - `pnpm --dir arena build` passes.
 - `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-fill-tape-feed-smoke-20260602` passes.
 - Visual inspection of `.evolve/arena-fill-tape-feed-smoke-20260602/1440x900-home.png` and `1280x800-home.png` confirms the volume chart and fill tape share the same height, the fill tape scrolls internally, and there is no horizontal tape scrollbar.
+
+## 2026-06-02 Hyperliquid Terminal Live-Data Correction Pass
+
+Production evidence after `fix: upgrade arena performance terminal chart` (`ae27508`):
+
+- GitHub Actions:
+  - `Deploy arena UI to Cloudflare Pages` passed: `26814302862`.
+  - `Static Analysis` passed: `26814302854`.
+  - `CI` passed: `26814302875`.
+- Live smoke:
+  - `pnpm --dir arena smoke:agent-workspace -- --url https://trading-arena.blueprint.tangle.tools --allow-empty --screenshot-dir ../.evolve/arena-production-hyperliquid-terminal-smoke-20260602-ae27508` passed.
+  - Selected real recently traded bot: `trading-eecc41ef-255f-4360-82c5-a59306d1c92c`.
+  - Browser operator API/CORS passed for `https://178.104.232.124.sslip.io`.
+
+Live screenshot audit:
+
+- The production NAV chart could render with `Account` heading while the `Market` chart-mode button still appeared selected when no market candles were available.
+- The terminal `Fills` strip could show a checkpoint-derived count (`168`) while the visible ledger rail and agent header showed the inspectable trade history count (`100`). That is technically explainable but product-hostile; the trading surface should privilege the ledger the user can inspect unless the trade API returns an explicit total.
+- DEX pair labels in the terminal fills rail were inheriting the shared asset-pair primary text color instead of the terminal override, making `USDC/WETH` too low contrast.
+- Market-mode x-axis labels were too long at 1280px because candle ticks could pick NAV checkpoint labels like `Jun 2, 3:10 AM`.
+
+Shipped in this slice:
+
+- Chart mode buttons now reflect the effective rendered mode. If market candles are unavailable, `Market` is disabled and `NAV` is the active mode.
+- Fill counts now prefer the trade API total, then loaded ledger rows, then checkpoint metrics as a fallback. This keeps the Performance strip aligned with the trade rail and agent header in live data.
+- `AssetPairDisplay` now accepts `labelClassName`, so `TradeInstrumentDisplay` can render DEX pairs with readable terminal text while preserving token logos.
+- Performance terminal rail passes explicit terminal label color for selected and listed fills.
+- Market chart axis labels now use compact candle ticks in market mode and prefer candle labels over NAV checkpoint labels.
+
+Verification:
+
+- `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/PerformanceTab.test.tsx src/components/bot-detail/shared/__tests__/AssetDisplay.test.tsx --reporter=dot` passes: 2 files, 22 tests.
+- `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/PerformanceTab.test.tsx src/components/bot-detail/shared/__tests__/AssetDisplay.test.tsx src/components/bot-detail/__tests__/performanceChart.test.ts --reporter=dot` passes: 3 files, 30 tests.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-performance-terminal-count-mode-smoke-20260602-axis` passes.
+- Visual inspection of `.evolve/arena-performance-terminal-count-mode-smoke-20260602-axis/1280x800-performance.png` confirms compact x-axis labels and readable instrument labels in the terminal fill rail.
+- `pnpm --dir arena test` passes: 66 files, 383 tests.
+- `pnpm --dir arena typecheck` passes.
+- `pnpm --dir arena build` passes.

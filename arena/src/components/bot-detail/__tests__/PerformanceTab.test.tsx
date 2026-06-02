@@ -568,6 +568,55 @@ describe('PerformanceTab', () => {
     expect(screen.getByText('6 / 110')).toBeInTheDocument();
   });
 
+  it('keeps fill stats aligned to inspectable ledger rows when checkpoint counts are higher', () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 168,
+      },
+    ];
+    mockMetricsSummary = {
+      portfolio_value_usd: 10000,
+      total_pnl: 0,
+      trade_count: 168,
+    };
+    mockTrades = Array.from({ length: 100 }, (_, index) => makeTrade({
+      id: `trade-${index + 1}`,
+      timestamp: Date.parse(`2026-04-23T10:${String(index % 60).padStart(2, '0')}:00.000Z`),
+    }));
+    mockTradeTotal = null;
+
+    render(<PerformanceTab bot={makeBot({ totalTrades: 100 })} isLive />);
+
+    expect(screen.getAllByText('100').length).toBeGreaterThan(0);
+    expect(screen.queryByText('168')).not.toBeInTheDocument();
+    expect(screen.queryByText(/ledger rows/i)).not.toBeInTheDocument();
+  });
+
+  it('shows NAV as the active chart mode when market candles are unavailable', () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+
+    render(<PerformanceTab bot={makeBot()} isLive />);
+
+    expect(screen.getByRole('heading', { name: 'Account' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Market' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Market' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'NAV' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
   it('renders real market candles and volume when OHLCV exists for the traded venue', async () => {
     mockMetrics = [
       {

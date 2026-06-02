@@ -81,6 +81,14 @@ const markerTimeFormatter = new Intl.DateTimeFormat('en-US', {
   hour: 'numeric',
   minute: '2-digit',
 });
+const compactCandleTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  hour: 'numeric',
+  minute: '2-digit',
+});
+const compactCandleDayFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+});
 
 function formatAxisCurrency(value: number): string {
   return `$${formatNumber(value, { maximumFractionDigits: value >= 1000 ? 0 : 2 })}`;
@@ -90,6 +98,14 @@ function timeKey(time: Time): string {
   if (typeof time === 'number') return String(time);
   if (typeof time === 'string') return time;
   return `${time.year}-${time.month}-${time.day}`;
+}
+
+function formatCandleAxisTick(timestamp: number): string {
+  const date = new Date(timestamp);
+  if (date.getHours() === 0 && date.getMinutes() === 0) {
+    return compactCandleDayFormatter.format(date);
+  }
+  return compactCandleTimeFormatter.format(date);
 }
 
 function prepareBaseChartPoints(points: PerformanceChartPoint[]): PreparedPoint[] {
@@ -526,10 +542,11 @@ export function TradingPerformanceChart({
               return '';
             }
             const key = timeKey(time);
+            const candle = candleByTimeRef.current.get(key);
+            if (activeModeRef.current === 'market' && candle) return formatCandleAxisTick(candle.timestamp);
             const navPoint = pointByTimeRef.current.get(key);
             if (navPoint) return navPoint.label;
-            const candle = candleByTimeRef.current.get(key);
-            return candle ? markerTimeFormatter.format(new Date(candle.timestamp)) : '';
+            return candle ? formatCandleAxisTick(candle.timestamp) : '';
           },
         },
         crosshair: {

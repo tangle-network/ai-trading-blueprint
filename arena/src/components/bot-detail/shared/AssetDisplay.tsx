@@ -19,6 +19,7 @@ interface AssetPairDisplayProps {
   left: ResolvedAssetDisplay;
   right: ResolvedAssetDisplay;
   className?: string;
+  labelClassName?: string;
   size?: 'sm' | 'md' | 'lg';
 }
 
@@ -143,9 +144,9 @@ export function AssetDisplay({
   );
 }
 
-export function AssetPairDisplay({ left, right, className, size = 'md' }: AssetPairDisplayProps) {
+export function AssetPairDisplay({ left, right, className, labelClassName, size = 'md' }: AssetPairDisplayProps) {
   const iconSize = size === 'lg' ? 'lg' : 'sm';
-  const labelClassName = size === 'lg'
+  const sizeLabelClassName = size === 'lg'
     ? 'whitespace-nowrap text-lg font-semibold'
     : size === 'md'
       ? 'whitespace-nowrap text-base font-medium'
@@ -161,7 +162,7 @@ export function AssetPairDisplay({ left, right, className, size = 'md' }: AssetP
         <AssetIcon asset={left} size={iconSize} />
         <AssetIcon asset={right} size={iconSize} />
       </div>
-      <span className={joinClasses('font-display text-arena-elements-textPrimary', labelClassName)}>
+      <span className={joinClasses('font-display text-arena-elements-textPrimary', sizeLabelClassName, labelClassName)}>
         {left.symbol}/{right.symbol}
       </span>
     </div>
@@ -218,7 +219,7 @@ export function TradeInstrumentDisplay({
           left={trade.assetIn}
           right={trade.assetOut}
           size={isCompact ? 'sm' : 'md'}
-          className={labelClassName}
+          labelClassName={labelClassName}
         />
         {showVenue && (
           <div className="mt-0.5 flex min-w-0 items-center gap-1.5 font-data text-xs text-arena-elements-textSecondary">
