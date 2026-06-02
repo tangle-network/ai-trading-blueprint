@@ -272,6 +272,34 @@ describe("ChatTab", () => {
   });
 
   it("uses a full-height shell without card chrome in immersive mode", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        runs: [
+          {
+            run_id: "run-immersive-public",
+            workflow_id: 101,
+            workflow_kind: "trading",
+            status: "completed",
+            started_at: 1_775_824_500,
+            completed_at: 1_775_824_560,
+            session_id: null,
+            transcript_available: false,
+            trace_id: null,
+            duration_ms: 60_000,
+            input_tokens: 10,
+            output_tokens: 6,
+            result: JSON.stringify({
+              checked_state: { nav_status: "fresh", total_nav_usdc: 11 },
+              decision: { action: "trade", reason: "rsi-oversold" },
+              trade_action: { attempted: true, execution_status: "paper_recorded" },
+            }),
+            error: null,
+          },
+        ],
+        next_cursor: null,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
     const { ChatTab } = await import("../ChatTab");
 
     const { container } = render(
@@ -292,5 +320,19 @@ describe("ChatTab", () => {
     expect(shell).toHaveClass("h-full");
     expect(shell).not.toHaveClass("glass-card");
     expect(shell).not.toHaveClass("rounded-xl");
+    expect(await screen.findByText("Sessions")).toBeInTheDocument();
+    expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getByRole("complementary", { name: /decision inspector/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          sessionId: "run-replay-run-immersive-public",
+          historyPath: "/runs/run-immersive-public/messages?limit=200",
+          streamEnabled: false,
+        }),
+      );
+    });
   });
 });

@@ -592,6 +592,11 @@ describe("RunsTab", () => {
 
   it("uses a full-height shell without card chrome in immersive mode", async () => {
     const { RunsTab } = await import("../RunsTab");
+    const result = JSON.stringify({
+      checked_state: { nav_status: "fresh", total_nav_usdc: 11 },
+      decision: { action: "trade", reason: "rsi-oversold" },
+      trade_action: { attempted: true, execution_status: "paper_recorded" },
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -610,7 +615,7 @@ describe("RunsTab", () => {
               duration_ms: 60_000,
               input_tokens: 10,
               output_tokens: 6,
-              result: "summary",
+              result,
               error: null,
             },
           ],
@@ -636,6 +641,8 @@ describe("RunsTab", () => {
     expect(shell).toHaveClass("h-full");
     expect(shell).not.toHaveClass("glass-card");
     expect(shell).not.toHaveClass("rounded-xl");
-    expect(screen.queryByRole("complementary", { name: /decision inspector/i })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Autonomous runs")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: /decision inspector/i })).toBeInTheDocument();
+    expect(screen.getByText("Decision")).toBeInTheDocument();
   });
 });

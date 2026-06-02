@@ -171,8 +171,8 @@ export function AgentWorkspaceShell({
     <div className="flex h-full min-h-0 overflow-hidden">
       <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         {focusMode && (
-          <div className="pointer-events-none absolute left-2 right-2 top-2 z-30 flex min-w-0 items-start justify-between gap-2">
-            <div className="pointer-events-auto flex min-w-0 items-center gap-1.5 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/90 p-1 shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-xl">
+          <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1">
+            <div className="flex h-12 min-w-0 items-center gap-2 px-2">
               <Link
                 to={backHref ?? `/arena/bot/${encodeURIComponent(bot.id)}/performance`}
                 replace
@@ -194,6 +194,12 @@ export function AgentWorkspaceShell({
                   iconOnly
                 />
               )}
+              <div className="ml-auto hidden min-w-0 items-center gap-2 pr-2 sm:flex">
+                <Identicon address={bot.operatorAddress as Address} size={22} />
+                <span className="max-w-[280px] truncate font-display text-sm font-medium text-arena-elements-textSecondary">
+                  {title}
+                </span>
+              </div>
             </div>
           </div>
         )}

@@ -2083,7 +2083,7 @@ User-reported problems:
 | Positions | `PositionsTab` | Account strip + positions ledger | Added `workspaceLayout="ledger"` with dense tables | Labels must be table headers or compact metric labels only |
 | Executions | `TradeHistoryTab` | Paged execution ledger | Added offset pagination, visible size/USD/mode columns, simplified expanded row | Never show `loaded` copy or duplicate paper/validation prose |
 | Chart | `PerformanceTab` + chart components | Professional market/NAV terminal | Prior pass retained; no new change here | Trade count must come from trade ledger, not just metric checkpoints |
-| Runs/Chat | `RunsTab`, chat routes | Full transcripts/control conversation | Still needs session-list work; not addressed in this slice | Hide owner-only terminals rather than over-explaining access |
+| Runs/Chat | `RunsTab`, chat routes, `AgentWorkspaceShell` focus mode | Full transcripts/control conversation | Changed to a trace workbench with visible run/session rail, transcript, and decision inspector in full-screen focus mode | Full-screen trace views must not hide navigation or decision context |
 
 ### Leaderboard / Explorer Alternatives
 
@@ -2252,3 +2252,60 @@ Verification:
   - `.evolve/arena-agent-explorer-smoke-20260602/1440x900-home.png`: Home is now volume + fills, with no ranked-agent duplicate.
   - `.evolve/arena-agent-explorer-smoke-20260602/1440x900-leaderboard.png`: Agent Explorer shows full-width volume, latest fills, and agents ledgers with no horizontal squeeze.
   - `.evolve/arena-agent-explorer-smoke-20260602/1280x800-leaderboard.png`: the explorer remains readable at tighter desktop width.
+
+## 2026-06-02 Runs / Chat Trace Workbench Pass
+
+User-reported problem:
+
+- Full-screen Runs and Chat were technically route-native, but the views hid the most important context. Runs showed a transcript with no run rail in focus mode. Chat could look blank to public viewers even when replayable autonomous runs existed. The floating focus navigation also overlapped the left rail headers.
+
+Alternatives considered:
+
+1. **Winner: Trace Workbench**
+
+```text
+┌ compact focus bar ┐
+├ run/session rail ┬ transcript/replay ┬ decision inspector ┐
+└──────────────────┴───────────────────┴────────────────────┘
+```
+
+Score: 9/10. This uses the space like an execution trace product: choose a run/session, read the transcript, inspect the decision and evidence. It reuses existing primitives instead of creating another trace surface.
+
+2. **Transcript-Only Focus Mode**
+
+Score: 4/10. It maximizes the conversation column but makes the user guess which run they are reading and why it happened.
+
+3. **Bottom Run Timeline**
+
+Score: 6.5/10. Good for visual chronology, worse for scanning many runs or sessions. It also competes with the chat composer on owner views.
+
+4. **Right-Side Run Rail, Left Transcript**
+
+Score: 7/10. Works for some dashboards, but it puts the selector after the content and makes the decision inspector compete with navigation.
+
+5. **Raw Terminal Log**
+
+Score: 5/10. Dense, but wrong abstraction for public product users. The product needs agent reasoning and decisions, not just process output.
+
+Selected implementation: Alternative 1.
+
+Shipped in this slice:
+
+- `RunsTab` no longer collapses/hides the run rail in immersive mode.
+- `RunsTab` shows the decision activity strip and decision inspector whenever structured decision items exist, including focus mode.
+- `ChatTab` maps public replayable autonomous runs into read-only session rail items so non-owner viewers can inspect real run transcripts instead of landing on an empty generic chat.
+- `ChatTab` keeps the session rail visible in owner focus mode and uses the same decision activity/inspector model for public replay runs.
+- `AgentWorkspaceShell` replaced the absolute floating focus nav with a compact 48px focus bar so Runs/Chat headers are not hidden under route chrome.
+
+Verification:
+
+- `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/RunsTab.test.tsx src/components/bot-detail/__tests__/ChatTab.test.tsx --reporter=dot` passes: 2 files, 14 tests.
+- `pnpm --dir arena exec vitest run src/components/bot-detail/__tests__/RunsTab.test.tsx src/components/bot-detail/__tests__/ChatTab.test.tsx src/routes/__tests__/bot-workspace-routing.test.tsx --reporter=dot` passes after the focus bar change: 3 files, 24 tests.
+- `pnpm --dir arena exec vitest run --reporter=dot` passes: 67 files, 387 tests.
+- `pnpm --dir arena typecheck` passes.
+- `pnpm --dir arena build` passes. Existing large-chunk warnings remain unchanged.
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --screenshot-dir ../.evolve/arena-runs-chat-focusbar-smoke-20260602` passes.
+- Visual inspection passed:
+  - `.evolve/arena-runs-chat-focusbar-smoke-20260602/1440x900-runs.png`: full-screen Runs has visible run rail, transcript replay, and decision inspector with no header overlap.
+  - `.evolve/arena-runs-chat-focusbar-smoke-20260602/1440x900-chat.png`: full-screen Chat has visible public run sessions, transcript replay, and decision inspector with no header overlap.
+  - `.evolve/arena-runs-chat-focusbar-smoke-20260602/1280x800-runs.png` and `1280x800-chat.png`: both remain in-viewport at tighter desktop width.

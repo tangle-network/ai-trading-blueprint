@@ -25,6 +25,9 @@ import {
   buildRunReplayHistoryPath,
   buildRunReplaySessionId,
   chooseDefaultRun,
+  formatDuration,
+  formatRunTimestamp,
+  getWorkflowKindLabel,
   hasReplayableRunTrace,
   parseRunsResponse,
 } from "~/lib/botRuns";
@@ -463,7 +466,7 @@ export function ChatTab({
       ? false
       : window.innerWidth < (immersive ? 860 : 1100),
   );
-  const [sessionSidebarCollapsed, setSessionSidebarCollapsed] = useState(immersive);
+  const [sessionSidebarCollapsed, setSessionSidebarCollapsed] = useState(false);
   const chatCacheKey = `${baseApiUrl}::${botId}`;
 
   const sessionToken = canWrite ? token : null;
@@ -682,8 +685,17 @@ export function ChatTab({
   }, [stream]);
 
   const sessionItems: SessionItem[] = useMemo(
-    () =>
-      sessions.length > 0
+    () => {
+      if (!canWrite && publicReplayRuns && publicReplayRuns.length > 0) {
+        return publicReplayRuns.map((run) => ({
+          id: run.runId,
+          title: getWorkflowKindLabel(run.workflowKind),
+          rawTitle: getWorkflowKindLabel(run.workflowKind),
+          subtitle: `${formatRunTimestamp(run.startedAt)} · ${formatDuration(run.durationMs)}`,
+        }));
+      }
+
+      return sessions.length > 0
         ? sessions.map((session: Session) => ({
             id: session.id,
             title: normalizeSessionTitle(session.title),
@@ -697,11 +709,34 @@ export function ChatTab({
               rawTitle: "Main Chat",
               subtitle: "Start a new conversation",
             },
-          ],
-    [primarySessionId, sessions],
+          ];
+    },
+    [canWrite, primarySessionId, publicReplayRuns, sessions],
   );
-  const showSessionSidebar = !immersive && sessionItems.length > 1;
-  const showDecisionInspector = !immersive && decisionItems.length > 0;
+  const hasPublicRunSessions =
+    !canWrite && Boolean(publicReplayRuns && publicReplayRuns.length > 0);
+  const showSessionSidebar =
+    hasPublicRunSessions || sessionItems.length > 1 || (immersive && canWrite);
+  const showDecisionInspector = decisionItems.length > 0;
+  const sidebarActiveSessionId =
+    hasPublicRunSessions && publicReplayRun
+      ? publicReplayRun.runId
+      : activeSessionId;
+  const sidebarPrimarySessionId = hasPublicRunSessions ? "" : primarySessionId;
+  const handleSidebarSelect = useCallback(
+    (id: string) => {
+      if (
+        !canWrite &&
+        publicReplayRuns?.some((run) => run.runId === id)
+      ) {
+        setSelectedPublicRunId(id);
+        return;
+      }
+
+      setActiveSessionId(id);
+    },
+    [canWrite, publicReplayRuns],
+  );
   const chatHeaderTitle = activeSession
     ? getSessionDisplayTitle(
         {
@@ -783,13 +818,13 @@ export function ChatTab({
         {showSessionSidebar && (
           <SessionWorkspaceSidebar
             sessions={sessionItems}
-            activeSessionId={activeSessionId}
-            primarySessionId={primarySessionId}
+            activeSessionId={sidebarActiveSessionId}
+            primarySessionId={sidebarPrimarySessionId}
             isStreaming={stream.isStreaming}
             stacked={isStackedLayout}
             compactStacked={immersive}
             collapsed={!isStackedLayout && sessionSidebarCollapsed}
-            onSelect={setActiveSessionId}
+            onSelect={handleSidebarSelect}
             onDelete={(id) => {
               if (!canWrite) return;
               if (confirm("Delete this session?")) {
@@ -847,7 +882,7 @@ export function ChatTab({
             isAborting={isAborting}
           />
 
-          {!immersive && decisionItems.length > 0 && (
+          {decisionItems.length > 0 && (
             <DecisionActivityStrip
               items={decisionItems}
               selectedId={selectedDecisionItem?.id}

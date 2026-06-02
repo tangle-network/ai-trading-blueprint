@@ -596,7 +596,7 @@ export function RunsTab({
       ? false
       : window.innerWidth < (immersive ? 860 : 1100),
   );
-  const [runsSidebarCollapsed, setRunsSidebarCollapsed] = useState(immersive);
+  const [runsSidebarCollapsed, setRunsSidebarCollapsed] = useState(false);
   const runsCacheKey = `${baseApiUrl}::${botId}::runs`;
   const authKey = token ?? "anonymous";
 
@@ -734,8 +734,9 @@ export function RunsTab({
     completed: runs.filter((run) => run.status === "completed").length,
     failed: runs.filter((run) => run.status === "failed" || run.status === "interrupted").length,
   }), [runs]);
-  const showRunsSidebar = !immersive && (runs.length > 1 || Boolean(runsQuery.hasNextPage));
-  const showDecisionInspector = !immersive;
+  const showRunsSidebar =
+    immersive || runs.length > 1 || Boolean(runsQuery.hasNextPage);
+  const showDecisionInspector = decisionItems.length > 0;
 
   const runsErrorMessage = extractRunsErrorMessage(
     runsQuery.error instanceof Error ? runsQuery.error.message : null,
@@ -907,7 +908,7 @@ export function RunsTab({
               error={streamErrorMessage}
             />
 
-            {!immersive && decisionItems.length > 0 && (
+            {decisionItems.length > 0 && (
               <DecisionActivityStrip
                 items={decisionItems}
                 selectedId={selectedDecisionItem?.id}
