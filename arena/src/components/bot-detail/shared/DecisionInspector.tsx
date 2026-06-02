@@ -72,7 +72,10 @@ export function DecisionInspector({ item, className }: DecisionInspectorProps) {
 
   const primaryStats = [
     item.notionalLabel ? { label: 'Notional', value: item.notionalLabel } : null,
-    item.venueLabel ? { label: 'Venue', value: item.venueLabel } : null,
+    item.venueLabel ? {
+      label: item.venueLabel.toLowerCase() === 'paper' ? 'Mode' : 'Venue',
+      value: item.venueLabel.toLowerCase() === 'paper' ? 'Paper' : item.venueLabel,
+    } : null,
     item.validationLabel ? { label: 'Validation', value: item.validationLabel } : null,
     item.executionLabel ? { label: 'Execution', value: item.executionLabel } : null,
   ].filter((entry): entry is { label: string; value: string } => entry !== null);

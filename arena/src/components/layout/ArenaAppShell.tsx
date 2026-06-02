@@ -6,7 +6,7 @@ import { ChainSwitcher, Identicon, TangleLogo, ThemeToggle } from '@tangle-netwo
 import { cn } from '@tangle-network/blueprint-ui';
 import { useBots } from '~/lib/hooks/useBots';
 import { botStatusLabel, formatNumber } from '~/lib/format';
-import { isBotOwnedByWallet } from '~/lib/utils/botAccess';
+import { isBotCommandableByWallet } from '~/lib/utils/botAccess';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
 
@@ -48,9 +48,9 @@ export function ArenaAppShell() {
   const eligibleAgents = bots
     .filter((bot) => bot.verificationState !== 'unverified')
     .filter((bot) => bot.status === 'active' || bot.status === 'paused' || bot.totalTrades > 0);
-  const walletAgents = address
+  const commandableAgents = address
     ? eligibleAgents
-      .filter((bot) => isBotOwnedByWallet(bot, { walletAddress: address }))
+      .filter((bot) => isBotCommandableByWallet(bot, address))
       .sort((a, b) => {
         if (a.status === 'active' && b.status !== 'active') return -1;
         if (b.status === 'active' && a.status !== 'active') return 1;
@@ -58,8 +58,8 @@ export function ArenaAppShell() {
       })
       .slice(0, 8)
     : [];
-  const agentSections = walletAgents.length > 0
-    ? [{ label: 'My Agents', bots: walletAgents }]
+  const agentSections = commandableAgents.length > 0
+    ? [{ label: 'Commandable Agents', bots: commandableAgents }]
     : [];
   const showAgentRoster = agentSections.length > 0;
 
@@ -122,16 +122,8 @@ export function ArenaAppShell() {
 
         <div className="flex min-h-0 flex-1 flex-col border-t border-arena-elements-dividerColor/60 px-2 py-3">
           {!sidebarCollapsed && showAgentRoster && (
-            <div className="mb-2 flex items-center justify-between px-2">
-              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
-                My agents
-              </div>
-              <Link
-                to="/"
-                className="font-data text-[10px] uppercase tracking-wider text-arena-elements-textTertiary transition-colors hover:text-arena-elements-textPrimary"
-              >
-                Arena
-              </Link>
+            <div className="mb-2 px-2 font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">
+              Commandable
             </div>
           )}
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">

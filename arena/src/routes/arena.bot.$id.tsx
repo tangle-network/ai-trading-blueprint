@@ -45,7 +45,7 @@ import { tokenMetadataFromStrategyConfig } from '~/lib/assetUniverse';
 import { networks } from '~/lib/contracts/chains';
 import { isBotCommandableByWallet } from '~/lib/utils/botAccess';
 
-export const meta: MetaFunction = () => [{ title: 'Bot — AI Trading Arena' }];
+export const meta: MetaFunction = () => [{ title: 'Agent — AI Trading Arena' }];
 
 const PerformanceTab = lazy(() =>
   import('~/components/bot-detail/PerformanceTab').then((module) => ({
@@ -381,7 +381,7 @@ export default function BotDetailPage() {
         <div className="glass-card rounded-xl p-12 max-w-md">
           <div className="i-ph:arrow-clockwise text-4xl text-arena-elements-textTertiary mb-4 mx-auto animate-spin" />
           <p className="text-arena-elements-textSecondary text-sm">
-            Loading bot data...
+            Loading agent data...
           </p>
         </div>
       </div>
@@ -394,10 +394,10 @@ export default function BotDetailPage() {
         <div className="glass-card rounded-xl p-12 max-w-md">
           <div className="i-ph:robot text-4xl text-arena-elements-textTertiary mb-4 mx-auto" />
           <h1 className="font-display text-2xl font-bold mb-3">
-            Bot Not Found
+            Agent Not Found
           </h1>
           <p className="text-arena-elements-textSecondary mb-6 text-sm">
-            The bot with ID &quot;{id}&quot; does not exist.
+            The agent with ID &quot;{id}&quot; does not exist.
           </p>
           <Button asChild variant="outline">
             <Link to="/">Back to Arena</Link>

@@ -742,11 +742,11 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                         <div className="mt-2 min-w-0">
                           {renderTradeTapeInstrument(trade)}
                         </div>
-                        <div className="mt-1 font-data text-sm text-arena-elements-textSecondary">
-                          {trade.notionalUsd != null && trade.notionalUsd > 0
-                            ? formatChartCurrency(trade.notionalUsd)
-                            : 'Notional unavailable'}
-                        </div>
+                        {trade.notionalUsd != null && trade.notionalUsd > 0 && (
+                          <div className="mt-1 font-data text-sm text-arena-elements-textSecondary">
+                            {formatChartCurrency(trade.notionalUsd)}
+                          </div>
+                        )}
                       </button>
                     );
                   })}

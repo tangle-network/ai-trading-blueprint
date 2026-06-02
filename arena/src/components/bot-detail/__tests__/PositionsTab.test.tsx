@@ -241,7 +241,7 @@ describe('PositionsTab', () => {
 
     render(<PositionsTab botId="bot-1" status="active" operatorApiUrl="/operator-api" operatorKind="cloud" />);
 
-    expect(screen.getByText('Bot Equity')).toBeInTheDocument();
+    expect(screen.getByText('Account Equity')).toBeInTheDocument();
     expect(screen.getAllByText('Margin Usage').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole('columnheader', { name: 'Position' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Notional' })).toBeInTheDocument();

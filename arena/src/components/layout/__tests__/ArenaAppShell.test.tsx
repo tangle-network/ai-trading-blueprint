@@ -94,6 +94,7 @@ describe('ArenaAppShell', () => {
         id: 'mine',
         name: 'Callable Agent',
         submitterAddress: '0x1111111111111111111111111111111111111111',
+        source: 'operator',
         pnlPercent: 4.2,
       }),
       makeBot({
@@ -128,6 +129,7 @@ describe('ArenaAppShell', () => {
 	        id: 'mine-low-pnl',
 	        name: 'My Low PnL Agent',
 	        submitterAddress: '0x1111111111111111111111111111111111111111',
+	        source: 'operator',
 	        pnlPercent: -12,
 	        totalTrades: 1,
 	      }),
@@ -140,6 +142,34 @@ describe('ArenaAppShell', () => {
 	    expect(sidebar).not.toBeNull();
 	    expect(within(sidebar!).getByText('My Low PnL Agent')).toBeInTheDocument();
 	    expect(within(sidebar!).queryByText('Public Agent 1')).not.toBeInTheDocument();
+	  });
+
+	  it('does not pin operator-owned agents when the wallet is not the permitted caller', () => {
+	    hoisted.bots = [
+	      makeBot({
+	        id: 'operator-owned',
+	        name: 'Operator Owned Agent',
+	        operatorAddress: '0x1111111111111111111111111111111111111111',
+	        submitterAddress: '0x2222222222222222222222222222222222222222',
+	        source: 'operator',
+	        totalTrades: 14,
+	      }),
+	      makeBot({
+	        id: 'callable',
+	        name: 'Callable Agent',
+	        submitterAddress: '0x1111111111111111111111111111111111111111',
+	        source: 'operator',
+	        totalTrades: 1,
+	      }),
+	    ];
+
+	    renderShell();
+
+	    const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
+
+	    expect(sidebar).not.toBeNull();
+	    expect(within(sidebar!).getByText('Callable Agent')).toBeInTheDocument();
+	    expect(within(sidebar!).queryByText('Operator Owned Agent')).not.toBeInTheDocument();
 	  });
 
 	  it('does not show public fleet agents as callable before a wallet is connected', () => {
@@ -170,6 +200,7 @@ describe('ArenaAppShell', () => {
 	        id: 'mine',
 	        name: 'Callable Agent',
 	        submitterAddress: '0x1111111111111111111111111111111111111111',
+	        source: 'operator',
 	      }),
 	    ];
 

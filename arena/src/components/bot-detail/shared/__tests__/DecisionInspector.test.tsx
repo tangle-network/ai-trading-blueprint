@@ -72,6 +72,14 @@ describe('decision inspector surfaces', () => {
     expect(screen.getByTitle('Cycle: run-1')).toBeInTheDocument();
   });
 
+  it('labels paper execution as mode instead of venue', () => {
+    render(<DecisionInspector item={{ ...decisionItem, venueLabel: 'PAPER' }} />);
+
+    expect(screen.getByText('Mode')).toBeInTheDocument();
+    expect(screen.getByText('Paper')).toBeInTheDocument();
+    expect(screen.queryByText('Venue')).not.toBeInTheDocument();
+  });
+
   it('emits the selected decision from the activity strip', async () => {
     const onSelect = vi.fn();
     render(

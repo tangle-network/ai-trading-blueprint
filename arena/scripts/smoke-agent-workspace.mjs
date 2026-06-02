@@ -28,8 +28,8 @@ const SECTION_EXPECTATIONS = {
   ],
   portfolio: [
     'Account',
-    'Positions Value',
-    ['Bot Equity', 'Account Total'],
+    'Priced Positions',
+    ['Account Equity', 'NAV'],
     ['Trade Ledger', 'No executions recorded'],
   ],
   runs: [
