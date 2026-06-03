@@ -777,6 +777,68 @@ describe('PerformanceTab', () => {
     expect(screen.getByTestId('chart-execution-coverage')).toHaveTextContent('2 candles');
   });
 
+  it('groups dense same-location market executions into one readable marker', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 20,
+      },
+    ];
+    mockTrades = Array.from({ length: 20 }, (_, index) => makeTrade({
+      id: `clustered-fill-${index + 1}`,
+      action: 'buy',
+      timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
+      priceUsd: 3315,
+      venue: 'perp',
+      hyperliquidMetadata: {
+        asset: 'ETH',
+        assetSize: '0.03',
+        orderType: 'market',
+        reduceOnly: false,
+      },
+    }));
+    mockMarketCandles = [
+      {
+        timestamp: Date.parse('2026-04-23T10:00:00.000Z'),
+        token: 'ETH',
+        open: 3300,
+        high: 3320,
+        low: 3294,
+        close: 3315,
+        volume: 120.5,
+      },
+      {
+        timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
+        token: 'ETH',
+        open: 3315,
+        high: 3332,
+        low: 3310,
+        close: 3324,
+        volume: 1650.25,
+      },
+    ];
+
+    render(
+      <PerformanceTab
+        bot={makeBot({
+          strategyType: 'hyperliquid_perp',
+          strategyConfig: { asset: 'ETH' },
+        })}
+        isLive
+      />,
+    );
+
+    expect(await screen.findByLabelText(/BUY x20 .*Apr 23/i)).toBeInTheDocument();
+    expect(screen.getByText('x20')).toBeInTheDocument();
+    const coverage = screen.getByTestId('chart-execution-coverage');
+    expect(coverage).toHaveTextContent('20/20 fills');
+    expect(coverage).toHaveTextContent('1 groups');
+  });
+
   it('surfaces Hyperliquid exposure risk from the live portfolio feed', () => {
     mockMetrics = [
       {

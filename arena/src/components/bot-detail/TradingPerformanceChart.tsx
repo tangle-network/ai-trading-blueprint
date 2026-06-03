@@ -340,6 +340,8 @@ interface ExactMarketMarkerOverlay {
   side: 'buy' | 'sell' | 'other';
   color: string;
   marker: TradeChartMarker;
+  count: number;
+  members: TradeChartMarker[];
   value: number;
 }
 
@@ -560,14 +562,27 @@ function formatExecutionTime(timestampMs: number): string {
 }
 
 function formatExecutionDetail(item: ExactMarketMarkerOverlay): string {
+  if (item.count > 1) {
+    const startTimestamp = Math.min(...item.members.map((marker) => marker.timestampMs));
+    const endTimestamp = Math.max(...item.members.map((marker) => marker.timestampMs));
+    const timeRange = startTimestamp === endTimestamp
+      ? markerTimeFormatter.format(new Date(startTimestamp))
+      : `${markerTimeFormatter.format(new Date(startTimestamp))} - ${markerTimeFormatter.format(new Date(endTimestamp))}`;
+    const sample = item.members
+      .slice(0, 2)
+      .map((marker) => marker.tooltip)
+      .join(' · ');
+    const remainder = item.members.length > 2 ? ` · +${item.members.length - 2} more` : '';
+    return `${timeRange} · ${sample}${remainder}`;
+  }
   return `${formatExecutionTime(item.marker.timestampMs)} · ${item.marker.tooltip}`;
 }
 
 function executionReadout(item: ExactMarketMarkerOverlay): HoverReadout {
   return {
-    label: item.marker.tooltip,
+    label: item.count > 1 ? `${item.marker.text} x${item.count}` : item.marker.tooltip,
     value: item.value,
-    detail: formatExecutionTime(item.marker.timestampMs),
+    detail: item.count > 1 ? formatExecutionDetail(item) : formatExecutionTime(item.marker.timestampMs),
   };
 }
 
@@ -663,10 +678,51 @@ function exactOverlayEquals(left: ExactMarketMarkerOverlay[], right: ExactMarket
     const other = right[index];
     return other != null
       && item.id === other.id
+      && item.count === other.count
       && Math.abs(item.x - other.x) < 0.5
       && Math.abs(item.y - other.y) < 0.5
       && item.value === other.value;
   });
+}
+
+function groupExactMarketMarkerOverlay(items: ExactMarketMarkerOverlay[]): ExactMarketMarkerOverlay[] {
+  if (items.length <= DENSE_MARKER_THRESHOLD) return items;
+
+  const bucketSizePx = 18;
+  const groups = new Map<string, ExactMarketMarkerOverlay[]>();
+  for (const item of items) {
+    const key = `${item.side}:${Math.round(item.x / bucketSizePx)}:${Math.round(item.y / bucketSizePx)}`;
+    const group = groups.get(key);
+    if (group) {
+      group.push(item);
+    } else {
+      groups.set(key, [item]);
+    }
+  }
+
+  return Array.from(groups.values())
+    .map((group) => {
+      if (group.length === 1) return group[0];
+
+      const sorted = [...group].sort((left, right) => left.marker.timestampMs - right.marker.timestampMs);
+      const middle = sorted[Math.floor(sorted.length / 2)] ?? sorted[0];
+      const members = sorted.flatMap((item) => item.members);
+      const count = members.length;
+      const x = sorted.reduce((sum, item) => sum + item.x, 0) / sorted.length;
+      const y = sorted.reduce((sum, item) => sum + item.y, 0) / sorted.length;
+      const value = sorted.reduce((sum, item) => sum + item.value, 0) / sorted.length;
+
+      return {
+        ...middle,
+        id: `${middle.id}-group-${count}`,
+        x,
+        y: y as Coordinate,
+        count,
+        members,
+        value,
+      };
+    })
+    .sort((left, right) => left.x - right.x);
 }
 
 function buildExactMarketMarkerOverlay({
@@ -687,7 +743,7 @@ function buildExactMarketMarkerOverlay({
     .sort((left, right) => left - right);
   if (marketTimes.length === 0) return [];
 
-  return tradeMarkers
+  const items = tradeMarkers
     .filter((marker) => Number.isFinite(marker.timestampMs))
     .map((marker) => {
       const target = Math.floor(marker.timestampMs / 1000) as UTCTimestamp;
@@ -708,11 +764,15 @@ function buildExactMarketMarkerOverlay({
         side: markerSide(marker),
         color: marker.color,
         marker,
+        count: 1,
+        members: [marker],
         value,
       };
     })
     .filter((item): item is ExactMarketMarkerOverlay => item != null)
     .sort((left, right) => left.x - right.x);
+
+  return groupExactMarketMarkerOverlay(items);
 }
 
 interface ExecutionCoverage {
@@ -724,14 +784,16 @@ interface ExecutionCoverage {
 
 function buildExecutionCoverage({
   activeMode,
-  exactOverlayCount,
+  exactOverlayFillCount,
+  exactOverlayGroupCount,
   fillCountEvidence,
   marketCandles,
   marketMarkerVisibleCount,
   tradeMarkers,
 }: {
   activeMode: 'nav' | 'market';
-  exactOverlayCount: number;
+  exactOverlayFillCount: number;
+  exactOverlayGroupCount: number;
   fillCountEvidence?: FillCountEvidence | null;
   marketCandles: MarketCandle[];
   marketMarkerVisibleCount: number;
@@ -745,7 +807,7 @@ function buildExecutionCoverage({
     ? marketMarkerVisibleCount
     : renderedRows;
   const shown = activeMode === 'market'
-    ? exactOverlayCount || chartable
+    ? exactOverlayFillCount || chartable
     : renderedRows;
   const loaded = Math.max(fillCountEvidence?.loaded ?? 0, renderedRows);
   const outsidePage = Math.max(fillCountEvidence?.outsidePage ?? 0, total - loaded, 0);
@@ -759,6 +821,9 @@ function buildExecutionCoverage({
   ).length;
   const unpriced = Math.max(fillCountEvidence?.unpriced ?? 0, inferredUnpriced);
   const detailParts = [
+    activeMode === 'market' && exactOverlayGroupCount > 0 && exactOverlayGroupCount < shown
+      ? `${formatNumber(exactOverlayGroupCount, { maximumFractionDigits: 0 })} groups`
+      : null,
     offWindow > 0 ? `${formatNumber(offWindow, { maximumFractionDigits: 0 })} off-window` : null,
     outsidePage > 0 ? `${formatNumber(outsidePage, { maximumFractionDigits: 0 })} outside page` : null,
     unpriced > 0 ? `${formatNumber(unpriced, { maximumFractionDigits: 0 })} unpriced` : null,
@@ -1341,9 +1406,11 @@ export function TradingPerformanceChart({
   }, [exactMarketOverlay, selectedExecutionId]);
 
   const latestMarketCandle = marketCandles[marketCandles.length - 1] ?? null;
+  const exactOverlayFillCount = exactMarketOverlay.reduce((sum, item) => sum + item.count, 0);
   const executionCoverage = buildExecutionCoverage({
     activeMode,
-    exactOverlayCount: exactMarketOverlay.length,
+    exactOverlayFillCount,
+    exactOverlayGroupCount: exactMarketOverlay.length,
     fillCountEvidence,
     marketCandles,
     marketMarkerVisibleCount,
@@ -1391,8 +1458,8 @@ export function TradingPerformanceChart({
                 selectedExecutionId === item.id ? 'ring-2 ring-[#50d2c1]/70' : ''
               }`}
               style={{ left: item.x, top: item.y }}
-              aria-label={`${item.marker.tooltip} at ${markerTimeFormatter.format(new Date(item.marker.timestampMs))}`}
-              title={`${item.marker.tooltip} · ${markerTimeFormatter.format(new Date(item.marker.timestampMs))}`}
+              aria-label={`${item.count > 1 ? `${item.marker.text} x${item.count}` : item.marker.tooltip} at ${markerTimeFormatter.format(new Date(item.marker.timestampMs))}`}
+              title={`${item.count > 1 ? `${item.marker.text} x${item.count}` : item.marker.tooltip} · ${formatExecutionDetail(item)}`}
               onClick={() => {
                 const nextSelectedId = selectedExecutionId === item.id ? null : item.id;
                 setSelectedExecutionId(nextSelectedId);
@@ -1451,6 +1518,20 @@ export function TradingPerformanceChart({
                   }}
                 />
               )}
+              {item.count > 1 && (
+                <span
+                  aria-hidden="true"
+                  className="absolute left-1/2 top-1/2 min-w-8 -translate-x-1/2 translate-y-[54%] rounded-sm border px-1 py-0.5 text-center font-data text-[10px] font-semibold tabular-nums"
+                  style={{
+                    background: chartTheme.tooltipBg,
+                    borderColor: chartTheme.tooltipBorder,
+                    color: chartTheme.tooltipBodyColor,
+                    boxShadow: chartTheme.tooltipShadow,
+                  }}
+                >
+                  x{formatNumber(item.count, { maximumFractionDigits: 0 })}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -1506,7 +1587,9 @@ export function TradingPerformanceChart({
               aria-hidden="true"
             />
             <span className="truncate font-data text-xs font-semibold" style={{ color: chartTheme.tooltipBodyColor }}>
-              {featuredExecution.marker.text}
+              {featuredExecution.count > 1
+                ? `${featuredExecution.marker.text} x${formatNumber(featuredExecution.count, { maximumFractionDigits: 0 })}`
+                : featuredExecution.marker.text}
             </span>
             <span className="font-data text-xs font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
               {formatAxisCurrency(featuredExecution.value)}
