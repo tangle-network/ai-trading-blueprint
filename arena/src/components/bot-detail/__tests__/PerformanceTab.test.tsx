@@ -776,6 +776,84 @@ describe('PerformanceTab', () => {
     expect(screen.getByTestId('chart-execution-coverage')).toHaveTextContent('2 candles');
   });
 
+  it('uses compact dates on long-range market axis ticks', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-20T18:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockTrades = [
+      makeTrade({
+        id: 'multi-day-fill',
+        action: 'open_long',
+        timestamp: Date.parse('2026-04-24T18:00:00.000Z'),
+        hyperliquidMetadata: {
+          asset: 'ETH',
+          assetSize: '0.03',
+          orderType: 'market',
+          reduceOnly: false,
+        },
+        venue: 'perp',
+      }),
+    ];
+    mockMarketCandles = [
+      {
+        timestamp: Date.parse('2026-04-20T18:00:00.000Z'),
+        token: 'ETH',
+        open: 3300,
+        high: 3320,
+        low: 3294,
+        close: 3315,
+        volume: 120.5,
+      },
+      {
+        timestamp: Date.parse('2026-04-24T18:00:00.000Z'),
+        token: 'ETH',
+        open: 3315,
+        high: 3332,
+        low: 3310,
+        close: 3324,
+        volume: 1650.25,
+      },
+      {
+        timestamp: Date.parse('2026-04-30T18:00:00.000Z'),
+        token: 'ETH',
+        open: 3324,
+        high: 3340,
+        low: 3312,
+        close: 3338,
+        volume: 1500,
+      },
+    ];
+
+    render(
+      <PerformanceTab
+        bot={makeBot({
+          strategyType: 'hyperliquid_perp',
+          strategyConfig: { asset: 'ETH' },
+        })}
+        isLive
+      />,
+    );
+
+    await waitFor(() => expect(lightweightChartMock.createChart).toHaveBeenCalled());
+    const createChartCalls = lightweightChartMock.createChart.mock.calls as unknown as Array<[
+      unknown,
+      { timeScale?: { tickMarkFormatter?: (time: number) => string } },
+    ]>;
+    const chartOptions = createChartCalls[0]?.[1];
+    const formatter = chartOptions.timeScale?.tickMarkFormatter;
+    if (!formatter) throw new Error('Expected market chart tick formatter');
+    const label = formatter(Math.floor(Date.parse('2026-04-24T18:00:00.000Z') / 1000));
+    expect(label).toBe('Apr 24');
+    expect(label).not.toBe('12:00 PM');
+  });
+
   it('does not pin off-window fills to the first or last market candle', async () => {
     mockMetrics = [
       {

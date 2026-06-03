@@ -75,6 +75,8 @@ const SYNTHETIC_TIME_BASE_SECONDS = 1_700_000_000;
 const DENSE_MARKER_THRESHOLD = 16;
 const DENSE_MARKER_BUCKET_TARGET = 10;
 const MARKET_MARKER_MIN_TOLERANCE_SECONDS = 90;
+const MARKET_AXIS_DATE_THRESHOLD_MS = 20 * 60 * 60 * 1000;
+const MARKET_AXIS_DAY_ONLY_THRESHOLD_MS = 5 * 24 * 60 * 60 * 1000;
 const TERMINAL_SURFACE = '#0f1a1f';
 const TERMINAL_GRID = 'rgba(148, 158, 156, 0.085)';
 const TERMINAL_TICK = '#949e9c';
@@ -87,6 +89,17 @@ const markerTimeFormatter = new Intl.DateTimeFormat('en-US', {
   minute: '2-digit',
 });
 const compactCandleTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  hour: 'numeric',
+  minute: '2-digit',
+});
+const compactCandleDateHourFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+});
+const compactCandleDateTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
   hour: 'numeric',
   minute: '2-digit',
 });
@@ -105,8 +118,39 @@ function timeKey(time: Time): string {
   return `${time.year}-${time.month}-${time.day}`;
 }
 
-function formatCandleAxisTick(timestamp: number): string {
+function timestampMsFromChartTime(time: Time | undefined): number | null {
+  if (time == null) return null;
+  if (typeof time === 'number') return time * 1000;
+  if (typeof time === 'string') {
+    const parsed = Date.parse(time);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return Date.UTC(time.year, time.month - 1, time.day);
+}
+
+function timeRangeMs(first: Time | undefined, last: Time | undefined): number {
+  const firstTimestamp = timestampMsFromChartTime(first);
+  const lastTimestamp = timestampMsFromChartTime(last);
+  if (firstTimestamp == null || lastTimestamp == null) return 0;
+  return Math.max(0, lastTimestamp - firstTimestamp);
+}
+
+function formatCandleDateTick(timestamp: number, rangeMs: number): string {
   const date = new Date(timestamp);
+  if (rangeMs >= MARKET_AXIS_DAY_ONLY_THRESHOLD_MS) {
+    return compactCandleDayFormatter.format(date);
+  }
+  const formatter = date.getMinutes() === 0
+    ? compactCandleDateHourFormatter
+    : compactCandleDateTimeFormatter;
+  return formatter.format(date).replace(',', '');
+}
+
+function formatCandleAxisTick(timestamp: number, rangeMs = 0): string {
+  const date = new Date(timestamp);
+  if (rangeMs >= MARKET_AXIS_DATE_THRESHOLD_MS) {
+    return formatCandleDateTick(timestamp, rangeMs);
+  }
   if (date.getHours() === 0 && date.getMinutes() === 0) {
     return compactCandleDayFormatter.format(date);
   }
@@ -856,7 +900,12 @@ export function TradingPerformanceChart({
             }
             const key = timeKey(time);
             const candle = candleByTimeRef.current.get(key);
-            if (activeModeRef.current === 'market' && candle) return formatCandleAxisTick(candle.timestamp);
+            if (activeModeRef.current === 'market' && candle) {
+              return formatCandleAxisTick(
+                candle.timestamp,
+                timeRangeMs(firstMarketTimeRef.current, lastMarketTimeRef.current),
+              );
+            }
             const navPoint = pointByTimeRef.current.get(key);
             if (navPoint) return formatNavAxisTick(navPoint);
             return candle ? formatCandleAxisTick(candle.timestamp) : '';
