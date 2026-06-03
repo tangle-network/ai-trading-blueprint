@@ -190,12 +190,12 @@ export default function CreateAgent() {
   const compilerRows = useMemo(() => [
     {
       icon: 'i-ph:clock-countdown',
-      label: 'Replay',
+      label: 'Signal',
       value: launchSteps[0] ?? 'Signal replay',
     },
     {
       icon: 'i-ph:shield-check',
-      label: 'Envelope',
+      label: 'Risk',
       value: detectedProfile.envelope,
     },
     {
@@ -206,11 +206,11 @@ export default function CreateAgent() {
   ], [detectedProfile.envelope, detectedProfile.venue, launchSteps])
   const compilerSpecRows = useMemo(() => [
     ['Strategy', selectedHint.label],
-    ['Profile', detectedProfile.label],
+    ['Class', detectedProfile.label],
     ['Venue', detectedProfile.venue],
-    ['Replay', launchSteps[0] ?? 'Signal replay'],
-    ['Promotion', 'Paper Start'],
-    ['Workspace', '/performance'],
+    ['Signal', launchSteps[0] ?? 'Signal replay'],
+    ['Mode', 'Paper Start'],
+    ['Opens', '/performance'],
   ], [detectedProfile.label, detectedProfile.venue, launchSteps, selectedHint.label])
   const envelopeChecks = useMemo(
     () => detectedProfile.envelope.split(',').map((item) => item.trim()).filter(Boolean),
@@ -218,13 +218,13 @@ export default function CreateAgent() {
   )
   const launchPathRows = useMemo(() => [
     ['01', 'Parse Mandate', selectedHint.label],
-    ['02', launchSteps[0] ?? 'Signal replay', detectedProfile.venue],
-    ['03', 'Risk Envelope', detectedProfile.envelope],
+    ['02', 'Select Venue', detectedProfile.venue],
+    ['03', 'Apply Risk', detectedProfile.envelope],
     ['04', 'Open Workspace', '/performance'],
-  ], [detectedProfile.envelope, detectedProfile.venue, launchSteps, selectedHint.label])
+  ], [detectedProfile.envelope, detectedProfile.venue, selectedHint.label])
   const readinessRows = useMemo(() => [
     ['Operator', operatorLabel],
-    ['Chain', 'Base Sepolia'],
+    ['Network', 'Base Sepolia'],
     ['Mode', 'Paper Start'],
     ['Risk', 'Gated'],
   ], [operatorLabel])
@@ -273,7 +273,7 @@ export default function CreateAgent() {
     try {
       const strategyType = inferStrategyType(prompt)
 
-      setStatus('Provisioning agent…')
+      setStatus('Creating paper agent…')
 
       if (!HAS_TRADING_OPERATOR_API || !ALL_TRADING_OPERATOR_API_URLS[0]) {
         throw new Error('Trading operator API is not configured')
@@ -318,7 +318,7 @@ export default function CreateAgent() {
 
       if (!res.ok) {
         const err = await res.text()
-        throw new Error(err || `Provision failed: ${res.status}`)
+        throw new Error(err || `Create failed: ${res.status}`)
       }
 
       const data = await res.json() as CreateBotResponse
@@ -352,15 +352,15 @@ export default function CreateAgent() {
   }, [handleCreate])
 
   return (
-    <div className="arena-trace-terminal flex min-h-full overflow-y-auto bg-[#081013] text-[#f6fefd] lg:h-full lg:min-h-0 lg:overflow-hidden">
+    <div className="arena-trace-terminal flex min-h-full overflow-y-auto bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)] lg:h-full lg:min-h-0 lg:overflow-hidden">
       <section className="mx-auto flex w-full max-w-[1560px] flex-1 flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:min-h-0">
         <ArenaPageHeader
           title="Create"
           titleWidthClassName="min-[1180px]:w-[11rem]"
           metrics={[
-            { label: 'Profile', value: detectedProfile.label },
+            { label: 'Draft', value: detectedProfile.label },
             { label: 'Venue', value: detectedProfile.venue },
-            { label: 'Risk', value: 'Gated' },
+            { label: 'Route', value: 'Paper' },
           ]}
           controls={(
             <>
@@ -390,26 +390,26 @@ export default function CreateAgent() {
         >
           <form
             id="create-agent-form"
-            className="grid rounded-[5px] border border-[#273035] bg-[#0b1418] lg:col-start-1 lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:overflow-hidden"
+            className="grid content-start rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] lg:col-start-1 lg:min-h-0 lg:self-start lg:grid-rows-[auto_auto_auto] lg:overflow-hidden"
             onSubmit={(event) => {
               event.preventDefault()
               handleCreate()
             }}
           >
-            <div className="grid shrink-0 gap-3 border-b border-[#273035] px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+            <div className="grid shrink-0 gap-3 border-b border-[var(--arena-terminal-border)] px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
               <label
                 htmlFor="agent-strategy-prompt"
-                className="font-display text-base font-semibold text-[#f6fefd]"
+                className="font-display text-base font-semibold text-[var(--arena-terminal-text)]"
               >
                 Mandate
               </label>
-              <div className="inline-flex w-fit items-center gap-2 rounded-[5px] border border-[#273035] bg-[#081013] px-2.5 py-1.5 font-mono text-xs text-[#d2dad7]">
-                <span className={`${detectedProfile.icon} text-base text-[#50d2c1]`} aria-hidden="true" />
+              <div className="inline-flex w-fit items-center gap-2 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-2.5 py-1.5 font-mono text-xs text-[var(--arena-terminal-text-secondary)]">
+                <span className={`${detectedProfile.icon} text-base text-[var(--arena-terminal-accent)]`} aria-hidden="true" />
                 <span>{detectedProfile.label}</span>
               </div>
             </div>
 
-            <div className="grid shrink-0 bg-[#081013]">
+            <div className="grid shrink-0 bg-[var(--arena-terminal-bg)]">
               <textarea
                 id="agent-strategy-prompt"
                 ref={textareaRef}
@@ -422,42 +422,42 @@ export default function CreateAgent() {
                 autoComplete="off"
                 aria-label="Trading agent strategy prompt"
                 aria-describedby="agent-create-status"
-                className="h-[150px] resize-none bg-[#081013] px-4 py-3 font-mono text-[15px] leading-6 text-[#f6fefd] placeholder:text-[#697371] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60 disabled:opacity-50 md:h-[136px] lg:h-[124px] min-[1440px]:h-[136px]"
+                className="h-[150px] resize-none bg-[var(--arena-terminal-bg)] px-4 py-3 font-mono text-[15px] leading-6 text-[var(--arena-terminal-text)] placeholder:text-[var(--arena-terminal-text-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--arena-terminal-accent)] disabled:opacity-50 md:h-[136px] lg:h-[124px] min-[1440px]:h-[136px]"
               />
             </div>
 
-            <div className="grid gap-3 border-t border-[#273035] bg-[#081013] p-3 lg:min-h-0 xl:grid-cols-[minmax(0,1fr)_320px]">
-              <section className="grid rounded-[5px] border border-[#273035] bg-[#0b1418] lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)] lg:overflow-hidden">
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#273035] px-3 py-2">
+            <div className="grid items-start gap-3 border-t border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <section className="grid overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
                   <div className="min-w-0">
-                    <h2 className="truncate font-display text-sm font-semibold text-[#f6fefd]">
-                      Strategy Compiler
+                    <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+                      Compiled Brief
                     </h2>
-                    <p className="truncate font-mono text-[11px] text-[#949e9c]">
+                    <p className="truncate font-mono text-[11px] text-[var(--arena-terminal-text-muted)]">
                       {selectedHint.shorthand}
                     </p>
                   </div>
-                  <span className="rounded-[4px] border border-[#1d5b52] bg-[#0d302c] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[#50d2c1]">
-                    Ready
+                  <span className="rounded-[4px] border border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-accent)]">
+                    Draft
                   </span>
                 </div>
-                <div className="grid grid-cols-1 lg:min-h-0 lg:overflow-auto lg:[scrollbar-gutter:stable] min-[1440px]:grid-cols-2">
+                <div className="grid grid-cols-1 min-[1440px]:grid-cols-2">
                   {compilerSpecRows.map(([label, value]) => (
                     <CompilerSpecRow key={label} label={label} value={value} />
                   ))}
                 </div>
               </section>
 
-              <section className="grid rounded-[5px] border border-[#273035] bg-[#0b1418] lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:overflow-hidden">
-                <div className="border-b border-[#273035] px-3 py-2">
-                  <h2 className="truncate font-display text-sm font-semibold text-[#f6fefd]">
-                    Envelope
+              <section className="grid overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+                <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2">
+                  <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+                    Risk Envelope
                   </h2>
-                  <p className="truncate font-mono text-[11px] text-[#949e9c]">
+                  <p className="truncate font-mono text-[11px] text-[var(--arena-terminal-text-muted)]">
                     Pre-trade checks
                   </p>
                 </div>
-                <div className="grid gap-2 border-b border-[#273035] p-2">
+                <div className="grid gap-2 border-b border-[var(--arena-terminal-border)] p-2">
                   {envelopeChecks.map((check) => (
                     <RiskCheck key={check} label={check} />
                   ))}
@@ -489,14 +489,14 @@ export default function CreateAgent() {
             />
           ) : (
           <aside className="grid gap-2.5 lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:grid-rows-[auto_auto_auto_auto] lg:overflow-hidden">
-            <section className="grid overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
-              <div className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-3 border-b border-[#273035] px-3 py-2">
-                <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[5px] bg-[#143c38] text-[#50d2c1]">
+            <section className="grid overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+              <div className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
+                <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[5px] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
                   <span className={`${detectedProfile.icon} text-lg`} aria-hidden="true" />
                 </span>
                 <div className="min-w-0">
-                  <h2 className="truncate font-display text-base font-semibold text-[#f6fefd]">Strategy Book</h2>
-                  <p className="truncate font-mono text-xs text-[#949e9c]">{detectedProfile.label} / {detectedProfile.venue}</p>
+                  <h2 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">Strategy Presets</h2>
+                  <p className="truncate font-mono text-xs text-[var(--arena-terminal-text-muted)]">{detectedProfile.label} / {detectedProfile.venue}</p>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-1.5 p-2">
@@ -521,8 +521,8 @@ export default function CreateAgent() {
               </div>
             </section>
 
-            <section className="overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
-              <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_8rem] border-b border-[#273035] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[#697371]">
+            <section className="overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+              <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_8rem] border-b border-[var(--arena-terminal-border)] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--arena-terminal-text-subtle)]">
                 <span>#</span>
                 <span>Path</span>
                 <span className="text-right">Surface</span>
@@ -534,10 +534,10 @@ export default function CreateAgent() {
               </div>
             </section>
 
-            <section className="overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
-              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#273035] px-3 py-2">
-                <h2 className="truncate font-display text-sm font-semibold text-[#f6fefd]">Ready</h2>
-                <span className="font-mono text-xs text-[#50d2c1]">Online</span>
+            <section className="overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
+                <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Execution</h2>
+                <span className="font-mono text-xs text-[var(--arena-terminal-accent)]">Paper</span>
               </div>
               <div className="grid grid-cols-2">
                 {readinessRows.map(([label, value]) => (
@@ -546,18 +546,18 @@ export default function CreateAgent() {
               </div>
             </section>
 
-            <section className="grid gap-2 overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-2.5">
+            <section className="grid gap-2 overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-2.5">
               <div
                 id="agent-create-status"
                 aria-live="polite"
-                className="min-h-5 min-w-0 font-mono text-xs text-[#949e9c]"
+                className="min-h-5 min-w-0 font-mono text-xs text-[var(--arena-terminal-text-muted)]"
               >
                 {error ? (
                   <p
                     ref={errorRef}
                     tabIndex={-1}
                     role="alert"
-                    className="break-words text-[#ff7f7f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff7f7f]/45"
+                    className="break-words text-[var(--arena-terminal-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-danger)]"
                   >
                     {routeStatus}
                   </p>
@@ -569,9 +569,9 @@ export default function CreateAgent() {
                 type="submit"
                 form="create-agent-form"
                 disabled={!prompt.trim() || isCreating}
-                className="h-10 w-full rounded-[5px] bg-[#50d2c1] px-5 font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity,transform] duration-150 hover:bg-[#7ce6d9] active:scale-[0.98] disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                className="h-10 w-full rounded-[5px] bg-[var(--arena-terminal-accent)] px-5 font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] active:scale-[0.98] disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
               >
-                {isCreating ? 'Creating…' : 'Deploy Agent'}
+                {isCreating ? 'Creating…' : 'Create Paper Agent'}
               </Button>
             </section>
           </aside>
@@ -599,18 +599,18 @@ function StrategyBookButton({
       onClick={onSelect}
       disabled={disabled}
       aria-pressed={active}
-      className={`grid min-h-[50px] w-full grid-cols-[26px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2 py-1.5 text-left transition-[background-color,border-color,opacity,transform] duration-150 active:scale-[0.99] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+      className={`grid min-h-[50px] w-full grid-cols-[26px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2 py-1.5 text-left transition-[background-color,border-color,opacity,transform] duration-150 active:scale-[0.99] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
         active
-          ? 'border-[#50d2c1]/70 bg-[#143c38] shadow-[inset_3px_0_0_rgba(80,210,193,0.86)]'
-          : 'border-[#273035] bg-[#0f1a1f] hover:border-[#50d2c1]/60 hover:bg-[#132329]'
+          ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_var(--arena-terminal-accent)]'
+          : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)]'
       }`}
     >
-      <span className="flex h-[26px] w-[26px] items-center justify-center rounded-[5px] bg-[#081013] text-[#50d2c1]">
+      <span className="flex h-[26px] w-[26px] items-center justify-center rounded-[5px] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-accent)]">
         <span className={`${hint.icon} text-base`} aria-hidden="true" />
       </span>
       <span className="min-w-0">
-        <span className="block truncate font-display text-[13px] font-semibold text-[#f6fefd]">{hint.label}</span>
-        <span className="block truncate font-mono text-[10px] text-[#949e9c]">{hint.shorthand}</span>
+        <span className="block truncate font-display text-[13px] font-semibold text-[var(--arena-terminal-text)]">{hint.label}</span>
+        <span className="block truncate font-mono text-[10px] text-[var(--arena-terminal-text-muted)]">{hint.shorthand}</span>
       </span>
     </button>
   )
@@ -624,11 +624,11 @@ function CompilerSpecRow({
   value: string
 }) {
   return (
-    <div className="min-w-0 border-b border-[#273035] px-3 py-3 last:border-b-0 min-[1440px]:border-r min-[1440px]:even:border-r-0">
-      <span className="block truncate font-mono text-[10px] uppercase tracking-[0.12em] text-[#697371]">
+    <div className="min-w-0 border-b border-[var(--arena-terminal-border)] px-3 py-3 last:border-b-0 min-[1440px]:border-r min-[1440px]:even:border-r-0">
+      <span className="block truncate font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">
         {label}
       </span>
-      <span className="mt-1 block min-w-0 truncate font-mono text-[13px] font-semibold text-[#f6fefd]">
+      <span className="mt-1 block min-w-0 truncate font-mono text-[13px] font-semibold text-[var(--arena-terminal-text)]">
         {value}
       </span>
     </div>
@@ -637,11 +637,11 @@ function CompilerSpecRow({
 
 function RiskCheck({ label }: { label: string }) {
   return (
-    <div className="grid grid-cols-[22px_minmax(0,1fr)] items-center gap-2 rounded-[4px] border border-[#273035] bg-[#081013] px-2 py-1.5">
-      <span className="flex h-[22px] w-[22px] items-center justify-center rounded-[4px] bg-[#0d302c] text-[#50d2c1]">
+    <div className="grid grid-cols-[22px_minmax(0,1fr)] items-center gap-2 rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-2 py-1.5">
+      <span className="flex h-[22px] w-[22px] items-center justify-center rounded-[4px] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
         <span className="i-ph:check-bold text-xs" aria-hidden="true" />
       </span>
-      <span className="min-w-0 truncate font-mono text-[12px] text-[#d2dad7]">
+      <span className="min-w-0 truncate font-mono text-[12px] text-[var(--arena-terminal-text-secondary)]">
         {label}
       </span>
     </div>
@@ -658,12 +658,12 @@ function RouteChip({
   value: string
 }) {
   return (
-    <div className="grid min-h-[54px] content-between gap-1.5 rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-2.5">
+    <div className="grid min-h-[54px] content-between gap-1.5 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-2.5">
       <span className="flex items-center justify-between gap-3">
-        <span className={`${icon} text-base text-[#50d2c1]`} aria-hidden="true" />
-        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#697371]">{label}</span>
+        <span className={`${icon} text-base text-[var(--arena-terminal-accent)]`} aria-hidden="true" />
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">{label}</span>
       </span>
-      <span className="line-clamp-2 font-mono text-[11px] leading-4 text-[#d2dad7]">{value}</span>
+      <span className="line-clamp-2 font-mono text-[11px] leading-4 text-[var(--arena-terminal-text-secondary)]">{value}</span>
     </div>
   )
 }
@@ -678,10 +678,10 @@ function LedgerRow({
   output: string
 }) {
   return (
-    <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_8rem] items-center border-b border-[#273035] px-3 py-2 last:border-b-0">
-      <span className="font-mono text-xs text-[#50d2c1]">{index}</span>
-      <span className="min-w-0 truncate font-display text-sm font-semibold text-[#f6fefd]">{action}</span>
-      <span className="min-w-0 truncate text-right font-mono text-xs text-[#949e9c]">{output}</span>
+    <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_8rem] items-center border-b border-[var(--arena-terminal-border)] px-3 py-2 last:border-b-0">
+      <span className="font-mono text-xs text-[var(--arena-terminal-accent)]">{index}</span>
+      <span className="min-w-0 truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">{action}</span>
+      <span className="min-w-0 truncate text-right font-mono text-xs text-[var(--arena-terminal-text-muted)]">{output}</span>
     </div>
   )
 }
@@ -694,9 +694,9 @@ function ReadinessRow({
   value: string
 }) {
   return (
-    <div className="min-w-0 border-t border-[#273035] px-3 py-2 odd:border-r">
-      <span className="block truncate font-mono text-[10px] uppercase tracking-[0.12em] text-[#697371]">{label}</span>
-      <span className="mt-0.5 block min-w-0 truncate font-mono text-xs text-[#d2dad7]">{value}</span>
+    <div className="min-w-0 border-t border-[var(--arena-terminal-border)] px-3 py-2 odd:border-r">
+      <span className="block truncate font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">{label}</span>
+      <span className="mt-0.5 block min-w-0 truncate font-mono text-xs text-[var(--arena-terminal-text-secondary)]">{value}</span>
     </div>
   )
 }

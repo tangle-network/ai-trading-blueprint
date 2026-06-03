@@ -13,15 +13,16 @@ Core jobs:
 - Understand whether the platform is live: recent fills, volume, active agents, and top movers.
 - Choose an agent to inspect from a dense ranked explorer.
 - Inspect an agent's account, market chart, fills, risk, positions, runs, decisions, chat trace, and control-plane state.
-- Deploy a new agent with a clear mandate, strategy, venue, assets, collateral, wallet, network, and review path.
+- Create a paper agent quickly from a natural-language mandate, with a visible compiled brief and a clear handoff into the agent workspace.
+- Deploy/provision an agent with explicit wallet-backed requirements: strategy pack, venue, assets, collateral, service/operator route, network, review, and secrets.
 - Verify that execution, validation, vault, operator, and trace data are accurate enough to act on.
 
 Primary workflows:
 - Home: scan market pulse, platform flow, latest fills, and top agents.
 - Agents: search, rank, compare, and open agent workspaces.
 - Activity: inspect recent execution records and their agent/market context.
-- Create: compile a natural-language mandate into an agent launch request.
-- Deploy/Provision: configure strategy, assets, operator route, collateral, and review before launch.
+- Create: compile a natural-language mandate into a paper-agent create request and open the resulting workspace.
+- Deploy/Provision: configure hard provisioning requirements, operator route, collateral, wallet/network state, and review before launch.
 - Agent workspace: inspect performance, portfolio, runs, chat, and operations without losing agent context.
 - Operations: audit runtime state, validation, revisions, permissions, vault/secrets, and control availability.
 
@@ -30,7 +31,7 @@ Critical data:
 - Account value, return, drawdown, fills, total and recent volume, positions, executions, and market candles.
 - Trade evidence: fill count source, priced/unpriced fills, outside-range fills, timestamps, prices, notional, status, validation, and provenance.
 - Run and chat trace evidence: workflow, decision, tools, reasoning, output, error state, public/private access, and timestamps.
-- Provisioning evidence: wallet, network, service, collateral, strategy profile, asset universe, and launch readiness.
+- Provisioning evidence: wallet, network, service, collateral, strategy pack, asset universe, operator route, and launch readiness.
 
 Primary actions:
 - Open an agent workspace from Home, Agents, or Activity.
@@ -58,6 +59,7 @@ Non-goals:
 - Do not add decorative widgets to fill sparse data.
 - Do not bolt on draggable/resizable behavior without a coherent persisted layout model.
 - Do not introduce duplicate navigation layers unless each layer has a distinct job.
+- Do not present natural-language Create as a substitute for wallet-backed Deploy/Provision.
 
 Evidence:
 - `arena/src/routes/_index.tsx`, `leaderboard.tsx`, `activity.tsx`, `create.tsx`, `provision.tsx`, and `arena.bot.$id.*.tsx`

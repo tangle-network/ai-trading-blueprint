@@ -217,8 +217,8 @@ export function ConfigureStep({
   };
 
   return (
-    <div className="arena-trace-terminal overflow-hidden rounded-[5px] border border-[#273035] bg-[#081013] text-[#f6fefd]">
-      <div className="grid gap-px bg-[#273035] lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,0.8fr)]">
+    <div className="arena-trace-terminal overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)]">
+      <div className="grid gap-px bg-[var(--arena-terminal-border)] lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,0.8fr)]">
         <LaunchHeaderCell
           icon={<Database className="h-4 w-4" />}
           label="Strategy"
@@ -227,13 +227,13 @@ export function ConfigureStep({
         />
         <LaunchHeaderCell
           icon={<WalletCards className="h-4 w-4" />}
-          label="Route"
+          label="Infrastructure"
           value={routeStatus}
           detail={routeDetail}
         />
         <LaunchHeaderCell
           icon={canNext ? <CheckCircle2 className="h-4 w-4" /> : <CircleAlert className="h-4 w-4" />}
-          label="Risk"
+          label="Readiness"
           value={readinessLabel}
           detail={executionModeLabel}
           tone={canNext ? 'ready' : 'pending'}
@@ -246,9 +246,9 @@ export function ConfigureStep({
         style={workspaceStyle}
       >
         <div className="space-y-2.5 lg:col-start-1 lg:min-h-0 lg:overflow-auto lg:pr-2 lg:[scrollbar-gutter:stable]">
-          <ProvisionPanel title="Command">
+          <ProvisionPanel title="Agent Identity">
             <label htmlFor="agent-name" className="block">
-              <span className="mb-1.5 block font-display text-sm font-semibold text-[#f6fefd]">
+              <span className="mb-1.5 block font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
                 Agent Name
               </span>
               <input
@@ -261,18 +261,18 @@ export function ConfigureStep({
                   : 'e.g. Base USDC/WETH swing bot…'}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="h-9 w-full rounded-[5px] border border-[#273035] bg-[#081013] px-3 py-2 font-mono text-sm text-[#f6fefd] placeholder:text-[#697371] transition-[border-color,box-shadow] duration-150 hover:border-[#3a464a] focus-visible:border-[#50d2c1]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/35"
+                className="h-9 w-full rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-2 font-mono text-sm text-[var(--arena-terminal-text)] placeholder:text-[var(--arena-terminal-text-subtle)] transition-[border-color,box-shadow] duration-150 hover:border-[var(--arena-terminal-border-hover)] focus-visible:border-[var(--arena-terminal-border-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
               />
             </label>
           </ProvisionPanel>
 
-          <ProvisionPanel title="Strategy" action={(
+          <ProvisionPanel title="Strategy Pack" action={(
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => setShowAdvanced(true)}
-              className="h-8 gap-2 rounded-[5px] border-[#273035] bg-[#0f1a1f] px-3 font-display text-xs text-[#d2dad7] transition-[background-color,border-color,color] duration-150 hover:border-[#50d2c1]/50 hover:bg-[#143c38] hover:text-[#f6fefd]"
+              className="h-8 gap-2 rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-3 font-display text-xs text-[var(--arena-terminal-text-secondary)] transition-[background-color,border-color,color] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)]"
             >
               <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
               Customize
@@ -290,7 +290,7 @@ export function ConfigureStep({
             </div>
             {predictionPacks.length > 0 && (
               <div className="mt-2.5">
-                <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.12em] text-[#50d2c1]">
+                <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-accent)]">
                   <span className="i-ph:newspaper-clipping text-sm" aria-hidden="true" />
                   Prediction Markets
                 </div>
@@ -307,7 +307,7 @@ export function ConfigureStep({
               </div>
             )}
             {strategyExecutionNotice && (
-              <p className="mt-3 rounded-[5px] border border-[#6f5723] bg-[#201808] px-3 py-2 font-mono text-xs text-[#f2c066]">
+              <p className="mt-3 rounded-[5px] border border-[color-mix(in_srgb,var(--arena-terminal-warning)_42%,var(--arena-terminal-border))] bg-[color-mix(in_srgb,var(--arena-terminal-warning)_10%,var(--arena-terminal-panel))] px-3 py-2 font-mono text-xs text-[var(--arena-terminal-warning)]">
                 {strategyExecutionNotice}
               </p>
             )}
@@ -333,7 +333,7 @@ export function ConfigureStep({
         ) : (
         <aside className="grid content-start gap-2.5 lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:overflow-auto lg:pl-2 lg:[scrollbar-gutter:stable]">
           <ProvisionPanel
-            title="Launch Summary"
+            title="Provision Review"
             action={(
               <WorkspaceControlButton
                 label="Minimize deploy summary"
@@ -350,8 +350,8 @@ export function ConfigureStep({
                 <ReadRow label="Target" value={executionTargetLabel} />
               )}
               <ReadRow label="Assets" value={selectedAssetLabel} />
-              <div className="rounded-[5px] border border-[#273035] bg-[#081013] p-3">
-                <p className="text-sm leading-5 text-[#d2dad7]">
+              <div className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3">
+                <p className="text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
                   {executionTargetDescription ?? selectedPack.description}
                 </p>
               </div>
@@ -362,14 +362,14 @@ export function ConfigureStep({
             onClick={goNext}
             disabled={!canNext}
             size="lg"
-            className="h-11 w-full rounded-[5px] bg-[#50d2c1] font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity] duration-150 hover:bg-[#7ce6d9] disabled:opacity-45"
+            className="h-11 w-full rounded-[5px] bg-[var(--arena-terminal-accent)] font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] disabled:opacity-45"
           >
             Review Provision
           </Button>
 
           {isHyperliquidStrategy && (
             <ProvisionPanel title="Hyperliquid Guardrails">
-              <div className="grid overflow-hidden border border-[#273035] bg-[#273035] sm:grid-cols-2">
+              <div className="grid overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-border)] sm:grid-cols-2">
                 <GuardrailRow
                   label="Account"
                   value="Bot-bound HyperEVM vault"
@@ -413,22 +413,22 @@ export function ConfigureStep({
                           void addAssetToUniverse(asset.address);
                         }
                       }}
-                      className={`grid min-h-[50px] grid-cols-[24px_minmax(0,1fr)_14px] items-center gap-2 rounded-[5px] border px-2 py-1.5 text-left transition-[background-color,border-color,opacity,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+                      className={`grid min-h-[50px] grid-cols-[24px_minmax(0,1fr)_14px] items-center gap-2 rounded-[5px] border px-2 py-1.5 text-left transition-[background-color,border-color,opacity,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
                         selected
-                          ? 'border-[#50d2c1]/70 bg-[#143c38] text-[#f6fefd]'
-                          : 'border-[#273035] bg-[#0f1a1f] text-[#d2dad7] hover:border-[#50d2c1]/40 hover:bg-[#132329]'
+                          ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-text)]'
+                          : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)] hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)]'
                       }`}
                       aria-pressed={selected}
                     >
                       <AssetLogo asset={asset} size="sm" />
                       <span className="min-w-0">
                         <span className="block truncate font-display text-xs font-semibold">{asset.symbol}</span>
-                        <span className="block truncate font-mono text-[10px] text-[#949e9c]">
+                        <span className="block truncate font-mono text-[10px] text-[var(--arena-terminal-text-muted)]">
                           {isBase ? 'Base' : asset.name}
                         </span>
                       </span>
                       {selected && (
-                        <CheckCircle2 className="h-3.5 w-3.5 text-[#50d2c1]" aria-hidden="true" />
+                        <CheckCircle2 className="h-3.5 w-3.5 text-[var(--arena-terminal-accent)]" aria-hidden="true" />
                       )}
                     </button>
                   );
@@ -444,17 +444,17 @@ export function ConfigureStep({
                     return (
                       <span
                         key={asset.address}
-                        className="inline-flex h-7 items-center gap-1.5 rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2 text-xs"
+                        className="inline-flex h-7 items-center gap-1.5 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2 text-xs"
                       >
                         <AssetLogo asset={asset} size="sm" />
-                        <span className="font-display font-semibold text-[#f6fefd]">
+                        <span className="font-display font-semibold text-[var(--arena-terminal-text)]">
                           {asset.symbol}
                         </span>
                         <span
                           className={
                             asset.valuationSource === 'uniswap_v3_twap'
-                              ? 'font-mono text-[10px] text-[#f2c066]'
-                              : 'font-mono text-[10px] text-[#949e9c]'
+                              ? 'font-mono text-[10px] text-[var(--arena-terminal-warning)]'
+                              : 'font-mono text-[10px] text-[var(--arena-terminal-text-muted)]'
                           }
                           title={
                             asset.valuationSource === 'uniswap_v3_twap'
@@ -474,7 +474,7 @@ export function ConfigureStep({
                           <button
                             type="button"
                             onClick={() => removeAssetFromUniverse(asset.address)}
-                            className="rounded-[4px] text-[#697371] transition-colors hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                            className="rounded-[4px] text-[var(--arena-terminal-text-subtle)] transition-colors hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
                             aria-label={`Remove ${asset.symbol}`}
                             title={`Remove ${asset.symbol}`}
                           >
@@ -505,7 +505,7 @@ export function ConfigureStep({
                       void addAssetToUniverse(manualAssetInput);
                     }
                   }}
-                  className="h-9 w-full rounded-[5px] border border-[#273035] bg-[#081013] px-3 py-2 font-mono text-xs text-[#f6fefd] placeholder:text-[#697371] transition-[border-color,box-shadow] duration-150 hover:border-[#3a464a] focus-visible:border-[#50d2c1]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/35"
+                  className="h-9 w-full rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-2 font-mono text-xs text-[var(--arena-terminal-text)] placeholder:text-[var(--arena-terminal-text-subtle)] transition-[border-color,box-shadow] duration-150 hover:border-[var(--arena-terminal-border-hover)] focus-visible:border-[var(--arena-terminal-border-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
                   aria-invalid={customAssetError ? 'true' : undefined}
                 />
                 <Button
@@ -513,27 +513,27 @@ export function ConfigureStep({
                   variant="outline"
                   disabled={customAssetChecking}
                   onClick={() => void addAssetToUniverse(manualAssetInput)}
-                  className="h-9 gap-2 rounded-[5px] border-[#273035] bg-[#0f1a1f] px-3 text-xs text-[#d2dad7] transition-[background-color,border-color,color,opacity] duration-150 hover:border-[#50d2c1]/50 hover:bg-[#143c38] hover:text-[#f6fefd]"
+                  className="h-9 gap-2 rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-3 text-xs text-[var(--arena-terminal-text-secondary)] transition-[background-color,border-color,color,opacity] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)]"
                 >
                   <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                   {customAssetChecking ? 'Checking…' : 'Add Token'}
                 </Button>
               </div>
               {customAssetError && (
-                <p className="mt-2 font-mono text-xs text-[#ff7f7f]" aria-live="polite">
+                <p className="mt-2 font-mono text-xs text-[var(--arena-terminal-danger)]" aria-live="polite">
                   {customAssetError}
                 </p>
               )}
 
               <label className="mt-2 block">
-                <span className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.12em] text-[#697371]">
+                <span className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">
                   Base Asset
                 </span>
                 <select
                   value={effectiveBaseAssetAddress ?? ''}
                   onChange={(event) => setBaseAssetAddress(event.target.value as Address)}
                   disabled={baseAssetChoices.length === 0}
-                  className="h-9 w-full rounded-[5px] border border-[#273035] bg-[#081013] px-3 font-mono text-xs text-[#f6fefd] disabled:opacity-60"
+                  className="h-9 w-full rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 font-mono text-xs text-[var(--arena-terminal-text)] disabled:opacity-60"
                 >
                   {baseAssetChoices.map((asset) => (
                     <option key={asset.address} value={asset.address}>
@@ -550,14 +550,14 @@ export function ConfigureStep({
               <span
                 className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${
                   routeStatus === 'Online' || routeStatus === 'Operator Selected'
-                    ? 'bg-[#50d2c1]'
+                    ? 'bg-[var(--arena-terminal-accent)]'
                     : routeStatus === 'Checking'
-                      ? 'bg-[#f2c066]'
-                      : 'bg-[#697371]'
+                      ? 'bg-[var(--arena-terminal-warning)]'
+                      : 'bg-[var(--arena-terminal-text-subtle)]'
                 }`}
                 aria-hidden="true"
               />
-              <p className="min-w-0 font-mono text-xs leading-5 text-[#d2dad7]">
+              <p className="min-w-0 font-mono text-xs leading-5 text-[var(--arena-terminal-text-secondary)]">
                 {infrastructureSummary}
               </p>
             </div>
@@ -566,7 +566,7 @@ export function ConfigureStep({
           <ProvisionPanel title="Collateral">
             {supportsClobCollateral ? (
               <label htmlFor="collateral-cap" className="block">
-                <span className="mb-2 block font-display text-sm font-semibold text-[#f6fefd]">
+                <span className="mb-2 block font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
                   CLOB Collateral Cap (%)
                 </span>
                 <div className="flex items-center gap-3">
@@ -581,9 +581,9 @@ export function ConfigureStep({
                     min={0}
                     max={100}
                     step={1}
-                    className="h-10 max-w-32 rounded-[5px] border border-[#273035] bg-[#081013] px-3 py-2 font-mono text-sm text-[#f6fefd] transition-[border-color,box-shadow] duration-150 hover:border-[#3a464a] focus-visible:border-[#50d2c1]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/35"
+                    className="h-10 max-w-32 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-2 font-mono text-sm text-[var(--arena-terminal-text)] transition-[border-color,box-shadow] duration-150 hover:border-[var(--arena-terminal-border-hover)] focus-visible:border-[var(--arena-terminal-border-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
                   />
-                  <span className="font-mono text-sm text-[#949e9c]">%</span>
+                  <span className="font-mono text-sm text-[var(--arena-terminal-text-muted)]">%</span>
                 </div>
               </label>
             ) : (
@@ -621,12 +621,12 @@ function LaunchHeaderCell({
   tone?: 'default' | 'ready' | 'pending';
 }) {
   const iconClassName = tone === 'ready'
-    ? 'border-[#1d5b52] bg-[#143c38] text-[#50d2c1]'
+    ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]'
     : tone === 'pending'
-      ? 'border-[#6f5723] bg-[#201808] text-[#f2c066]'
-      : 'border-[#273035] bg-[#0f1a1f] text-[#d2dad7]';
+      ? 'border-[color-mix(in_srgb,var(--arena-terminal-warning)_42%,var(--arena-terminal-border))] bg-[color-mix(in_srgb,var(--arena-terminal-warning)_10%,var(--arena-terminal-panel))] text-[var(--arena-terminal-warning)]'
+      : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)]';
   return (
-    <div className="flex min-h-[58px] items-center gap-2.5 bg-[#0b1418] px-3.5 py-2">
+    <div className="flex min-h-[58px] items-center gap-2.5 bg-[var(--arena-terminal-surface)] px-3.5 py-2">
       <span
         className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] border ${iconClassName}`}
         aria-hidden="true"
@@ -634,13 +634,13 @@ function LaunchHeaderCell({
         {icon}
       </span>
       <div className="min-w-0">
-        <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#697371]">
+        <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">
           {label}
         </div>
-        <div className="mt-0.5 truncate font-display text-sm font-semibold text-[#f6fefd]">
+        <div className="mt-0.5 truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
           {value}
         </div>
-        <div className="truncate font-mono text-[11px] text-[#949e9c]">
+        <div className="truncate font-mono text-[11px] text-[var(--arena-terminal-text-muted)]">
           {detail}
         </div>
       </div>
@@ -658,9 +658,9 @@ function ProvisionPanel({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-[5px] border border-[#273035] bg-[#0b1418]">
-      <div className="flex min-h-9 items-center justify-between gap-3 border-b border-[#273035] px-3 py-1.5">
-        <h2 className="font-display text-sm font-semibold text-[#f6fefd]">{title}</h2>
+    <section className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+      <div className="flex min-h-9 items-center justify-between gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-1.5">
+        <h2 className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">{title}</h2>
         {action}
       </div>
       <div className="p-2.5">{children}</div>
@@ -717,27 +717,27 @@ function StrategyPackButton({
       type="button"
       onClick={onClick}
       title={pack.description}
-      className={`grid h-full min-h-0 grid-cols-[24px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2.5 py-1.5 text-left transition-[background-color,border-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+      className={`grid h-full min-h-0 grid-cols-[24px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2.5 py-1.5 text-left transition-[background-color,border-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
         active
-          ? 'border-[#50d2c1]/70 bg-[#143c38] shadow-[inset_3px_0_0_rgba(80,210,193,0.9)]'
-          : 'border-[#273035] bg-[#0f1a1f] hover:border-[#50d2c1]/40 hover:bg-[#132329]'
+          ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_var(--arena-terminal-accent)]'
+          : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)]'
       }`}
     >
       <span
         className={`inline-flex h-6 w-6 items-center justify-center rounded-[5px] border ${
           active
-            ? 'border-[#50d2c1]/40 bg-[#081013] text-[#50d2c1]'
-            : 'border-[#273035] bg-[#081013] text-[#949e9c]'
+            ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-accent)]'
+            : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text-muted)]'
         }`}
         aria-hidden="true"
       >
         <span className={`${strategyPackIcon(pack)} text-sm`} />
       </span>
       <span className="min-w-0">
-        <span className="block truncate font-display text-[13px] font-semibold leading-4 text-[#f6fefd]">
+        <span className="block truncate font-display text-[13px] font-semibold leading-4 text-[var(--arena-terminal-text)]">
           {pack.name}
         </span>
-        <span className="mt-0.5 block truncate font-mono text-[11px] text-[#949e9c]">
+        <span className="mt-0.5 block truncate font-mono text-[11px] text-[var(--arena-terminal-text-muted)]">
           {pack.providers.slice(0, 3).join(', ')}
           {pack.providers.length > 3 ? ` +${pack.providers.length - 3}` : ''}
         </span>
@@ -760,10 +760,10 @@ function PredictionPackButton({
       type="button"
       onClick={onClick}
       title={pack.description}
-      className={`grid h-full max-w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2.5 font-display text-[13px] font-semibold transition-[background-color,border-color,color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+      className={`grid h-full max-w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2.5 font-display text-[13px] font-semibold transition-[background-color,border-color,color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
         active
-          ? 'border-[#50d2c1]/70 bg-[#143c38] text-[#f6fefd]'
-          : 'border-[#273035] bg-[#0f1a1f] text-[#d2dad7] hover:border-[#50d2c1]/40 hover:bg-[#132329]'
+          ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-text)]'
+          : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)] hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)]'
       }`}
     >
       <span className={`${strategyPackIcon(pack)} shrink-0 text-sm`} aria-hidden="true" />
@@ -800,7 +800,7 @@ function AssetLogo({
 
   return (
     <span
-      className={`${sizeClassName} flex shrink-0 items-center justify-center rounded-full bg-[#081013] font-mono font-semibold text-[#50d2c1] ring-1 ring-[#273035]`}
+      className={`${sizeClassName} flex shrink-0 items-center justify-center rounded-full bg-[var(--arena-terminal-bg)] font-mono font-semibold text-[var(--arena-terminal-accent)] ring-1 ring-[var(--arena-terminal-border)]`}
       aria-hidden="true"
     >
       {fallbackText}
@@ -810,9 +810,9 @@ function AssetLogo({
 
 function ReadRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[84px_minmax(0,1fr)] items-center gap-3 border-b border-[#273035] pb-2 last:border-b-0 last:pb-0">
-      <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#697371]">{label}</span>
-      <span className="min-w-0 truncate text-right font-mono text-xs text-[#f6fefd]">{value}</span>
+    <div className="grid grid-cols-[84px_minmax(0,1fr)] items-center gap-3 border-b border-[var(--arena-terminal-border)] pb-2 last:border-b-0 last:pb-0">
+      <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--arena-terminal-text-subtle)]">{label}</span>
+      <span className="min-w-0 truncate text-right font-mono text-xs text-[var(--arena-terminal-text)]">{value}</span>
     </div>
   );
 }
@@ -830,12 +830,12 @@ function GuardrailRow({
     <div
       className={
         compact
-          ? 'grid min-w-0 gap-1 bg-[#081013] px-3 py-2'
-          : 'grid min-w-0 gap-1.5 rounded-[5px] border border-[#273035] bg-[#081013] px-3 py-2'
+          ? 'grid min-w-0 gap-1 bg-[var(--arena-terminal-bg)] px-3 py-2'
+          : 'grid min-w-0 gap-1.5 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-2'
       }
     >
-      <span className="font-mono text-[10px] uppercase text-[#697371]">{label}</span>
-      <span className="min-w-0 font-mono text-xs leading-4 text-[#d2dad7]">{value}</span>
+      <span className="font-mono text-[10px] uppercase text-[var(--arena-terminal-text-subtle)]">{label}</span>
+      <span className="min-w-0 font-mono text-xs leading-4 text-[var(--arena-terminal-text-secondary)]">{value}</span>
     </div>
   );
 }

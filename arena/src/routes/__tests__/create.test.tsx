@@ -80,7 +80,7 @@ describe('create agent route', () => {
       'I want to trade political and news events on Polymarket. Find markets with edge and manage positions.',
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /deploy agent/i }))
+    fireEvent.click(screen.getByRole('button', { name: /create paper agent/i }))
 
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
     const [, request] = vi.mocked(fetch).mock.calls[0]
@@ -105,7 +105,7 @@ describe('create agent route', () => {
       'I want an agent that trades ETH perps on Hyperliquid, using breakout retests with strict max leverage, liquidation buffer, and drawdown limits.',
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /deploy agent/i }))
+    fireEvent.click(screen.getByRole('button', { name: /create paper agent/i }))
 
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
     const [, request] = vi.mocked(fetch).mock.calls[0]

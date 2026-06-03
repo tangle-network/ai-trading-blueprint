@@ -3571,7 +3571,7 @@ export default function ProvisionPage() {
   }
 
   return (
-    <div className="arena-trace-terminal min-h-full bg-[#081013] text-[#f6fefd]">
+    <div className="arena-trace-terminal min-h-full bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)]">
       <div className="mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3">
         <ArenaPageHeader
           title="Deploy"
@@ -3607,21 +3607,21 @@ export default function ProvisionPage() {
                   setStep(s);
                 }}
                 disabled={!isDone && !isCurrent}
-                className={`flex h-12 items-center gap-3 rounded-[5px] border px-3 text-left font-display text-sm font-medium transition-[background-color,border-color,color,opacity,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+                className={`flex h-12 items-center gap-3 rounded-[5px] border px-3 text-left font-display text-sm font-medium transition-[background-color,border-color,color,opacity,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
                   isCurrent
-                    ? 'border-[#50d2c1]/70 bg-[#143c38] text-[#f6fefd]'
+                    ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-text)]'
                     : isDone
-                      ? 'border-[#273035] bg-[#0f1a1f] text-[#d2dad7] hover:border-[#50d2c1]/40 hover:bg-[#132329]'
-                      : 'cursor-default border-[#273035] bg-[#0b1418] text-[#697371]'
+                      ? 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)] hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)]'
+                      : 'cursor-default border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-subtle)]'
                 }`}
               >
                 <span
                   className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border font-mono text-xs font-semibold ${
                     isCurrent
-                      ? 'border-[#50d2c1]/70 bg-[#081013] text-[#50d2c1]'
+                      ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-accent)]'
                       : isDone
-                        ? 'border-[#1d5b52] bg-[#143c38] text-[#9cf5e7]'
-                        : 'border-[#273035] bg-[#081013] text-[#697371]'
+                        ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]'
+                        : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text-subtle)]'
                   }`}
                 >
                   {isDone ? '\u2713' : i + 1}
@@ -3635,13 +3635,13 @@ export default function ProvisionPage() {
 
         <div className="space-y-4">
         {ambiguousInstanceProvisionMessage && (
-          <div className="flex items-start gap-3 rounded-[7px] border border-[#6f5723] bg-[#201808] p-4">
-            <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[#f2c066]" />
+          <div className="flex items-start gap-3 rounded-[7px] border border-[color-mix(in_srgb,var(--arena-terminal-warning)_42%,var(--arena-terminal-border))] bg-[color-mix(in_srgb,var(--arena-terminal-warning)_10%,var(--arena-terminal-panel))] p-4">
+            <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--arena-terminal-warning)]" />
             <div>
-              <div className="font-display text-sm font-semibold text-[#f2c066]">
+              <div className="font-display text-sm font-semibold text-[var(--arena-terminal-warning)]">
                 Instance Draft Needs Disambiguation
               </div>
-              <div className="mt-0.5 font-mono text-xs text-[#d2dad7]">
+              <div className="mt-0.5 font-mono text-xs text-[var(--arena-terminal-text-secondary)]">
                 {ambiguousInstanceProvisionMessage}
               </div>
             </div>
@@ -3650,13 +3650,13 @@ export default function ProvisionPage() {
 
         {/* Wrong chain banner */}
         {isWrongChain && (
-          <div className="flex items-center gap-3 rounded-[7px] border border-[#6f5723] bg-[#201808] p-4">
-            <div className="h-3 w-3 shrink-0 rounded-full bg-[#f2c066] animate-pulse" />
+          <div className="flex items-center gap-3 rounded-[7px] border border-[color-mix(in_srgb,var(--arena-terminal-warning)_42%,var(--arena-terminal-border))] bg-[color-mix(in_srgb,var(--arena-terminal-warning)_10%,var(--arena-terminal-panel))] p-4">
+            <div className="h-3 w-3 shrink-0 rounded-full bg-[var(--arena-terminal-warning)] animate-pulse" />
             <div className="flex-1">
-              <div className="font-display text-sm font-semibold text-[#f2c066]">
+              <div className="font-display text-sm font-semibold text-[var(--arena-terminal-warning)]">
                 Wrong Network
               </div>
-              <div className="mt-0.5 font-mono text-xs text-[#d2dad7]">
+              <div className="mt-0.5 font-mono text-xs text-[var(--arena-terminal-text-secondary)]">
                 Your wallet is on chain {walletChainId}. Switch to{' '}
                 {targetChain.name} to submit transactions.
               </div>
@@ -3670,7 +3670,7 @@ export default function ProvisionPage() {
                   ),
                 )
               }
-              className="h-9 rounded-[5px] bg-[#f2c066] px-3 font-display text-xs font-semibold text-[#120d02] transition-[background-color,opacity,transform] duration-150 hover:bg-[#ffda87] active:scale-[0.98]"
+              className="h-9 rounded-[5px] bg-[var(--arena-terminal-warning)] px-3 font-display text-xs font-semibold text-[#120d02] transition-[background-color,opacity,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-warning)_82%,var(--arena-terminal-text))] active:scale-[0.98]"
             >
               Switch Network
             </Button>
@@ -3695,7 +3695,7 @@ export default function ProvisionPage() {
               <Button
                 disabled={!selectedBlueprint}
                 onClick={goNext}
-                className="h-10 rounded-[5px] bg-[#50d2c1] px-4 font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity,transform] duration-150 hover:bg-[#7ce6d9] active:scale-[0.98] disabled:opacity-45"
+                className="h-10 rounded-[5px] bg-[var(--arena-terminal-accent)] px-4 font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] active:scale-[0.98] disabled:opacity-45"
               >
                 Continue
               </Button>
