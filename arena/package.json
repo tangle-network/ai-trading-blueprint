@@ -60,7 +60,9 @@
       "minimatch": "^9.0.9",
       "picomatch@<2.3.2": "^2.3.2",
       "picomatch@>=4.0.0 <4.0.4": "^4.0.4",
-      "rollup": "^4.61.0"
+      "postcss": "^8.5.15",
+      "rollup": "^4.61.0",
+      "ws": "^8.20.1"
     },
     "onlyBuiltDependencies": [
       "esbuild",
