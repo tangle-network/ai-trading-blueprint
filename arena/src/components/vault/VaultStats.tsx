@@ -55,14 +55,14 @@ export function VaultStats({ tvl, sharePrice, totalShares, assetSymbol, paused, 
   ];
 
   return (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {stats.map((stat, i) => (
         <m.div
           key={stat.label}
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: i * 0.06, duration: 0.4 }}
-          className={`glass-card rounded-xl p-5 ${
+          className={`glass-card rounded-[6px] p-5 ${
             stat.label === 'Total Value Locked' && stat.value != null && stat.value > 0
               ? 'glow-emerald' : ''
           }${

@@ -180,7 +180,7 @@ export function DepositForm({
 
   if (assetSymbol === '???') {
     return (
-      <Card>
+      <Card className="rounded-[6px]">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <div className="i-ph:arrow-down-right text-arena-elements-icon-success" />
@@ -204,7 +204,7 @@ export function DepositForm({
 
   return (
     <>
-    <Card>
+    <Card className="rounded-[6px]">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <div className="i-ph:arrow-down-right text-arena-elements-icon-success" />

@@ -45,10 +45,10 @@ function formatVerificationState(verificationState?: BotVerificationState): stri
 }
 
 function routeToneClass(tone: RouteStateItem['tone'] = 'neutral'): string {
-  if (tone === 'good') return 'text-[#50d2c1]';
-  if (tone === 'warn') return 'text-[#f7b955]';
-  if (tone === 'muted') return 'text-[#697371]';
-  return 'text-[#f6fefd]';
+  if (tone === 'good') return 'text-[var(--arena-terminal-accent)]';
+  if (tone === 'warn') return 'text-[var(--arena-terminal-warning)]';
+  if (tone === 'muted') return 'text-[var(--arena-terminal-text-subtle)]';
+  return 'text-[var(--arena-terminal-text)]';
 }
 
 function TerminalPane({
@@ -65,13 +65,13 @@ function TerminalPane({
   bodyClassName?: string;
 }) {
   return (
-    <section className={`flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] ${className}`}>
-      <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0b1418] px-3">
-        <h3 className="font-data text-[11px] font-semibold uppercase tracking-[0.12em] text-[#949e9c]">
+    <section className={`flex min-h-0 flex-col overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] ${className}`}>
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3">
+        <h3 className="font-data text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--arena-terminal-text-muted)]">
           {title}
         </h3>
         {meta && (
-          <div className="min-w-0 font-data text-xs tabular-nums text-[#d2dad7]">
+          <div className="min-w-0 font-data text-xs tabular-nums text-[var(--arena-terminal-text-secondary)]">
             {meta}
           </div>
         )}
@@ -89,7 +89,7 @@ function RouteStateTicker({ items }: { items: RouteStateItem[] }) {
       {items.map((item, index) => (
         <span
           key={`${item.value}-${index}`}
-          className={`min-w-0 max-w-[9.5rem] truncate rounded-[4px] border border-[#273035] bg-[#0b1418] px-2 py-1 ${routeToneClass(item.tone)}`}
+          className={`min-w-0 max-w-[9.5rem] truncate rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-2 py-1 ${routeToneClass(item.tone)}`}
           title={item.value}
           translate="no"
         >
@@ -136,39 +136,39 @@ export function PortfolioWorkspace({
     },
   ];
   const terminalTableClass = [
-    'text-[#d2dad7]',
-    '[&_.glass-card]:!border-[#273035]',
-    '[&_.glass-card]:!bg-[#0f1a1f]',
-    '[&_.glass-card]:!text-[#d2dad7]',
-    '[&_table]:!bg-[#0f1a1f]',
-    '[&_thead]:!bg-[#0b1418]',
-    '[&_tbody]:!bg-[#0f1a1f]',
-    '[&_tr]:!border-[#273035]',
-    '[&_th]:!border-[#273035]',
-    '[&_th]:!bg-[#0b1418]',
+    'text-[var(--arena-terminal-text-secondary)]',
+    '[&_.glass-card]:!border-[var(--arena-terminal-border)]',
+    '[&_.glass-card]:!bg-[var(--arena-terminal-panel)]',
+    '[&_.glass-card]:!text-[var(--arena-terminal-text-secondary)]',
+    '[&_table]:!bg-[var(--arena-terminal-panel)]',
+    '[&_thead]:!bg-[var(--arena-terminal-surface)]',
+    '[&_tbody]:!bg-[var(--arena-terminal-panel)]',
+    '[&_tr]:!border-[var(--arena-terminal-border)]',
+    '[&_th]:!border-[var(--arena-terminal-border)]',
+    '[&_th]:!bg-[var(--arena-terminal-surface)]',
     '[&_th]:!font-data',
-    '[&_th]:!text-[#949e9c]',
-    '[&_td]:!border-[#273035]',
-    '[&_td]:!bg-[#0f1a1f]',
-    '[&_code]:!text-[#d2dad7]',
-    '[&_.text-arena-elements-textPrimary]:!text-[#f6fefd]',
-    '[&_.text-arena-elements-textSecondary]:!text-[#d2dad7]',
-    '[&_.text-arena-elements-textTertiary]:!text-[#697371]',
+    '[&_th]:!text-[var(--arena-terminal-text-muted)]',
+    '[&_td]:!border-[var(--arena-terminal-border)]',
+    '[&_td]:!bg-[var(--arena-terminal-panel)]',
+    '[&_code]:!text-[var(--arena-terminal-text-secondary)]',
+    '[&_.text-arena-elements-textPrimary]:!text-[var(--arena-terminal-text)]',
+    '[&_.text-arena-elements-textSecondary]:!text-[var(--arena-terminal-text-secondary)]',
+    '[&_.text-arena-elements-textTertiary]:!text-[var(--arena-terminal-text-muted)]',
   ].join(' ');
 
   return (
-    <section className={`flex h-full min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.24)] ${terminalTableClass}`}>
-      <div className="flex min-h-10 shrink-0 items-center justify-between gap-3 border-b border-[#273035] bg-[#081115] px-3 py-1.5">
+    <section className={`flex h-full min-h-0 flex-col overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] shadow-[var(--arena-terminal-shadow-lg)] ${terminalTableClass}`}>
+      <div className="flex min-h-10 shrink-0 items-center justify-between gap-3 border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-3">
-          <h2 className="min-w-0 truncate font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
+          <h2 className="min-w-0 truncate font-display text-lg font-semibold tracking-tight text-[var(--arena-terminal-text)]">
             Account
           </h2>
-          <div className="hidden min-w-0 items-center gap-2 font-data text-xs tabular-nums text-[#697371] min-[640px]:flex">
-            <span className="max-w-[16rem] truncate text-[#d2dad7]" translate="no">
+          <div className="hidden min-w-0 items-center gap-2 font-data text-xs tabular-nums text-[var(--arena-terminal-text-subtle)] min-[640px]:flex">
+            <span className="max-w-[16rem] truncate text-[var(--arena-terminal-text-secondary)]" translate="no">
               {botName}
             </span>
             <span aria-hidden="true">/</span>
-            <span className={modeLabel === 'Live' ? 'text-[#50d2c1]' : modeLabel === 'Paper' ? 'text-[#f7b955]' : 'text-[#697371]'}>
+            <span className={modeLabel === 'Live' ? 'text-[var(--arena-terminal-accent)]' : modeLabel === 'Paper' ? 'text-[var(--arena-terminal-warning)]' : 'text-[var(--arena-terminal-text-subtle)]'}>
               {modeLabel}
             </span>
           </div>

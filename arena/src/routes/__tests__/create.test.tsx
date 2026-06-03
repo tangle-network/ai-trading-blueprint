@@ -88,7 +88,7 @@ describe('create agent route', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /hyperliquid perp/i }))
     expect(screen.getByLabelText('Trading agent strategy prompt')).toHaveValue(
-      'I want an agent that trades ETH perps on Hyperliquid, using breakout retests and fast backtests with strict leverage and liquidation risk limits.',
+      'I want an agent that trades ETH perps on Hyperliquid, using breakout retests with strict max leverage, liquidation buffer, and drawdown limits.',
     )
 
     fireEvent.click(screen.getByRole('button', { name: /deploy agent/i }))

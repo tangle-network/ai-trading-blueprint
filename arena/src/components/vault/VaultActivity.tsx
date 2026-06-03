@@ -414,7 +414,7 @@ export function VaultActivity({
   }, [vaultAddress, assetToken, targetChainId, refreshKey]);
 
   return (
-    <div className="glass-card rounded-xl p-6">
+    <div className="glass-card rounded-[6px] p-6">
       <div className="flex items-center justify-between gap-4 mb-4">
         <h2 className="font-display font-bold text-lg">Recent Activity</h2>
         {items.length > 0 && (

@@ -36,21 +36,21 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   if (isLoading) {
     if (ledger) {
       return (
-        <div className="h-full min-h-0 overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
-          <div className="grid grid-cols-3 divide-x divide-[#273035] border-b border-[#273035]">
+        <div className="h-full min-h-0 overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+          <div className="grid grid-cols-3 divide-x divide-[var(--arena-terminal-border)] border-b border-[var(--arena-terminal-border)]">
             {Array.from({ length: 3 }).map((_, index) => (
               <div key={index} className="px-3 py-2">
-                <div className="h-2 w-12 animate-pulse rounded bg-[#253138]" />
-                <div className="mt-2 h-4 w-20 animate-pulse rounded bg-[#253138]" />
+                <div className="h-2 w-12 animate-pulse rounded bg-[var(--arena-terminal-panel-strong)]" />
+                <div className="mt-2 h-4 w-20 animate-pulse rounded bg-[var(--arena-terminal-panel-strong)]" />
               </div>
             ))}
           </div>
-          <div className="divide-y divide-[#273035]">
+          <div className="divide-y divide-[var(--arena-terminal-border)]">
             {Array.from({ length: 3 }).map((_, index) => (
               <div key={index} className="grid grid-cols-[minmax(0,1fr)_5rem_5rem] gap-3 px-3 py-3">
-                <div className="h-4 animate-pulse rounded bg-[#253138]" />
-                <div className="h-4 animate-pulse rounded bg-[#253138]" />
-                <div className="h-4 animate-pulse rounded bg-[#253138]" />
+                <div className="h-4 animate-pulse rounded bg-[var(--arena-terminal-panel-strong)]" />
+                <div className="h-4 animate-pulse rounded bg-[var(--arena-terminal-panel-strong)]" />
+                <div className="h-4 animate-pulse rounded bg-[var(--arena-terminal-panel-strong)]" />
               </div>
             ))}
           </div>
@@ -69,7 +69,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   if (!portfolio) {
     if (ledger) {
       return (
-        <div className="flex h-full min-h-[8rem] items-center justify-center rounded-[5px] border border-[#273035] bg-[#0b1418] px-4 text-center font-display text-sm text-[#949e9c]">
+        <div className="flex h-full min-h-[8rem] items-center justify-center rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-4 text-center font-display text-sm text-[var(--arena-terminal-text-muted)]">
           No portfolio data available{isLive ? '.' : ` while it is ${botStatusLabel(status).toLowerCase()}.`}
         </div>
       );
@@ -155,7 +155,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
     : null;
   const positionCountLabel = formatNumber(portfolio.positions.length, { maximumFractionDigits: 0 });
   const pnlTone = totalUnrealizedPnl == null
-    ? 'text-[#f6fefd]'
+    ? 'text-[var(--arena-terminal-text)]'
     : totalUnrealizedPnl < 0
       ? 'text-[#ff5d6c]'
       : 'text-[#50d2c1]';
@@ -165,19 +165,19 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
         label: 'Equity',
         value: formatCurrency(portfolio.displayTotalValueUsd),
         detail: 'portfolio value',
-        valueClassName: 'text-[#f6fefd]',
+        valueClassName: 'text-[var(--arena-terminal-text)]',
       },
       {
         label: 'Cash',
         value: formatCurrency(portfolio.displayCashBalance),
         detail: `${formatPercent(totalMarginUsage)} margin use`,
-        valueClassName: 'text-[#f6fefd]',
+        valueClassName: 'text-[var(--arena-terminal-text)]',
       },
       {
         label: 'Notional',
         value: formatCurrency(totalNotionalUsd > 0 ? totalNotionalUsd : null),
         detail: `${formatCurrency(totalMarginUsed > 0 ? totalMarginUsed : null)} margin`,
-        valueClassName: 'text-[#f6fefd]',
+        valueClassName: 'text-[var(--arena-terminal-text)]',
       },
       {
         label: 'uPNL',
@@ -191,19 +191,19 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
         label: 'Value',
         value: formatCurrency(portfolio.displayTotalValueUsd),
         detail: `${positionCountLabel} position${portfolio.positions.length === 1 ? '' : 's'}`,
-        valueClassName: 'text-[#f6fefd]',
+        valueClassName: 'text-[var(--arena-terminal-text)]',
       },
       {
         label: 'Cash',
         value: formatCurrency(portfolio.displayCashBalance),
         detail: 'available',
-        valueClassName: 'text-[#f6fefd]',
+        valueClassName: 'text-[var(--arena-terminal-text)]',
       },
       {
         label: 'Positions',
         value: positionCountLabel,
         detail: portfolio.hasUnpricedPositions ? 'valuation pending' : 'priced',
-        valueClassName: 'text-[#f6fefd]',
+        valueClassName: 'text-[var(--arena-terminal-text)]',
       },
     ];
   const positionHeadClass = (dense: boolean) => dense ? 'py-1.5 text-[11px]' : 'py-4 text-base';
@@ -211,7 +211,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   const positionPrimaryCellClass = (dense: boolean) => dense ? 'py-1.5 text-[15px]' : 'py-4';
 
   const renderStandardPositionsTable = (positions: Position[], dense = false) => (
-    <div className={`${ledger ? 'rounded-[5px] border-[#273035] bg-[#0b1418]' : 'rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
+    <div className={`${ledger ? 'rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
       <Table className={dense ? 'min-w-[620px]' : 'min-w-[780px]'}>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
@@ -257,7 +257,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   );
 
   const renderPerpPositionsTable = (positions: Position[], dense = false) => (
-    <div className={`${ledger ? 'rounded-[5px] border-[#273035] bg-[#0b1418]' : 'rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
+    <div className={`${ledger ? 'rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
       <Table className={dense ? 'min-w-[920px]' : 'min-w-[1120px]'}>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
@@ -530,19 +530,19 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
       )}
 
       {ledger ? (
-        <div className="grid overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418] min-[820px]:grid-cols-4">
+        <div className="grid overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] min-[820px]:grid-cols-4">
           {ledgerAccountMetrics.map((metric) => (
             <div
               key={metric.label}
-              className="min-w-0 border-b border-[#273035] px-3 py-2.5 last:border-b-0 min-[820px]:border-b-0 min-[820px]:border-r min-[820px]:last:border-r-0"
+              className="min-w-0 border-b border-[var(--arena-terminal-border)] px-3 py-2.5 last:border-b-0 min-[820px]:border-b-0 min-[820px]:border-r min-[820px]:last:border-r-0"
             >
-              <div className="font-data text-[11px] uppercase tracking-[0.12em] text-[#697371]">
+              <div className="font-data text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">
                 {metric.label}
               </div>
               <div className={`mt-1 min-w-0 truncate font-data text-xl font-bold leading-none tracking-tight ${metric.valueClassName}`}>
                 {metric.value}
               </div>
-              <div className="mt-1 truncate font-data text-[11px] text-[#949e9c]" title={metric.detail}>
+              <div className="mt-1 truncate font-data text-[11px] text-[var(--arena-terminal-text-muted)]" title={metric.detail}>
                 {metric.detail}
               </div>
             </div>

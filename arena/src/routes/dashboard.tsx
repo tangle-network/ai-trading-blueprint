@@ -1,9 +1,8 @@
 import { useEffect, useState, useMemo, useCallback, useRef, useSyncExternalStore } from 'react';
-import { Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useAccount } from 'wagmi';
 import { parseAbiItem } from 'viem';
-import { Badge, Button, Card, CardContent, Skeleton, StaggerContainer, StaggerItem } from '@tangle-network/blueprint-ui/components';
+import { Badge, StaggerContainer, StaggerItem } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
 import {
   provisionsForOwner,
@@ -22,6 +21,8 @@ import { HomeBotCard } from '~/components/home/HomeBotCard';
 import { ProvisionsBanner } from '~/components/home/ProvisionsBanner';
 import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
+import { ArenaHeaderLink, ArenaPageHeader, type ArenaPageMetric } from '~/components/arena/ArenaPageHeader';
+import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import {
   doesProvisionLikelyReferToBot,
   partitionProvisionsForBots,
@@ -209,38 +210,42 @@ export default function HomePage() {
   // ── Not connected ──────────────────────────────────────────────────────
   if (!isConnected) {
     return (
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
-        <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">My Agents</h1>
-        <p className="text-base text-arena-elements-textSecondary mb-8">
-          Owned services, deployed agents, and setup status.
-        </p>
-        <Card>
-          <CardContent className="py-16 text-center space-y-3">
-            <div className="i-ph:wallet text-4xl text-arena-elements-textTertiary mx-auto opacity-40" />
-            <p className="text-sm text-arena-elements-textSecondary">
-              Connect your wallet to see your services and agents.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      <ConnectWalletPanel
+        title="Connect owner wallet"
+        description="Wallet ownership determines which services, vaults, secrets, and operator-managed agents appear in this workspace."
+        bullets={[
+          'Owned service instances',
+          'Operator-managed agents',
+          'Vault and secret status',
+        ]}
+      />
     );
   }
 
   // ── Loading ────────────────────────────────────────────────────────────
   if (isLoading && services.length === 0 && visibleMyBots.length === 0) {
     return (
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
-        <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">My Agents</h1>
-        <p className="text-base text-arena-elements-textSecondary mb-8">
-          Owned services, deployed agents, and setup status.
-        </p>
-        <div className="space-y-4">
-          <Skeleton className="h-10 w-full" />
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <Skeleton className="h-48" />
-            <Skeleton className="h-48" />
-            <Skeleton className="h-48" />
-          </div>
+      <div className="arena-trace-terminal min-h-full bg-[#081013] px-3 py-3 text-[#f6fefd] sm:px-4 lg:px-6">
+        <div className="mx-auto flex w-full max-w-[1360px] flex-col gap-3">
+          <ArenaPageHeader
+            title="My Agents"
+            metrics={[
+              { label: 'Services', value: 'Sync' },
+              { label: 'Agents', value: 'Sync' },
+              { label: 'Operator', value: 'Auth' },
+            ]}
+            controls={<DashboardHeaderControls />}
+          />
+          <section className="overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+            <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2 font-data text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-muted)]">
+              Loading owner workspace
+            </div>
+            <div className="grid gap-3 p-3 md:grid-cols-2 lg:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} className="h-36 animate-pulse rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]" />
+              ))}
+            </div>
+          </section>
         </div>
       </div>
     );
@@ -252,50 +257,45 @@ export default function HomePage() {
     || hasBotSection
     || inProgressProvisions.length > 0
     || failedProvisions.length > 0;
+  const dashboardMetrics: ArenaPageMetric[] = [
+    { label: 'Services', value: String(services.length) },
+    { label: 'Active Agents', value: operatorDataIncomplete ? '-' : String(activeBots.length) },
+    {
+      label: 'NAV',
+      value: operatorDataIncomplete
+        ? '-'
+        : totalTvl >= 1000
+          ? `$${(totalTvl / 1000).toFixed(1)}K`
+          : `$${totalTvl.toFixed(0)}`,
+    },
+    { label: 'Trades', value: operatorDataIncomplete ? '-' : String(totalTrades) },
+    {
+      label: 'Validator',
+      value: operatorDataIncomplete
+        ? '-'
+        : scoredBots.length > 0
+          ? String(avgRiskScore)
+          : '-',
+    },
+  ];
 
   // ── Main content ───────────────────────────────────────────────────────
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
-      <OperatorSessionBanner />
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">My Agents</h1>
-          <p className="text-sm text-arena-elements-textSecondary">
-            Owned services, deployed agents, and setup status.
-          </p>
-        </div>
-        <Button asChild>
-          <Link to="/provision">
-            <span className="i-ph:plus-bold text-xs mr-1.5" />
-            Deploy
-          </Link>
-        </Button>
-      </div>
+    <div className="arena-trace-terminal min-h-full bg-[#081013] px-3 py-3 text-[#f6fefd] sm:px-4 lg:px-6">
+      <div className="mx-auto flex w-full max-w-[1360px] flex-col gap-3">
+        <OperatorSessionBanner />
 
-      {/* ── Stats bar ───────────────────────────────────────────────────── */}
-      {hasContent && (
-        <div className="grid grid-cols-2 gap-3 mb-8 sm:grid-cols-3 lg:grid-cols-5">
-          <StatTile label="Services" value={services.length} />
-          <StatTile label="Active Agents" value={operatorDataIncomplete ? '—' : activeBots.length} />
-          <StatTile
-            label="Total NAV"
-            value={operatorDataIncomplete ? '—' : totalTvl}
-            prefix="$"
-            format={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)}K` : v.toFixed(0)}
-          />
-          <StatTile label="Trades" value={operatorDataIncomplete ? '—' : totalTrades} className="hidden lg:block" />
-          <StatTile
-            label="Avg Validator"
-            value={operatorDataIncomplete
-              ? '—'
-              : scoredBots.length > 0
-                ? avgRiskScore
-                : '—'}
-            className="hidden lg:block"
-          />
-        </div>
-      )}
+        <ArenaPageHeader
+          title="My Agents"
+          metrics={dashboardMetrics}
+          metricsClassName="grid-cols-3 min-[980px]:grid-cols-5 min-[1180px]:w-[31rem] min-[1180px]:shrink-0"
+          titleWidthClassName="min-[1180px]:w-44"
+          controls={<DashboardHeaderControls />}
+        >
+          <div className="hidden min-w-0 font-data text-xs leading-5 text-[var(--arena-terminal-text-muted)] min-[900px]:block">
+            Owned services, live/paper agents, vaults, secrets, and operator auth in one control plane.
+          </div>
+        </ArenaPageHeader>
 
       {/* ── Provisions banner ───────────────────────────────────────────── */}
       {(inProgressProvisions.length > 0 || failedProvisions.length > 0) && (
@@ -318,45 +318,47 @@ export default function HomePage() {
 
       {/* ── Services ────────────────────────────────────────────────────── */}
       {services.length > 0 && (
-        <section className="mb-8">
-          <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
+        <section className="overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+          <div className="flex items-center gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-2">
+            <h2 className="text-sm font-data uppercase tracking-wider text-[var(--arena-terminal-text-secondary)]">
               Services
             </h2>
             <Badge variant="secondary" className="text-[10px]">{services.length}</Badge>
           </div>
-          <StaggerContainer>
-            <div className="space-y-2">
-              {services.map((svc) => (
-                <StaggerItem key={svc.serviceId}>
-                  <ServiceCard
-                    service={svc}
-                    bots={myBotsByService.get(svc.serviceId) ?? []}
-                    lockedBotCount={lockedBotsByService.get(svc.serviceId) ?? 0}
-                  />
-                </StaggerItem>
-              ))}
-            </div>
-          </StaggerContainer>
+          <div className="p-3">
+            <StaggerContainer>
+              <div className="space-y-2">
+                {services.map((svc) => (
+                  <StaggerItem key={svc.serviceId}>
+                    <ServiceCard
+                      service={svc}
+                      bots={myBotsByService.get(svc.serviceId) ?? []}
+                      lockedBotCount={lockedBotsByService.get(svc.serviceId) ?? 0}
+                    />
+                  </StaggerItem>
+                ))}
+              </div>
+            </StaggerContainer>
+          </div>
         </section>
       )}
 
       {/* ── My agents ───────────────────────────────────────────────────── */}
       {hasBotSection ? (
-        <section>
-          <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary">
+        <section className="overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-2">
+            <h2 className="text-sm font-data uppercase tracking-wider text-[var(--arena-terminal-text-secondary)]">
               My Agents
             </h2>
             <Badge variant="secondary" className="text-[10px]">{knownBotCount}</Badge>
             {hasLockedBots && (
-              <span className="text-xs font-data text-arena-elements-textTertiary ml-1">
+              <span className="text-xs font-data text-[var(--arena-terminal-text-muted)]">
                 {lockedOperatorProvisions.length} require operator auth
               </span>
             )}
           </div>
           {visibleMyBots.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
               {visibleMyBots.map((bot) => {
                 const configureHandler = (bot.status === 'needs_config' || bot.lifecycleStatus === 'awaiting_secrets')
                   ? () => setSecretsTarget({
@@ -377,28 +379,55 @@ export default function HomePage() {
               })}
             </div>
           ) : (
-            <OperatorAccessCard
-              apiUrls={ALL_TRADING_OPERATOR_API_URLS}
-              title="Operator authentication required"
-              description={`Authenticate to load ${lockedOperatorProvisions.length} operator-managed agent${lockedOperatorProvisions.length === 1 ? '' : 's'} on this dashboard.`}
-            />
+            <div className="p-3">
+              <OperatorAccessCard
+                apiUrls={ALL_TRADING_OPERATOR_API_URLS}
+                title="Operator authentication required"
+                description={`Authenticate to load ${lockedOperatorProvisions.length} operator-managed agent${lockedOperatorProvisions.length === 1 ? '' : 's'} on this dashboard.`}
+              />
+            </div>
           )}
         </section>
       ) : !hasContent ? (
-        <Card>
-          <CardContent className="py-16 text-center space-y-4">
-            <div className="i-ph:robot text-4xl text-arena-elements-textTertiary mx-auto opacity-30" />
-            <p className="text-base font-display font-medium text-arena-elements-textPrimary">
-              No services or agents yet
-            </p>
-            <p className="text-sm text-arena-elements-textSecondary max-w-sm mx-auto">
-              Deploy an autonomous trading agent to get started.
-            </p>
-            <Button asChild className="mt-2">
-              <Link to="/provision">Deploy your first agent</Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <section className="grid gap-3 overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 lg:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-4">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-[5px] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
+                <span className="i-ph:robot text-xl" aria-hidden="true" />
+              </span>
+              <div>
+                <h2 className="font-display text-lg font-semibold text-[var(--arena-terminal-text)]">
+                  No services or agents yet
+                </h2>
+                <p className="mt-1 text-sm text-[var(--arena-terminal-text-muted)]">
+                  Start with a risk-gated operator deployment, then open the agent workspace once the service is live.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch" variant="primary">
+                Deploy Agent
+              </ArenaHeaderLink>
+              <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">
+                Draft Strategy
+              </ArenaHeaderLink>
+            </div>
+          </div>
+          <div className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+            {[
+              ['01', 'Service owner', 'wallet'],
+              ['02', 'Risk envelope', 'required'],
+              ['03', 'Secrets', 'operator'],
+              ['04', 'Workspace', 'agent'],
+            ].map(([index, label, value]) => (
+              <div key={index} className="grid grid-cols-[2rem_minmax(0,1fr)_5.5rem] border-b border-[var(--arena-terminal-border)] px-3 py-2.5 last:border-b-0">
+                <span className="font-data text-xs text-[var(--arena-terminal-accent)]">{index}</span>
+                <span className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">{label}</span>
+                <span className="truncate text-right font-data text-xs uppercase text-[var(--arena-terminal-text-muted)]">{value}</span>
+              </div>
+            ))}
+          </div>
+        </section>
       ) : null}
 
       {/* Secrets configuration modal */}
@@ -406,41 +435,20 @@ export default function HomePage() {
         target={secretsTarget}
         onClose={() => setSecretsTarget(null)}
       />
+      </div>
     </div>
   );
 }
 
-// ── Stat Tile ──────────────────────────────────────────────────────────────
-
-function StatTile({
-  label,
-  value,
-  prefix,
-  suffix,
-  format,
-  valueColor,
-  className,
-}: {
-  label: string;
-  value: number | string;
-  prefix?: string;
-  suffix?: string;
-  format?: (v: number) => string;
-  valueColor?: string;
-  className?: string;
-}) {
-  const display = typeof value === 'number'
-    ? (format ? format(value) : String(value))
-    : value;
-
+function DashboardHeaderControls() {
   return (
-    <div className={`glass-card rounded-lg px-4 py-3 ${className ?? ''}`}>
-      <p className="text-[11px] font-data uppercase tracking-wider text-arena-elements-textTertiary mb-1">
-        {label}
-      </p>
-      <p className={`text-lg font-data font-bold ${valueColor ?? 'text-arena-elements-textPrimary'}`}>
-        {prefix}{display}{suffix}
-      </p>
-    </div>
+    <>
+      <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">
+        Create
+      </ArenaHeaderLink>
+      <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch" variant="primary">
+        Deploy
+      </ArenaHeaderLink>
+    </>
   );
 }

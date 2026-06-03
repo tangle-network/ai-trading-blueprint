@@ -1,16 +1,17 @@
 import { useCallback, useState } from 'react';
-import { useParams, Link, useSearchParams } from 'react-router';
+import { useParams, useSearchParams } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import type { Address } from 'viem';
 import { useAccount, useSwitchChain } from 'wagmi';
 import { useStore } from '@nanostores/react';
-import { AnimatedPage, Button } from '@tangle-network/blueprint-ui/components';
+import { Button } from '@tangle-network/blueprint-ui/components';
 import { VaultStats } from '~/components/vault/VaultStats';
 import { CollateralStats } from '~/components/vault/CollateralStats';
 import { CollateralAdmin } from '~/components/vault/CollateralAdmin';
 import { DepositForm } from '~/components/vault/DepositForm';
 import { WithdrawForm } from '~/components/vault/WithdrawForm';
 import { VaultActivity } from '~/components/vault/VaultActivity';
+import { ArenaHeaderLink, ArenaPageHeader, type ArenaPageMetric } from '~/components/arena/ArenaPageHeader';
 import { useVaultRead } from '~/lib/hooks/useVaultRead';
 import { networks } from '~/lib/contracts/chains';
 import { selectedChainIdStore } from '@tangle-network/blueprint-ui';
@@ -39,6 +40,25 @@ function chainLabel(chainId: number, configuredName?: string): string {
   return configuredName ?? KNOWN_CHAIN_NAMES[chainId] ?? `Chain ${chainId}`;
 }
 
+function formatVaultMetric(value: number | undefined, {
+  suffix = '',
+  maximumFractionDigits = 2,
+}: {
+  suffix?: string;
+  maximumFractionDigits?: number;
+} = {}) {
+  if (value == null || !Number.isFinite(value)) return '-';
+  const compact = Math.abs(value) >= 1000
+    ? value.toLocaleString(undefined, {
+        notation: 'compact',
+        maximumFractionDigits: 1,
+      })
+    : value.toLocaleString(undefined, {
+        maximumFractionDigits,
+      });
+  return suffix ? `${compact} ${suffix}` : compact;
+}
+
 export default function VaultPage() {
   const { address } = useParams();
   const [searchParams] = useSearchParams();
@@ -65,68 +85,79 @@ export default function VaultPage() {
 
   if (!isValidAddress) {
     return (
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-20 text-center">
-        <div className="glass-card rounded-xl p-12 max-w-md mx-auto">
-          <div className="i-ph:wallet text-4xl text-arena-elements-textTertiary mb-4 mx-auto" />
-          <h1 className="font-display text-2xl font-bold mb-3">Invalid Vault Address</h1>
-          <p className="text-arena-elements-textSecondary mb-6 text-sm">
-            Please provide a valid vault contract address.
-          </p>
+      <div className="arena-trace-terminal min-h-full bg-[#081013] px-3 py-3 text-[#f6fefd] sm:px-4 lg:px-6">
+        <div className="mx-auto flex w-full max-w-[980px] flex-col gap-3">
+          <ArenaPageHeader
+            title="Vault"
+            metrics={[
+              { label: 'Address', value: 'Invalid' },
+              { label: 'Chain', value: '-' },
+              { label: 'Status', value: 'Blocked' },
+            ]}
+            controls={(
+              <ArenaHeaderLink to="/" icon="i-ph:arrow-left">
+                Arena
+              </ArenaHeaderLink>
+            )}
+          />
+          <section className="rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-8 text-center">
+            <div className="i-ph:wallet mx-auto mb-4 text-3xl text-[var(--arena-terminal-text-muted)]" />
+            <h1 className="font-display text-xl font-semibold text-[var(--arena-terminal-text)]">Invalid vault address</h1>
+            <p className="mx-auto mt-2 max-w-md text-sm text-[var(--arena-terminal-text-muted)]">
+              Provide a valid vault contract address to inspect shares, NAV, collateral, and withdrawal state.
+            </p>
+          </section>
         </div>
       </div>
     );
   }
 
-  return (
-    <AnimatedPage>
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8">
-        <Link
-          to="/"
-          className="inline-flex items-center gap-1.5 text-sm text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 mb-6 transition-colors duration-200 font-display font-medium"
-        >
-          <span className="text-sm">&larr;</span> Back to Arena
-        </Link>
+  const vaultMetrics: ArenaPageMetric[] = [
+    { label: 'TVL', value: formatVaultMetric(vault.tvl, { suffix: vault.assetSymbol }) },
+    { label: 'Share Price', value: formatVaultMetric(vault.sharePrice, { suffix: vault.assetSymbol, maximumFractionDigits: 6 }) },
+    { label: 'Shares', value: formatVaultMetric(vault.totalShares, { maximumFractionDigits: 0 }) },
+    { label: 'Your Shares', value: isConnected ? formatVaultMetric(vault.userSharesFormatted, { maximumFractionDigits: 4 }) : '-' },
+  ];
 
-        <div className="glass-card rounded-xl p-6 mb-8">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
-              <div className="i-ph:vault text-xl text-violet-700 dark:text-violet-400" />
+  return (
+    <div className="arena-trace-terminal min-h-full bg-[#081013] px-3 py-3 text-[#f6fefd] sm:px-4 lg:px-6">
+      <div className="mx-auto flex w-full max-w-[1360px] flex-col gap-3">
+        <ArenaPageHeader
+          title="Vault"
+          badge={vault.paused ? (
+            <span className="rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] px-2 py-1 font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-danger)]">
+              Paused
+            </span>
+          ) : undefined}
+          metrics={vaultMetrics}
+          metricsClassName="grid-cols-2 min-[900px]:grid-cols-4 min-[1180px]:w-[34rem] min-[1180px]:shrink-0"
+          controls={(
+            <ArenaHeaderLink to="/" icon="i-ph:arrow-left">
+              Arena
+            </ArenaHeaderLink>
+          )}
+        >
+          <div className="grid min-w-0 gap-1.5 font-data text-xs min-[980px]:grid-cols-[minmax(0,1fr)_auto] min-[980px]:items-center">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 truncate text-[var(--arena-terminal-text-secondary)]" translate="no">
+                {vaultAddress}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(vaultAddress!);
+                }}
+                className="shrink-0 text-[var(--arena-terminal-text-muted)] transition-colors hover:text-[var(--arena-terminal-accent)]"
+                aria-label="Copy vault address"
+              >
+                <span className="i-ph:copy text-sm" aria-hidden="true" />
+              </button>
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="font-display font-bold text-2xl tracking-tight">Vault</h1>
-                {vault.assetSymbol !== '???' && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs font-data font-semibold text-violet-700 dark:text-violet-400 uppercase tracking-wider">
-                    {vault.assetSymbol}
-                  </span>
-                )}
-                {vault.paused && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-crimson-500/10 border border-crimson-500/20 text-xs font-data font-semibold text-crimson-600 dark:text-crimson-400 uppercase tracking-wider">
-                    Paused
-                  </span>
-                )}
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-arena-elements-background-depth-2 border border-arena-elements-borderColor text-xs font-data font-semibold text-arena-elements-textSecondary uppercase tracking-wider">
-                  {targetChainName} · {targetChainId}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 mt-1.5">
-                <p className="text-sm text-arena-elements-textSecondary font-data truncate">
-                  {vaultAddress}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(vaultAddress!);
-                  }}
-                  className="text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 transition-colors shrink-0"
-                  aria-label="Copy vault address"
-                >
-                  <div className="i-ph:copy text-sm" />
-                </button>
-              </div>
-            </div>
+            <span className="w-fit rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-2 py-1 font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-muted)]">
+              {targetChainName} / {targetChainId}
+            </span>
           </div>
-        </div>
+        </ArenaPageHeader>
 
         <VaultStats
           tvl={vault.tvl}
@@ -141,7 +172,7 @@ export default function VaultPage() {
         />
 
         {navNeedsPricing ? (
-          <div className="glass-card rounded-xl p-5 mb-6 border-amber-400/30 bg-amber-500/5">
+          <div className="glass-card rounded-[6px] border-amber-400/30 bg-amber-500/5 p-5">
             <div className="flex items-start gap-3">
               <div className="i-ph:warning-circle text-lg text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
               <div>
@@ -155,7 +186,7 @@ export default function VaultPage() {
             </div>
           </div>
         ) : vault.hasNonDepositAssets ? (
-          <div className="glass-card rounded-xl p-5 mb-6 border-emerald-400/30 bg-emerald-500/5">
+          <div className="glass-card rounded-[6px] border-emerald-400/30 bg-emerald-500/5 p-5">
             <div className="flex items-start gap-3">
               <div className="i-ph:check-circle text-lg text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
               <div>
@@ -195,7 +226,7 @@ export default function VaultPage() {
         )}
 
         {vault.error ? (
-          <div className="glass-card rounded-xl p-8 mb-6 text-center">
+          <div className="glass-card rounded-[6px] p-8 text-center">
             <div className="i-ph:warning-circle text-3xl text-crimson-500 dark:text-crimson-400 mb-3 mx-auto" />
             <p className="text-base text-arena-elements-textSecondary mb-2">
               Could not read vault contract data.
@@ -212,28 +243,28 @@ export default function VaultPage() {
             </Button>
           </div>
         ) : !isConnected ? (
-          <div className="glass-card rounded-xl p-8 mb-6 text-center">
+          <div className="glass-card rounded-[6px] p-8 text-center">
             <div className="i-ph:wallet text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
             <p className="text-base text-arena-elements-textSecondary">
               Connect your wallet on {targetChainName} ({targetChainId}) to deposit or withdraw.
             </p>
           </div>
         ) : isWrongChain ? (
-          <div className="glass-card rounded-xl p-8 mb-6 text-center">
+          <div className="glass-card rounded-[6px] p-8 text-center">
             <div className="i-ph:arrow-square-out text-3xl text-amber-500 dark:text-amber-400 mb-3 mx-auto" />
             <p className="text-base text-arena-elements-textSecondary mb-4">
               This vault is on <span className="text-violet-700 dark:text-violet-400 font-semibold">{targetChainName} ({targetChainId})</span>. Your wallet is connected to chain {chainId}. Switch chains to deposit or withdraw.
             </p>
             <Button
               onClick={() => switchChain({ chainId: targetChainId })}
-              className="bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/20"
+              className="border border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)] hover:bg-[var(--arena-terminal-panel-strong)]"
             >
               Switch to {targetChainName}
             </Button>
           </div>
         ) : null}
 
-        <div className="grid md:grid-cols-2 gap-6 mb-8">
+        <div className="grid gap-3 md:grid-cols-2">
           <DepositForm
             vaultAddress={vaultAddress}
             assetToken={vault.assetToken}
@@ -273,6 +304,6 @@ export default function VaultPage() {
           refreshKey={activityRefreshKey}
         />
       </div>
-    </AnimatedPage>
+    </div>
   );
 }

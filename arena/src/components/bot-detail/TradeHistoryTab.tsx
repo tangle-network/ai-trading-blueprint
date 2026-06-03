@@ -54,12 +54,24 @@ function TradeTableHead({ compact = false }: { compact?: boolean }) {
     return (
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="w-[8.6rem] py-1 font-data text-[11px] uppercase text-[#949e9c]">Time</TableHead>
-          <TableHead className="w-[8.45rem] py-1 font-data text-[11px] uppercase text-[#949e9c]">Trade</TableHead>
-          <TableHead className="py-1 font-data text-[11px] uppercase text-[#949e9c]">Market</TableHead>
-          <TableHead className="w-[8rem] py-1 text-right font-data text-[11px] uppercase text-[#949e9c]">Size</TableHead>
-          <TableHead className="w-[7.35rem] py-1 text-right font-data text-[11px] uppercase text-[#949e9c]">USD</TableHead>
-          <TableHead className="hidden w-[7rem] py-1 text-right font-data text-[11px] uppercase text-[#949e9c] min-[1500px]:table-cell">Ref</TableHead>
+          <TableHead className="w-[8.6rem] py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
+            Time
+          </TableHead>
+          <TableHead className="w-[8.45rem] py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
+            Trade
+          </TableHead>
+          <TableHead className="py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
+            Market
+          </TableHead>
+          <TableHead className="w-[8rem] py-1 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
+            Size
+          </TableHead>
+          <TableHead className="w-[7.35rem] py-1 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
+            USD
+          </TableHead>
+          <TableHead className="hidden w-[7rem] py-1 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)] min-[1500px]:table-cell">
+            Ref
+          </TableHead>
         </TableRow>
       </TableHeader>
     );
@@ -339,17 +351,17 @@ function TradePager({
 
   return (
     <div className={`flex items-center justify-end gap-2 ${className ?? ''}`}>
-      <span className={`font-data text-sm tabular-nums ${terminal ? 'text-[#d2dad7]' : 'text-arena-elements-textSecondary'}`}>
+      <span className={`font-data text-sm tabular-nums ${terminal ? 'text-[var(--arena-terminal-text-secondary)]' : 'text-arena-elements-textSecondary'}`}>
         {range}
       </span>
-      <div className={`inline-flex overflow-hidden rounded-[5px] border ${terminal ? 'border-[#273035] bg-[#0b1418]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55'}`}>
+      <div className={`inline-flex overflow-hidden rounded-[5px] border ${terminal ? 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55'}`}>
         <button
           type="button"
           onClick={onPrevious}
           disabled={!canPrevious}
           className={`inline-flex h-8 w-8 items-center justify-center transition-colors disabled:pointer-events-none disabled:opacity-35 ${
             terminal
-              ? 'text-[#949e9c] hover:bg-[#16242a] hover:text-[#f6fefd]'
+              ? 'text-[var(--arena-terminal-text-muted)] hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)]'
               : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
           }`}
           aria-label="Previous trades page"
@@ -362,7 +374,7 @@ function TradePager({
           disabled={!canNext}
           className={`inline-flex h-8 w-8 items-center justify-center border-l transition-colors disabled:pointer-events-none disabled:opacity-35 ${
             terminal
-              ? 'border-[#273035] text-[#949e9c] hover:bg-[#16242a] hover:text-[#f6fefd]'
+              ? 'border-[var(--arena-terminal-border)] text-[var(--arena-terminal-text-muted)] hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)]'
               : 'border-arena-elements-dividerColor/70 text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
           }`}
           aria-label="Next trades page"
@@ -442,19 +454,19 @@ export function TradeHistoryTab({
   if (isLoading) {
     if (compact) {
       return (
-        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
-          <div className="grid grid-cols-[8.6rem_8.45rem_minmax(0,1fr)_8rem_7.35rem] gap-2 border-b border-[#273035] px-3 py-1 font-data text-[11px] uppercase text-[#697371]">
+        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+          <div className="grid grid-cols-[8.6rem_8.45rem_minmax(0,1fr)_8rem_7.35rem] gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">
             <span>Time</span>
             <span>Trade</span>
             <span>Market</span>
             <span className="text-right">Size</span>
             <span className="text-right">USD</span>
           </div>
-          <div className="divide-y divide-[#273035]">
+          <div className="divide-y divide-[var(--arena-terminal-border)]">
             {Array.from({ length: 6 }).map((_, index) => (
               <div key={index} className="grid grid-cols-[8.6rem_8.45rem_minmax(0,1fr)_8rem_7.35rem] gap-2 px-3 py-1.5">
                 {Array.from({ length: 5 }).map((__, cellIndex) => (
-                  <div key={cellIndex} className="h-4 animate-pulse rounded bg-[#253138]" />
+                  <div key={cellIndex} className="h-4 animate-pulse rounded bg-[var(--arena-terminal-panel-strong)]" />
                 ))}
               </div>
             ))}
@@ -486,7 +498,7 @@ export function TradeHistoryTab({
   if (!trades || trades.length === 0) {
     if (compact) {
       return (
-        <div className="flex h-full min-h-[10rem] items-center justify-center rounded-[5px] border border-[#273035] bg-[#0b1418] px-4 text-center font-display text-sm text-[#949e9c]">
+        <div className="flex h-full min-h-[10rem] items-center justify-center rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-4 text-center font-display text-sm text-[var(--arena-terminal-text-muted)]">
           No executions recorded for this agent.
         </div>
       );
@@ -519,7 +531,7 @@ export function TradeHistoryTab({
         terminal={compact}
       />
 
-      <div className={`${compact ? 'min-h-0 flex-1 overflow-auto rounded-[5px] border-[#273035] bg-[#0b1418]' : 'overflow-x-auto rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} border`}>
+      <div className={`${compact ? 'min-h-0 flex-1 overflow-auto rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'overflow-x-auto rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} border`}>
         <Table className={compact ? 'w-full table-fixed' : 'min-w-[1120px]'}>
           <TradeTableHead compact={compact} />
           <TableBody>
@@ -550,7 +562,7 @@ export function TradeHistoryTab({
                   }
                 }}
               >
-              <TableCell className={`${compact ? 'py-0.5 align-middle text-[15px] leading-none text-[#d2dad7]' : 'py-3'} font-data text-arena-elements-textTertiary`} colSpan={isExpanded ? columnCount : undefined}>
+              <TableCell className={`${compact ? 'py-0.5 align-middle text-[15px] leading-none text-[var(--arena-terminal-text-secondary)]' : 'py-3'} font-data text-arena-elements-textTertiary`} colSpan={isExpanded ? columnCount : undefined}>
                 {isExpanded ? (
                   /* Expanded view replaces the row */
                   <div className="py-2">
@@ -739,13 +751,13 @@ export function TradeHistoryTab({
                   </TableCell>
                   {compact && (
                     <>
-                      <TableCell className="min-w-0 truncate py-0.5 text-right align-middle font-data text-[15px] tabular-nums text-[#d2dad7]" title={getTradeSizeLabel(trade)}>
+                      <TableCell className="min-w-0 truncate py-0.5 text-right align-middle font-data text-[15px] tabular-nums text-[var(--arena-terminal-text-secondary)]" title={getTradeSizeLabel(trade)}>
                         {getTradeSizeLabel(trade)}
                       </TableCell>
-                      <TableCell className="py-0.5 text-right align-middle font-data text-[16px] font-semibold tabular-nums text-[#f6fefd]">
+                      <TableCell className="py-0.5 text-right align-middle font-data text-[16px] font-semibold tabular-nums text-[var(--arena-terminal-text)]">
                         {formatTradeCurrency(trade.notionalUsd)}
                       </TableCell>
-                      <TableCell className="hidden py-0.5 text-right align-middle font-data text-[13px] text-[#949e9c] min-[1500px]:table-cell">
+                      <TableCell className="hidden py-0.5 text-right align-middle font-data text-[13px] text-[var(--arena-terminal-text-muted)] min-[1500px]:table-cell">
                         {renderExecutionRef(trade)}
                       </TableCell>
                     </>

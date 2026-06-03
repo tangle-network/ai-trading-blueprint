@@ -24,12 +24,12 @@ const STRATEGY_HINTS = [
     prompt: 'I want an agent that trades ETH/USDC on Uniswap V3, using momentum and mean-reversion signals with strict risk management.',
   },
   {
-    label: 'Hyperliquid Perp',
+    label: 'Hyperliquid Perps',
     icon: 'i-ph:pulse',
     strategyType: 'perp',
     profile: 'Perps',
-    shorthand: 'ETH futures replay + margin guard',
-    prompt: 'I want an agent that trades ETH perps on Hyperliquid, using breakout retests and fast backtests with strict leverage and liquidation risk limits.',
+    shorthand: 'ETH-PERP breakout + liquidation buffer',
+    prompt: 'I want an agent that trades ETH perps on Hyperliquid, using breakout retests with strict max leverage, liquidation buffer, and drawdown limits.',
   },
   {
     label: 'Prediction Markets',
@@ -74,7 +74,7 @@ const STRATEGY_PROFILES: Record<StrategyType, {
   dex: {
     label: 'DEX Spot',
     venue: 'Uniswap V3 / Base',
-    route: 'Backtest -> paper start -> workspace',
+    route: 'Signal replay -> paper start -> workspace',
     envelope: 'Small probes, slippage cap, drawdown guard',
     icon: 'i-ph:currency-eth',
   },
@@ -151,7 +151,7 @@ export default function CreateAgent() {
     {
       icon: 'i-ph:clock-countdown',
       label: 'Replay',
-      value: launchSteps[0] ?? 'Backtest',
+      value: launchSteps[0] ?? 'Signal replay',
     },
     {
       icon: 'i-ph:shield-check',
@@ -168,7 +168,7 @@ export default function CreateAgent() {
     ['Strategy', selectedHint.label],
     ['Profile', detectedProfile.label],
     ['Venue', detectedProfile.venue],
-    ['Replay', launchSteps[0] ?? 'Backtest'],
+    ['Replay', launchSteps[0] ?? 'Signal replay'],
     ['Promotion', 'Paper Start'],
     ['Workspace', '/performance'],
   ], [detectedProfile.label, detectedProfile.venue, launchSteps, selectedHint.label])
@@ -178,7 +178,7 @@ export default function CreateAgent() {
   )
   const launchPathRows = useMemo(() => [
     ['01', 'Parse Mandate', selectedHint.label],
-    ['02', launchSteps[0] ?? 'Backtest', detectedProfile.venue],
+    ['02', launchSteps[0] ?? 'Signal replay', detectedProfile.venue],
     ['03', 'Risk Envelope', detectedProfile.envelope],
     ['04', 'Open Workspace', '/performance'],
   ], [detectedProfile.envelope, detectedProfile.venue, launchSteps, selectedHint.label])
@@ -296,7 +296,7 @@ export default function CreateAgent() {
               Launch Agent
             </h1>
             <p className="mt-1 max-w-2xl font-mono text-xs text-[#949e9c]">
-              Prompt -&gt; replay -&gt; risk -&gt; workspace
+              Mandate / replay / envelope / workspace
             </p>
           </div>
           <div className="grid grid-cols-3 overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] font-mono text-[11px] uppercase tracking-[0.12em] text-[#949e9c] md:w-[430px]">
@@ -335,7 +335,7 @@ export default function CreateAgent() {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Trade ETH momentum with a 5% max drawdown…"
+                placeholder="Trade ETH-PERP momentum with 3x max leverage, 5% max drawdown, and a liquidation buffer…"
                 disabled={isCreating}
                 name="agent-strategy-prompt"
                 autoComplete="off"
@@ -350,14 +350,14 @@ export default function CreateAgent() {
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#273035] px-3 py-2">
                   <div className="min-w-0">
                     <h2 className="truncate font-display text-sm font-semibold text-[#f6fefd]">
-                      Compiler
+                      Strategy Compiler
                     </h2>
                     <p className="truncate font-mono text-[11px] text-[#949e9c]">
                       {selectedHint.shorthand}
                     </p>
                   </div>
                   <span className="rounded-[4px] border border-[#1d5b52] bg-[#0d302c] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[#50d2c1]">
-                    Armed
+                    Ready
                   </span>
                 </div>
                 <div className="grid min-h-0 grid-cols-1 overflow-auto [scrollbar-gutter:stable] min-[1440px]:grid-cols-2">
@@ -426,8 +426,8 @@ export default function CreateAgent() {
             <section className="overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
               <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_8rem] border-b border-[#273035] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[#697371]">
                 <span>#</span>
-                <span>Route</span>
-                <span className="text-right">Output</span>
+                <span>Path</span>
+                <span className="text-right">Surface</span>
               </div>
               <div>
                 {launchPathRows.map(([index, action, output]) => (

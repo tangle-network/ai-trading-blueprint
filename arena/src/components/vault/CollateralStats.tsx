@@ -144,7 +144,7 @@ export function CollateralStats({
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
-        className="glass-card rounded-xl p-5 mb-6"
+        className="glass-card rounded-[6px] p-5"
       >
         <div className="flex items-center gap-2 mb-1">
           <div className="i-ph:lock-key text-base text-arena-elements-textTertiary" />
@@ -190,19 +190,19 @@ export function CollateralStats({
   ];
 
   return (
-    <div className="mb-6">
+    <div>
       <div className="flex items-center gap-2 mb-3">
         <div className="i-ph:lock-key text-base text-violet-700 dark:text-violet-400" />
         <span className="text-sm font-display font-semibold">CLOB Collateral</span>
       </div>
-      <div className="grid sm:grid-cols-3 gap-4 mb-4">
+      <div className="grid gap-3 sm:grid-cols-3">
         {stats.map((stat, i) => (
           <m.div
             key={stat.label}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.06, duration: 0.4 }}
-            className="glass-card rounded-xl p-4"
+            className="glass-card rounded-[6px] p-4"
           >
             <div className="flex items-center gap-2 mb-1.5">
               <div className={`${stat.icon} text-sm text-arena-elements-textTertiary`} />
@@ -236,7 +236,7 @@ export function CollateralStats({
 
       {/* Recent collateral activity */}
       {events.length > 0 && (
-        <div className="glass-card rounded-xl p-4">
+        <div className="glass-card rounded-[6px] p-4">
           <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textSecondary mb-2">
             Recent Activity
           </div>
