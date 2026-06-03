@@ -1,5 +1,6 @@
 import { lazy, Suspense, useMemo, useState } from 'react';
 import type { Bot } from '~/lib/types/bot';
+import type { Portfolio, Position } from '~/lib/types/portfolio';
 import { Card, CardHeader, CardTitle, CardContent } from '@tangle-network/blueprint-ui/components';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
 import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
@@ -149,6 +150,22 @@ function formatChartNumber(value: number | null): string {
   });
 }
 
+function formatChartPercent(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `${formatNumber(value, {
+    maximumFractionDigits: Math.abs(value) >= 10 ? 1 : 2,
+    minimumFractionDigits: Math.abs(value) >= 10 ? 1 : 2,
+  })}%`;
+}
+
+function formatLeverageValue(value: number | null): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) return '—';
+  return `${formatNumber(value, {
+    maximumFractionDigits: value >= 10 ? 1 : 2,
+    minimumFractionDigits: value >= 10 ? 1 : 2,
+  })}x`;
+}
+
 function marketCandleLimitForRange(range: PerformanceRange): number {
   if (range === '1d') return 1_440;
   if (range === '7d') return 5_000;
@@ -200,6 +217,108 @@ function formatTradeMarkerTooltip(trade: Trade): string {
 function formatTradeStatus(value: string | null | undefined): string {
   if (!value) return 'Pending';
   return value.replace(/_/g, ' ').toUpperCase();
+}
+
+function isHyperliquidPerpPosition(position: Position): boolean {
+  const positionType = position.positionType?.toLowerCase() ?? '';
+  return positionType === 'long_perp'
+    || positionType === 'short_perp'
+    || positionType.includes('perp')
+    || position.notionalUsd != null
+    || position.leverage != null
+    || position.liquidationPrice != null;
+}
+
+function marginUsedUsd(position: Position): number | null {
+  if (position.marginUsedUsd != null) return position.marginUsedUsd;
+  if (position.notionalUsd != null && position.leverage != null && position.leverage > 0) {
+    return position.notionalUsd / position.leverage;
+  }
+  if (position.valueUsd != null && (position.notionalUsd == null || position.valueUsd <= position.notionalUsd)) {
+    return position.valueUsd;
+  }
+  return null;
+}
+
+function liquidationDistancePercent(position: Position): number | null {
+  if (
+    position.currentPrice == null
+    || position.currentPrice <= 0
+    || position.liquidationPrice == null
+    || position.liquidationPrice <= 0
+  ) {
+    return null;
+  }
+  return Math.abs(position.currentPrice - position.liquidationPrice) / position.currentPrice * 100;
+}
+
+interface HyperliquidRiskSnapshot {
+  positions: Position[];
+  totalNotionalUsd: number;
+  totalMarginUsd: number;
+  totalUnrealizedPnlUsd: number | null;
+  maxLeverage: number | null;
+  nearestLiquidation: {
+    price: number;
+    distancePercent: number;
+  } | null;
+  marginUsagePercent: number | null;
+}
+
+function buildHyperliquidRiskSnapshot(portfolio: Portfolio | null | undefined): HyperliquidRiskSnapshot | null {
+  if (!portfolio) return null;
+
+  const portfolioPositions = Array.isArray(portfolio.positions) ? portfolio.positions : [];
+  const positions = portfolioPositions.filter(isHyperliquidPerpPosition);
+  if (positions.length === 0) {
+    return {
+      positions,
+      totalNotionalUsd: 0,
+      totalMarginUsd: 0,
+      totalUnrealizedPnlUsd: null,
+      maxLeverage: null,
+      nearestLiquidation: null,
+      marginUsagePercent: null,
+    };
+  }
+
+  const totalNotionalUsd = positions.reduce((sum, position) => sum + (position.notionalUsd ?? 0), 0);
+  const totalMarginUsd = positions.reduce((sum, position) => sum + (marginUsedUsd(position) ?? 0), 0);
+  const pnlValues = positions
+    .map((position) => position.unrealizedPnlUsd)
+    .filter((value): value is number => value != null && Number.isFinite(value));
+  const leverageValues = positions
+    .map((position) => position.leverage)
+    .filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
+  const nearestLiquidation = positions
+    .map((position) => {
+      const distancePercent = liquidationDistancePercent(position);
+      return position.liquidationPrice != null && distancePercent != null
+        ? { price: position.liquidationPrice, distancePercent }
+        : null;
+    })
+    .filter((item): item is { price: number; distancePercent: number } => item != null)
+    .sort((left, right) => left.distancePercent - right.distancePercent)[0] ?? null;
+  const equity = portfolio.displayTotalValueUsd ?? portfolio.totalValueUsd;
+
+  return {
+    positions,
+    totalNotionalUsd,
+    totalMarginUsd,
+    totalUnrealizedPnlUsd: pnlValues.length > 0
+      ? pnlValues.reduce((sum, value) => sum + value, 0)
+      : null,
+    maxLeverage: leverageValues.length > 0 ? Math.max(...leverageValues) : null,
+    nearestLiquidation,
+    marginUsagePercent: equity != null && equity > 0 && totalMarginUsd > 0
+      ? (totalMarginUsd / equity) * 100
+      : null,
+  };
+}
+
+function riskToneClass(value: number | null): string {
+  if (value == null || !Number.isFinite(value) || value === 0) return 'text-[#d2dad7]';
+  return value > 0 ? 'text-[#50d2c1]' : 'text-[#ff5d6c]';
 }
 
 function formatTradeMicrostructure(trade: Trade): string {
@@ -503,6 +622,9 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const chartHeading = effectiveChartMode === 'market'
     ? `${isHyperliquidPerpBot && marketCandleToken ? `${marketCandleToken}-PERP` : marketCandleToken ?? 'Market'}`
     : 'Account';
+  const hyperliquidRiskSnapshot = isHyperliquidPerpBot
+    ? buildHyperliquidRiskSnapshot(livePortfolio ?? null)
+    : null;
 
   if (isLoading) {
     return (
@@ -623,6 +745,84 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
               </div>
             </div>
           </div>
+
+          {isHyperliquidPerpBot && (
+            <section
+              aria-label="Hyperliquid exposure"
+              className="grid shrink-0 gap-px border-b border-[#273035] bg-[#273035] min-[900px]:grid-cols-[minmax(0,1.08fr)_repeat(5,minmax(0,1fr))]"
+            >
+              <div className="min-w-0 bg-[#0b1418] px-3 py-2">
+                <div className="font-data text-[10px] uppercase tracking-[0.12em] text-[#697371]">
+                  Perp Risk
+                </div>
+                <div className="mt-1 truncate font-display text-sm font-semibold text-[#f6fefd]">
+                  {hyperliquidRiskSnapshot == null
+                    ? 'Risk feed pending'
+                    : hyperliquidRiskSnapshot.positions.length === 0
+                      ? 'No open perps'
+                      : `${formatNumber(hyperliquidRiskSnapshot.positions.length, { maximumFractionDigits: 0 })} open ${hyperliquidRiskSnapshot.positions.length === 1 ? 'position' : 'positions'}`}
+                </div>
+              </div>
+              {[
+                {
+                  label: 'Notional',
+                  value: hyperliquidRiskSnapshot == null
+                    ? '—'
+                    : formatChartCurrency(hyperliquidRiskSnapshot.totalNotionalUsd > 0 ? hyperliquidRiskSnapshot.totalNotionalUsd : null),
+                  subvalue: hyperliquidRiskSnapshot == null
+                    ? 'portfolio sync'
+                    : `${formatChartCurrency(hyperliquidRiskSnapshot.totalMarginUsd > 0 ? hyperliquidRiskSnapshot.totalMarginUsd : null)} margin`,
+                  tone: 'text-[#f6fefd]',
+                },
+                {
+                  label: 'Margin Use',
+                  value: formatChartPercent(hyperliquidRiskSnapshot?.marginUsagePercent ?? null),
+                  subvalue: 'equity basis',
+                  tone: 'text-[#f6fefd]',
+                },
+                {
+                  label: 'Max Lev',
+                  value: formatLeverageValue(hyperliquidRiskSnapshot?.maxLeverage ?? null),
+                  subvalue: 'open book',
+                  tone: 'text-[#f6fefd]',
+                },
+                {
+                  label: 'Nearest Liq',
+                  value: hyperliquidRiskSnapshot?.nearestLiquidation
+                    ? formatChartCurrency(hyperliquidRiskSnapshot.nearestLiquidation.price)
+                    : '—',
+                  subvalue: hyperliquidRiskSnapshot?.nearestLiquidation
+                    ? `${formatChartPercent(hyperliquidRiskSnapshot.nearestLiquidation.distancePercent)} away`
+                    : 'no liquidation price',
+                  tone: hyperliquidRiskSnapshot?.nearestLiquidation?.distancePercent != null && hyperliquidRiskSnapshot.nearestLiquidation.distancePercent < 5
+                    ? 'text-[#ff5d6c]'
+                    : 'text-[#f6fefd]',
+                },
+                {
+                  label: 'uPnL',
+                  value: hyperliquidRiskSnapshot?.totalUnrealizedPnlUsd == null
+                    ? '—'
+                    : formatChartCurrency(hyperliquidRiskSnapshot.totalUnrealizedPnlUsd),
+                  subvalue: hyperliquidRiskSnapshot == null
+                    ? 'portfolio sync'
+                    : livePortfolio?.stale ? 'stale' : 'live account',
+                  tone: riskToneClass(hyperliquidRiskSnapshot?.totalUnrealizedPnlUsd ?? null),
+                },
+              ].map((item) => (
+                <div key={item.label} className="min-w-0 bg-[#0f1a1f] px-3 py-2">
+                  <div className="truncate font-data text-[10px] uppercase tracking-[0.12em] text-[#697371]">
+                    {item.label}
+                  </div>
+                  <div className={`mt-1 truncate font-data text-sm font-semibold tabular-nums ${item.tone}`}>
+                    {item.value}
+                  </div>
+                  <div className="mt-0.5 truncate font-data text-[10px] text-[#949e9c]">
+                    {item.subvalue}
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
 
           <div className="min-h-0 flex-1 bg-[#0f1a1f]">
             {chartIsRenderable ? (

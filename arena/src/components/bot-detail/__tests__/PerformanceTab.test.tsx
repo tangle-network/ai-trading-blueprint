@@ -779,6 +779,99 @@ describe('PerformanceTab', () => {
     expect(screen.getByTestId('chart-execution-coverage')).toHaveTextContent('2 candles');
   });
 
+  it('surfaces Hyperliquid exposure risk from the live portfolio feed', () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockPortfolio = {
+      displayTotalValueUsd: 10000,
+      totalValueUsd: 10000,
+      observedAt: '2026-04-23T10:02:00.000Z',
+      stale: false,
+      positions: [
+        {
+          token: 'ETH',
+          symbol: 'ETH',
+          amount: 2.5,
+          currentPrice: 2000,
+          liquidationPrice: 1800,
+          marginUsedUsd: 1000,
+          notionalUsd: 5000,
+          unrealizedPnlUsd: -125.5,
+          leverage: 5,
+          protocol: 'hyperliquid',
+          positionType: 'long',
+          valueUsd: 1000,
+          displayValueUsd: 1000,
+          displayPnlPercent: -2.51,
+          displayWeight: 10,
+          warnings: [],
+          valuationStatus: 'priced',
+          asset: {
+            rawToken: 'ETH',
+            symbol: 'ETH',
+            name: 'Ether',
+            primaryLabel: 'ETH',
+            isKnown: true,
+            accentClassName: 'bg-sky-100 text-sky-700',
+            iconText: 'E',
+          },
+        },
+        {
+          token: 'USDC',
+          symbol: 'USDC',
+          amount: 5000,
+          currentPrice: 1,
+          protocol: 'hyperliquid',
+          positionType: 'cash',
+          valueUsd: 5000,
+          displayValueUsd: 5000,
+          displayPnlPercent: null,
+          displayWeight: 50,
+          warnings: [],
+          valuationStatus: 'value_only',
+          asset: {
+            rawToken: 'USDC',
+            symbol: 'USDC',
+            name: 'USD Coin',
+            primaryLabel: 'USDC',
+            isKnown: true,
+            accentClassName: 'bg-blue-100 text-blue-700',
+            iconText: 'U',
+          },
+        },
+      ],
+    };
+
+    render(
+      <PerformanceTab
+        bot={makeBot({
+          strategyType: 'hyperliquid_perp',
+          strategyConfig: { asset: 'ETH' },
+        })}
+        isLive
+      />,
+    );
+
+    expect(screen.getByLabelText('Hyperliquid exposure')).toBeInTheDocument();
+    expect(screen.getByText('1 open position')).toBeInTheDocument();
+    expect(screen.getByText('$5,000')).toBeInTheDocument();
+    expect(screen.getByText('$1,000 margin')).toBeInTheDocument();
+    expect(screen.getByText('10.0%')).toBeInTheDocument();
+    expect(screen.getByText('5.00x')).toBeInTheDocument();
+    expect(screen.getByText('$1,800')).toBeInTheDocument();
+    expect(screen.getByText('10.0% away')).toBeInTheDocument();
+    expect(screen.getByText(/\$-125/)).toBeInTheDocument();
+    expect(screen.getByText('live account')).toBeInTheDocument();
+  });
+
   it('uses compact dates on long-range market axis ticks', async () => {
     mockMetrics = [
       {
