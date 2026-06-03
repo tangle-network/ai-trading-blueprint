@@ -291,8 +291,8 @@ export default function CreateAgent() {
   }, [handleCreate])
 
   return (
-    <div className="arena-trace-terminal flex h-full min-h-0 overflow-hidden bg-[#081013] text-[#f6fefd]">
-      <section className="mx-auto flex h-full min-h-0 w-full max-w-[1220px] flex-1 flex-col gap-3 px-3 py-3 sm:px-4 lg:px-6">
+    <div className="arena-trace-terminal flex min-h-full overflow-y-auto bg-[#081013] text-[#f6fefd] lg:h-full lg:min-h-0 lg:overflow-hidden">
+      <section className="mx-auto flex w-full max-w-[1220px] flex-1 flex-col gap-3 px-3 py-3 sm:px-4 lg:h-full lg:min-h-0 lg:px-6">
         <header className="grid shrink-0 gap-3 border-b border-[#273035] pb-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
           <div className="min-w-0">
             <h1 className="text-pretty font-display text-3xl font-semibold tracking-tight text-[#f6fefd]">
@@ -309,10 +309,10 @@ export default function CreateAgent() {
           </div>
         </header>
 
-        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_378px]">
+        <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_378px]">
           <form
             id="create-agent-form"
-            className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]"
+            className="grid rounded-[5px] border border-[#273035] bg-[#0b1418] lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:overflow-hidden"
             onSubmit={(event) => {
               event.preventDefault()
               handleCreate()
@@ -344,12 +344,12 @@ export default function CreateAgent() {
                 autoComplete="off"
                 aria-label="Trading agent strategy prompt"
                 aria-describedby="agent-create-status"
-                className="h-[148px] resize-none bg-[#081013] px-4 py-4 font-mono text-[15px] leading-7 text-[#f6fefd] placeholder:text-[#697371] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60 disabled:opacity-50 min-[1440px]:h-[168px]"
+                className="h-[188px] resize-none bg-[#081013] px-4 py-4 font-mono text-[15px] leading-7 text-[#f6fefd] placeholder:text-[#697371] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60 disabled:opacity-50 md:h-[168px] lg:h-[148px] min-[1440px]:h-[168px]"
               />
             </div>
 
-            <div className="grid min-h-0 gap-3 border-t border-[#273035] bg-[#081013] p-3 xl:grid-cols-[minmax(0,1fr)_320px]">
-              <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
+            <div className="grid gap-3 border-t border-[#273035] bg-[#081013] p-3 lg:min-h-0 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <section className="grid rounded-[5px] border border-[#273035] bg-[#0b1418] lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)] lg:overflow-hidden">
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#273035] px-3 py-2">
                   <div className="min-w-0">
                     <h2 className="truncate font-display text-sm font-semibold text-[#f6fefd]">
@@ -363,14 +363,14 @@ export default function CreateAgent() {
                     Ready
                   </span>
                 </div>
-                <div className="grid min-h-0 grid-cols-1 overflow-auto [scrollbar-gutter:stable] min-[1440px]:grid-cols-2">
+                <div className="grid grid-cols-1 lg:min-h-0 lg:overflow-auto lg:[scrollbar-gutter:stable] min-[1440px]:grid-cols-2">
                   {compilerSpecRows.map(([label, value]) => (
                     <CompilerSpecRow key={label} label={label} value={value} />
                   ))}
                 </div>
               </section>
 
-              <section className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
+              <section className="grid rounded-[5px] border border-[#273035] bg-[#0b1418] lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:overflow-hidden">
                 <div className="border-b border-[#273035] px-3 py-2">
                   <h2 className="truncate font-display text-sm font-semibold text-[#f6fefd]">
                     Envelope
@@ -384,7 +384,7 @@ export default function CreateAgent() {
                     <RiskCheck key={check} label={check} />
                   ))}
                 </div>
-                <div className="grid min-h-0 gap-2 overflow-auto p-2 [scrollbar-gutter:stable]">
+                <div className="grid gap-2 p-2 lg:min-h-0 lg:overflow-auto lg:[scrollbar-gutter:stable]">
                   {compilerRows.map((row) => (
                     <RouteChip key={row.label} icon={row.icon} label={row.label} value={row.value} />
                   ))}
@@ -393,7 +393,7 @@ export default function CreateAgent() {
             </div>
           </form>
 
-          <aside className="grid min-h-0 grid-rows-[auto_auto_auto_auto] gap-3 overflow-hidden">
+          <aside className="grid gap-3 lg:min-h-0 lg:grid-rows-[auto_auto_auto_auto] lg:overflow-hidden">
             <section className="grid overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
               <div className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-3 border-b border-[#273035] px-3 py-2">
                 <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[5px] bg-[#143c38] text-[#50d2c1]">
