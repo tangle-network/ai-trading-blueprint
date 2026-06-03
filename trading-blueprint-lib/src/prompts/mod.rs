@@ -885,7 +885,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_treats_vault_spot_as_tradeable() {
-        let prompt = build_fast_tick_prompt("volatility", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::PerTrade);
 
         assert!(
             prompt.contains("get-portfolio.js"),
@@ -1297,7 +1297,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_references_slippage_learner_and_bandit() {
-        let prompt = build_fast_tick_prompt("volatility", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::PerTrade);
         assert!(
             prompt.contains("recommendSlippageBps"),
             "fast tick must consult the slippage learner before quoting"
