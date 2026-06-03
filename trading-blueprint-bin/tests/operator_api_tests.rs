@@ -704,6 +704,64 @@ async fn spawn_mock_terminal_sidecar() -> String {
     format!("http://{addr}")
 }
 
+async fn spawn_mock_fast_tick_sidecar() -> String {
+    let app = Router::new().route(
+        "/terminals/commands",
+        post(|Json(payload): Json<serde_json::Value>| async move {
+            let command = payload
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let stdout = if command.contains("perp-tick.js") {
+                json!({
+                    "result_schema_version": 1,
+                    "family": "perp",
+                    "run_started_at": "2026-06-03T19:50:00.000Z",
+                    "run_completed_at": "2026-06-03T19:50:01.000Z",
+                    "checked_state": {
+                        "strategy_type": "perp",
+                        "protocol_chain_id": 42161,
+                        "available_protocols": ["gmx_v2", "vertex"],
+                        "venues": ["gmx_v2", "vertex"],
+                        "hyperliquid_native_forbidden": true
+                    },
+                    "decision": {
+                        "action": "skip",
+                        "reason": "paper-gmx-vertex-no-funding-edge-confirmed",
+                        "venues": ["gmx_v2", "vertex"],
+                        "no_live_execution": true
+                    },
+                    "logs_written": true,
+                    "metrics_written": true
+                })
+                .to_string()
+            } else {
+                String::new()
+            };
+            Json(json!({
+                "success": true,
+                "result": {
+                    "exitCode": 0,
+                    "stdout": stdout,
+                    "stderr": "",
+                    "duration": 1
+                }
+            }))
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock fast-tick sidecar");
+    let addr = listener.local_addr().expect("mock fast-tick sidecar addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock fast-tick sidecar");
+    });
+    format!("http://{addr}")
+}
+
 async fn spawn_mock_chat_sidecar(bot_id: &str) -> String {
     let workflow_session = format!("trading-{bot_id}");
     let tick_session = format!("trading-{bot_id}-1775823900");
@@ -4147,6 +4205,75 @@ async fn test_run_now_inactive_bot_returns_conflict() {
         .unwrap();
 
     assert_eq!(response.status(), 409);
+}
+
+#[tokio::test]
+async fn test_run_now_fast_tick_uses_deterministic_executor() {
+    let _dir = init_test_env();
+    let workflow_id = 9_100_043;
+    let bot = seed_bot_with_workflow("run-now-fast-perp-1", "perp", true, Some(workflow_id));
+    mark_sandbox_secrets_configured(&bot.sandbox_id);
+    let sidecar_url = spawn_mock_fast_tick_sidecar().await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+
+    let workflow_key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id);
+    ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .expect("workflows store")
+        .update(&workflow_key, |entry| {
+            entry.name = format!("fast-tick-{}", bot.id);
+            entry.workflow_json = json!({
+                "sidecar_url": sidecar_url,
+                "sidecar_token": "test-token",
+                "timeout_ms": 10_000
+            })
+            .to_string();
+        })
+        .expect("update workflow");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/bots/{}/run-now", bot.id))
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let mut direct_run = None;
+    for _ in 0..20 {
+        let runs = trading_blueprint_lib::workflow_compat::list_workflow_runs_for_workflows(&[
+            workflow_id,
+        ])
+        .expect("list runs");
+        direct_run = runs.into_iter().find(|run| {
+            run.session_id
+                .as_deref()
+                .is_some_and(|session| session.starts_with("direct-fast-"))
+        });
+        if direct_run.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let run = direct_run.expect("manual run-now should persist a direct fast-tick run");
+    let result = run
+        .result
+        .expect("direct fast tick should persist stdout JSON");
+    assert!(result.contains(r#""family":"perp""#), "{result}");
+    assert!(
+        result.contains(r#""available_protocols":["gmx_v2","vertex"]"#),
+        "{result}"
+    );
+    assert!(
+        result.contains(r#""hyperliquid_native_forbidden":true"#),
+        "{result}"
+    );
 }
 
 // ---------------------------------------------------------------------------

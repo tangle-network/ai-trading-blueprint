@@ -2212,6 +2212,104 @@ async fn run_now(
         );
     }
 
+    if entry.name.starts_with("fast-tick-") {
+        let wf_key_bg = wf_key.clone();
+        let entry_bg = entry.clone();
+        let bot_bg = bot.clone();
+        tokio::spawn(async move {
+            let _guard = _run_guard;
+            match trading_blueprint_lib::jobs::run_manual_fast_tick_for_workflow(&bot_bg, &entry_bg)
+                .await
+            {
+                Ok(Some(result)) => {
+                    let latest_execution = result.latest_execution();
+                    let _ = ai_agent_sandbox_blueprint_lib::workflows::store_latest_execution(
+                        workflow_id,
+                        latest_execution.clone(),
+                    );
+                    if let Err(err) =
+                        trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+                            workflow_id,
+                            latest_execution,
+                        )
+                    {
+                        tracing::warn!(
+                            workflow_id,
+                            error = %err,
+                            "Failed to persist manual fast-tick run history"
+                        );
+                    }
+                    let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+                        .ok()
+                        .and_then(|store| {
+                            store
+                                .update(&wf_key_bg, |e| {
+                                    e.last_run_at = Some(result.executed_at);
+                                })
+                                .ok()
+                        });
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        workflow_id,
+                        "Manual fast-tick branch selected a non-fast workflow"
+                    );
+                }
+                Err(err) => {
+                    tracing::error!("Manual fast tick {workflow_id} failed: {err}");
+                    let failed_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    match ai_agent_sandbox_blueprint_lib::workflows::store_failed_execution(
+                        workflow_id,
+                        err,
+                    ) {
+                        Ok(latest_execution) => {
+                            if let Err(err) =
+                                trading_blueprint_lib::workflow_compat::persist_latest_execution_run(
+                                    workflow_id,
+                                    latest_execution,
+                                )
+                            {
+                                tracing::warn!(
+                                    workflow_id,
+                                    error = %err,
+                                    "Failed to persist failed manual fast-tick run history"
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                workflow_id,
+                                error = %err,
+                                "Failed to store failed manual fast-tick execution"
+                            );
+                        }
+                    }
+                    let _ = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+                        .ok()
+                        .and_then(|store| {
+                            store
+                                .update(&wf_key_bg, |e| {
+                                    trading_blueprint_lib::workflow_compat::apply_workflow_failure(
+                                        e, failed_at,
+                                    );
+                                })
+                                .ok()
+                        });
+                }
+            }
+        });
+
+        return Ok(Json(RunNowResponse {
+            status: "started".to_string(),
+            workflow_id: workflow_id.to_string(),
+            session_id: String::new(),
+            accepted_at,
+        }));
+    }
+
     // Spawn workflow execution in the background so we return immediately.
     let wf_key_bg = wf_key.clone();
     tokio::spawn(async move {

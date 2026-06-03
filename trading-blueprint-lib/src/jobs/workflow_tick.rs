@@ -10,7 +10,9 @@ use crate::state::{bot_key, bots};
 use crate::wind_down::should_initiate_wind_down;
 
 use crate::prompts::tick_tool_for_strategy;
-use ai_agent_sandbox_blueprint_lib::workflows::{workflow_key, workflows};
+use ai_agent_sandbox_blueprint_lib::workflows::{
+    WorkflowEntry, WorkflowLatestExecution, workflow_key, workflows,
+};
 use ai_agent_sandbox_blueprint_lib::{SandboxExecRequest, run_exec_request};
 use blueprint_sdk::tangle::extract::TangleResult;
 use futures_util::{StreamExt, stream};
@@ -454,6 +456,94 @@ async fn run_direct_fast_tick(
         response.exit_code,
         validation_error,
     )
+}
+
+#[derive(Clone, Debug)]
+pub struct ManualFastTickResult {
+    pub executed_at: u64,
+    pub task: Value,
+}
+
+impl ManualFastTickResult {
+    pub fn latest_execution(&self) -> WorkflowLatestExecution {
+        WorkflowLatestExecution {
+            executed_at: self.executed_at,
+            success: self
+                .task
+                .get("success")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            result: workflow_result_text(&self.task, "result").unwrap_or_default(),
+            error: workflow_result_text(&self.task, "error").unwrap_or_default(),
+            trace_id: workflow_result_text(&self.task, "traceId").unwrap_or_default(),
+            duration_ms: self
+                .task
+                .get("durationMs")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            input_tokens: self
+                .task
+                .get("inputTokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as u32,
+            output_tokens: self
+                .task
+                .get("outputTokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as u32,
+            session_id: workflow_result_text(&self.task, "sessionId").unwrap_or_default(),
+        }
+    }
+}
+
+/// Run the same deterministic fast-tick path used by the scheduler for a
+/// manual control action. Returns `Ok(None)` for non-fast-tick workflows so
+/// callers can fall back to the generic workflow runner.
+pub async fn run_manual_fast_tick_for_workflow(
+    bot: &crate::state::TradingBotRecord,
+    entry: &WorkflowEntry,
+) -> Result<Option<ManualFastTickResult>, String> {
+    if !entry.name.starts_with("fast-tick-") {
+        return Ok(None);
+    }
+    let belongs =
+        bot.workflow_id == Some(entry.id) || workflow_name_belongs_to_bot(&entry.name, &bot.id);
+    if !belongs {
+        return Err(format!(
+            "fast tick workflow {} does not belong to bot {}",
+            entry.id, bot.id
+        ));
+    }
+    if !workflow_is_current_for_bot(entry, bot) {
+        return Err(format!(
+            "fast tick workflow {} is stale for bot {}",
+            entry.id, bot.id
+        ));
+    }
+    if !bot.trading_active || bot.wind_down_started_at.is_some() {
+        return Err(format!(
+            "bot {} is not eligible for a manual fast tick",
+            bot.id
+        ));
+    }
+
+    let tool = tick_tool_for_strategy(&bot.strategy_type).ok_or_else(|| {
+        format!(
+            "strategy {} has no deterministic tick tool",
+            bot.strategy_type
+        )
+    })?;
+    let timeout_ms = workflow_timeout_ms(&entry.workflow_json, 180_000);
+    tracing::info!(
+        workflow_id = entry.id,
+        bot_id = %bot.id,
+        strategy = %bot.strategy_type,
+        tool,
+        "Running manual deterministic fast tick directly"
+    );
+    let task = run_direct_fast_tick(bot, tool, timeout_ms).await;
+    let executed_at = chrono::Utc::now().timestamp().max(0) as u64;
+    Ok(Some(ManualFastTickResult { executed_at, task }))
 }
 
 async fn sync_canonical_harness_to_sidecar(

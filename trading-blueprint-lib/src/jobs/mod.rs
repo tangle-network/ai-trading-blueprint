@@ -37,6 +37,7 @@ pub use stop::stop_core;
 pub use task::task;
 pub use webhook_event::webhook_event;
 pub use webhook_event::webhook_event_core;
+pub use workflow_tick::run_manual_fast_tick_for_workflow;
 pub use workflow_tick::trading_workflow_tick as workflow_tick;
 
 /// Run a standalone cron loop for workflow ticks when the full Blueprint
