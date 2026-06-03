@@ -10,12 +10,10 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import '~/test/mockBlueprintUi';
+import '~/test/mockFramerMotion';
 import { SecretsStep } from '../SecretsStep';
 import type { TrackedProvision } from '~/lib/stores/provisions';
-import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
-
-mockBlueprintUi();
-mockFramerMotion();
 
 vi.mock('react-router', () => ({
   Link: ({ to, children, ...rest }: { to: string; children: unknown }) => (

@@ -1,11 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import '~/test/mockBlueprintUi';
+import '~/test/mockFramerMotion';
 import { AdvancedSettingsDialog } from '../AdvancedSettingsDialog';
-import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
-
-mockBlueprintUi();
-mockFramerMotion();
 
 function defaultProps(overrides: Record<string, unknown> = {}) {
   return {

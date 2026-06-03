@@ -6,12 +6,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import '~/test/mockBlueprintUi';
+import '~/test/mockFramerMotion';
 import { EnvelopeNeededBanner } from '../EnvelopeNeededBanner';
-import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
 import type { Bot } from '~/lib/types/bot';
-
-mockBlueprintUi();
-mockFramerMotion();
 
 const useEnvelopeMock = vi.fn();
 

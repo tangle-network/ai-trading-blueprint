@@ -1,8 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { mockBlueprintUi } from '~/test/mocks';
-
-mockBlueprintUi();
+import '~/test/mockBlueprintUi';
 
 import { EnvelopeBuilder } from '../EnvelopeBuilder';
 import type { SignedEnvelope } from '~/lib/types/envelope';

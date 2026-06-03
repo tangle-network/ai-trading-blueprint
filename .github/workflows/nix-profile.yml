@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # The default GitHub runner ships ~14 GB free out of ~30. The
       # universal profile closure plus Rust target dirs occasionally

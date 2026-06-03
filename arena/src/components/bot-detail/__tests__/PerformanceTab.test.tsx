@@ -1,14 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import '~/test/mockBlueprintUi';
+import '~/test/mockFramerMotion';
 import type { Bot } from '~/lib/types/bot';
 import type { Trade } from '~/lib/types/trade';
 import type { FillCountEvidence } from '~/lib/tradeEvidence';
-import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
 import { PerformanceTab } from '../PerformanceTab';
-
-mockBlueprintUi();
-mockFramerMotion();
 
 const lightweightChartMock = vi.hoisted(() => {
   const fitContent = vi.fn();

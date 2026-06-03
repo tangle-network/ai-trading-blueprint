@@ -1,16 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import '~/test/mockBlueprintUi';
+import '~/test/mockFramerMotion';
 import {
   truncateAddress,
   truncateSignature,
   SimulationBadge,
   SimulationDetail,
 } from '../ValidatorComponents';
-import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
-
-mockBlueprintUi();
-mockFramerMotion();
 
 // ── Utility tests ───────────────────────────────────────────────────────
 

@@ -1,11 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import '~/test/mockBlueprintUi';
 import { PositionsTab } from '../PositionsTab';
-import { mockBlueprintUi } from '~/test/mocks';
 import type { Portfolio } from '~/lib/types/portfolio';
 import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
-
-mockBlueprintUi();
 
 let mockPortfolio: Portfolio | null = null;
 let isLoading = false;

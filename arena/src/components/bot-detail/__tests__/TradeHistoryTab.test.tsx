@@ -1,13 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import '~/test/mockBlueprintUi';
+import '~/test/mockFramerMotion';
 import { TradeHistoryTab } from '../TradeHistoryTab';
-import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
 import type { Trade } from '~/lib/types/trade';
 import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
-
-mockBlueprintUi();
-mockFramerMotion();
 
 // ── Hook mocks ────────────────────────────────────────────────────────
 

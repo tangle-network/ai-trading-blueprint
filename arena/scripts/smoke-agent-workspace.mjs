@@ -1015,6 +1015,9 @@ async function navigate(page, url) {
     const readyState = await evaluate(page, 'document.readyState');
     return readyState === 'interactive' || readyState === 'complete';
   }, { timeoutMs: 15_000 });
+  await waitFor(async () => {
+    return evaluate(page, `Boolean(document.body && document.body.children.length > 0)`);
+  }, { timeoutMs: 15_000, intervalMs: 100 });
   await wait(250);
 }
 

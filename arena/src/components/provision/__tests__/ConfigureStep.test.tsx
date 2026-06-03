@@ -1,11 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import '~/test/mockBlueprintUi';
+import '~/test/mockFramerMotion';
 import { ConfigureStep, strategySupportsClobCollateral } from '../ConfigureStep';
-import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
-
-mockBlueprintUi();
-mockFramerMotion();
 
 vi.mock('~/lib/blueprints', () => ({
   strategyPacks: [
