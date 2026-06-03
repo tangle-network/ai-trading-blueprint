@@ -135,9 +135,12 @@ function timeRangeMs(first: Time | undefined, last: Time | undefined): number {
   return Math.max(0, lastTimestamp - firstTimestamp);
 }
 
-function formatCandleDateTick(timestamp: number, rangeMs: number): string {
+function formatCandleDateTick(timestamp: number, rangeMs: number, lastTimestampMs: number | null): string {
   const date = new Date(timestamp);
   if (rangeMs >= MARKET_AXIS_DAY_ONLY_THRESHOLD_MS) {
+    if (lastTimestampMs != null && lastTimestampMs - timestamp < 24 * 60 * 60 * 1000) {
+      return compactCandleTimeFormatter.format(date);
+    }
     return compactCandleDayFormatter.format(date);
   }
   const formatter = date.getMinutes() === 0
@@ -146,10 +149,10 @@ function formatCandleDateTick(timestamp: number, rangeMs: number): string {
   return formatter.format(date).replace(',', '');
 }
 
-function formatCandleAxisTick(timestamp: number, rangeMs = 0): string {
+function formatCandleAxisTick(timestamp: number, rangeMs = 0, lastTimestampMs: number | null = null): string {
   const date = new Date(timestamp);
   if (rangeMs >= MARKET_AXIS_DATE_THRESHOLD_MS) {
-    return formatCandleDateTick(timestamp, rangeMs);
+    return formatCandleDateTick(timestamp, rangeMs, lastTimestampMs);
   }
   if (date.getHours() === 0 && date.getMinutes() === 0) {
     return compactCandleDayFormatter.format(date);
@@ -904,6 +907,7 @@ export function TradingPerformanceChart({
               return formatCandleAxisTick(
                 candle.timestamp,
                 timeRangeMs(firstMarketTimeRef.current, lastMarketTimeRef.current),
+                timestampMsFromChartTime(lastMarketTimeRef.current),
               );
             }
             const navPoint = pointByTimeRef.current.get(key);

@@ -821,13 +821,22 @@ describe('PerformanceTab', () => {
         volume: 1650.25,
       },
       {
-        timestamp: Date.parse('2026-04-30T18:00:00.000Z'),
+        timestamp: Date.parse('2026-04-30T12:00:00.000Z'),
         token: 'ETH',
         open: 3324,
         high: 3340,
         low: 3312,
         close: 3338,
         volume: 1500,
+      },
+      {
+        timestamp: Date.parse('2026-04-30T18:00:00.000Z'),
+        token: 'ETH',
+        open: 3338,
+        high: 3350,
+        low: 3320,
+        close: 3342,
+        volume: 1400,
       },
     ];
 
@@ -852,6 +861,9 @@ describe('PerformanceTab', () => {
     const label = formatter(Math.floor(Date.parse('2026-04-24T18:00:00.000Z') / 1000));
     expect(label).toBe('Apr 24');
     expect(label).not.toBe('12:00 PM');
+    const tailLabel = formatter(Math.floor(Date.parse('2026-04-30T12:00:00.000Z') / 1000));
+    expect(tailLabel).toMatch(/\b(AM|PM)\b/);
+    expect(tailLabel).not.toContain('Apr 30');
   });
 
   it('does not pin off-window fills to the first or last market candle', async () => {
