@@ -91,6 +91,7 @@ function parseArgs(argv) {
     fixture: false,
     ownerPerformance: false,
     serveFixture: false,
+    themeMatrix: false,
     readyFile: '',
     screenshotDir: process.env.ARENA_SMOKE_SCREENSHOT_DIR ?? '',
   };
@@ -118,6 +119,8 @@ function parseArgs(argv) {
     } else if (arg === '--owner-performance') {
       args.ownerPerformance = true;
       args.fixture = true;
+    } else if (arg === '--theme-matrix') {
+      args.themeMatrix = true;
     } else if (arg === '--screenshot-dir') {
       args.screenshotDir = argv[index + 1] ?? args.screenshotDir;
       index += 1;
@@ -151,6 +154,7 @@ Options:
                     With --serve-fixture, write the app URL to a file after the server is ready.
   --owner-performance
                     Start fixture mode with dev owner auth and verify the owner Performance copilot.
+  --theme-matrix    Check forced light and dark themes and suffix screenshots with -light/-dark.
   --screenshot-dir <dir>
                     Save PNG screenshots for each checked workspace/viewport.
   --allow-empty     Exit 0 when no agent route is discoverable. Use only for local UI iteration, not release gates.`);
@@ -1014,12 +1018,23 @@ async function navigate(page, url) {
   await wait(250);
 }
 
-function withPath(baseUrl, pathPart) {
+function withTheme(baseUrl, theme = '') {
+  const url = new URL(baseUrl);
+  if (theme) url.searchParams.set('theme', theme);
+  return url.toString();
+}
+
+function withPath(baseUrl, pathPart, theme = '') {
   const url = new URL(baseUrl);
   url.pathname = pathPart;
   url.search = '';
+  if (theme) url.searchParams.set('theme', theme);
   url.hash = '';
   return url.toString();
+}
+
+function themeSuffix(theme = '') {
+  return theme ? `-${theme}` : '';
 }
 
 function textIncludes(bodyText, expected) {
@@ -1247,6 +1262,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
   fixture = false,
   ownerPerformance = false,
   screenshotDir = '',
+  theme = '',
 } = {}) {
   const failures = [];
   const sections = ownerPerformance ? ['performance'] : WORKSPACE_SECTIONS;
@@ -1255,7 +1271,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
     await setViewport(page, viewport);
     for (const section of sections) {
       const route = `/arena/bot/${encodeURIComponent(botId)}/${section}`;
-      await navigate(page, withPath(baseUrl, route));
+      await navigate(page, withPath(baseUrl, route, theme));
       let metrics;
       try {
         metrics = await waitFor(async () => {
@@ -1333,7 +1349,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
       if (ownerPerformance && section === 'performance' && /Trade Tape|Decision Tape/i.test(metrics.bodyText)) {
         failures.push(`${viewport.width}x${viewport.height} ${section}: owner copilot rendered with public decision tape still visible`);
       }
-      await captureScreenshot(page, screenshotDir, viewport, section, ownerPerformance ? '-owner' : '');
+      await captureScreenshot(page, screenshotDir, viewport, section, `${themeSuffix(theme)}${ownerPerformance ? '-owner' : ''}`);
     }
   }
 
@@ -1342,12 +1358,12 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
   }
 }
 
-async function assertFixtureHomeDashboard(page, baseUrl, { screenshotDir = '' } = {}) {
+async function assertFixtureHomeDashboard(page, baseUrl, { screenshotDir = '', theme = '' } = {}) {
   const failures = [];
 
   for (const viewport of VIEWPORTS) {
     await setViewport(page, viewport);
-    await navigate(page, baseUrl);
+    await navigate(page, withTheme(baseUrl, theme));
     let metrics;
     try {
       metrics = await waitFor(async () => {
@@ -1374,7 +1390,7 @@ async function assertFixtureHomeDashboard(page, baseUrl, { screenshotDir = '' } 
     if (/Unexpected Application Error/i.test(metrics.bodyText)) {
       failures.push(`${viewport.width}x${viewport.height} home: route rendered an error state`);
     }
-    await captureScreenshot(page, screenshotDir, viewport, 'home');
+    await captureScreenshot(page, screenshotDir, viewport, 'home', themeSuffix(theme));
   }
 
   if (failures.length > 0) {
@@ -1382,12 +1398,12 @@ async function assertFixtureHomeDashboard(page, baseUrl, { screenshotDir = '' } 
   }
 }
 
-async function assertFixtureLeaderboardDashboard(page, baseUrl, { screenshotDir = '' } = {}) {
+async function assertFixtureLeaderboardDashboard(page, baseUrl, { screenshotDir = '', theme = '' } = {}) {
   const failures = [];
 
   for (const viewport of VIEWPORTS) {
     await setViewport(page, viewport);
-    await navigate(page, withPath(baseUrl, '/leaderboard'));
+    await navigate(page, withPath(baseUrl, '/leaderboard', theme));
     let metrics;
     try {
       metrics = await waitFor(async () => {
@@ -1417,7 +1433,7 @@ async function assertFixtureLeaderboardDashboard(page, baseUrl, { screenshotDir 
     if (/Unexpected Application Error/i.test(metrics.bodyText)) {
       failures.push(`${viewport.width}x${viewport.height} leaderboard: route rendered an error state`);
     }
-    await captureScreenshot(page, screenshotDir, viewport, 'leaderboard');
+    await captureScreenshot(page, screenshotDir, viewport, 'leaderboard', themeSuffix(theme));
   }
 
   if (failures.length > 0) {
@@ -1425,12 +1441,12 @@ async function assertFixtureLeaderboardDashboard(page, baseUrl, { screenshotDir 
   }
 }
 
-async function assertFixtureActivityDashboard(page, baseUrl, { screenshotDir = '' } = {}) {
+async function assertFixtureActivityDashboard(page, baseUrl, { screenshotDir = '', theme = '' } = {}) {
   const failures = [];
 
   for (const viewport of VIEWPORTS) {
     await setViewport(page, viewport);
-    await navigate(page, withPath(baseUrl, '/activity'));
+    await navigate(page, withPath(baseUrl, '/activity', theme));
     let metrics;
     try {
       metrics = await waitFor(async () => {
@@ -1460,7 +1476,7 @@ async function assertFixtureActivityDashboard(page, baseUrl, { screenshotDir = '
     if (/Unexpected Application Error/i.test(metrics.bodyText)) {
       failures.push(`${viewport.width}x${viewport.height} activity: route rendered an error state`);
     }
-    await captureScreenshot(page, screenshotDir, viewport, 'activity');
+    await captureScreenshot(page, screenshotDir, viewport, 'activity', themeSuffix(theme));
   }
 
   if (failures.length > 0) {
@@ -1468,12 +1484,12 @@ async function assertFixtureActivityDashboard(page, baseUrl, { screenshotDir = '
   }
 }
 
-async function assertFixtureCreateCommand(page, baseUrl, { screenshotDir = '' } = {}) {
+async function assertFixtureCreateCommand(page, baseUrl, { screenshotDir = '', theme = '' } = {}) {
   const failures = [];
 
   for (const viewport of VIEWPORTS) {
     await setViewport(page, viewport);
-    await navigate(page, withPath(baseUrl, '/create'));
+    await navigate(page, withPath(baseUrl, '/create', theme));
     let metrics;
     try {
       metrics = await waitFor(async () => {
@@ -1503,7 +1519,7 @@ async function assertFixtureCreateCommand(page, baseUrl, { screenshotDir = '' } 
     if (/Unexpected Application Error/i.test(metrics.bodyText)) {
       failures.push(`${viewport.width}x${viewport.height} create: route rendered an error state`);
     }
-    await captureScreenshot(page, screenshotDir, viewport, 'create');
+    await captureScreenshot(page, screenshotDir, viewport, 'create', themeSuffix(theme));
   }
 
   if (failures.length > 0) {
@@ -1511,12 +1527,12 @@ async function assertFixtureCreateCommand(page, baseUrl, { screenshotDir = '' } 
   }
 }
 
-async function assertFixtureProvisionGate(page, baseUrl, { screenshotDir = '' } = {}) {
+async function assertFixtureProvisionGate(page, baseUrl, { screenshotDir = '', theme = '' } = {}) {
   const failures = [];
 
   for (const viewport of VIEWPORTS) {
     await setViewport(page, viewport);
-    await navigate(page, withPath(baseUrl, '/provision'));
+    await navigate(page, withPath(baseUrl, '/provision', theme));
     let metrics;
     try {
       metrics = await waitFor(async () => {
@@ -1546,7 +1562,7 @@ async function assertFixtureProvisionGate(page, baseUrl, { screenshotDir = '' } 
     if (/Unexpected Application Error/i.test(metrics.bodyText)) {
       failures.push(`${viewport.width}x${viewport.height} provision: route rendered an error state`);
     }
-    await captureScreenshot(page, screenshotDir, viewport, 'provision');
+    await captureScreenshot(page, screenshotDir, viewport, 'provision', themeSuffix(theme));
   }
 
   if (failures.length > 0) {
@@ -1554,10 +1570,11 @@ async function assertFixtureProvisionGate(page, baseUrl, { screenshotDir = '' } 
   }
 }
 
-async function assertFixtureProvisionConnected(page, baseUrl, { screenshotDir = '' } = {}) {
+async function assertFixtureProvisionConnected(page, baseUrl, { screenshotDir = '', theme = '' } = {}) {
   const failures = [];
   const provisionUrl = new URL('/provision', baseUrl);
   provisionUrl.searchParams.set('blueprint', 'trading-cloud');
+  if (theme) provisionUrl.searchParams.set('theme', theme);
 
   for (const viewport of VIEWPORTS) {
     await setViewport(page, viewport);
@@ -1597,7 +1614,7 @@ async function assertFixtureProvisionConnected(page, baseUrl, { screenshotDir = 
     if (/Connect Wallet/i.test(metrics.bodyText)) {
       failures.push(`${viewport.width}x${viewport.height} provision-connected: still rendered disconnected wallet gate`);
     }
-    await captureScreenshot(page, screenshotDir, viewport, 'provision-connected');
+    await captureScreenshot(page, screenshotDir, viewport, 'provision-connected', themeSuffix(theme));
   }
 
   if (failures.length > 0) {
@@ -1803,6 +1820,7 @@ async function main() {
   const chromePath = findChrome(args.chrome);
   const browser = await launchChrome(chromePath);
   const page = await newPage(browser.port);
+  const themes = args.themeMatrix ? ['light', 'dark'] : [''];
 
   try {
     if (args.ownerPerformance) {
@@ -1816,31 +1834,44 @@ async function main() {
       await assertBrowserOperatorApis(page, args.url);
     }
     if (args.fixture && !args.ownerPerformance) {
-      await assertFixtureHomeDashboard(page, args.url, {
-        screenshotDir: args.screenshotDir,
-      });
-      await assertFixtureLeaderboardDashboard(page, args.url, {
-        screenshotDir: args.screenshotDir,
-      });
-      await assertFixtureActivityDashboard(page, args.url, {
-        screenshotDir: args.screenshotDir,
-      });
-      await assertFixtureCreateCommand(page, args.url, {
-        screenshotDir: args.screenshotDir,
-      });
-      await assertFixtureProvisionGate(page, args.url, {
-        screenshotDir: args.screenshotDir,
-      });
+      for (const theme of themes) {
+        await assertFixtureHomeDashboard(page, args.url, {
+          screenshotDir: args.screenshotDir,
+          theme,
+        });
+        await assertFixtureLeaderboardDashboard(page, args.url, {
+          screenshotDir: args.screenshotDir,
+          theme,
+        });
+        await assertFixtureActivityDashboard(page, args.url, {
+          screenshotDir: args.screenshotDir,
+          theme,
+        });
+        await assertFixtureCreateCommand(page, args.url, {
+          screenshotDir: args.screenshotDir,
+          theme,
+        });
+        await assertFixtureProvisionGate(page, args.url, {
+          screenshotDir: args.screenshotDir,
+          theme,
+        });
+      }
       await installFixtureWallet(page);
-      await assertFixtureProvisionConnected(page, args.url, {
+      for (const theme of themes) {
+        await assertFixtureProvisionConnected(page, args.url, {
+          screenshotDir: args.screenshotDir,
+          theme,
+        });
+      }
+    }
+    for (const theme of themes) {
+      await assertWorkspaceFits(page, args.url, botId, {
+        fixture: args.fixture,
+        ownerPerformance: args.ownerPerformance,
         screenshotDir: args.screenshotDir,
+        theme,
       });
     }
-    await assertWorkspaceFits(page, args.url, botId, {
-      fixture: args.fixture,
-      ownerPerformance: args.ownerPerformance,
-      screenshotDir: args.screenshotDir,
-    });
     if (!args.ownerPerformance) {
       await assertCollapsibleRails(page, args.url, botId);
       await assertRouteNavigation(page, args.url, botId);

@@ -187,7 +187,7 @@ export function PortfolioWorkspace({
         <RouteStateTicker items={routeStateItems} />
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(330px,0.48fr)_minmax(260px,0.52fr)] gap-2 overflow-hidden p-2 min-[1500px]:grid-rows-[minmax(320px,0.46fr)_minmax(260px,0.54fr)]">
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(380px,0.6fr)_minmax(210px,0.4fr)] gap-2 overflow-hidden p-2 min-[1500px]:grid-rows-[minmax(380px,0.58fr)_minmax(220px,0.42fr)]">
         <TerminalPane
           title="Positions"
           bodyClassName="overflow-auto overscroll-contain p-2 [scrollbar-gutter:stable]"
@@ -207,7 +207,7 @@ export function PortfolioWorkspace({
 
         <TerminalPane
           title="Executions"
-          bodyClassName="overflow-visible p-2"
+          bodyClassName="overflow-hidden p-2"
         >
           <TradeHistoryTab
             botId={botId}

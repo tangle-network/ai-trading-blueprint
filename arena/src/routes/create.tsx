@@ -310,7 +310,7 @@ export default function CreateAgent() {
           )}
         />
 
-        <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_378px]">
+        <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_360px]">
           <form
             id="create-agent-form"
             className="grid rounded-[5px] border border-[#273035] bg-[#0b1418] lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:overflow-hidden"
@@ -345,7 +345,7 @@ export default function CreateAgent() {
                 autoComplete="off"
                 aria-label="Trading agent strategy prompt"
                 aria-describedby="agent-create-status"
-                className="h-[188px] resize-none bg-[#081013] px-4 py-4 font-mono text-[15px] leading-7 text-[#f6fefd] placeholder:text-[#697371] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60 disabled:opacity-50 md:h-[168px] lg:h-[148px] min-[1440px]:h-[168px]"
+                className="h-[150px] resize-none bg-[#081013] px-4 py-3 font-mono text-[15px] leading-6 text-[#f6fefd] placeholder:text-[#697371] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60 disabled:opacity-50 md:h-[136px] lg:h-[124px] min-[1440px]:h-[136px]"
               />
             </div>
 
@@ -394,7 +394,7 @@ export default function CreateAgent() {
             </div>
           </form>
 
-          <aside className="grid gap-3 lg:min-h-0 lg:grid-rows-[auto_auto_auto_auto] lg:overflow-hidden">
+          <aside className="grid gap-2.5 lg:min-h-0 lg:grid-rows-[auto_auto_auto_auto] lg:overflow-hidden">
             <section className="grid overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
               <div className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-3 border-b border-[#273035] px-3 py-2">
                 <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[5px] bg-[#143c38] text-[#50d2c1]">
@@ -563,12 +563,12 @@ function RouteChip({
   value: string
 }) {
   return (
-    <div className="grid min-h-[66px] content-between gap-2 rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-3">
+    <div className="grid min-h-[54px] content-between gap-1.5 rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-2.5">
       <span className="flex items-center justify-between gap-3">
         <span className={`${icon} text-base text-[#50d2c1]`} aria-hidden="true" />
         <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#697371]">{label}</span>
       </span>
-      <span className="line-clamp-2 font-mono text-xs leading-4 text-[#d2dad7]">{value}</span>
+      <span className="line-clamp-2 font-mono text-[11px] leading-4 text-[#d2dad7]">{value}</span>
     </div>
   )
 }

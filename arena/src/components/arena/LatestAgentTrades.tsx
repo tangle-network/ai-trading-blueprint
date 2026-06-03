@@ -187,21 +187,21 @@ export function LatestAgentTrades({
           </div>
         </div>
       ) : isExplorer ? (
-        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_308px]">
           <div className="flex min-h-0 flex-col overflow-hidden">
             <div
               data-testid="live-fill-explorer-scroll"
               className="min-h-0 flex-1 overflow-auto overscroll-contain [scrollbar-gutter:stable]"
             >
-              <table className="w-full min-w-[680px] border-separate border-spacing-0 rounded-none">
+              <table className="w-full min-w-[640px] border-separate border-spacing-0 rounded-none">
                 <thead className="sticky top-0 z-10 rounded-none bg-[var(--arena-terminal-surface)] backdrop-blur">
                   <tr>
-                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-left font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)]">Time</th>
-                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-left font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)]">Agent</th>
-                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-left font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)]">Fill</th>
-                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-left font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)]">Market</th>
-                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-right font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)]">USD</th>
-                    <th className="hidden rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-right font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)] 2xl:table-cell">Ref</th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)]">Time</th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)]">Agent</th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)]">Fill</th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)]">Market</th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)]">USD</th>
+                    <th className="hidden rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)] 2xl:table-cell">Ref</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -220,30 +220,30 @@ export function LatestAgentTrades({
                         aria-current={selected ? 'true' : undefined}
                       >
                         <td
-                          className="border-b border-[var(--arena-terminal-border)] px-3 py-2 align-middle font-data text-sm text-[var(--arena-terminal-text-muted)]"
+                          className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle font-data text-xs text-[var(--arena-terminal-text-muted)]"
                           title={formatTradeTimestamp(trade.timestamp)}
                         >
                           {formatTradeAge(trade.timestamp)}
                         </td>
-                        <td className="border-b border-[var(--arena-terminal-border)] px-3 py-2 align-middle">
+                        <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle">
                           <Link
                             to={`/arena/bot/${encodeURIComponent(botId)}/performance`}
                             className="flex min-w-0 items-center gap-2.5 rounded-[5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
                           >
                             {hasOperatorAddress ? (
-                              <Identicon address={operatorAddress as Address} size={22} />
+                              <Identicon address={operatorAddress as Address} size={20} />
                             ) : (
                               <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
                             )}
-                            <span className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
+                            <span className="truncate font-display text-[13px] font-semibold text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
                               {agentName}
                             </span>
                           </Link>
                         </td>
-                        <td className="border-b border-[var(--arena-terminal-border)] px-3 py-2 align-middle">
+                        <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle">
                           <button
                             type="button"
-                            className={`inline-flex h-8 min-w-[4.75rem] items-center justify-start rounded-none bg-transparent px-0 font-data text-xs font-bold transition-[color,opacity] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${getTradeActionToneClass(trade.action)}`}
+                            className={`inline-flex h-6 min-w-[4.75rem] items-center justify-start rounded-none bg-transparent px-0 font-data text-[11px] font-bold transition-[color,opacity] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${getTradeActionToneClass(trade.action)}`}
                             aria-label={`Inspect ${agentName} fill`}
                             aria-pressed={selected}
                             onClick={() => selectFill(trade.id)}
@@ -251,19 +251,19 @@ export function LatestAgentTrades({
                             {formatTradeActionLabel(trade.action)}
                           </button>
                         </td>
-                        <td className="border-b border-[var(--arena-terminal-border)] px-3 py-2 align-middle">
+                        <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle">
                           <TradeInstrumentDisplay
                             trade={trade}
-                            size="md"
+                            size="sm"
                             showVenue={false}
-                            labelClassName="max-w-[280px]"
+                            labelClassName="max-w-[240px]"
                             terminal
                           />
                         </td>
-                        <td className="border-b border-[var(--arena-terminal-border)] px-3 py-2 text-right align-middle font-data text-base font-semibold text-[var(--arena-terminal-text)]">
+                        <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right align-middle font-data text-sm font-semibold text-[var(--arena-terminal-text)]">
                           {formatTradeUsd(trade.notionalUsd)}
                         </td>
-                        <td className="hidden border-b border-[var(--arena-terminal-border)] px-3 py-2 text-right align-middle font-data text-sm text-[var(--arena-terminal-text-muted)] 2xl:table-cell">
+                        <td className="hidden border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right align-middle font-data text-xs text-[var(--arena-terminal-text-muted)] 2xl:table-cell">
                           {formatReference(trade)}
                         </td>
                       </tr>

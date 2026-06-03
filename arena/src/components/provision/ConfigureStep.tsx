@@ -157,7 +157,7 @@ export function ConfigureStep({
     : `Service #${serviceId}`;
 
   return (
-    <div className="arena-trace-terminal overflow-hidden rounded-[7px] border border-[#273035] bg-[#081013] text-[#f6fefd]">
+    <div className="arena-trace-terminal overflow-hidden rounded-[5px] border border-[#273035] bg-[#081013] text-[#f6fefd]">
       <div className="grid gap-px bg-[#273035] lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,0.8fr)]">
         <LaunchHeaderCell
           icon={<Database className="h-4 w-4" />}
@@ -180,8 +180,8 @@ export function ConfigureStep({
         />
       </div>
 
-      <div className="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="space-y-3">
+      <div className="grid gap-2.5 p-2.5 lg:grid-cols-[minmax(0,1fr)_324px]">
+        <div className="space-y-2.5">
           <ProvisionPanel title="Command">
             <label htmlFor="agent-name" className="block">
               <span className="mb-1.5 block font-display text-sm font-semibold text-[#f6fefd]">
@@ -197,7 +197,7 @@ export function ConfigureStep({
                   : 'e.g. Base USDC/WETH swing bot…'}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="h-10 w-full rounded-[5px] border border-[#273035] bg-[#081013] px-3.5 py-2 font-mono text-sm text-[#f6fefd] placeholder:text-[#697371] transition-[border-color,box-shadow] duration-150 hover:border-[#3a464a] focus-visible:border-[#50d2c1]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/35"
+                className="h-9 w-full rounded-[5px] border border-[#273035] bg-[#081013] px-3 py-2 font-mono text-sm text-[#f6fefd] placeholder:text-[#697371] transition-[border-color,box-shadow] duration-150 hover:border-[#3a464a] focus-visible:border-[#50d2c1]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/35"
               />
             </label>
           </ProvisionPanel>
@@ -214,7 +214,7 @@ export function ConfigureStep({
               Customize
             </Button>
           )}>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid auto-rows-[56px] gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
               {primaryPacks.map((pack) => (
                 <StrategyPackButton
                   key={pack.id}
@@ -225,12 +225,12 @@ export function ConfigureStep({
               ))}
             </div>
             {predictionPacks.length > 0 && (
-              <div className="mt-3">
-                <div className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] text-[#50d2c1]">
+              <div className="mt-2.5">
+                <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.12em] text-[#50d2c1]">
                   <span className="i-ph:newspaper-clipping text-sm" aria-hidden="true" />
                   Prediction Markets
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid auto-rows-[38px] gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
                   {predictionPacks.map((pack) => (
                     <PredictionPackButton
                       key={pack.id}
@@ -250,9 +250,9 @@ export function ConfigureStep({
           </ProvisionPanel>
         </div>
 
-        <aside className="grid content-start gap-3">
+        <aside className="grid content-start gap-2.5">
           <ProvisionPanel title="Launch Summary">
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               <ReadRow label="Pack" value={selectedPack.name} />
               <ReadRow label="Mode" value={executionModeLabel} />
               <ReadRow label="Venue" value={providerLabel} />
@@ -272,7 +272,7 @@ export function ConfigureStep({
             onClick={goNext}
             disabled={!canNext}
             size="lg"
-            className="h-12 w-full rounded-[5px] bg-[#50d2c1] font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity,transform] duration-150 hover:bg-[#7ce6d9] active:scale-[0.98] disabled:opacity-45"
+            className="h-11 w-full rounded-[5px] bg-[#50d2c1] font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity] duration-150 hover:bg-[#7ce6d9] disabled:opacity-45"
           >
             Review Provision
           </Button>
@@ -535,21 +535,21 @@ function LaunchHeaderCell({
       ? 'border-[#6f5723] bg-[#201808] text-[#f2c066]'
       : 'border-[#273035] bg-[#0f1a1f] text-[#d2dad7]';
   return (
-    <div className="flex min-h-[66px] items-center gap-3 bg-[#0b1418] px-4 py-2.5">
+    <div className="flex min-h-[58px] items-center gap-2.5 bg-[#0b1418] px-3.5 py-2">
       <span
-        className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[5px] border ${iconClassName}`}
+        className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] border ${iconClassName}`}
         aria-hidden="true"
       >
         {icon}
       </span>
       <div className="min-w-0">
-        <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#697371]">
+        <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#697371]">
           {label}
         </div>
-        <div className="mt-0.5 truncate font-display text-base font-semibold text-[#f6fefd]">
+        <div className="mt-0.5 truncate font-display text-sm font-semibold text-[#f6fefd]">
           {value}
         </div>
-        <div className="truncate font-mono text-xs text-[#949e9c]">
+        <div className="truncate font-mono text-[11px] text-[#949e9c]">
           {detail}
         </div>
       </div>
@@ -567,12 +567,12 @@ function ProvisionPanel({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-[7px] border border-[#273035] bg-[#0b1418]">
-      <div className="flex min-h-10 items-center justify-between gap-3 border-b border-[#273035] px-4 py-2">
+    <section className="rounded-[5px] border border-[#273035] bg-[#0b1418]">
+      <div className="flex min-h-9 items-center justify-between gap-3 border-b border-[#273035] px-3 py-1.5">
         <h2 className="font-display text-sm font-semibold text-[#f6fefd]">{title}</h2>
         {action}
       </div>
-      <div className="p-3">{children}</div>
+      <div className="p-2.5">{children}</div>
     </section>
   );
 }
@@ -625,7 +625,8 @@ function StrategyPackButton({
     <button
       type="button"
       onClick={onClick}
-      className={`grid h-[64px] grid-cols-[26px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2.5 py-2 text-left transition-[background-color,border-color,box-shadow,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+      title={pack.description}
+      className={`grid h-full min-h-0 grid-cols-[24px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2.5 py-1.5 text-left transition-[background-color,border-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
         active
           ? 'border-[#50d2c1]/70 bg-[#143c38] shadow-[inset_3px_0_0_rgba(80,210,193,0.9)]'
           : 'border-[#273035] bg-[#0f1a1f] hover:border-[#50d2c1]/40 hover:bg-[#132329]'
@@ -642,10 +643,10 @@ function StrategyPackButton({
         <span className={`${strategyPackIcon(pack)} text-sm`} />
       </span>
       <span className="min-w-0">
-        <span className="block truncate font-display text-[15px] font-semibold leading-5 text-[#f6fefd]">
+        <span className="block truncate font-display text-[13px] font-semibold leading-4 text-[#f6fefd]">
           {pack.name}
         </span>
-        <span className="mt-0.5 block line-clamp-1 font-mono text-xs text-[#949e9c]">
+        <span className="mt-0.5 block truncate font-mono text-[11px] text-[#949e9c]">
           {pack.providers.slice(0, 3).join(', ')}
           {pack.providers.length > 3 ? ` +${pack.providers.length - 3}` : ''}
         </span>
@@ -667,7 +668,8 @@ function PredictionPackButton({
     <button
       type="button"
       onClick={onClick}
-      className={`grid h-9 max-w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2.5 font-display text-sm font-semibold transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+      title={pack.description}
+      className={`grid h-full max-w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2.5 font-display text-[13px] font-semibold transition-[background-color,border-color,color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
         active
           ? 'border-[#50d2c1]/70 bg-[#143c38] text-[#f6fefd]'
           : 'border-[#273035] bg-[#0f1a1f] text-[#d2dad7] hover:border-[#50d2c1]/40 hover:bg-[#132329]'

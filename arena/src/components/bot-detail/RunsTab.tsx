@@ -269,8 +269,8 @@ function RunsSidebar({
       <div
         className={
           stacked
-            ? `${compactStacked ? "max-h-40" : "max-h-72"} overflow-y-auto py-1`
-            : "min-h-0 flex-1 overflow-y-auto py-1"
+            ? `${compactStacked ? "max-h-40" : "max-h-72"} overflow-y-auto overflow-x-hidden py-1`
+            : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1"
         }
         tabIndex={0}
         aria-label={ariaLabel}
@@ -315,7 +315,7 @@ function RunsSidebar({
                 <button
                   key={run.id}
                   aria-pressed={isActive}
-                    className={`group grid w-full grid-cols-[10px_minmax(0,1fr)] gap-2.5 border-l-2 px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
+                    className={`group grid w-full min-w-0 grid-cols-[10px_minmax(0,1fr)] gap-2.5 overflow-hidden border-l-2 px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
                     isActive
                       ? "border-amber-500 bg-arena-elements-item-backgroundActive"
                       : "border-transparent hover:bg-arena-elements-item-backgroundHover"
@@ -342,20 +342,19 @@ function RunsSidebar({
                     <div className="mt-0.5 truncate text-xs font-data text-arena-elements-textTertiary">
                       {run.subtitle}
                     </div>
-                    <div className="mt-1 flex min-w-0 items-center gap-1.5 font-data text-[11px] text-arena-elements-textTertiary">
-                      <span className={run.status === "running" ? "text-amber-400" : run.status === "completed" ? "text-emerald-400" : run.status === "interrupted" ? "text-slate-400" : "text-crimson-400"}>
+                    <div className="mt-1 grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-1.5 gap-y-0.5 font-data text-[11px] text-arena-elements-textTertiary">
+                      <span className={`min-w-0 truncate ${run.status === "running" ? "text-amber-400" : run.status === "completed" ? "text-emerald-400" : run.status === "interrupted" ? "text-slate-400" : "text-crimson-400"}`}>
                         {getStatusLabel(run.status)}
                       </span>
                       <span aria-hidden="true">/</span>
-                      <span className="truncate">
+                      <span className="min-w-0 truncate">
                         {run.signalLabel}
                       </span>
-                      <span aria-hidden="true">/</span>
-                      <span className="shrink-0">
+                      <span className="col-start-1 shrink-0">
                         {run.durationLabel}
                       </span>
                       <span aria-hidden="true">/</span>
-                      <span className="shrink-0">
+                      <span className="min-w-0 truncate">
                         {run.tokenLabel}
                       </span>
                     </div>

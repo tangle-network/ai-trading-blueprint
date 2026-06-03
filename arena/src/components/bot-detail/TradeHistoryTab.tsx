@@ -26,7 +26,7 @@ interface TradeHistoryTabProps {
 }
 
 const TRADE_HISTORY_LIMIT = 50;
-const SQUARE_TABLE_CLASS = 'rounded-none [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_table]:rounded-none [&_thead]:rounded-none [&_tbody]:rounded-none [&_tr]:rounded-none [&_th]:rounded-none [&_td]:rounded-none';
+const SQUARE_TABLE_CLASS = 'rounded-none [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_.relative.overflow-auto]:!rounded-none [&_table]:!rounded-none [&_thead]:!rounded-none [&_tbody]:!rounded-none [&_tr]:!rounded-none [&_th]:!rounded-none [&_td]:!rounded-none';
 
 const EXPLORER_URLS: Record<number, { name: string; base: string }> = {
   1: { name: 'Etherscan', base: 'https://etherscan.io/tx/' },

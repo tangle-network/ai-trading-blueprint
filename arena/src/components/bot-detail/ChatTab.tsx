@@ -298,8 +298,8 @@ function SessionWorkspaceSidebar({
       <div
         className={
           stacked
-            ? `${compactStacked ? "max-h-36" : "max-h-56"} overflow-y-auto py-1`
-            : "min-h-0 flex-1 overflow-y-auto py-1"
+            ? `${compactStacked ? "max-h-36" : "max-h-56"} overflow-y-auto overflow-x-hidden py-1`
+            : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1"
         }
       >
         {sessions.map((session, index) => {
@@ -342,7 +342,7 @@ function SessionWorkspaceSidebar({
           return (
             <div
               key={session.id}
-              className={`group grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 transition-colors ${
+              className={`group grid min-w-0 grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-3 overflow-hidden px-4 py-2.5 transition-colors ${
                 isActive
                   ? "bg-arena-elements-item-backgroundActive"
                   : "hover:bg-arena-elements-item-backgroundHover"
@@ -386,12 +386,12 @@ function SessionWorkspaceSidebar({
                       <div className="truncate text-[15px] font-display font-semibold text-arena-elements-textPrimary">
                         {displayTitle}
                       </div>
-                      <div className="mt-1 flex items-center gap-1.5">
-                        <div className="truncate text-sm font-data text-arena-elements-textTertiary">
+                      <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                        <div className="min-w-0 truncate text-xs font-data text-arena-elements-textTertiary">
                           {session.subtitle}
                         </div>
                         {showStreamingDot && (
-                          <span className="font-data text-[11px] text-emerald-700 dark:text-emerald-300">
+                          <span className="shrink-0 font-data text-[11px] text-emerald-700 dark:text-emerald-300">
                             Live
                           </span>
                         )}
