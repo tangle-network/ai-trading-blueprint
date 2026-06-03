@@ -77,6 +77,9 @@ const DENSE_MARKER_BUCKET_TARGET = 10;
 const MARKET_MARKER_MIN_TOLERANCE_SECONDS = 90;
 const MARKET_AXIS_DATE_THRESHOLD_MS = 20 * 60 * 60 * 1000;
 const MARKET_AXIS_DAY_ONLY_THRESHOLD_MS = 5 * 24 * 60 * 60 * 1000;
+const MARKET_AXIS_EDGE_SUPPRESSION_MIN_MS = 8 * 60 * 1000;
+const MARKET_AXIS_EDGE_SUPPRESSION_MAX_MS = 6 * 60 * 60 * 1000;
+const MARKET_AXIS_EDGE_SUPPRESSION_RANGE_FRACTION = 0.005;
 const TERMINAL_SURFACE = '#0f1a1f';
 const TERMINAL_GRID = 'rgba(148, 158, 156, 0.085)';
 const TERMINAL_TICK = '#949e9c';
@@ -133,6 +136,21 @@ function timeRangeMs(first: Time | undefined, last: Time | undefined): number {
   const lastTimestamp = timestampMsFromChartTime(last);
   if (firstTimestamp == null || lastTimestamp == null) return 0;
   return Math.max(0, lastTimestamp - firstTimestamp);
+}
+
+function shouldSuppressMarketEdgeTick(time: Time, first: Time | undefined, last: Time | undefined): boolean {
+  const timestamp = timestampMsFromChartTime(time);
+  const firstTimestamp = timestampMsFromChartTime(first);
+  const lastTimestamp = timestampMsFromChartTime(last);
+  if (timestamp == null || firstTimestamp == null || lastTimestamp == null || lastTimestamp <= firstTimestamp) {
+    return false;
+  }
+  const rangeMs = lastTimestamp - firstTimestamp;
+  const thresholdMs = Math.min(
+    MARKET_AXIS_EDGE_SUPPRESSION_MAX_MS,
+    Math.max(MARKET_AXIS_EDGE_SUPPRESSION_MIN_MS, rangeMs * MARKET_AXIS_EDGE_SUPPRESSION_RANGE_FRACTION),
+  );
+  return timestamp - firstTimestamp <= thresholdMs || lastTimestamp - timestamp <= thresholdMs;
 }
 
 function formatCandleDateTick(timestamp: number, rangeMs: number, lastTimestampMs: number | null): string {
@@ -898,7 +916,10 @@ export function TradingPerformanceChart({
           timeVisible: true,
           secondsVisible: false,
           tickMarkFormatter: (time: Time) => {
-            if (activeModeRef.current === 'market' && (time === firstMarketTimeRef.current || time === lastMarketTimeRef.current)) {
+            if (
+              activeModeRef.current === 'market'
+              && shouldSuppressMarketEdgeTick(time, firstMarketTimeRef.current, lastMarketTimeRef.current)
+            ) {
               return '';
             }
             const key = timeKey(time);

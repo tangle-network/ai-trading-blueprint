@@ -812,6 +812,15 @@ describe('PerformanceTab', () => {
         volume: 120.5,
       },
       {
+        timestamp: Date.parse('2026-04-20T18:20:00.000Z'),
+        token: 'ETH',
+        open: 3315,
+        high: 3322,
+        low: 3308,
+        close: 3318,
+        volume: 98,
+      },
+      {
         timestamp: Date.parse('2026-04-24T18:00:00.000Z'),
         token: 'ETH',
         open: 3315,
@@ -858,6 +867,7 @@ describe('PerformanceTab', () => {
     const chartOptions = createChartCalls[0]?.[1];
     const formatter = chartOptions.timeScale?.tickMarkFormatter;
     if (!formatter) throw new Error('Expected market chart tick formatter');
+    expect(formatter(Math.floor(Date.parse('2026-04-20T18:20:00.000Z') / 1000))).toBe('');
     const label = formatter(Math.floor(Date.parse('2026-04-24T18:00:00.000Z') / 1000));
     expect(label).toBe('Apr 24');
     expect(label).not.toBe('12:00 PM');
