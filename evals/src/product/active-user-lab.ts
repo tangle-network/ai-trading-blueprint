@@ -5,6 +5,7 @@ import {
   lastAssistantId,
   OperatorClient,
 } from '../sim/operator-client.js'
+import type { StrategyType } from '../sim/strategy-type.js'
 
 export const DEFAULT_REPO = 'tangle-network/ai-trading-blueprint'
 export const DEFAULT_LIN_LOGIN = 'vutuanlinh2k2'
@@ -59,6 +60,13 @@ export interface IssueScenario {
   exactMatchMode?: 'any' | 'all'
   partialMatchers: string[]
   staticPrompts: string[]
+  freshBot?: FreshBotSpec | undefined
+}
+
+export interface FreshBotSpec {
+  strategyType: StrategyType
+  name: string
+  prompt: string
 }
 
 export interface IssueCoverageCandidate {
@@ -107,6 +115,7 @@ export interface DispatchOptions extends AuditOptions {
   prompts?: string[] | undefined
   generateIdeas?: boolean | undefined
   configureSecrets?: boolean | undefined
+  freshBot?: boolean | undefined
   dryRun?: boolean | undefined
 }
 
@@ -128,8 +137,13 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
     issueNumber: 57,
     key: 'hyperliquid-perp-envelope',
     expectedSurface: 'Hyperliquid perp bot with dedicated perp envelope state',
-    exactMatchers: ['strategy:hyperliquid_perp', 'hyperliquid perp', 'hyperliqu perp', 'hyperliquid'],
-    partialMatchers: ['strategy:perp', 'perp'],
+    exactMatchers: ['strategy:hyperliquid_perp'],
+    partialMatchers: ['hyperliquid perp', 'hyperliqu perp', 'hyperliquid', 'strategy:perp', 'perp'],
+    freshBot: {
+      strategyType: 'hyperliquid_perp',
+      name: 'QA Hyperliquid ETH perp envelope',
+      prompt: 'QA issue #57: create a paper Hyperliquid ETH-PERP agent focused on dedicated perp envelope evidence, account equity, margin, leverage, position scope, max order notional, and fail-closed risk gates. Do not execute live funds.',
+    },
     staticPrompts: [
       'Inspect your current perp venue/envelope setup. Are you operating as a Hyperliquid perp agent, and what exact paper-safe risk envelope would block live execution today?',
       'Compare the current perp envelope to what a dedicated Hyperliquid model should expose: account equity, margin, leverage, position, order intent, and venue-specific failure modes.',
@@ -142,6 +156,11 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
     expectedSurface: 'Cross-strategy / multi-strategy allocation bot',
     exactMatchers: ['strategy:multi', 'cross-strategy', 'diversified'],
     partialMatchers: ['strategy:yield', 'strategy:dex', 'strategy:mm'],
+    freshBot: {
+      strategyType: 'multi',
+      name: 'QA cross-strategy allocation',
+      prompt: 'QA issue #46: create a paper cross-strategy allocation agent that compares prediction, yield, perps, and DEX opportunities, enforces no-unsupported-execution guardrails, logs allocation/no-rebalance reasoning, and exposes sub-strategy decisions. Do not execute live funds.',
+    },
     staticPrompts: [
       'Inspect your current allocation policy as a cross-strategy bot. What target weights, rebalance band, venues, and paper risk limits are active right now?',
       'Challenge a drift case: one leg is overweight and another venue has stale liquidity. What should you do, and what exact guard blocks a bad rebalance?',
@@ -154,6 +173,11 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
     expectedSurface: 'Market-making bot with spread and inventory behavior',
     exactMatchers: ['strategy:mm', 'market making', 'market-making'],
     partialMatchers: ['aerodrome', 'uniswap', 'dex'],
+    freshBot: {
+      strategyType: 'mm',
+      name: 'QA Aerodrome ETH/USDC market maker',
+      prompt: 'QA issue #45: create a paper market-making agent for ETH/USDC on Aerodrome or Uniswap-style DEX venues. Track fair value, spread, inventory skew, quote/no-quote decisions, paper-only guardrails, and fill reasoning. Do not execute live funds.',
+    },
     staticPrompts: [
       'Inspect your market-making state: pair, venue, spread/band, target inventory, paper equity, and the next quote or no-quote decision.',
       'Stress the inventory edge case: inventory is far from target and the spread narrows. What do you quote, what do you refuse, and why?',
@@ -166,6 +190,11 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
     expectedSurface: 'Volatility strategy bot',
     exactMatchers: ['strategy:volatility', 'volatility', 'variance', 'vol surface'],
     partialMatchers: ['perp', 'dex', 'momentum'],
+    freshBot: {
+      strategyType: 'volatility',
+      name: 'QA volatility paper strategy',
+      prompt: 'QA issue #44: create a paper volatility strategy agent that inspects realized versus implied volatility proxies, funding rates, market spreads, delta-hedging assumptions, paper-only guardrails, and no-trade reasoning. Do not execute live funds.',
+    },
     staticPrompts: [
       'Inspect whether you are actually configured as a volatility strategy. If not, say exactly which configuration fields are missing.',
       'Design the paper-safe volatility decision you would need: signal window, realized/implied vol input, position sizing, max loss, and stop condition.',
@@ -179,6 +208,11 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
     exactMatchers: ['gmx', 'vertex'],
     exactMatchMode: 'all',
     partialMatchers: ['strategy:perp', 'perp', 'hyperliquid'],
+    freshBot: {
+      strategyType: 'perp',
+      name: 'QA GMX Vertex perp paper strategy',
+      prompt: 'QA issue #43: create a paper GMX and Vertex perpetual futures strategy on Arbitrum. Inspect funding, price, margin, leverage, order type, validator rejection, no-trade decisions, and venue API failures. Do not use Hyperliquid native execution and do not execute live funds.',
+    },
     staticPrompts: [
       'Inspect your perp venue coverage. Are GMX or Vertex actually configured, or are you only covering a generic/Hyperliquid perp path?',
       'For a GMX/Vertex paper perp test, specify the venue fields, margin inputs, order type, risk limits, and failure states the product must expose.',
@@ -191,6 +225,11 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
     expectedSurface: 'Polymarket / prediction market CLOB bot',
     exactMatchers: ['strategy:prediction', 'polymarket', 'prediction market', 'clob'],
     partialMatchers: ['market', 'order book'],
+    freshBot: {
+      strategyType: 'prediction',
+      name: 'QA Polymarket CLOB paper trader',
+      prompt: 'QA issue #41: create a paper Polymarket prediction-market CLOB agent. Track market discovery, outcome, order book, limit price, collateral cap, order intent, validation rejection, and paper/live status. Do not execute live funds.',
+    },
     staticPrompts: [
       'Inspect your prediction-market setup: market, outcome, CLOB assumptions, paper order intent, risk limits, and missing live credentials.',
       'Challenge the stale-order case: market odds move sharply after you decide. What should the bot cancel, resize, or refuse?',
@@ -203,6 +242,11 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
     expectedSurface: 'Fleet-level production QA checklist',
     exactMatchers: ['strategy:mm', 'strategy:multi', 'strategy:dex', 'strategy:yield', 'strategy:prediction', 'strategy:perp'],
     partialMatchers: ['trading'],
+    freshBot: {
+      strategyType: 'multi',
+      name: 'QA production readiness multi-strategy',
+      prompt: 'QA issue #17: create a paper production-readiness smoke agent that checks paper/live mode, secrets, venue access, risk gates, recent runs, recent fills, and user-visible evidence across the trading arena. Do not execute live funds.',
+    },
     staticPrompts: [
       'Act as a production QA user. Inspect your current readiness: paper/live mode, secrets, venue access, risk gates, recent runs, and recent fills.',
       'Name the top three production blockers that would matter to a real trading user and the exact UI evidence that should prove each blocker is resolved.',
@@ -213,8 +257,8 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
     issueNumber: 16,
     key: 'vault-collateral-admin',
     expectedSurface: 'Vault collateral admin cap/write-down workflow',
-    exactMatchers: ['collateral', 'write-down', 'writedown', 'cap setting'],
-    partialMatchers: ['vault', 'factory:', 'paper'],
+    exactMatchers: ['collateral-admin-workflow'],
+    partialMatchers: ['vault', 'factory:', 'paper', 'collateral', 'write-down', 'writedown', 'cap setting'],
     staticPrompts: [
       'Inspect your vault/collateral context. What cap, collateral, vault address, and paper/live constraints can you actually observe?',
       'Challenge an admin write-down scenario. Which actor, authorization, accounting values, and audit trail must exist before this is safe?',
@@ -227,6 +271,11 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
     expectedSurface: 'Trade history with validator reasoning',
     exactMatchers: ['strategy:mm', 'strategy:multi', 'strategy:dex', 'strategy:yield'],
     partialMatchers: ['strategy:prediction', 'strategy:perp'],
+    freshBot: {
+      strategyType: 'mm',
+      name: 'QA trade history validator reasoning',
+      prompt: 'QA issue #9: create a paper agent for trade-history and validator-reasoning QA. The bot should make fill-to-decision-to-validation evidence explicit across chat, runs, portfolio, and executions. Do not execute live funds.',
+    },
     staticPrompts: [
       'Inspect your recent trade history and validator reasoning. Which fields prove the last paper fill was valid, priced, and risk-approved?',
       'Find any missing reasoning fields. If agent reasoning is null or generic, say what should have been recorded and where.',
@@ -251,6 +300,11 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
     expectedSurface: 'Public leaderboard rankings and filtering',
     exactMatchers: ['strategy:mm', 'strategy:multi', 'strategy:dex', 'strategy:yield', 'strategy:prediction', 'strategy:perp'],
     partialMatchers: ['trading'],
+    freshBot: {
+      strategyType: 'multi',
+      name: 'QA leaderboard ranking candidate',
+      prompt: 'QA issue #3: create a paper leaderboard QA agent whose status, strategy, return, PnL, volume, drawdown, fills, and paper/live mode can be compared against other public agents. Do not execute live funds.',
+    },
     staticPrompts: [
       'As a public leaderboard candidate, summarize the fields that should rank you: return, PnL, volume, drawdown, fills, status, strategy, and paper/live mode.',
       'Challenge the filtering case: how should users compare you against bots from other strategies without misleading rankings?',
@@ -286,12 +340,12 @@ export async function dispatchActiveUserLab(options: DispatchOptions = {}): Prom
   const results: DispatchResult[] = []
 
   for (const coverage of selected) {
-    const candidate = chooseCandidate(coverage, options.botId)
-    if (!candidate) {
-      throw new Error(`issue #${coverage.issue.number} has no candidate bot; run audit first and provision one`)
+    const bot = options.freshBot
+      ? await provisionFreshLabBot(coverage, client, dryRun)
+      : chooseCandidate(coverage, options.botId)?.bot
+    if (!bot) {
+      throw new Error(`issue #${coverage.issue.number} has no candidate bot; run audit first or dispatch with --fresh-bot`)
     }
-
-    const bot = candidate.bot
     const prompts = options.prompts?.length
       ? options.prompts.slice(0, turns)
       : options.generateIdeas
@@ -349,6 +403,52 @@ export async function dispatchActiveUserLab(options: DispatchOptions = {}): Prom
   return results
 }
 
+async function provisionFreshLabBot(
+  coverage: IssueCoverage,
+  client: OperatorClient | null,
+  dryRun: boolean,
+): Promise<LabBot> {
+  const spec = coverage.scenario.freshBot
+  if (!spec) {
+    throw new Error(
+      `issue #${coverage.issue.number} cannot be honestly covered by a generic fresh paper bot; ` +
+      `use the product flow named by the issue instead`,
+    )
+  }
+  if (dryRun) {
+    return {
+      id: `dry-run-fresh-${coverage.issue.number}`,
+      name: spec.name,
+      strategy_type: spec.strategyType,
+      prompt: spec.prompt,
+      paper_trade: true,
+      sandbox_id: 'dry-run',
+      vault_address: null,
+      created_at: Date.now(),
+      strategy_config: null,
+    }
+  }
+  if (!client) throw new Error('fresh bot provisioning requires an authenticated operator client')
+  const botId = await client.provisionBot({
+    prompt: spec.prompt,
+    name: spec.name,
+    strategy_type: spec.strategyType,
+  })
+  await client.waitForVaultResolved(botId)
+  await client.configureSecrets(botId, deterministicAgentEnv())
+  return {
+    id: botId,
+    name: spec.name,
+    strategy_type: spec.strategyType,
+    prompt: spec.prompt,
+    paper_trade: true,
+    sandbox_id: null,
+    vault_address: null,
+    created_at: Date.now(),
+    strategy_config: null,
+  }
+}
+
 export function buildCoverage(issues: LabIssue[], bots: LabBot[]): IssueCoverage[] {
   return issues
     .map((issue) => {
@@ -356,7 +456,11 @@ export function buildCoverage(issues: LabIssue[], bots: LabBot[]): IssueCoverage
       const candidates = bots
         .map((bot) => scoreBotForScenario(bot, scenario))
         .filter((candidate) => candidate.score > 0)
-        .sort((a, b) => b.score - a.score || a.bot.id.localeCompare(b.bot.id))
+        .sort((a, b) =>
+          Number(b.exact) - Number(a.exact) ||
+          b.score - a.score ||
+          a.bot.id.localeCompare(b.bot.id),
+        )
       const status: CoverageStatus = candidates.some((candidate) => candidate.exact)
         ? 'covered'
         : candidates.length > 0

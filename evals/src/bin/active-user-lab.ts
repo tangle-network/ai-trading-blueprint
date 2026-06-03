@@ -41,6 +41,7 @@ if (command === 'audit') {
     prompts: valuesAfter('--prompt'),
     generateIdeas: hasFlag('--generate-ideas'),
     configureSecrets: hasFlag('--configure-secrets'),
+    freshBot: hasFlag('--fresh-bot'),
     dryRun: hasFlag('--dry-run'),
   })
   if (hasFlag('--json')) {
@@ -85,6 +86,7 @@ Dispatch options:
   --turns n                      Number of turns per issue. Default: 3.
   --prompt text                  Repeat to provide exact prompts instead of scenario prompts.
   --generate-ideas               Use agent-runtime to compose prompt ideas before dispatch.
+  --fresh-bot                    Provision an owned paper QA bot before dispatching prompts.
   --watch                        Poll for assistant replies after each turn.
   --configure-secrets            Inject local deterministic LLM secrets before dispatch.
   --token token                  Operator session token. Also reads OPERATOR_SESSION_TOKEN.
