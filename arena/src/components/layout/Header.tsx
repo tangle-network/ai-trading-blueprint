@@ -95,7 +95,7 @@ export function Header() {
           <div className="hidden sm:block">
             <TxDropdown />
           </div>
-          <WalletButton />
+          <WalletButton compact />
         </div>
       </div>
 

@@ -69,7 +69,7 @@ export function ArenaAppShell() {
               <div className={collapsedControlClass}>
                 <ThemeToggle />
               </div>
-              <WalletButton />
+              <WalletButton compact />
             </div>
           </div>
         )}
@@ -237,7 +237,7 @@ const primaryWalletControlClass = [
 ].join(' ');
 
 const collapsedControlClass = [
-  'flex h-11 w-11 items-center justify-center overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-muted)] transition-[background-color,border-color,color] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)]',
+  'flex h-11 w-11 items-center justify-center rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-muted)] transition-[background-color,border-color,color] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)]',
   '[&>button]:!h-10',
   '[&>button]:!w-10',
   '[&>button]:!min-w-0',
@@ -256,7 +256,6 @@ const collapsedControlClass = [
   '[&>div>button]:!bg-transparent',
   '[&>div>button]:!p-0',
   '[&>div>button]:!text-[var(--arena-terminal-text-secondary)]',
-  '[&_*]:!max-w-full',
 ].join(' ');
 
 function ExpandedAccountDock() {
@@ -298,7 +297,7 @@ function CollapsedAccountDock({ onExpand }: { onExpand: () => void }) {
         <ThemeToggle />
       </div>
       <div className={collapsedControlClass}>
-        <WalletButton align="start" side="up" />
+        <WalletButton compact align="start" side="up" />
       </div>
     </>
   );
@@ -345,7 +344,7 @@ function NetworkButton({
       {open && (
         <div
           className={cn(
-            'absolute z-50 w-[min(18rem,calc(100vw-1rem))] overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-1.5 shadow-[var(--arena-terminal-shadow-lg)]',
+            'absolute z-50 max-h-[min(24rem,calc(100vh-1rem))] w-[min(18rem,calc(100vw-1rem))] overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-1.5 shadow-[var(--arena-terminal-shadow-lg)]',
             align === 'start' ? 'left-0' : 'right-0',
             side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
           )}

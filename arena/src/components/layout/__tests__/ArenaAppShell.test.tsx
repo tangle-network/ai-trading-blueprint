@@ -63,7 +63,9 @@ vi.mock('../TxDropdown', () => ({
 }));
 
 vi.mock('../WalletButton', () => ({
-  WalletButton: () => <button type="button">Wallet</button>,
+  WalletButton: ({ compact = false }: { compact?: boolean }) => (
+    <button type="button" data-compact={compact ? 'true' : 'false'}>Wallet</button>
+  ),
 }));
 
 function renderShell(path = '/dashboard') {
@@ -127,7 +129,9 @@ describe('ArenaAppShell', () => {
     expect(within(sidebar!).getByRole('button', { name: 'Network' })).toBeInTheDocument();
     expect(within(sidebar!).getByRole('button', { name: 'Transactions' })).toBeInTheDocument();
     expect(within(sidebar!).getByRole('button', { name: 'Theme' })).toBeInTheDocument();
-    expect(within(sidebar!).getByRole('button', { name: 'Wallet' })).toBeInTheDocument();
+    const walletButton = within(sidebar!).getByRole('button', { name: 'Wallet' });
+    expect(walletButton).toHaveAttribute('data-compact', 'true');
+    expect(walletButton.parentElement).not.toHaveClass('overflow-hidden');
   });
 
   it('gives the expanded wallet action primary visual weight', () => {

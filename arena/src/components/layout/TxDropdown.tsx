@@ -123,7 +123,9 @@ export function TxDropdown({ align = 'end', side = 'down' }: { align?: 'start' |
       </button>
 
       {open && (
-        <div className={`absolute ${align === 'start' ? 'left-0' : 'right-0'} ${side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} w-[min(24rem,calc(100vw-2rem))] glass-card-strong rounded-xl border border-arena-elements-dividerColor/50 z-50 shadow-xl overflow-hidden`}>
+        <div
+          className={`absolute ${align === 'start' ? 'left-0' : 'right-0'} ${side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} z-50 w-[min(20rem,calc(100vw-1rem))] max-h-[min(28rem,calc(100vh-1rem))] overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] shadow-[var(--arena-terminal-shadow-lg)]`}
+        >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-arena-elements-dividerColor/50">
             <div className="flex items-center gap-2">

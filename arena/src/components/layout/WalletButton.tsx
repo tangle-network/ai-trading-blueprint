@@ -4,7 +4,7 @@ import { useAccount, useDisconnect, useSwitchChain, useConnectorClient } from 'w
 import { useStore } from '@nanostores/react';
 import type { Address } from 'viem';
 import { Identicon } from '@tangle-network/blueprint-ui/components';
-import { publicClient, selectedChainIdStore, useWalletEthBalance } from '@tangle-network/blueprint-ui';
+import { cn, publicClient, selectedChainIdStore, useWalletEthBalance } from '@tangle-network/blueprint-ui';
 import { useDropdownMenu } from '@tangle-network/sandbox-ui/hooks';
 import { copyText } from '@tangle-network/sandbox-ui/utils';
 import { networks } from '~/lib/contracts/chains';
@@ -18,9 +18,11 @@ function truncateAddress(address?: string): string {
 export function WalletButton({
   align = 'end',
   side = 'down',
+  compact = false,
 }: {
   align?: 'start' | 'end';
   side?: 'up' | 'down';
+  compact?: boolean;
 } = {}) {
   const { open, ref, toggle, close } = useDropdownMenu();
   const menuRef = ref as RefObject<HTMLDivElement>;
@@ -92,11 +94,15 @@ export function WalletButton({
               type="button"
               onClick={show}
               disabled={isReconnecting}
-              className="inline-flex h-10 min-w-[8.75rem] max-w-full items-center justify-center gap-2 rounded-[5px] border border-[#50d2c1]/55 bg-[#50d2c1] px-3 font-display text-sm font-semibold text-[#06100e] shadow-none transition-[background-color,border-color,opacity,transform] duration-150 hover:border-[#7ce6d9] hover:bg-[#7ce6d9] active:scale-[0.98] disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#081013]"
+              className={cn(
+                'inline-flex h-10 max-w-full items-center justify-center gap-2 rounded-[5px] border border-[#50d2c1]/55 bg-[#50d2c1] font-display text-sm font-semibold text-[#06100e] shadow-none transition-[background-color,border-color,opacity,transform] duration-150 hover:border-[#7ce6d9] hover:bg-[#7ce6d9] active:scale-[0.98] disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#081013]',
+                compact ? 'w-10 min-w-0 px-0' : 'min-w-[8.75rem] px-3',
+              )}
               aria-label="Connect Wallet"
+              title={compact ? 'Connect Wallet' : undefined}
             >
               <span className="i-ph:plug-charging-bold shrink-0 text-base" aria-hidden="true" />
-              <span className="truncate">
+              <span className={compact ? 'sr-only' : 'truncate'}>
                 {isReconnecting ? 'Reconnecting…' : 'Connect Wallet'}
               </span>
             </button>
@@ -107,22 +113,44 @@ export function WalletButton({
         const displayBalance = ethBalance ?? (balanceError ? '—' : '…');
 
         return (
-          <div ref={menuRef} className="relative">
+          <div ref={menuRef} className="relative min-w-0">
             <button
               type="button"
               onClick={toggle}
-              className="relative rounded-full transition-[box-shadow,opacity] duration-150 hover:ring-2 hover:ring-[#50d2c1]/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-              aria-label="Account menu"
+              className={cn(
+                'inline-flex h-10 max-w-full items-center rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)] transition-[background-color,border-color,color,opacity,transform] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60',
+                compact ? 'w-10 justify-center px-0' : 'w-full min-w-0 justify-start gap-2 px-2',
+              )}
+              aria-label={`Account menu ${truncated}`}
               aria-expanded={open}
+              title={compact ? truncated : undefined}
             >
-              {address && <Identicon address={address as Address} size={32} />}
-              {isWrongChain && (
-                <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-500 dark:bg-amber-400 animate-pulse ring-2 ring-arena-elements-background-depth-1" title="Wrong chain" />
+              <span className="relative flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full">
+                {address && <Identicon address={address as Address} size={28} />}
+                {isWrongChain && (
+                  <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-[var(--arena-terminal-panel)] dark:bg-amber-400" title="Wrong chain" />
+                )}
+              </span>
+              {!compact && (
+                <>
+                  <span className="min-w-0 flex-1 truncate text-left font-data text-sm font-semibold tabular-nums text-[var(--arena-terminal-text)]">
+                    {truncated}
+                  </span>
+                  <span className="i-ph:caret-up-down shrink-0 text-xs text-[var(--arena-terminal-text-muted)]" aria-hidden="true" />
+                </>
               )}
             </button>
 
             {open && (
-              <div className={`absolute ${align === 'start' ? 'left-0' : 'right-0'} ${side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} z-50 w-72 max-w-[calc(100vw-1rem)] rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 text-[var(--arena-terminal-text)] shadow-[var(--arena-terminal-shadow-lg)]`}>
+              <div
+                role="menu"
+                aria-label="Account actions"
+                className={cn(
+                  'absolute z-50 max-h-[min(28rem,calc(100vh-1rem))] w-[min(18rem,calc(100vw-1rem))] overflow-y-auto overscroll-contain rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 text-[var(--arena-terminal-text)] shadow-[var(--arena-terminal-shadow-lg)]',
+                  align === 'start' ? 'left-0' : 'right-0',
+                  side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
+                )}
+              >
                 {/* Address + Copy */}
                 <div className="flex items-center gap-3 mb-4">
                   {address && <Identicon address={address as Address} size={32} />}
