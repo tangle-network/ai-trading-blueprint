@@ -46,6 +46,8 @@ interface ConfigureStepProps {
   selectedOperators: Set<Address>;
   setShowAdvanced: (v: boolean) => void;
   strategyExecutionNotice?: string | null;
+  executionTargetLabel?: string;
+  executionTargetDescription?: string;
   assetOptions?: DexAssetSelection[];
   baseAssetAddress?: Address;
   setBaseAssetAddress?: (v: Address) => void;
@@ -76,6 +78,8 @@ export function ConfigureStep({
   selectedOperators,
   setShowAdvanced,
   strategyExecutionNotice,
+  executionTargetLabel,
+  executionTargetDescription,
   assetOptions = [],
   baseAssetAddress,
   setBaseAssetAddress = () => {},
@@ -92,6 +96,7 @@ export function ConfigureStep({
   goNext,
 }: ConfigureStepProps) {
   const supportsClobCollateral = strategySupportsClobCollateral(strategyType, selectedPack);
+  const isHyperliquidStrategy = strategyType === 'hyperliquid_perp';
   const isDexStrategy = strategyUsesDexAssetUniverse(strategyType);
   const effectiveBaseAssetAddress =
     baseAssetAddress ?? selectedAssetAddresses[0] ?? assetOptions[0]?.address;
@@ -112,7 +117,9 @@ export function ConfigureStep({
       };
     });
   const baseAssetChoices = selectedAssets;
-  const primaryPacks = strategyPacks.filter((p) => !p.id.startsWith('prediction'));
+  const primaryPacks = [...strategyPacks]
+    .filter((p) => !p.id.startsWith('prediction'))
+    .sort(compareStrategyPackPriority);
   const predictionPacks = strategyPacks.filter((p) => p.id.startsWith('prediction'));
   const providerLabel = selectedPack.providers.slice(0, 3).join(', ');
   const executionModeLabel = formatExecutionMode(selectedPack.executionMode);
@@ -185,7 +192,9 @@ export function ConfigureStep({
                 name="agent-name"
                 autoComplete="off"
                 spellCheck={false}
-                placeholder="e.g. Base USDC/WETH swing bot…"
+                placeholder={isHyperliquidStrategy
+                  ? 'e.g. ETH Hyperliquid breakout agent…'
+                  : 'e.g. Base USDC/WETH swing bot…'}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="h-10 w-full rounded-[5px] border border-[#273035] bg-[#081013] px-3.5 py-2 font-mono text-sm text-[#f6fefd] placeholder:text-[#697371] transition-[border-color,box-shadow] duration-150 hover:border-[#3a464a] focus-visible:border-[#50d2c1]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/35"
@@ -247,14 +256,40 @@ export function ConfigureStep({
               <ReadRow label="Pack" value={selectedPack.name} />
               <ReadRow label="Mode" value={executionModeLabel} />
               <ReadRow label="Venue" value={providerLabel} />
+              {executionTargetLabel && (
+                <ReadRow label="Target" value={executionTargetLabel} />
+              )}
               <ReadRow label="Assets" value={selectedAssetLabel} />
               <div className="rounded-[5px] border border-[#273035] bg-[#081013] p-3">
                 <p className="text-sm leading-5 text-[#d2dad7]">
-                  {selectedPack.description}
+                  {executionTargetDescription ?? selectedPack.description}
                 </p>
               </div>
             </div>
           </ProvisionPanel>
+
+          {isHyperliquidStrategy && (
+            <ProvisionPanel title="Hyperliquid Guardrails">
+              <div className="grid gap-2">
+                <GuardrailRow
+                  label="Account"
+                  value="Bot-bound HyperEVM vault"
+                />
+                <GuardrailRow
+                  label="Collateral"
+                  value="USDC margin, validator checked"
+                />
+                <GuardrailRow
+                  label="Orders"
+                  value="Native Hyperliquid perps only"
+                />
+                <GuardrailRow
+                  label="Exits"
+                  value="Reduce-only when closing risk"
+                />
+              </div>
+            </ProvisionPanel>
+          )}
 
           {isDexStrategy && (
             <ProvisionPanel title="Assets">
@@ -532,6 +567,25 @@ function formatExecutionMode(mode: StrategyPackDef['executionMode']): string {
   return 'Multi Route';
 }
 
+const STRATEGY_PACK_PRIORITY = [
+  'hyperliquid_perp',
+  'perp',
+  'dex',
+  'yield',
+  'mm',
+  'volatility',
+  'multi',
+];
+
+function compareStrategyPackPriority(a: StrategyPackDef, b: StrategyPackDef): number {
+  const aIndex = STRATEGY_PACK_PRIORITY.indexOf(a.id);
+  const bIndex = STRATEGY_PACK_PRIORITY.indexOf(b.id);
+  const aRank = aIndex === -1 ? STRATEGY_PACK_PRIORITY.length : aIndex;
+  const bRank = bIndex === -1 ? STRATEGY_PACK_PRIORITY.length : bIndex;
+  if (aRank !== bRank) return aRank - bRank;
+  return a.name.localeCompare(b.name);
+}
+
 function strategyPackIcon(pack: StrategyPackDef): string {
   if (pack.id.startsWith('prediction')) return 'i-ph:newspaper-clipping';
   if (pack.id === 'hyperliquid_perp' || pack.id === 'perp') return 'i-ph:chart-line-up';
@@ -656,6 +710,15 @@ function ReadRow({ label, value }: { label: string; value: string }) {
     <div className="grid grid-cols-[84px_minmax(0,1fr)] items-center gap-3 border-b border-[#273035] pb-2 last:border-b-0 last:pb-0">
       <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#697371]">{label}</span>
       <span className="min-w-0 truncate text-right font-mono text-xs text-[#f6fefd]">{value}</span>
+    </div>
+  );
+}
+
+function GuardrailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid min-w-0 gap-1.5 rounded-[5px] border border-[#273035] bg-[#081013] px-3 py-2">
+      <span className="font-mono text-[10px] uppercase text-[#697371]">{label}</span>
+      <span className="min-w-0 font-mono text-xs leading-4 text-[#d2dad7]">{value}</span>
     </div>
   );
 }

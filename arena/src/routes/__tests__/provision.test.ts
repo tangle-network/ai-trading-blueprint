@@ -800,6 +800,56 @@ describe('provision runtime backend helpers', () => {
     expect(executionTargetsForStrategy('volatility', [...targets])).toEqual([]);
   });
 
+  it('defaults provisioning to Hyperliquid when a HyperEVM target is enabled', async () => {
+    const {
+      defaultExecutionTargetIdForStrategy,
+      defaultProvisionStrategyType,
+    } = await import('../provision');
+    const targets = [
+      {
+        id: 'base',
+        label: 'Base',
+        description: 'Base',
+        enabled: true,
+        chainId: 84532,
+      },
+      {
+        id: 'hyperevm-testnet',
+        label: 'HyperEVM Testnet',
+        description: 'HyperEVM',
+        enabled: true,
+        chainId: 998,
+      },
+    ] as const;
+
+    expect(defaultProvisionStrategyType([...targets])).toBe('hyperliquid_perp');
+    expect(
+      defaultExecutionTargetIdForStrategy('hyperliquid_perp', [...targets]),
+    ).toBe('hyperevm-testnet');
+  });
+
+  it('falls back to DEX provisioning when HyperEVM is not enabled', async () => {
+    const { defaultProvisionStrategyType } = await import('../provision');
+    const targets = [
+      {
+        id: 'base',
+        label: 'Base',
+        description: 'Base',
+        enabled: true,
+        chainId: 84532,
+      },
+      {
+        id: 'hyperevm-testnet',
+        label: 'HyperEVM Testnet',
+        description: 'HyperEVM',
+        enabled: false,
+        chainId: 998,
+      },
+    ] as const;
+
+    expect(defaultProvisionStrategyType([...targets])).toBe('dex');
+  });
+
   it('returns GMX and Vertex as the Arbitrum perp protocols', async () => {
     const { availableProtocolsForStrategyTarget } =
       await import('../provision');

@@ -145,14 +145,23 @@ export const baseSepolia = defineChain({
   },
 });
 
-const hyperEvmTestnetEnabled = import.meta.env.VITE_HYPEREVM_TESTNET_ENABLED === 'true';
-const configuredHyperEvmTestnetChainId = Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID);
+const hyperEvmTestnetEnabled = import.meta.env.VITE_HYPEREVM_TESTNET_ENABLED !== 'false';
+const configuredHyperEvmTestnetChainId = Number(import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID ?? '998');
 const hyperEvmTestnetChainId = Number.isFinite(configuredHyperEvmTestnetChainId) && configuredHyperEvmTestnetChainId > 0
   ? configuredHyperEvmTestnetChainId
   : 998;
-const hyperEvmTestnetRpcUrl = nonEmptyEnv(import.meta.env.VITE_HYPEREVM_TESTNET_RPC_URL);
-const hyperEvmTestnetAssetToken = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_TESTNET_USDC_ASSET_TOKEN);
-const hyperEvmTestnetVaultFactory = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_FACTORY_ADDRESS);
+const hyperEvmTestnetRpcUrl = nonEmptyEnv(
+  import.meta.env.VITE_HYPEREVM_TESTNET_RPC_URL ??
+    'https://rpc.hyperliquid-testnet.xyz/evm',
+);
+const hyperEvmTestnetAssetToken = nonZeroAddressEnv(
+  import.meta.env.VITE_HYPEREVM_TESTNET_USDC_ASSET_TOKEN ??
+    '0x2B3370eE501B4a559b57D449569354196457D8Ab',
+);
+const hyperEvmTestnetVaultFactory = nonZeroAddressEnv(
+  import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_FACTORY_ADDRESS ??
+    '0x7df00f20efbc59e2b978c0bcc10a16e5ff1070c3',
+);
 const hyperEvmTestnetVault = nonZeroAddressEnv(import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_ADDRESS);
 export const hyperEvmTestnetConfigured =
   hyperEvmTestnetEnabled &&

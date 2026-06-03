@@ -178,6 +178,39 @@ describe('ConfigureStep', () => {
     expect(screen.getByText('Swing trading on DEXes')).toBeInTheDocument();
   });
 
+  it('renders Hyperliquid target and guardrails for the default perp launch path', () => {
+    render(
+      <ConfigureStep
+        {...defaultProps({
+          strategyType: 'hyperliquid_perp',
+          selectedPack: {
+            id: 'hyperliquid_perp',
+            name: 'Hyperliquid Perps',
+            description: 'Native Hyperliquid perpetual futures.',
+            providers: ['Hyperliquid', 'CoinGecko'],
+            executionMode: 'single-chain' as const,
+            supportedChainIds: [998],
+            cron: '0 */2 * * *',
+            maxTurns: 40,
+            timeoutMs: 120000,
+            expertKnowledge: 'Hyperliquid account and margin setup.',
+          },
+          executionTargetLabel: 'HyperEVM Testnet',
+          executionTargetDescription: 'Uses a bot-bound HyperEVM vault account for native Hyperliquid perps.',
+        })}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('e.g. ETH Hyperliquid breakout agent…')).toBeInTheDocument();
+    expect(screen.getAllByText('Hyperliquid Perps').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('HyperEVM Testnet')).toBeInTheDocument();
+    expect(screen.getByText('Hyperliquid Guardrails')).toBeInTheDocument();
+    expect(screen.getByText('Bot-bound HyperEVM vault')).toBeInTheDocument();
+    expect(screen.getByText('USDC margin, validator checked')).toBeInTheDocument();
+    expect(screen.getByText('Native Hyperliquid perps only')).toBeInTheDocument();
+    expect(screen.getByText('Reduce-only when closing risk')).toBeInTheDocument();
+  });
+
   it('keeps runtime controls behind advanced settings', () => {
     render(<ConfigureStep {...defaultProps()} />);
     expect(screen.getByText('Customize')).toBeInTheDocument();

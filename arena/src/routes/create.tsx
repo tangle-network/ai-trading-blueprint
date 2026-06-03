@@ -303,8 +303,8 @@ export default function CreateAgent() {
             </p>
           </div>
           <div className="grid grid-cols-3 overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] font-mono text-[11px] uppercase tracking-[0.12em] text-[#949e9c] md:w-[430px]">
-            <span className="min-w-0 truncate border-r border-[#273035] px-3 py-2 text-center">{operatorLabel}</span>
-            <span className="border-r border-[#273035] px-3 py-2 text-center">Base Sepolia</span>
+            <span className="min-w-0 truncate border-r border-[#273035] px-3 py-2 text-center">Runtime API</span>
+            <span className="border-r border-[#273035] px-3 py-2 text-center">Service Base-S</span>
             <span className="px-3 py-2 text-center text-[#50d2c1]">Risk Gated</span>
           </div>
         </header>

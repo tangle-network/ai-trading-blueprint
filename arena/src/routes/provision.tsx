@@ -497,18 +497,21 @@ const DEFAULT_ARBITRUM_ONE_EXECUTION_TARGET: DexExecutionTargetOption = {
 
 const hyperEvmTestnetTargetEnabled = resolveEnvBoolean(
   import.meta.env.VITE_HYPEREVM_TESTNET_ENABLED,
-  false,
+  true,
 );
 const hyperEvmTestnetTargetChainId = resolveEnvPositiveNumberOptional(
-  import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID,
+  import.meta.env.VITE_HYPEREVM_TESTNET_CHAIN_ID ?? '998',
 );
 const hyperEvmTestnetTargetRpcUrl =
-  import.meta.env.VITE_HYPEREVM_TESTNET_RPC_URL?.trim() || undefined;
+  import.meta.env.VITE_HYPEREVM_TESTNET_RPC_URL?.trim() ||
+  'https://rpc.hyperliquid-testnet.xyz/evm';
 const hyperEvmTestnetAssetToken = nonZeroAddress(
-  import.meta.env.VITE_HYPEREVM_TESTNET_USDC_ASSET_TOKEN,
+  import.meta.env.VITE_HYPEREVM_TESTNET_USDC_ASSET_TOKEN ??
+    '0x2B3370eE501B4a559b57D449569354196457D8Ab',
 );
 const hyperEvmTestnetVaultFactory = nonZeroAddress(
-  import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_FACTORY_ADDRESS,
+  import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_FACTORY_ADDRESS ??
+    '0x7df00f20efbc59e2b978c0bcc10a16e5ff1070c3',
 );
 const hyperEvmTestnetVault = nonZeroAddress(
   import.meta.env.VITE_HYPEREVM_TESTNET_VAULT_ADDRESS,
@@ -1059,6 +1062,28 @@ export function executionTargetsForStrategy(
   });
 }
 
+export function defaultProvisionStrategyType(
+  targets: DexExecutionTargetOption[],
+): string {
+  const hasHyperliquidTarget = executionTargetsForStrategy(
+    'hyperliquid_perp',
+    targets,
+  ).some((target) => target.enabled);
+  if (hasHyperliquidTarget) return 'hyperliquid_perp';
+  return 'dex';
+}
+
+export function defaultExecutionTargetIdForStrategy(
+  strategyType: string,
+  targets: DexExecutionTargetOption[],
+): DexExecutionTargetId {
+  const enabledTarget = executionTargetsForStrategy(strategyType, targets).find(
+    (target) => target.enabled,
+  );
+  if (enabledTarget) return enabledTarget.id;
+  return import.meta.env.VITE_FORK_MODE === 'true' ? 'ethereum' : 'base';
+}
+
 export function availableProtocolsForStrategyTarget(
   strategyType: string,
   target: DexExecutionTargetOption | undefined,
@@ -1309,9 +1334,13 @@ export default function ProvisionPage() {
       DEFAULT_OPTIMISM_EXECUTION_TARGET,
     ];
   }, []);
+  const defaultStrategyType = useMemo(
+    () => defaultProvisionStrategyType(executionTargets),
+    [executionTargets],
+  );
   const [executionTargetId, setExecutionTargetId] =
-    useState<DexExecutionTargetId>(
-      import.meta.env.VITE_FORK_MODE === 'true' ? 'ethereum' : 'base',
+    useState<DexExecutionTargetId>(() =>
+      defaultExecutionTargetIdForStrategy(defaultStrategyType, executionTargets),
     );
   const configuredExecutionTarget = useMemo(
     () =>
@@ -1447,7 +1476,7 @@ export default function ProvisionPage() {
 
   // Configure agent settings
   const [name, setName] = useState('');
-  const [strategyType, setStrategyType] = useState('dex');
+  const [strategyType, setStrategyType] = useState(defaultStrategyType);
   const [runtimeBackend, setRuntimeBackend] =
     useState<RuntimeBackend>('docker');
   const [customInstructions, setCustomInstructions] = useState('');
@@ -3559,11 +3588,11 @@ export default function ProvisionPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-[#949e9c]">
             <span className="rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2.5 py-1.5">
-              {targetChain.name}
+              Service {targetChain.name}
             </span>
             {selectedBlueprint && (
               <span className="rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2.5 py-1.5">
-                {selectedBlueprint.name}
+                Runtime {selectedBlueprint.name}
               </span>
             )}
             <span className="rounded-[5px] border border-[#1d5b52] bg-[#143c38] px-2.5 py-1.5 text-[#9cf5e7]">
@@ -3702,6 +3731,8 @@ export default function ProvisionPage() {
             selectedOperators={selectedOperators}
             setShowAdvanced={setShowAdvanced}
             strategyExecutionNotice={strategyExecutionNotice}
+            executionTargetLabel={selectedExecutionTarget?.label}
+            executionTargetDescription={selectedExecutionTarget?.description}
             assetOptions={assetOptions}
             baseAssetAddress={baseAssetAddress}
             setBaseAssetAddress={setBaseAssetAddress}
