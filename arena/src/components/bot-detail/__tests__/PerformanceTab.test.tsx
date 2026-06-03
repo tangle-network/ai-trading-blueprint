@@ -942,6 +942,70 @@ describe('PerformanceTab', () => {
     expect(tailLabel).not.toContain('Apr 30');
   });
 
+  it('uses time-only intraday NAV ticks on multi-day ranges', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-05-29T06:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 0,
+      },
+      {
+        timestamp: '2026-05-30T06:00:00.000Z',
+        account_value_usd: 10008,
+        realized_pnl: 8,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+      {
+        timestamp: '2026-05-30T12:00:00.000Z',
+        account_value_usd: 10012,
+        realized_pnl: 12,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+      {
+        timestamp: '2026-05-30T12:25:00.000Z',
+        account_value_usd: 10014,
+        realized_pnl: 14,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+      {
+        timestamp: '2026-05-30T18:30:00.000Z',
+        account_value_usd: 10018,
+        realized_pnl: 18,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+
+    render(<PerformanceTab bot={makeBot()} isLive />);
+
+    await waitFor(() => expect(lightweightChartMock.createChart).toHaveBeenCalled());
+    const createChartCalls = lightweightChartMock.createChart.mock.calls as unknown as Array<[
+      unknown,
+      { timeScale?: { tickMarkFormatter?: (time: number) => string } },
+    ]>;
+    const chartOptions = createChartCalls[0]?.[1];
+    const formatter = chartOptions.timeScale?.tickMarkFormatter;
+    if (!formatter) throw new Error('Expected NAV chart tick formatter');
+
+    expect(formatter(Math.floor(Date.parse('2026-05-30T06:00:00.000Z') / 1000))).toBe('May 30');
+    const sixAmLabel = formatter(Math.floor(Date.parse('2026-05-30T12:00:00.000Z') / 1000));
+    const sixTwentyFiveLabel = formatter(Math.floor(Date.parse('2026-05-30T12:25:00.000Z') / 1000));
+    expect(sixAmLabel).toBe('6:00 AM');
+    expect(sixTwentyFiveLabel).toBe('6:25 AM');
+    expect(sixAmLabel).not.toContain('May 30');
+    expect(sixTwentyFiveLabel).not.toContain('May 30');
+  });
+
   it('does not pin off-window fills to the first or last market candle', async () => {
     mockMetrics = [
       {

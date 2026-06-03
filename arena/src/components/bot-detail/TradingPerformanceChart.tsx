@@ -90,17 +90,6 @@ const compactCandleTimeFormatter = new Intl.DateTimeFormat('en-US', {
   hour: 'numeric',
   minute: '2-digit',
 });
-const compactCandleDateHourFormatter = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-});
-const compactCandleDateTimeFormatter = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-});
 const compactCandleDayFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
@@ -150,16 +139,16 @@ function shouldSuppressChartEdgeTick(time: Time, first: Time | undefined, last: 
 
 function formatCandleDateTick(timestamp: number, rangeMs: number, lastTimestampMs: number | null): string {
   const date = new Date(timestamp);
+  const isDayBoundary = date.getHours() === 0 && date.getMinutes() === 0;
+  const isTailIntradayTick = lastTimestampMs != null && lastTimestampMs - timestamp < 24 * 60 * 60 * 1000;
+  if (isTailIntradayTick && !isDayBoundary) {
+    return compactCandleTimeFormatter.format(date);
+  }
   if (rangeMs >= MARKET_AXIS_DAY_ONLY_THRESHOLD_MS) {
-    if (lastTimestampMs != null && lastTimestampMs - timestamp < 24 * 60 * 60 * 1000) {
-      return compactCandleTimeFormatter.format(date);
-    }
     return compactCandleDayFormatter.format(date);
   }
-  const formatter = date.getMinutes() === 0
-    ? compactCandleDateHourFormatter
-    : compactCandleDateTimeFormatter;
-  return formatter.format(date).replace(',', '');
+  if (isDayBoundary) return compactCandleDayFormatter.format(date);
+  return compactCandleTimeFormatter.format(date);
 }
 
 function formatCandleAxisTick(timestamp: number, rangeMs = 0, lastTimestampMs: number | null = null): string {
