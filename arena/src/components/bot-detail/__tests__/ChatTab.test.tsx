@@ -366,6 +366,7 @@ describe("ChatTab", () => {
     expect(shell).toHaveClass("h-full");
     expect(shell).not.toHaveClass("glass-card");
     expect(shell).not.toHaveClass("rounded-xl");
+    expect(screen.queryByTestId("decision-activity-strip")).not.toBeInTheDocument();
     expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(
       0,
     );

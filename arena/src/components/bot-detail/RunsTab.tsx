@@ -825,6 +825,7 @@ export function RunsTab({
   }), [runs]);
   const showRunsSidebar =
     immersive || runs.length > 1 || Boolean(runsQuery.hasNextPage);
+  const showDecisionActivityStrip = decisionItems.length > 0 && !showRunsSidebar;
   const showDecisionInspector = decisionItems.length > 0;
   const surfaceCopy = surface === "chat"
     ? {
@@ -1019,7 +1020,7 @@ export function RunsTab({
               />
             )}
 
-            {decisionItems.length > 0 && (
+            {showDecisionActivityStrip && (
               <DecisionActivityStrip
                 items={decisionItems}
                 selectedId={selectedDecisionItem?.id}

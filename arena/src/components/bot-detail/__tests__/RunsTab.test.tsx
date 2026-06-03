@@ -647,6 +647,7 @@ describe("RunsTab", () => {
     expect(shell).not.toHaveClass("glass-card");
     expect(shell).not.toHaveClass("rounded-xl");
     expect(screen.getByLabelText("Autonomous runs")).toBeInTheDocument();
+    expect(screen.queryByTestId("decision-activity-strip")).not.toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: /decision inspector/i })).toBeInTheDocument();
     expect(screen.getAllByText("Decision").length).toBeGreaterThan(0);
   });

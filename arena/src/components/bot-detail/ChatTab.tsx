@@ -726,6 +726,7 @@ export function ChatTab({
     !canWrite && Boolean(publicReplayRuns && publicReplayRuns.length > 0);
   const showSessionSidebar =
     hasPublicRunSessions || sessionItems.length > 1 || (immersive && canWrite);
+  const showDecisionActivityStrip = decisionItems.length > 0 && !showSessionSidebar;
   const showDecisionInspector = decisionItems.length > 0;
   const sidebarActiveSessionId =
     hasPublicRunSessions && publicReplayRun
@@ -924,7 +925,7 @@ export function ChatTab({
             isAborting={isAborting}
           />
 
-          {decisionItems.length > 0 && (
+          {showDecisionActivityStrip && (
             <DecisionActivityStrip
               items={decisionItems}
               selectedId={selectedDecisionItem?.id}

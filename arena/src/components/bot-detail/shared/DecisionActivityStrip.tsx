@@ -40,6 +40,7 @@ export function DecisionActivityStrip({
 
   return (
     <div
+      data-testid="decision-activity-strip"
       className={cx(
         'border-b',
         isTerminal
