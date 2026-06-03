@@ -80,11 +80,6 @@ const MARKET_AXIS_DAY_ONLY_THRESHOLD_MS = 5 * 24 * 60 * 60 * 1000;
 const MARKET_AXIS_EDGE_SUPPRESSION_MIN_MS = 8 * 60 * 1000;
 const MARKET_AXIS_EDGE_SUPPRESSION_MAX_MS = 6 * 60 * 60 * 1000;
 const MARKET_AXIS_EDGE_SUPPRESSION_RANGE_FRACTION = 0.005;
-const TERMINAL_SURFACE = '#0f1a1f';
-const TERMINAL_GRID = 'rgba(148, 158, 156, 0.085)';
-const TERMINAL_TICK = '#949e9c';
-const TERMINAL_TOOLTIP = 'rgba(15, 26, 31, 0.95)';
-const TERMINAL_BORDER = 'rgba(39, 48, 53, 0.96)';
 const markerTimeFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
@@ -902,14 +897,14 @@ export function TradingPerformanceChart({
         autoSize: true,
         height: containerRef.current.clientHeight || 520,
         layout: {
-          background: { type: charts.ColorType.Solid, color: TERMINAL_SURFACE },
-          textColor: TERMINAL_TICK,
+          background: { type: charts.ColorType.Solid, color: chartTheme.chartSurface },
+          textColor: chartTheme.tickColor,
           attributionLogo: false,
           fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         },
         grid: {
           vertLines: { color: 'transparent' },
-          horzLines: { color: TERMINAL_GRID },
+          horzLines: { color: chartTheme.gridColor },
         },
         rightPriceScale: {
           borderVisible: false,
@@ -960,13 +955,13 @@ export function TradingPerformanceChart({
         crosshair: {
           mode: charts.CrosshairMode.Magnet,
           vertLine: {
-            color: 'rgba(148, 158, 156, 0.48)',
-            labelBackgroundColor: TERMINAL_TOOLTIP,
+            color: chartTheme.crosshairColor,
+            labelBackgroundColor: chartTheme.tooltipBg,
             style: charts.LineStyle.Dashed,
           },
           horzLine: {
-            color: 'rgba(148, 158, 156, 0.38)',
-            labelBackgroundColor: TERMINAL_TOOLTIP,
+            color: chartTheme.crosshairColor,
+            labelBackgroundColor: chartTheme.tooltipBg,
             style: charts.LineStyle.Dotted,
           },
         },
@@ -1098,7 +1093,7 @@ export function TradingPerformanceChart({
           if (navSeriesData.length > 1) {
             runtime.navPaneStartPriceLine = runtime.navPaneSeries.createPriceLine({
               price: navSeriesData[0].value,
-              color: TERMINAL_TICK,
+              color: chartTheme.tickColor,
               lineWidth: 1,
               lineStyle: charts.LineStyle.Dashed,
               axisLabelVisible: false,
@@ -1118,7 +1113,7 @@ export function TradingPerformanceChart({
         if (navSeriesData.length > 1) {
           runtime.startPriceLine = runtime.areaSeries.createPriceLine({
             price: navSeriesData[0].value,
-            color: TERMINAL_TICK,
+            color: chartTheme.tickColor,
             lineWidth: 1,
             lineStyle: charts.LineStyle.Dashed,
             axisLabelVisible: false,
@@ -1218,9 +1213,14 @@ export function TradingPerformanceChart({
   }, [
     activeMode,
     chartTheme.gradientEnd,
+    chartTheme.chartSurface,
+    chartTheme.crosshairColor,
+    chartTheme.gridColor,
     chartTheme.hoverBorderColor,
     chartTheme.negative,
     chartTheme.positive,
+    chartTheme.tickColor,
+    chartTheme.tooltipBg,
     fillTopColor,
     hasIntegratedNavPane,
     lineColor,
@@ -1249,7 +1249,7 @@ export function TradingPerformanceChart({
     if (navSeriesData.length > 1) {
       runtime.startPriceLine = runtime.areaSeries.createPriceLine({
         price: navSeriesData[0].value,
-        color: TERMINAL_TICK,
+        color: chartTheme.tickColor,
         lineWidth: 1,
         lineStyle: 2,
         axisLabelVisible: false,
@@ -1266,6 +1266,7 @@ export function TradingPerformanceChart({
     chartMarkers,
     chartTheme.gradientEnd,
     chartTheme.hoverBorderColor,
+    chartTheme.tickColor,
     fillTopColor,
     lineColor,
     navSeriesData,
@@ -1306,7 +1307,7 @@ export function TradingPerformanceChart({
       if (navSeriesData.length > 1) {
         runtime.navPaneStartPriceLine = runtime.navPaneSeries.createPriceLine({
           price: navSeriesData[0].value,
-          color: TERMINAL_TICK,
+          color: chartTheme.tickColor,
           lineWidth: 1,
           lineStyle: 2,
           axisLabelVisible: false,
@@ -1334,6 +1335,7 @@ export function TradingPerformanceChart({
     chartTheme.hoverBorderColor,
     chartTheme.negative,
     chartTheme.positive,
+    chartTheme.tickColor,
     fillTopColor,
     lineColor,
     marketSeriesData,
@@ -1377,7 +1379,11 @@ export function TradingPerformanceChart({
       : null);
 
   return (
-    <div className="relative h-full min-h-[320px] w-full overflow-hidden bg-[#0f1a1f]" data-testid="tradingview-performance-chart">
+    <div
+      className="relative h-full min-h-[320px] w-full overflow-hidden bg-[var(--arena-terminal-panel)]"
+      style={{ backgroundColor: chartTheme.chartSurface }}
+      data-testid="tradingview-performance-chart"
+    >
       <div ref={containerRef} className="absolute inset-0" />
       {activeMode === 'market' && exactMarketOverlay.length > 0 && (
         <div
@@ -1392,8 +1398,8 @@ export function TradingPerformanceChart({
             <button
               key={item.id}
               type="button"
-              className={`pointer-events-auto absolute h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-crosshair rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f6fefd]/70 ${
-                selectedExecutionId === item.id ? 'ring-2 ring-[#f6fefd]/70' : ''
+              className={`pointer-events-auto absolute h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-crosshair rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/70 ${
+                selectedExecutionId === item.id ? 'ring-2 ring-[#50d2c1]/70' : ''
               }`}
               style={{ left: item.x, top: item.y }}
               aria-label={`${item.marker.tooltip} at ${markerTimeFormatter.format(new Date(item.marker.timestampMs))}`}
@@ -1432,7 +1438,7 @@ export function TradingPerformanceChart({
                     borderLeft: '5px solid transparent',
                     borderRight: '5px solid transparent',
                     borderBottom: `9px solid ${item.color}`,
-                    filter: `drop-shadow(0 0 7px ${item.color}77) drop-shadow(0 0 1px rgba(246,254,253,0.55))`,
+                    filter: `drop-shadow(0 0 7px ${item.color}77) drop-shadow(0 0 1px ${chartTheme.hoverBorderColor})`,
                   }}
                 />
               ) : item.side === 'sell' ? (
@@ -1443,7 +1449,7 @@ export function TradingPerformanceChart({
                     borderLeft: '5px solid transparent',
                     borderRight: '5px solid transparent',
                     borderTop: `9px solid ${item.color}`,
-                    filter: `drop-shadow(0 0 7px ${item.color}77) drop-shadow(0 0 1px rgba(246,254,253,0.55))`,
+                    filter: `drop-shadow(0 0 7px ${item.color}77) drop-shadow(0 0 1px ${chartTheme.hoverBorderColor})`,
                   }}
                 />
               ) : (
@@ -1452,7 +1458,7 @@ export function TradingPerformanceChart({
                   className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full"
                   style={{
                     backgroundColor: item.color,
-                    boxShadow: `0 0 0 1px rgba(246,254,253,0.26), 0 0 10px ${item.color}77`,
+                    boxShadow: `0 0 0 1px ${chartTheme.hoverBorderColor}, 0 0 10px ${item.color}77`,
                   }}
                 />
               )}
@@ -1462,17 +1468,21 @@ export function TradingPerformanceChart({
       )}
       {readout && (
         <div
-          className="pointer-events-none absolute left-3 top-3 rounded-md border px-3 py-2 shadow-[0_18px_40px_rgba(0,0,0,0.32)]"
-          style={{ background: TERMINAL_TOOLTIP, borderColor: TERMINAL_BORDER }}
+          className="pointer-events-none absolute left-3 top-3 rounded-md border px-3 py-2"
+          style={{
+            background: chartTheme.tooltipBg,
+            borderColor: chartTheme.tooltipBorder,
+            boxShadow: chartTheme.tooltipShadow,
+          }}
         >
-          <div className="font-data text-[11px] text-[#949e9c]">
+          <div className="font-data text-[11px]" style={{ color: chartTheme.tooltipTitleColor }}>
             {readout.label}
           </div>
-          <div className="mt-0.5 font-data text-xl font-semibold tabular-nums text-[#f6fefd]">
+          <div className="mt-0.5 font-data text-xl font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
             {formatAxisCurrency(readout.value)}
           </div>
           {readout.detail && (
-            <div className="mt-1 font-data text-[11px] text-[#949e9c]">
+            <div className="mt-1 font-data text-[11px]" style={{ color: chartTheme.tooltipTitleColor }}>
               {readout.detail}
             </div>
           )}
@@ -1480,16 +1490,24 @@ export function TradingPerformanceChart({
       )}
       {activeMode === 'market' && navSeriesData.length > 0 && (
         <div
-          className="pointer-events-none absolute bottom-2 left-3 rounded-sm border px-2 py-0.5 font-data text-[10px] font-semibold text-[#949e9c]"
-          style={{ background: 'rgba(15, 26, 31, 0.78)', borderColor: TERMINAL_BORDER }}
+          className="pointer-events-none absolute bottom-2 left-3 rounded-sm border px-2 py-0.5 font-data text-[10px] font-semibold"
+          style={{
+            background: chartTheme.tooltipBg,
+            borderColor: chartTheme.tooltipBorder,
+            color: chartTheme.tooltipTitleColor,
+          }}
         >
           NAV
         </div>
       )}
       {featuredExecution && (
         <div
-          className="pointer-events-none absolute bottom-3 right-3 z-20 max-w-[min(360px,calc(100%-1.5rem))] rounded-md border px-3 py-2 shadow-[0_18px_40px_rgba(0,0,0,0.34)]"
-          style={{ background: TERMINAL_TOOLTIP, borderColor: TERMINAL_BORDER }}
+          className="pointer-events-none absolute bottom-3 right-3 z-20 max-w-[min(360px,calc(100%-1.5rem))] rounded-md border px-3 py-2"
+          style={{
+            background: chartTheme.tooltipBg,
+            borderColor: chartTheme.tooltipBorder,
+            boxShadow: chartTheme.tooltipShadow,
+          }}
           data-testid="chart-featured-execution"
         >
           <div className="flex min-w-0 items-center gap-2">
@@ -1498,30 +1516,34 @@ export function TradingPerformanceChart({
               style={{ backgroundColor: featuredExecution.color }}
               aria-hidden="true"
             />
-            <span className="truncate font-data text-xs font-semibold text-[#f6fefd]">
+            <span className="truncate font-data text-xs font-semibold" style={{ color: chartTheme.tooltipBodyColor }}>
               {featuredExecution.marker.text}
             </span>
-            <span className="font-data text-xs font-semibold tabular-nums text-[#f6fefd]">
+            <span className="font-data text-xs font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
               {formatAxisCurrency(featuredExecution.value)}
             </span>
           </div>
-          <div className="mt-1 truncate font-data text-[11px] text-[#949e9c]">
+          <div className="mt-1 truncate font-data text-[11px]" style={{ color: chartTheme.tooltipTitleColor }}>
             {formatExecutionDetail(featuredExecution)}
           </div>
         </div>
       )}
       {executionCoverage && (
         <div
-          className="pointer-events-none absolute right-3 top-3 z-20 rounded-md border px-3 py-2 font-data shadow-[0_14px_36px_rgba(0,0,0,0.3)]"
-          style={{ background: 'rgba(15, 26, 31, 0.78)', borderColor: TERMINAL_BORDER }}
+          className="pointer-events-none absolute right-3 top-3 z-20 rounded-md border px-3 py-2 font-data"
+          style={{
+            background: chartTheme.tooltipBg,
+            borderColor: chartTheme.tooltipBorder,
+            boxShadow: chartTheme.tooltipShadow,
+          }}
           title={executionCoverage.title}
           data-testid="chart-execution-coverage"
         >
-          <div className="text-right text-xs font-semibold tabular-nums text-[#f6fefd]">
+          <div className="text-right text-xs font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
             {formatNumber(executionCoverage.shown, { maximumFractionDigits: 0 })}
             /{formatNumber(executionCoverage.total, { maximumFractionDigits: 0 })} fills
           </div>
-          <div className="mt-0.5 max-w-[260px] truncate text-right text-[10px] font-medium text-[#949e9c]">
+          <div className="mt-0.5 max-w-[260px] truncate text-right text-[10px] font-medium" style={{ color: chartTheme.tooltipTitleColor }}>
             {executionCoverage.detail}
           </div>
         </div>

@@ -534,7 +534,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+    <div className="arena-trace-terminal flex h-full min-h-0 flex-col overflow-hidden">
       {bot.verificationState === 'unverified' && (
         <UnverifiedDataNotice subject="performance snapshots" />
       )}
@@ -745,7 +745,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                           type="button"
                           className={`grid h-10 w-full grid-cols-[104px_minmax(0,1fr)_112px] items-center gap-2 px-2 py-1 text-left transition-colors min-[1440px]:grid-cols-[118px_minmax(0,1fr)_126px] ${
                             selected
-                              ? 'bg-[#123f3a] shadow-[inset_3px_0_0_rgba(80,210,193,0.82)]'
+                              ? 'bg-[#132329] shadow-[inset_3px_0_0_rgba(80,210,193,0.82)]'
                               : 'hover:bg-[#101f25]'
                           }`}
                           aria-pressed={selected}
@@ -765,7 +765,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                             size="sm"
                             showVenue={false}
                             showSecondary={false}
-                            labelClassName="max-w-[240px] text-[16px] !text-[#f6fefd]"
+                            labelClassName="max-w-[240px] text-[16px] !text-[var(--arena-terminal-text)]"
                           />
                           <div className="min-w-0 text-right">
                             <div className="font-data text-[15px] font-semibold tabular-nums leading-5 text-[#f6fefd]">

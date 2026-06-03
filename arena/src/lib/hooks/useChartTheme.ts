@@ -12,12 +12,15 @@ export function useChartTheme() {
       positiveGradientStart: isDark ? 'rgba(80, 210, 193, 0.16)' : 'rgba(31, 166, 125, 0.12)',
       negativeGradientStart: isDark ? 'rgba(237, 112, 136, 0.16)' : 'rgba(217, 72, 97, 0.10)',
       gradientEnd: isDark ? 'rgba(0, 0, 0, 0)' : 'rgba(255, 255, 255, 0)',
+      chartSurface: isDark ? '#0f1a1f' : '#ffffff',
       tooltipBg: isDark ? 'rgba(15, 26, 31, 0.94)' : 'rgba(255, 255, 255, 0.95)',
       tooltipBorder: isDark ? 'rgba(148, 158, 156, 0.18)' : 'rgba(10, 10, 15, 0.08)',
+      tooltipShadow: isDark ? '0 18px 40px rgba(0, 0, 0, 0.32)' : '0 18px 40px rgba(15, 35, 42, 0.12)',
       tooltipTitleColor: isDark ? '#949E9C' : '#44445A',
       tooltipBodyColor: isDark ? '#F0F0F5' : '#0E0E16',
       gridColor: isDark ? 'rgba(148, 158, 156, 0.08)' : 'rgba(10, 10, 15, 0.08)',
       tickColor: isDark ? '#949E9C' : '#6B6B82',
+      crosshairColor: isDark ? 'rgba(148, 158, 156, 0.44)' : 'rgba(75, 89, 94, 0.32)',
       hoverBorderColor: isDark ? '#0A0A0F' : '#FAFAFE',
     };
   }, [theme]);

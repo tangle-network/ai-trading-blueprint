@@ -112,7 +112,7 @@ describe('ArenaAppShell', () => {
     const walletButton = within(sidebar!).getByRole('button', { name: 'Wallet' });
     const chainButton = within(sidebar!).getByRole('button', { name: 'Chain' });
 
-    expect(walletButton.parentElement).toHaveClass('[&>button]:!bg-[#50d2c1]');
+    expect(walletButton.parentElement).toHaveClass('[&>button]:!bg-[var(--arena-terminal-accent)]');
     expect(walletButton.parentElement).toHaveClass('[&>button]:!text-[#06100e]');
     expect(walletButton.compareDocumentPosition(chainButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

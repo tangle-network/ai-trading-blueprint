@@ -337,7 +337,7 @@ export function AgentWorkspaceShell({
   );
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden bg-[#081013]">
+    <div className="arena-trace-terminal flex h-full min-h-0 overflow-hidden bg-[var(--arena-terminal-bg)]">
       {focusMode ? (
         <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="arena-trace-terminal shrink-0 border-b border-[#273035] bg-[#081013] text-[#f6fefd]">

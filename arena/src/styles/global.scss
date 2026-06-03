@@ -109,6 +109,27 @@
   border: 1px solid var(--glass-border);
 }
 
+.arena-command-link-primary {
+  border-color: color-mix(in srgb, var(--arena-terminal-accent) 34%, transparent);
+  background: var(--arena-terminal-accent-strong);
+  color: var(--arena-terminal-accent-text);
+
+  &:hover {
+    background: color-mix(in srgb, var(--arena-terminal-accent-strong) 84%, var(--arena-terminal-accent));
+  }
+}
+
+.arena-command-link-secondary {
+  border-color: var(--arena-terminal-border);
+  background: var(--arena-terminal-surface);
+  color: var(--arena-terminal-text-secondary);
+
+  &:hover {
+    background: var(--arena-terminal-panel-strong);
+    color: var(--arena-terminal-text);
+  }
+}
+
 /* ═══ Theme-aware borders & hovers ═══ */
 .border-themed {
   border-color: var(--glass-border);
@@ -223,38 +244,200 @@
 }
 
 .arena-trace-terminal {
-  color-scheme: dark;
-  --arena-elements-borderColor: #273035;
-  --arena-elements-dividerColor: #273035;
-  --arena-elements-bg-depth-1: #081013;
-  --arena-elements-bg-depth-2: #0b1418;
-  --arena-elements-bg-depth-3: #0f1a1f;
-  --arena-elements-bg-depth-4: #16242a;
-  --arena-elements-textPrimary: #f6fefd;
-  --arena-elements-textSecondary: #d2dad7;
-  --arena-elements-textTertiary: #949e9c;
-  --arena-elements-item-backgroundHover: #16242a;
-  --arena-elements-item-backgroundActive: #143c38;
-  --arena-elements-focus: #50d2c1;
-  --glass-bg: #0b1418;
-  --glass-bg-strong: #0f1a1f;
-  --glass-border: #273035;
-  --glass-border-hover: rgba(80, 210, 193, 0.42);
-  --chat-input-bg: #0f1a1f;
-  --chat-input-border: #273035;
-  --chat-input-focus-border: rgba(80, 210, 193, 0.56);
+  color-scheme: light dark;
+  background: var(--arena-terminal-bg);
+  color: var(--arena-terminal-text);
+  --arena-elements-borderColor: var(--arena-terminal-border);
+  --arena-elements-dividerColor: var(--arena-terminal-border);
+  --arena-elements-bg-depth-1: var(--arena-terminal-bg);
+  --arena-elements-bg-depth-2: var(--arena-terminal-surface);
+  --arena-elements-bg-depth-3: var(--arena-terminal-panel);
+  --arena-elements-bg-depth-4: var(--arena-terminal-panel-strong);
+  --arena-elements-textPrimary: var(--arena-terminal-text);
+  --arena-elements-textSecondary: var(--arena-terminal-text-secondary);
+  --arena-elements-textTertiary: var(--arena-terminal-text-muted);
+  --arena-elements-item-backgroundHover: var(--arena-terminal-panel-strong);
+  --arena-elements-item-backgroundActive: var(--arena-terminal-accent-soft);
+  --arena-elements-focus: var(--arena-terminal-accent);
+  --glass-bg: var(--arena-terminal-surface);
+  --glass-bg-strong: var(--arena-terminal-panel);
+  --glass-border: var(--arena-terminal-border);
+  --glass-border-hover: var(--arena-terminal-border-hover);
+  --chat-input-bg: var(--arena-terminal-panel);
+  --chat-input-border: var(--arena-terminal-border);
+  --chat-input-focus-border: color-mix(in srgb, var(--arena-terminal-accent) 56%, transparent);
   --chat-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  --chat-input-focus-shadow: 0 0 0 1px rgba(80, 210, 193, 0.18);
-  --chat-send-border: rgba(80, 210, 193, 0.34);
-  --chat-send-bg: #143c38;
-  --chat-send-hover-bg: #19524c;
-  --chat-send-color: #f6fefd;
-  --chat-send-ring: rgba(80, 210, 193, 0.34);
+  --chat-input-focus-shadow: 0 0 0 1px color-mix(in srgb, var(--arena-terminal-accent) 18%, transparent);
+  --chat-send-border: color-mix(in srgb, var(--arena-terminal-accent) 34%, transparent);
+  --chat-send-bg: var(--arena-terminal-accent-soft);
+  --chat-send-hover-bg: color-mix(in srgb, var(--arena-terminal-accent-soft) 78%, var(--arena-terminal-accent));
+  --chat-send-color: var(--arena-terminal-text);
+  --chat-send-ring: color-mix(in srgb, var(--arena-terminal-accent) 34%, transparent);
 }
 
-.arena-terminal-transcript code,
-.arena-terminal-transcript pre {
+:root[data-theme='dark'] .arena-trace-terminal,
+:root[data-theme='dark'] .arena-terminal-transcript code,
+:root[data-theme='dark'] .arena-terminal-transcript pre {
   color-scheme: dark;
+}
+
+:root[data-theme='light'] .arena-trace-terminal,
+:root[data-theme='light'] .arena-terminal-transcript code,
+:root[data-theme='light'] .arena-terminal-transcript pre {
+  color-scheme: light;
+}
+
+.arena-trace-terminal[class~='bg-[#081013]'],
+.arena-trace-terminal [class~='bg-[#081013]'] {
+  background-color: var(--arena-terminal-bg) !important;
+}
+
+.arena-trace-terminal[class~='bg-[#0b1418]'],
+.arena-trace-terminal [class~='bg-[#0b1418]'] {
+  background-color: var(--arena-terminal-surface) !important;
+}
+
+.arena-trace-terminal[class~='bg-[#0b1418]/95'],
+.arena-trace-terminal [class~='bg-[#0b1418]/95'] {
+  background-color: color-mix(in srgb, var(--arena-terminal-surface) 95%, transparent) !important;
+}
+
+.arena-trace-terminal[class~='bg-[#0b1418]/90'],
+.arena-trace-terminal [class~='bg-[#0b1418]/90'] {
+  background-color: color-mix(in srgb, var(--arena-terminal-surface) 90%, transparent) !important;
+}
+
+.arena-trace-terminal[class~='bg-[#0f1a1f]'],
+.arena-trace-terminal [class~='bg-[#0f1a1f]'],
+.arena-trace-terminal[class~='bg-[#0f1a1e]'],
+.arena-trace-terminal [class~='bg-[#0f1a1e]'] {
+  background-color: var(--arena-terminal-panel) !important;
+}
+
+.arena-trace-terminal[class~='bg-[#13232a]'],
+.arena-trace-terminal [class~='bg-[#13232a]'],
+.arena-trace-terminal[class~='bg-[#101f25]'],
+.arena-trace-terminal [class~='bg-[#101f25]'],
+.arena-trace-terminal[class~='bg-[#16242a]'],
+.arena-trace-terminal [class~='bg-[#16242a]'] {
+  background-color: var(--arena-terminal-panel-strong) !important;
+}
+
+.arena-trace-terminal[class~='bg-[#143c38]'],
+.arena-trace-terminal [class~='bg-[#143c38]'],
+.arena-trace-terminal[class~='bg-[#12302e]'],
+.arena-trace-terminal [class~='bg-[#12302e]'],
+.arena-trace-terminal[class~='bg-[#132329]'],
+.arena-trace-terminal [class~='bg-[#132329]'],
+.arena-trace-terminal[class~='bg-[#0d302c]'],
+.arena-trace-terminal [class~='bg-[#0d302c]'] {
+  background-color: var(--arena-terminal-accent-soft) !important;
+}
+
+.arena-trace-terminal[class~='bg-[#123f3a]'],
+.arena-trace-terminal [class~='bg-[#123f3a]'],
+.arena-trace-terminal[class~='bg-[#19524c]'],
+.arena-trace-terminal [class~='bg-[#19524c]'],
+.arena-trace-terminal[class~='bg-[#18544e]'],
+.arena-trace-terminal [class~='bg-[#18544e]'] {
+  background-color: var(--arena-terminal-accent-strong) !important;
+}
+
+.arena-trace-terminal[class~='bg-[#273035]'],
+.arena-trace-terminal [class~='bg-[#273035]'] {
+  background-color: var(--arena-terminal-border) !important;
+}
+
+.arena-trace-terminal[class~='bg-[#d2dad7]'],
+.arena-trace-terminal [class~='bg-[#d2dad7]'] {
+  background-color: var(--arena-terminal-text-secondary) !important;
+}
+
+.arena-trace-terminal[class~='bg-[#50d2c1]'],
+.arena-trace-terminal [class~='bg-[#50d2c1]'] {
+  background-color: var(--arena-terminal-accent) !important;
+}
+
+.arena-trace-terminal [class~='hover:bg-[#16242a]']:hover,
+.arena-trace-terminal [class~='hover:bg-[#132329]']:hover,
+.arena-trace-terminal [class~='hover:bg-[#101f25]']:hover,
+.arena-trace-terminal [class~='hover:bg-[#344148]']:hover {
+  background-color: var(--arena-terminal-panel-strong) !important;
+}
+
+.arena-trace-terminal [class~='hover:bg-[#143c38]']:hover,
+.arena-trace-terminal [class~='hover:bg-[#12302e]']:hover,
+.arena-trace-terminal [class~='hover:bg-[#18544e]']:hover,
+.arena-trace-terminal [class~='hover:bg-[#19524c]']:hover {
+  background-color: var(--arena-terminal-accent-soft) !important;
+}
+
+.arena-trace-terminal[class~='border-[#273035]'],
+.arena-trace-terminal [class~='border-[#273035]'] {
+  border-color: var(--arena-terminal-border) !important;
+}
+
+.arena-trace-terminal[class~='border-[#50d2c1]/30'],
+.arena-trace-terminal [class~='border-[#50d2c1]/30'],
+.arena-trace-terminal[class~='border-[#50d2c1]/55'],
+.arena-trace-terminal [class~='border-[#50d2c1]/55'],
+.arena-trace-terminal [class~='hover:border-[#50d2c1]/45']:hover,
+.arena-trace-terminal [class~='hover:border-[#50d2c1]/50']:hover {
+  border-color: var(--arena-terminal-border-hover) !important;
+}
+
+.arena-trace-terminal[class~='divide-[#273035]'] > :not([hidden]) ~ :not([hidden]),
+.arena-trace-terminal [class~='divide-[#273035]'] > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--arena-terminal-border) !important;
+}
+
+.arena-trace-terminal[class~='text-[#f6fefd]'],
+.arena-trace-terminal [class~='text-[#f6fefd]'] {
+  color: var(--arena-terminal-text) !important;
+}
+
+.arena-trace-terminal[class~='text-[#d2dad7]'],
+.arena-trace-terminal [class~='text-[#d2dad7]'] {
+  color: var(--arena-terminal-text-secondary) !important;
+}
+
+.arena-trace-terminal[class~='text-[#949e9c]'],
+.arena-trace-terminal [class~='text-[#949e9c]'] {
+  color: var(--arena-terminal-text-muted) !important;
+}
+
+.arena-trace-terminal[class~='text-[#697371]'],
+.arena-trace-terminal [class~='text-[#697371]'],
+.arena-trace-terminal[class~='text-[#575e62]'],
+.arena-trace-terminal [class~='text-[#575e62]'] {
+  color: var(--arena-terminal-text-subtle) !important;
+}
+
+.arena-trace-terminal[class~='text-[#50d2c1]'],
+.arena-trace-terminal [class~='text-[#50d2c1]'],
+.arena-trace-terminal [class~='group-hover:text-[#50d2c1]']:hover {
+  color: var(--arena-terminal-accent) !important;
+}
+
+.arena-trace-terminal[class~='text-[#c8fffb]'],
+.arena-trace-terminal [class~='text-[#c8fffb]'],
+.arena-trace-terminal[class~='text-[#9cf5e7]'],
+.arena-trace-terminal [class~='text-[#9cf5e7]'] {
+  color: var(--arena-terminal-accent-text) !important;
+}
+
+.arena-trace-terminal[class~='text-[#ff5d6c]'],
+.arena-trace-terminal [class~='text-[#ff5d6c]'] {
+  color: var(--arena-terminal-danger) !important;
+}
+
+.arena-trace-terminal[class~='text-[#f2c066]'],
+.arena-trace-terminal [class~='text-[#f2c066]'] {
+  color: var(--arena-terminal-warning) !important;
+}
+
+.arena-trace-terminal [class~='placeholder:text-[#697371]']::placeholder {
+  color: var(--arena-terminal-text-subtle) !important;
 }
 
 :root[data-theme='dark'] .arena-chat-shell[data-sandbox-ui='true'] {
@@ -312,42 +495,15 @@
 }
 
 .arena-chat-shell.arena-trace-terminal[data-sandbox-ui='true'] {
-  color-scheme: dark;
-  background: #081013 !important;
-  --arena-elements-borderColor: #273035;
-  --arena-elements-dividerColor: #273035;
-  --arena-elements-bg-depth-1: #081013;
-  --arena-elements-bg-depth-2: #0b1418;
-  --arena-elements-bg-depth-3: #0f1a1f;
-  --arena-elements-bg-depth-4: #16242a;
-  --arena-elements-textPrimary: #f6fefd;
-  --arena-elements-textSecondary: #d2dad7;
-  --arena-elements-textTertiary: #949e9c;
-  --arena-elements-item-backgroundHover: #16242a;
-  --arena-elements-item-backgroundActive: #143c38;
-  --arena-elements-focus: #50d2c1;
-  --glass-bg: #0b1418;
-  --glass-bg-strong: #0f1a1f;
-  --glass-border: #273035;
-  --glass-border-hover: rgba(80, 210, 193, 0.42);
-  --chat-input-bg: #0f1a1f;
-  --chat-input-border: #273035;
-  --chat-input-focus-border: rgba(80, 210, 193, 0.56);
-  --chat-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  --chat-input-focus-shadow: 0 0 0 1px rgba(80, 210, 193, 0.18);
-  --chat-send-border: rgba(80, 210, 193, 0.34);
-  --chat-send-bg: #143c38;
-  --chat-send-hover-bg: #19524c;
-  --chat-send-color: #f6fefd;
-  --chat-send-ring: rgba(80, 210, 193, 0.34);
+  background: var(--arena-terminal-bg) !important;
 }
 
 .arena-chat-shell.arena-trace-terminal[data-sandbox-ui='true'] .arena-terminal-transcript {
-  background: #081013 !important;
+  background: var(--arena-terminal-bg) !important;
 }
 
 .arena-chat-shell.arena-trace-terminal[data-sandbox-ui='true'] .arena-trace-surface {
-  background: #081013 !important;
+  background: var(--arena-terminal-bg) !important;
 }
 
 .arena-chat-shell[data-sandbox-ui='true'] .text-\[var\(--chat-label-size\,11px\)\] {

@@ -9,6 +9,7 @@ import { useLatestAgentTrades, usePlatformVolumeSeries, type LatestAgentTrade } 
 import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
 import { PlatformVolumeChart } from '~/components/arena/PlatformVolumeChart';
 import { ArenaTopAgentsPanel } from '~/components/arena/ArenaTopAgentsPanel';
+import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
@@ -30,19 +31,6 @@ import { Identicon } from '@tangle-network/blueprint-ui/components';
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
 ];
-
-function HeaderMetric({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="font-data text-sm font-bold leading-none text-[#f6fefd]">
-        {value}
-      </div>
-      <div className="mt-0.5 truncate font-data text-[10px] uppercase text-[#949e9c]">
-        {label}
-      </div>
-    </div>
-  );
-}
 
 function formatMode(bot: Bot | null): string {
   if (!bot) return 'No agent';
@@ -67,10 +55,10 @@ function formatTrust(bot: Bot | null): string {
 function TrustMetric({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
     <div className="min-w-0" title={title}>
-      <div className="font-data text-[10px] uppercase tracking-[0.12em] text-[#949e9c]">
+      <div className="font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">
         {label}
       </div>
-      <div className="mt-0.5 truncate font-data text-xs font-semibold tabular-nums text-[#d2dad7]">
+      <div className="mt-0.5 truncate font-data text-xs font-semibold tabular-nums text-[var(--arena-terminal-text-secondary)]">
         {value}
       </div>
     </div>
@@ -87,7 +75,7 @@ function HeaderTrustBar({
   return (
     <div
       aria-label="Execution trust"
-      className="grid shrink-0 grid-cols-2 gap-x-4 gap-y-1 rounded-[6px] border border-[#273035] bg-[#0f1a1f] px-3 py-2 min-[760px]:grid-cols-5"
+      className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-1 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 py-2 min-[760px]:grid-cols-5"
     >
       <TrustMetric label="Network" value={bot?.chainId ? `Chain ${bot.chainId}` : 'Mixed'} />
       <TrustMetric label="Mode" value={formatMode(bot)} />
@@ -345,47 +333,34 @@ export default function IndexPage() {
   const trustAnchorBot = topActivity?.bot ?? leaderboardBots[0] ?? null;
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:overflow-hidden">
-      <section className="shrink-0 overflow-hidden rounded-[6px] border border-[#273035] bg-[#0f1a1f]">
-        <div className="flex min-h-12 flex-col gap-2 px-3 py-2 min-[1120px]:flex-row min-[1120px]:items-center">
-          <div className="flex min-w-0 items-center gap-3 min-[1120px]:w-[18rem]">
-            <span className="h-2 w-2 shrink-0 rounded-full bg-[#50d2c1] shadow-[0_0_16px_rgba(80,210,193,0.5)]" aria-hidden="true" />
-            <h1 className="truncate font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
-              Arena
-            </h1>
-          </div>
-          <div className="grid min-w-0 flex-1 grid-cols-3 gap-4 min-[1120px]:max-w-md">
-            <HeaderMetric value={formatNumber(leaderboardBots.length, { maximumFractionDigits: 0 })} label="Agents" />
-            <HeaderMetric value={formatCompactUsd(homeVolumeSeries.summary.totalUsd)} label="30D Vol" />
-            <HeaderMetric value={platformTradeCount > 0 ? formatNumber(platformTradeCount, { maximumFractionDigits: 0 }) : '—'} label={hasPlatformTradeCount ? '30D Fills' : 'Fills'} />
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <Link
-              to="/leaderboard"
-              className="inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border border-[#273035] bg-[#0b1418] px-3 text-sm font-display font-medium text-[#d2dad7] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-            >
-              <span className="i-ph:table text-sm" aria-hidden="true" />
-              Agents
-            </Link>
-            <Link
-              to="/provision"
-              className="inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border border-[#50d2c1]/30 bg-[#123f3a] px-3 text-sm font-display font-medium text-[#c8fffb] transition-colors hover:bg-[#18544e] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-            >
-              <span className="i-ph:plus-bold text-xs" aria-hidden="true" />
-              Deploy
-            </Link>
-          </div>
-        </div>
-      </section>
+    <div className="arena-trace-terminal mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:overflow-hidden">
+      <ArenaPageHeader
+        title="Arena"
+        titleWidthClassName="min-[1180px]:w-[11rem]"
+        metrics={[
+          { value: formatNumber(leaderboardBots.length, { maximumFractionDigits: 0 }), label: 'Agents' },
+          { value: formatCompactUsd(homeVolumeSeries.summary.totalUsd), label: '30D Vol' },
+          {
+            value: platformTradeCount > 0 ? formatNumber(platformTradeCount, { maximumFractionDigits: 0 }) : '—',
+            label: hasPlatformTradeCount ? '30D Fills' : 'Fills',
+          },
+        ]}
+        controls={(
+          <>
+            <ArenaHeaderLink to="/leaderboard" icon="i-ph:table">Agents</ArenaHeaderLink>
+            <ArenaHeaderLink to="/provision" icon="i-ph:plus-bold" variant="primary">Deploy</ArenaHeaderLink>
+          </>
+        )}
+      >
+        {leaderboardBots.length > 0 && (
+          <HeaderTrustBar
+            bot={trustAnchorBot}
+            hasTradeStoreEvidence={hasPlatformTradeCount}
+          />
+        )}
+      </ArenaPageHeader>
 
       <OperatorSessionBanner />
-
-      {leaderboardBots.length > 0 && (
-        <HeaderTrustBar
-          bot={trustAnchorBot}
-          hasTradeStoreEvidence={hasPlatformTradeCount}
-        />
-      )}
 
       {isLoading ? (
         <div className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.34fr)]">

@@ -34,7 +34,7 @@ export function ArenaAppShell() {
   }, [sidebarCollapsed]);
 
   return (
-    <div className="bp-tone-arena flex h-[100dvh] overflow-hidden bg-arena-elements-background-depth-1 text-arena-elements-textPrimary">
+    <div className="bp-tone-arena arena-trace-terminal flex h-[100dvh] overflow-hidden bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)]">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:rounded-lg focus:bg-violet-600 focus:text-white focus:text-sm focus:font-display focus:font-medium"
@@ -52,16 +52,19 @@ export function ArenaAppShell() {
 
       <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
         {!isBotWorkspace && (
-          <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#273035] bg-[#081013] px-3 lg:hidden">
+          <div className="arena-trace-terminal flex h-14 shrink-0 items-center justify-between border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 lg:hidden">
             <Link
               to="/"
-              className="inline-flex min-w-0 items-center gap-2 rounded-[5px] px-1 text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+              className="inline-flex min-w-0 items-center gap-2 rounded-[5px] px-1 text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
             >
               <TangleMark />
               <span className="font-display text-base font-semibold">Arena</span>
             </Link>
             <div className="flex shrink-0 items-center gap-1.5">
               <ChainSwitcher />
+              <div className={collapsedControlClass}>
+                <ThemeToggle />
+              </div>
               <WalletButton />
             </div>
           </div>
@@ -97,18 +100,18 @@ function DesktopArenaSidebar({
   return (
     <aside
       className={cn(
-        'arena-trace-terminal relative z-40 hidden shrink-0 flex-col border-r border-[#273035] bg-[#081013] text-[#f6fefd] transition-[width] duration-200 lg:flex',
+        'arena-trace-terminal relative z-40 hidden shrink-0 flex-col border-r border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)] transition-[width] duration-200 lg:flex',
         sidebarCollapsed ? 'w-16' : 'w-60',
       )}
     >
       <div className={cn(
-        'flex shrink-0 items-center border-b border-[#273035]',
+        'flex shrink-0 items-center border-b border-[var(--arena-terminal-border)]',
         sidebarCollapsed ? 'h-16 justify-center px-2' : 'h-14 justify-between gap-2 px-3',
       )}>
         <Link
           to="/"
           className={cn(
-            'inline-flex min-w-0 items-center rounded-[5px] text-[#f6fefd] transition-colors hover:bg-[#16242a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60',
+            'inline-flex min-w-0 items-center rounded-[5px] text-[var(--arena-terminal-text)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60',
             sidebarCollapsed ? 'h-10 w-10 justify-center' : 'h-10 gap-2 px-2',
           )}
           aria-label={sidebarCollapsed ? 'AI Trading Arena' : undefined}
@@ -160,11 +163,11 @@ function DesktopArenaSidebar({
         })}
       </nav>
 
-      <div className="min-h-0 flex-1 border-t border-[#273035]" />
+      <div className="min-h-0 flex-1 border-t border-[var(--arena-terminal-border)]" />
 
       <div
         className={cn(
-          'shrink-0 border-t border-[#273035]',
+          'shrink-0 border-t border-[var(--arena-terminal-border)]',
           sidebarCollapsed ? 'flex flex-col items-center gap-1.5 p-2' : 'p-2',
         )}
       >
@@ -184,53 +187,53 @@ const terminalControlClass = [
   '[&>button]:!justify-center',
   '[&>button]:!rounded-[5px]',
   '[&>button]:!border',
-  '[&>button]:!border-[#273035]',
-  '[&>button]:!bg-[#0f1a1f]',
+  '[&>button]:!border-[var(--arena-terminal-border)]',
+  '[&>button]:!bg-[var(--arena-terminal-panel)]',
   '[&>button]:!px-2',
-  '[&>button]:!text-[#d2dad7]',
+  '[&>button]:!text-[var(--arena-terminal-text-secondary)]',
   '[&>button]:!shadow-none',
   '[&>button]:transition-[background-color,border-color,color,opacity]',
   '[&>button]:duration-150',
-  '[&>button:hover]:!border-[#50d2c1]/45',
-  '[&>button:hover]:!bg-[#143c38]',
-  '[&>button:hover]:!text-[#f6fefd]',
+  '[&>button:hover]:!border-[var(--arena-terminal-border-hover)]',
+  '[&>button:hover]:!bg-[var(--arena-terminal-accent-soft)]',
+  '[&>button:hover]:!text-[var(--arena-terminal-text)]',
   '[&>div>button]:!h-10',
   '[&>div>button]:!w-full',
   '[&>div>button]:!justify-center',
   '[&>div>button]:!rounded-[5px]',
   '[&>div>button]:!border',
-  '[&>div>button]:!border-[#273035]',
-  '[&>div>button]:!bg-[#0f1a1f]',
+  '[&>div>button]:!border-[var(--arena-terminal-border)]',
+  '[&>div>button]:!bg-[var(--arena-terminal-panel)]',
   '[&>div>button]:!px-2',
-  '[&>div>button]:!text-[#d2dad7]',
+  '[&>div>button]:!text-[var(--arena-terminal-text-secondary)]',
   '[&>div>button]:!shadow-none',
   '[&>div>button]:transition-[background-color,border-color,color,opacity]',
   '[&>div>button]:duration-150',
-  '[&>div>button:hover]:!border-[#50d2c1]/45',
-  '[&>div>button:hover]:!bg-[#143c38]',
-  '[&>div>button:hover]:!text-[#f6fefd]',
+  '[&>div>button:hover]:!border-[var(--arena-terminal-border-hover)]',
+  '[&>div>button:hover]:!bg-[var(--arena-terminal-accent-soft)]',
+  '[&>div>button:hover]:!text-[var(--arena-terminal-text)]',
 ].join(' ');
 
 const primaryWalletControlClass = [
   terminalControlClass,
-  '[&>button]:!border-[#50d2c1]/55',
-  '[&>button]:!bg-[#50d2c1]',
+  '[&>button]:!border-[var(--arena-terminal-border-hover)]',
+  '[&>button]:!bg-[var(--arena-terminal-accent)]',
   '[&>button]:!font-semibold',
   '[&>button]:!text-[#06100e]',
-  '[&>button:hover]:!border-[#7ce6d9]',
-  '[&>button:hover]:!bg-[#7ce6d9]',
+  '[&>button:hover]:!border-[var(--arena-terminal-accent)]',
+  '[&>button:hover]:!bg-[var(--arena-terminal-accent)]',
   '[&>button:hover]:!text-[#06100e]',
-  '[&>div>button]:!border-[#50d2c1]/55',
-  '[&>div>button]:!bg-[#50d2c1]',
+  '[&>div>button]:!border-[var(--arena-terminal-border-hover)]',
+  '[&>div>button]:!bg-[var(--arena-terminal-accent)]',
   '[&>div>button]:!font-semibold',
   '[&>div>button]:!text-[#06100e]',
-  '[&>div>button:hover]:!border-[#7ce6d9]',
-  '[&>div>button:hover]:!bg-[#7ce6d9]',
+  '[&>div>button:hover]:!border-[var(--arena-terminal-accent)]',
+  '[&>div>button:hover]:!bg-[var(--arena-terminal-accent)]',
   '[&>div>button:hover]:!text-[#06100e]',
 ].join(' ');
 
 const collapsedControlClass = [
-  'flex h-11 w-11 items-center justify-center overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418] text-[#949e9c] transition-[background-color,border-color,color] duration-150 hover:border-[#50d2c1]/45 hover:bg-[#143c38] hover:text-[#f6fefd]',
+  'flex h-11 w-11 items-center justify-center overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-muted)] transition-[background-color,border-color,color] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)]',
   '[&>button]:!h-10',
   '[&>button]:!w-10',
   '[&>button]:!min-w-0',
@@ -239,7 +242,7 @@ const collapsedControlClass = [
   '[&>button]:!border-0',
   '[&>button]:!bg-transparent',
   '[&>button]:!p-0',
-  '[&>button]:!text-[#d2dad7]',
+  '[&>button]:!text-[var(--arena-terminal-text-secondary)]',
   '[&>div>button]:!h-10',
   '[&>div>button]:!w-10',
   '[&>div>button]:!min-w-0',
@@ -248,13 +251,13 @@ const collapsedControlClass = [
   '[&>div>button]:!border-0',
   '[&>div>button]:!bg-transparent',
   '[&>div>button]:!p-0',
-  '[&>div>button]:!text-[#d2dad7]',
+  '[&>div>button]:!text-[var(--arena-terminal-text-secondary)]',
   '[&_*]:!max-w-full',
 ].join(' ');
 
 function ExpandedAccountDock() {
   return (
-    <div className="rounded-[6px] border border-[#273035] bg-[#0b1418] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+    <div className="rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
       <div className={cn('min-w-0', primaryWalletControlClass)}>
         <WalletButton />
       </div>
@@ -319,7 +322,7 @@ function SidebarIconButton({ label, icon, onClick }: SidebarIconButtonProps) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[5px] text-[#949e9c] transition-[background-color,color,transform] duration-150 hover:bg-[#16242a] hover:text-[#f6fefd] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[5px] text-[var(--arena-terminal-text-muted)] transition-[background-color,color,transform] duration-150 hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
       aria-label={label}
       title={label}
     >

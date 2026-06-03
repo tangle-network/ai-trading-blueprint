@@ -9,6 +9,7 @@ import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
 import { useLatestAgentTrades, usePlatformVolumeSeries, type LatestAgentTrade } from '~/lib/hooks/useBotApi';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 import { LeaderboardTable } from '~/components/arena/LeaderboardTable';
+import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
@@ -25,21 +26,8 @@ import {
 } from '~/lib/tradeEvidence';
 
 export const meta: MetaFunction = () => [
-  { title: 'Agent Explorer — AI Trading Arena' },
+  { title: 'Agents | AI Trading Arena' },
 ];
-
-function ExplorerMetric({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="font-data text-sm font-bold leading-none text-[#f6fefd]">
-        {value}
-      </div>
-      <div className="mt-0.5 truncate font-data text-[10px] uppercase text-[#697371]">
-        {label}
-      </div>
-    </div>
-  );
-}
 
 function botMatchesSearch(bot: Bot, search: string): boolean {
   const query = search.trim().toLowerCase();
@@ -446,24 +434,23 @@ export default function LeaderboardPage() {
   }, [selectedBotId, visibleBots]);
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:overflow-hidden">
-      <section className="shrink-0 overflow-hidden rounded-[6px] border border-[#273035] bg-[#0f1a1f]">
-        <div className="flex min-h-12 flex-col gap-2 px-3 py-2 min-[1280px]:flex-row min-[1280px]:items-center">
-          <div className="flex min-w-0 items-center gap-3 min-[1280px]:w-40 min-[1280px]:shrink-0">
-            <span className="h-2 w-2 shrink-0 rounded-full bg-[#50d2c1] shadow-[0_0_16px_rgba(80,210,193,0.5)]" aria-hidden="true" />
-            <h1 className="truncate font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
-              Agents
-            </h1>
-            <span className="rounded-[4px] border border-[#273035] px-2 py-1 font-data text-xs text-[#949e9c]">
-              {formatNumber(visibleBots.length, { maximumFractionDigits: 0 })}
-            </span>
-          </div>
-          <div className="grid min-w-0 grid-cols-3 gap-3 min-[1280px]:w-[16.5rem] min-[1280px]:shrink-0">
-            <ExplorerMetric value={formatCompactUsd(oneDayVolume.series.summary.totalUsd)} label="24H Vol" />
-            <ExplorerMetric value={oneDayTrades > 0 ? formatNumber(oneDayTrades, { maximumFractionDigits: 0 }) : '—'} label="24H Fills" />
-            <ExplorerMetric value={formatNumber(activeAgents, { maximumFractionDigits: 0 })} label="Active" />
-          </div>
-          <div className="relative min-w-[12rem] flex-1 min-[1280px]:w-[15.5rem] min-[1280px]:flex-none">
+    <div className="arena-trace-terminal mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:overflow-hidden">
+      <ArenaPageHeader
+        title="Agents"
+        titleWidthClassName="min-[1180px]:w-[11rem]"
+        metrics={[
+          { value: formatCompactUsd(oneDayVolume.series.summary.totalUsd), label: '24H Vol' },
+          { value: oneDayTrades > 0 ? formatNumber(oneDayTrades, { maximumFractionDigits: 0 }) : '—', label: '24H Fills' },
+          { value: formatNumber(activeAgents, { maximumFractionDigits: 0 }), label: 'Active' },
+        ]}
+        badge={(
+          <span className="rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-2 py-1 font-data text-xs text-[var(--arena-terminal-text-muted)]">
+            {formatNumber(visibleBots.length, { maximumFractionDigits: 0 })}
+          </span>
+        )}
+      >
+        <div className="grid min-w-0 gap-2 min-[920px]:grid-cols-[minmax(12rem,1fr)_auto]">
+          <div className="relative min-w-[12rem]">
             <span className="i-ph:magnifying-glass pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-[#697371]" aria-hidden="true" />
             <input
               value={search}
@@ -475,24 +462,12 @@ export default function LeaderboardPage() {
               className="h-9 w-full rounded-[5px] border border-[#273035] bg-[#0b1418] pl-8 pr-2 font-display text-sm text-[#f6fefd] placeholder:text-[#697371] focus:border-[#50d2c1]/70 focus:ring-2 focus:ring-[#50d2c1]/20"
             />
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <Link
-              to="/"
-              className="inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border border-[#273035] bg-[#0b1418] px-3 text-sm font-display font-medium text-[#d2dad7] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-            >
-              <span className="i-ph:chart-line-up text-sm" aria-hidden="true" />
-              Terminal
-            </Link>
-            <Link
-              to="/provision"
-              className="inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border border-[#50d2c1]/30 bg-[#123f3a] px-3 text-sm font-display font-medium text-[#c8fffb] transition-colors hover:bg-[#18544e] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-            >
-              <span className="i-ph:plus-bold text-xs" aria-hidden="true" />
-              Deploy
-            </Link>
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            <ArenaHeaderLink to="/" icon="i-ph:chart-line-up">Terminal</ArenaHeaderLink>
+            <ArenaHeaderLink to="/provision" icon="i-ph:plus-bold" variant="primary">Deploy</ArenaHeaderLink>
           </div>
         </div>
-      </section>
+      </ArenaPageHeader>
 
       <OperatorSessionBanner />
 
