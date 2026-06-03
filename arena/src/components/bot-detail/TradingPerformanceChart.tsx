@@ -138,7 +138,7 @@ function timeRangeMs(first: Time | undefined, last: Time | undefined): number {
   return Math.max(0, lastTimestamp - firstTimestamp);
 }
 
-function shouldSuppressMarketEdgeTick(time: Time, first: Time | undefined, last: Time | undefined): boolean {
+function shouldSuppressChartEdgeTick(time: Time, first: Time | undefined, last: Time | undefined): boolean {
   const timestamp = timestampMsFromChartTime(time);
   const firstTimestamp = timestampMsFromChartTime(first);
   const lastTimestamp = timestampMsFromChartTime(last);
@@ -178,9 +178,13 @@ function formatCandleAxisTick(timestamp: number, rangeMs = 0, lastTimestampMs: n
   return compactCandleTimeFormatter.format(date);
 }
 
-function formatNavAxisTick(point: PerformanceChartPoint): string {
+function formatNavAxisTick(
+  point: PerformanceChartPoint,
+  rangeMs = 0,
+  lastTimestampMs: number | null = null,
+): string {
   if (point.kind === 'live_nav') return 'Live';
-  if (point.timestampMs != null) return formatCandleAxisTick(point.timestampMs);
+  if (point.timestampMs != null) return formatCandleAxisTick(point.timestampMs, rangeMs, lastTimestampMs);
   return point.label.length <= 8 ? point.label : '';
 }
 
@@ -856,6 +860,8 @@ export function TradingPerformanceChart({
   const marketLabelRef = useRef<string | null | undefined>(marketLabel);
   const firstMarketTimeRef = useRef<Time | undefined>(undefined);
   const lastMarketTimeRef = useRef<Time | undefined>(undefined);
+  const firstNavTimeRef = useRef<Time | undefined>(undefined);
+  const lastNavTimeRef = useRef<Time | undefined>(undefined);
   const tradeMarkersRef = useRef(tradeMarkers);
   const marketCandlesRef = useRef(marketCandles);
 
@@ -875,6 +881,8 @@ export function TradingPerformanceChart({
     markerReadoutsByIdRef.current = markerReadoutsById;
     firstMarketTimeRef.current = marketSeriesData[0]?.time;
     lastMarketTimeRef.current = marketSeriesData[marketSeriesData.length - 1]?.time;
+    firstNavTimeRef.current = preparedPoints[0]?.time;
+    lastNavTimeRef.current = preparedPoints[preparedPoints.length - 1]?.time;
   }, [activeMode, marketCandles, marketLabel, markerReadoutsById, marketSeriesData, preparedPoints, tradeMarkers]);
 
   useEffect(() => {
@@ -916,14 +924,22 @@ export function TradingPerformanceChart({
           timeVisible: true,
           secondsVisible: false,
           tickMarkFormatter: (time: Time) => {
+            const key = timeKey(time);
+            const candle = candleByTimeRef.current.get(key);
+            const navPoint = pointByTimeRef.current.get(key);
             if (
               activeModeRef.current === 'market'
-              && shouldSuppressMarketEdgeTick(time, firstMarketTimeRef.current, lastMarketTimeRef.current)
+              && shouldSuppressChartEdgeTick(time, firstMarketTimeRef.current, lastMarketTimeRef.current)
             ) {
               return '';
             }
-            const key = timeKey(time);
-            const candle = candleByTimeRef.current.get(key);
+            if (
+              activeModeRef.current === 'nav'
+              && navPoint?.kind !== 'live_nav'
+              && shouldSuppressChartEdgeTick(time, firstNavTimeRef.current, lastNavTimeRef.current)
+            ) {
+              return '';
+            }
             if (activeModeRef.current === 'market' && candle) {
               return formatCandleAxisTick(
                 candle.timestamp,
@@ -931,8 +947,13 @@ export function TradingPerformanceChart({
                 timestampMsFromChartTime(lastMarketTimeRef.current),
               );
             }
-            const navPoint = pointByTimeRef.current.get(key);
-            if (navPoint) return formatNavAxisTick(navPoint);
+            if (navPoint) {
+              return formatNavAxisTick(
+                navPoint,
+                timeRangeMs(firstNavTimeRef.current, lastNavTimeRef.current),
+                timestampMsFromChartTime(lastNavTimeRef.current),
+              );
+            }
             return candle ? formatCandleAxisTick(candle.timestamp) : '';
           },
         },

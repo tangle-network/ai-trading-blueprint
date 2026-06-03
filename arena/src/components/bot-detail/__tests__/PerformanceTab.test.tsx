@@ -876,6 +876,69 @@ describe('PerformanceTab', () => {
     expect(tailLabel).not.toContain('Apr 30');
   });
 
+  it('uses compact dates on long-range NAV axis ticks', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-20T18:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 0,
+      },
+      {
+        timestamp: '2026-04-20T18:20:00.000Z',
+        account_value_usd: 10010,
+        realized_pnl: 10,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 0,
+      },
+      {
+        timestamp: '2026-04-24T18:00:00.000Z',
+        account_value_usd: 10042,
+        realized_pnl: 42,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+      {
+        timestamp: '2026-04-30T12:00:00.000Z',
+        account_value_usd: 10080,
+        realized_pnl: 80,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+      {
+        timestamp: '2026-04-30T18:00:00.000Z',
+        account_value_usd: 10090,
+        realized_pnl: 90,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+
+    render(<PerformanceTab bot={makeBot()} isLive />);
+
+    await waitFor(() => expect(lightweightChartMock.createChart).toHaveBeenCalled());
+    const createChartCalls = lightweightChartMock.createChart.mock.calls as unknown as Array<[
+      unknown,
+      { timeScale?: { tickMarkFormatter?: (time: number) => string } },
+    ]>;
+    const chartOptions = createChartCalls[0]?.[1];
+    const formatter = chartOptions.timeScale?.tickMarkFormatter;
+    if (!formatter) throw new Error('Expected NAV chart tick formatter');
+    expect(formatter(Math.floor(Date.parse('2026-04-20T18:20:00.000Z') / 1000))).toBe('');
+    const label = formatter(Math.floor(Date.parse('2026-04-24T18:00:00.000Z') / 1000));
+    expect(label).toBe('Apr 24');
+    expect(label).not.toBe('12:00 PM');
+    const tailLabel = formatter(Math.floor(Date.parse('2026-04-30T12:00:00.000Z') / 1000));
+    expect(tailLabel).toMatch(/\b(AM|PM)\b/);
+    expect(tailLabel).not.toContain('Apr 30');
+  });
+
   it('does not pin off-window fills to the first or last market candle', async () => {
     mockMetrics = [
       {
