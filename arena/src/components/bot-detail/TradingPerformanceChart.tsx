@@ -1486,7 +1486,19 @@ export function TradingPerformanceChart({
                 }}
                 aria-hidden="true"
               />
-              {item.side === 'buy' ? (
+              {item.count > 1 ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute left-1/2 top-1/2 min-w-9 -translate-x-1/2 -translate-y-1/2 rounded-sm px-1.5 py-0.5 text-center font-data text-[10px] font-semibold tabular-nums"
+                  style={{
+                    backgroundColor: item.color,
+                    color: chartTheme.chartSurface,
+                    boxShadow: `0 0 0 1px ${chartTheme.hoverBorderColor}, 0 0 12px ${item.color}88`,
+                  }}
+                >
+                  x{formatNumber(item.count, { maximumFractionDigits: 0 })}
+                </span>
+              ) : item.side === 'buy' ? (
                 <span
                   aria-hidden="true"
                   className="absolute left-1/2 top-1/2 h-0 w-0 -translate-x-1/2 -translate-y-[62%]"
@@ -1517,20 +1529,6 @@ export function TradingPerformanceChart({
                     boxShadow: `0 0 0 1px ${chartTheme.hoverBorderColor}, 0 0 10px ${item.color}77`,
                   }}
                 />
-              )}
-              {item.count > 1 && (
-                <span
-                  aria-hidden="true"
-                  className="absolute left-1/2 top-1/2 min-w-8 -translate-x-1/2 translate-y-[54%] rounded-sm border px-1 py-0.5 text-center font-data text-[10px] font-semibold tabular-nums"
-                  style={{
-                    background: chartTheme.tooltipBg,
-                    borderColor: chartTheme.tooltipBorder,
-                    color: chartTheme.tooltipBodyColor,
-                    boxShadow: chartTheme.tooltipShadow,
-                  }}
-                >
-                  x{formatNumber(item.count, { maximumFractionDigits: 0 })}
-                </span>
               )}
             </button>
           ))}
