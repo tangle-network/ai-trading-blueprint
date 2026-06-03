@@ -130,6 +130,31 @@
   }
 }
 
+.arena-trade-pill-buy,
+.arena-trade-pill-sell,
+.arena-trade-pill-neutral {
+  border: 1px solid var(--arena-terminal-border);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
+}
+
+.arena-trade-pill-buy {
+  border-color: color-mix(in srgb, var(--arena-terminal-accent) 44%, var(--arena-terminal-border));
+  background: color-mix(in srgb, var(--arena-terminal-accent) 14%, var(--arena-terminal-panel));
+  color: var(--arena-terminal-accent);
+}
+
+.arena-trade-pill-sell {
+  border-color: color-mix(in srgb, var(--arena-terminal-danger) 42%, var(--arena-terminal-border));
+  background: color-mix(in srgb, var(--arena-terminal-danger) 12%, var(--arena-terminal-panel));
+  color: var(--arena-terminal-danger);
+}
+
+.arena-trade-pill-neutral {
+  border-color: color-mix(in srgb, var(--arena-terminal-warning) 38%, var(--arena-terminal-border));
+  background: color-mix(in srgb, var(--arena-terminal-warning) 10%, var(--arena-terminal-panel));
+  color: var(--arena-terminal-warning);
+}
+
 /* ═══ Theme-aware borders & hovers ═══ */
 .border-themed {
   border-color: var(--glass-border);

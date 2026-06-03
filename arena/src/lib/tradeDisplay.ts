@@ -35,12 +35,12 @@ export function getTradeActionPillClass(action: TradeAction): string {
 
 export function getTerminalTradeActionPillClass(action: TradeAction): string {
   if (isBuySideTradeAction(action)) {
-    return 'border border-[#50d2c1]/35 bg-[#123f3a] text-white';
+    return 'arena-trade-pill-buy';
   }
   if (isSellSideTradeAction(action)) {
-    return 'border border-[#ff4d6d]/35 bg-[#3a1720] text-white';
+    return 'arena-trade-pill-sell';
   }
-  return 'border border-[#8f7aff]/35 bg-[#241a3a] text-white';
+  return 'arena-trade-pill-neutral';
 }
 
 export function getTradeActionBadgeVariant(action: TradeAction): 'success' | 'destructive' | 'accent' {

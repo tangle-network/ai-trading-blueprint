@@ -43,9 +43,9 @@ describe('trade display helpers', () => {
     expect(getTradeActionBadgeVariant('close_short')).toBe('success');
     expect(getTradeActionToneClass('open_long')).toBe('text-[#50d2c1]');
     expect(getTradeActionToneClass('close_short')).toBe('text-[#50d2c1]');
-    expect(getTerminalTradeActionPillClass('open_long')).toContain('bg-[#123f3a]');
-    expect(getTerminalTradeActionPillClass('open_short')).toContain('bg-[#3a1720]');
-    expect(getTerminalTradeActionPillClass('open_long')).toContain('text-white');
+    expect(getTerminalTradeActionPillClass('open_long')).toBe('arena-trade-pill-buy');
+    expect(getTerminalTradeActionPillClass('open_short')).toBe('arena-trade-pill-sell');
+    expect(getTerminalTradeActionPillClass('swap')).toBe('arena-trade-pill-neutral');
   });
 
   it('formats Hyperliquid markets from metadata', () => {

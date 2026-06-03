@@ -82,6 +82,45 @@ function AgentRunGroup({
   const hasVisibleParts = visibleParts.length > 0;
   const failureState = useMemo(() => getRunFailureState(run), [run]);
   const isTerminal = variant === 'terminal';
+  const headerClassName = cn(
+    'w-full flex items-center gap-2 px-3 py-2 text-left transition-colors',
+    isTerminal
+      ? 'rounded-[5px] border border-[#273035] bg-[#0f1a1f]'
+      : `rounded-lg ${branding.bgClass}`,
+    hasCollapsible && (isTerminal ? 'hover:bg-[#16242a] cursor-pointer' : 'hover:bg-arena-elements-item-backgroundHover/80 cursor-pointer'),
+    !hasCollapsible && 'cursor-default',
+    !isTerminal && collapsed && branding.borderClass && `border ${branding.borderClass}`,
+    !isTerminal && !collapsed && 'border border-transparent',
+  );
+  const headerContent = (
+    <>
+      <div className={cn('w-4 h-4 shrink-0', branding.iconClass, branding.accentClass)} />
+      <span className={cn('text-sm font-medium shrink-0', branding.textClass)}>
+        {branding.label}
+      </span>
+      <div className="flex items-center gap-3 flex-1 min-w-0">
+        {failureState && (
+          <span className="rounded-full bg-crimson-500/10 px-2 py-0.5 text-[11px] font-medium text-crimson-600 dark:text-crimson-300">
+            Failed
+          </span>
+        )}
+        {run.stats.toolCount > 0 && (
+          <span className="text-sm text-arena-elements-textTertiary">
+            {run.stats.toolCount} tool{run.stats.toolCount !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+      {hasCollapsible && (
+        <div
+          className={cn(
+            'w-3.5 h-3.5 text-arena-elements-textTertiary transition-transform shrink-0',
+            !collapsed ? 'i-ph:caret-down' : 'i-ph:caret-right',
+          )}
+          aria-hidden="true"
+        />
+      )}
+    </>
+  );
 
   if (!hasVisibleParts && !run.isStreaming && !failureState) {
     return null;
@@ -89,48 +128,21 @@ function AgentRunGroup({
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={hasCollapsible ? onToggle : undefined}
-        aria-expanded={hasCollapsible ? !collapsed : undefined}
-        aria-label={hasCollapsible ? `${collapsed ? 'Expand' : 'Collapse'} ${branding.label} details` : undefined}
-        className={cn(
-          'w-full flex items-center gap-2 px-3 py-2 text-left transition-colors',
-          isTerminal
-            ? 'rounded-[5px] border border-[#273035] bg-[#0f1a1f]'
-            : `rounded-lg ${branding.bgClass}`,
-          hasCollapsible && (isTerminal ? 'hover:bg-[#16242a] cursor-pointer' : 'hover:bg-arena-elements-item-backgroundHover/80 cursor-pointer'),
-          !hasCollapsible && 'cursor-default',
-          !isTerminal && collapsed && branding.borderClass && `border ${branding.borderClass}`,
-          !isTerminal && !collapsed && 'border border-transparent',
-        )}
-      >
-        <div className={cn('w-4 h-4 shrink-0', branding.iconClass, branding.accentClass)} />
-        <span className={cn('text-sm font-medium shrink-0', branding.textClass)}>
-          {branding.label}
-        </span>
-        <div className="flex items-center gap-3 flex-1 min-w-0">
-          {failureState && (
-            <span className="rounded-full bg-crimson-500/10 px-2 py-0.5 text-[11px] font-medium text-crimson-600 dark:text-crimson-300">
-              Failed
-            </span>
-          )}
-          {run.stats.toolCount > 0 && (
-            <span className="text-sm text-arena-elements-textTertiary">
-              {run.stats.toolCount} tool{run.stats.toolCount !== 1 ? 's' : ''}
-            </span>
-          )}
+      {hasCollapsible ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={!collapsed}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${branding.label} details`}
+          className={headerClassName}
+        >
+          {headerContent}
+        </button>
+      ) : (
+        <div className={headerClassName}>
+          {headerContent}
         </div>
-        {hasCollapsible && (
-          <div
-            className={cn(
-              'w-3.5 h-3.5 text-arena-elements-textTertiary transition-transform shrink-0',
-              !collapsed ? 'i-ph:caret-down' : 'i-ph:caret-right',
-            )}
-            aria-hidden="true"
-          />
-        )}
-      </button>
+      )}
 
       {visibleParts.length > 0 && (
         <div
