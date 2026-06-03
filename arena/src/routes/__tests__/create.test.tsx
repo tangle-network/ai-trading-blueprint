@@ -38,7 +38,7 @@ describe('create agent route', () => {
       'I want an agent that trades ETH perps on Hyperliquid, using breakout retests with strict max leverage, liquidation buffer, and drawdown limits.',
     )
     expect(screen.getByRole('button', { name: /hyperliquid perp/i })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getAllByText('Hyperliquid Perps').length).toBeGreaterThanOrEqual(3)
+    expect(screen.getAllByText('Hyperliquid Perps').length).toBeGreaterThanOrEqual(2)
     expect(screen.getAllByText(/Leverage cap/i).length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText(/liquidation buffer/i).length).toBeGreaterThanOrEqual(1)
   })
@@ -86,7 +86,9 @@ describe('create agent route', () => {
     const [, request] = vi.mocked(fetch).mock.calls[0]
     const body = JSON.parse(String((request as RequestInit).body))
     expect(body.strategy_type).toBe('prediction')
+    expect(body.name).toBe('Polymarket Event Scout')
     expect(body.prompt).toContain('Polymarket')
+    expect(body.prompt).toContain('Launch draft:')
   })
 
   it('supports launching a Hyperliquid perp tactic from the strategy book', async () => {
@@ -110,7 +112,8 @@ describe('create agent route', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
     const [, request] = vi.mocked(fetch).mock.calls[0]
     const body = JSON.parse(String((request as RequestInit).body))
-    expect(body.strategy_type).toBe('perp')
+    expect(body.strategy_type).toBe('hyperliquid_perp')
+    expect(body.name).toBe('ETH Perp Breakout')
     expect(body.prompt).toContain('Hyperliquid')
   })
 })

@@ -11,6 +11,17 @@ function isFabricatedStrategyAgentName(name: string, strategyType?: string | nul
   return name.toLowerCase() === `${normalizedStrategyType} agent`.toLowerCase();
 }
 
+function isPromptLikeAgentName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (normalized.length < 40) return false;
+  return /^(i want|i need|build|create|make|deploy|launch)\b/.test(normalized)
+    && /\b(agent|trade|trades|trading|yield|perp|prediction)\b/.test(normalized);
+}
+
+function isUnusableAgentName(name: string, strategyType?: string | null): boolean {
+  return isFabricatedStrategyAgentName(name, strategyType) || isPromptLikeAgentName(name);
+}
+
 export function fallbackBotDisplayName(strategyType?: string | null): string {
   const normalizedStrategyType = normalizeName(strategyType);
   if (!normalizedStrategyType) return 'Agent';
@@ -27,10 +38,10 @@ export function resolveBotDisplayName({
   strategyType?: string | null;
 }): string {
   const preferredName = normalizeName(primaryName);
-  if (preferredName) return preferredName;
+  if (preferredName && !isUnusableAgentName(preferredName, strategyType)) return preferredName;
 
   const secondaryName = normalizeName(fallbackName);
-  if (secondaryName && !isFabricatedStrategyAgentName(secondaryName, strategyType)) {
+  if (secondaryName && !isUnusableAgentName(secondaryName, strategyType)) {
     return secondaryName;
   }
 

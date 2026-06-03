@@ -21,6 +21,21 @@ describe('botNames', () => {
     })).toBe('Base Sepolia Rollout Plan');
   });
 
+  it('drops raw prompt-style backend names', () => {
+    expect(resolveBotDisplayName({
+      primaryName: 'I want an agent that trades ETH perps on Hyperliquid with strict drawdown limits',
+      strategyType: 'hyperliquid_perp',
+    })).toBe('Hyperliquid Perps');
+  });
+
+  it('uses a clean fallback when the primary name is a prompt', () => {
+    expect(resolveBotDisplayName({
+      primaryName: 'Build me an agent that maximizes yield across Aave and Morpho lending protocols',
+      fallbackName: 'USDC Yield Router',
+      strategyType: 'yield',
+    })).toBe('USDC Yield Router');
+  });
+
   it('falls back to the raw strategy type when there is no mapped label', () => {
     expect(fallbackBotDisplayName('custom-strategy')).toBe('custom-strategy');
   });

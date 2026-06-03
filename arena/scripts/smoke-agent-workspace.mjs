@@ -69,15 +69,15 @@ const LIVE_SECTION_EXPECTATIONS = {
 const FIXTURE_HOME_EXPECTATIONS = ['Tangle', 'Volume', 'Fills', 'ETH Macro Scalper'];
 const FIXTURE_LEADERBOARD_EXPECTATIONS = ['Agents', '24H Vol', 'Active', 'ETH Macro Scalper', 'HL Perp'];
 const FIXTURE_ACTIVITY_EXPECTATIONS = ['Activity', '24H Vol', 'Fills', 'ETH Macro Scalper', 'ETH-PERP'];
-const FIXTURE_CREATE_EXPECTATIONS = ['Create', 'Mandate', 'Prediction Markets', 'Deploy Agent'];
+const FIXTURE_CREATE_EXPECTATIONS = ['Create', 'Mandate', 'Launch Ticket', 'Prediction Markets', 'Review in Deploy'];
 const FIXTURE_PROVISION_EXPECTATIONS = ['Deploy', 'Launch Check', 'Owner Wallet', 'Connect Wallet'];
 const FIXTURE_PROVISION_CONNECTED_EXPECTATIONS = [
   'Deploy',
   'Base Sepolia',
-  'Command',
   'Strategy',
-  'Assets',
-  'Launch Summary',
+  'Agent Identity',
+  'Provision Review',
+  'Hyperliquid Guardrails',
   'Review Provision',
 ];
 

@@ -300,12 +300,14 @@ async function createBotThroughProductApi(operatorUrl: string, token: string, pr
     ? 'yield'
     : promptLower.includes('polymarket') || promptLower.includes('prediction') || promptLower.includes('politics')
       ? 'prediction'
-      : promptLower.includes('perp') || promptLower.includes('leverage') || promptLower.includes('futures')
-        ? 'perp'
-        : 'dex'
+      : promptLower.includes('hyperliquid') || promptLower.includes('hyperevm')
+        ? 'hyperliquid_perp'
+        : promptLower.includes('perp') || promptLower.includes('leverage') || promptLower.includes('futures')
+          ? 'perp'
+          : 'dex'
   await postJsonWithToken(`${operatorUrl}/api/bots`, token, {
     prompt,
-    name: prompt.slice(0, 50),
+    name: strategyType === 'hyperliquid_perp' ? 'Hyperliquid Perp Test' : prompt.slice(0, 50),
     strategy_type: strategyType,
   })
 }

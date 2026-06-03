@@ -43,7 +43,7 @@ export function ConnectWalletPanel({
   ];
 
   return (
-    <div className="arena-trace-terminal flex min-h-full bg-[#081013] px-3 py-3 text-[#f6fefd] sm:px-4 lg:h-full lg:px-6">
+    <div className="arena-trace-terminal flex min-h-full bg-[#081013] text-[#f6fefd] lg:h-full">
       <div className="mx-auto flex w-full max-w-[1260px] flex-1 flex-col gap-3 lg:h-full lg:min-h-0">
         <section className="grid border border-[#273035] bg-[#0b1418] lg:h-full lg:min-h-[560px] lg:grid-rows-[auto_minmax(0,1fr)] lg:overflow-hidden">
           <div className="grid gap-4 border-b border-[#273035] px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">

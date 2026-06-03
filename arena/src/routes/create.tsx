@@ -1,8 +1,9 @@
 import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from 'react'
 import type { MetaFunction } from 'react-router'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { Button } from '@tangle-network/blueprint-ui/components'
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader'
+import { saveCreateStrategyDraft, type CreateStrategyDraft } from '~/lib/createStrategyDraft'
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth'
 import {
   ALL_TRADING_OPERATOR_API_URLS,
@@ -22,6 +23,7 @@ export const meta: MetaFunction = () => [
 ]
 
 type StrategyType = 'dex' | 'yield' | 'prediction' | 'perp'
+type DraftField = 'name' | 'market' | 'venue' | 'sizing' | 'drawdown' | 'mode'
 
 interface CreateWorkspaceLayout {
   railWidth: number
@@ -149,6 +151,151 @@ function inferStrategyType(strategyPrompt: string): StrategyType {
   return 'dex'
 }
 
+function inferProvisionStrategyType(strategyPrompt: string, strategyType: StrategyType): string {
+  const promptLower = strategyPrompt.toLowerCase()
+  if (
+    strategyType === 'perp' &&
+    (promptLower.includes('hyperliquid') || promptLower.includes('hype') || promptLower.includes('hyperevm'))
+  ) {
+    return 'hyperliquid_perp'
+  }
+  return strategyType
+}
+
+function inferMarket(strategyPrompt: string, strategyType: StrategyType): string {
+  const promptUpper = strategyPrompt.toUpperCase()
+  const assetMatch = promptUpper.match(/\b(BTC|ETH|SOL|HYPE|BNB|XRP|DOGE|AVAX|LINK)\b/)
+  const asset = assetMatch?.[1] ?? (strategyType === 'yield' ? 'USDC' : 'ETH')
+
+  if (strategyType === 'perp') return `${asset}-PERP`
+  if (strategyType === 'yield') return `${asset} lending`
+  if (strategyType === 'prediction') {
+    if (promptUpper.includes('CRYPTO')) return 'Crypto events'
+    if (promptUpper.includes('POLITIC')) return 'Political events'
+    return 'Event markets'
+  }
+  return promptUpper.includes('/') ? strategyPrompt.match(/\b[A-Z0-9]{2,8}\/[A-Z0-9]{2,8}\b/i)?.[0]?.toUpperCase() ?? 'ETH/USDC' : `${asset}/USDC`
+}
+
+function inferVenue(strategyPrompt: string, strategyType: StrategyType, fallbackVenue: string): string {
+  const promptLower = strategyPrompt.toLowerCase()
+  if (promptLower.includes('hyperliquid')) return 'Hyperliquid'
+  if (promptLower.includes('uniswap')) return 'Uniswap V3 / Base'
+  if (promptLower.includes('aerodrome')) return 'Aerodrome / Base'
+  if (promptLower.includes('polymarket')) return 'Polymarket'
+  if (promptLower.includes('morpho') && promptLower.includes('aave')) return 'Aave / Morpho'
+  if (promptLower.includes('morpho')) return 'Morpho'
+  if (promptLower.includes('aave')) return 'Aave'
+  if (strategyType === 'perp') return 'Hyperliquid'
+  return fallbackVenue
+}
+
+function inferSizing(strategyPrompt: string, strategyType: StrategyType): string {
+  const promptLower = strategyPrompt.toLowerCase()
+  const leverageMatch = promptLower.match(/(\d+(?:\.\d+)?)\s*x/)
+  if (leverageMatch && strategyType === 'perp') return `${leverageMatch[1]}x max leverage`
+
+  const percentMatch = promptLower.match(/(\d+(?:\.\d+)?)\s*%[^.]{0,32}(?:position|sizing|size|allocation|capital|collateral)/)
+  if (percentMatch) return `${percentMatch[1]}% max position`
+
+  if (strategyType === 'perp') return '3x max leverage'
+  if (strategyType === 'prediction') return '5% max market exposure'
+  if (strategyType === 'yield') return '25% max protocol allocation'
+  return '10% max position'
+}
+
+function inferDrawdown(strategyPrompt: string, strategyType: StrategyType): string {
+  const promptLower = strategyPrompt.toLowerCase()
+  const drawdownMatch = promptLower.match(/(\d+(?:\.\d+)?)\s*%[^.]{0,36}(?:drawdown|loss|risk)/)
+  if (drawdownMatch) return `${drawdownMatch[1]}% max drawdown`
+
+  if (strategyType === 'perp') return '5% max drawdown'
+  if (strategyType === 'prediction') return '3% max daily loss'
+  if (strategyType === 'yield') return '2% rebalance loss guard'
+  return '4% max drawdown'
+}
+
+function draftNameFor(strategyType: StrategyType, market: string): string {
+  const marketRoot = market
+    .replace(/-PERP/i, '')
+    .replace(/\/USDC/i, '')
+    .replace(/\s+lending/i, '')
+    .trim()
+
+  if (strategyType === 'perp') return `${marketRoot || 'ETH'} Perp Breakout`
+  if (strategyType === 'prediction') return 'Polymarket Event Scout'
+  if (strategyType === 'yield') return `${marketRoot || 'USDC'} Yield Router`
+  return `${marketRoot || 'ETH'} Spot Momentum`
+}
+
+function buildStrategyDraft({
+  prompt,
+  strategyType,
+  profile,
+  overrides,
+}: {
+  prompt: string
+  strategyType: StrategyType
+  profile: typeof STRATEGY_PROFILES[StrategyType]
+  overrides: Partial<Record<DraftField, string>>
+}): CreateStrategyDraft {
+  const market = inferMarket(prompt, strategyType)
+  const inferred = {
+    name: draftNameFor(strategyType, market),
+    market,
+    venue: inferVenue(prompt, strategyType, profile.venue),
+    sizing: inferSizing(prompt, strategyType),
+    drawdown: inferDrawdown(prompt, strategyType),
+    mode: 'Paper start',
+  }
+  const merged = {
+    ...inferred,
+    ...Object.fromEntries(
+      Object.entries(overrides).filter(([, value]) => typeof value === 'string' && value.trim()),
+    ),
+  } as Record<DraftField, string>
+
+  return {
+    name: merged.name,
+    strategyType,
+    provisionStrategyType: inferProvisionStrategyType(prompt, strategyType),
+    market: merged.market,
+    venue: merged.venue,
+    sizing: merged.sizing,
+    drawdown: merged.drawdown,
+    mode: merged.mode,
+    prompt,
+    updatedAt: Date.now(),
+  }
+}
+
+function buildCreatePrompt(draft: CreateStrategyDraft): string {
+  return [
+    draft.prompt.trim(),
+    '',
+    'Launch draft:',
+    `Agent name: ${draft.name}`,
+    `Strategy pack: ${draft.provisionStrategyType}`,
+    `Market: ${draft.market}`,
+    `Venue: ${draft.venue}`,
+    `Sizing: ${draft.sizing}`,
+    `Risk: ${draft.drawdown}`,
+    `Mode: ${draft.mode}`,
+  ].filter(Boolean).join('\n')
+}
+
+function clampDraftValue(value: string, maxLength = 80): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, maxLength)
+}
+
+function compactCreateHeaderVenue(venue: string): string {
+  if (/hyperliquid/i.test(venue)) return 'Hyper'
+  if (/uniswap/i.test(venue)) return 'UniV3'
+  if (/polymarket/i.test(venue)) return 'Poly'
+  if (/aave/i.test(venue) && /morpho/i.test(venue)) return 'Aave/Morpho'
+  return venue.split('/')[0]?.trim() || venue
+}
+
 function formatOperatorLabel(operatorUrl: string | undefined) {
   if (!operatorUrl) return 'No operator'
   if (operatorUrl.startsWith('/')) return operatorUrl
@@ -168,6 +315,7 @@ interface CreateBotResponse {
 
 export default function CreateAgent() {
   const [prompt, setPrompt] = useState(DEFAULT_STRATEGY_HINT.prompt)
+  const [draftOverrides, setDraftOverrides] = useState<Partial<Record<DraftField, string>>>({})
   const [isCreating, setIsCreating] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
@@ -187,6 +335,12 @@ export default function CreateAgent() {
   const operatorLabel = formatOperatorLabel(ALL_TRADING_OPERATOR_API_URLS[0])
   const exactHint = STRATEGY_HINTS.find((hint) => prompt.trim() === hint.prompt)
   const selectedHint = exactHint ?? STRATEGY_HINTS.find((hint) => hint.strategyType === detectedStrategyType) ?? STRATEGY_HINTS[0]
+  const draft = useMemo(() => buildStrategyDraft({
+    prompt,
+    strategyType: detectedStrategyType,
+    profile: detectedProfile,
+    overrides: draftOverrides,
+  }), [detectedProfile, detectedStrategyType, draftOverrides, prompt])
   const compilerRows = useMemo(() => [
     {
       icon: 'i-ph:clock-countdown',
@@ -196,39 +350,48 @@ export default function CreateAgent() {
     {
       icon: 'i-ph:shield-check',
       label: 'Risk',
-      value: detectedProfile.envelope,
+      value: `${draft.sizing}, ${draft.drawdown}`,
     },
     {
       icon: 'i-ph:map-trifold',
       label: 'Venue',
-      value: detectedProfile.venue,
+      value: `${draft.venue} / ${draft.market}`,
     },
-  ], [detectedProfile.envelope, detectedProfile.venue, launchSteps])
-  const compilerSpecRows = useMemo(() => [
-    ['Strategy', selectedHint.label],
-    ['Class', detectedProfile.label],
-    ['Venue', detectedProfile.venue],
-    ['Signal', launchSteps[0] ?? 'Signal replay'],
-    ['Mode', 'Paper Start'],
-    ['Opens', '/performance'],
-  ], [detectedProfile.label, detectedProfile.venue, launchSteps, selectedHint.label])
+  ], [draft.drawdown, draft.market, draft.sizing, draft.venue, launchSteps])
   const envelopeChecks = useMemo(
-    () => detectedProfile.envelope.split(',').map((item) => item.trim()).filter(Boolean),
-    [detectedProfile.envelope],
+    () => [
+      draft.sizing,
+      draft.drawdown,
+      ...detectedProfile.envelope.split(','),
+    ].map((item) => item.trim()).filter(Boolean),
+    [detectedProfile.envelope, draft.drawdown, draft.sizing],
   )
   const launchPathRows = useMemo(() => [
     ['01', 'Parse Mandate', selectedHint.label],
-    ['02', 'Select Venue', detectedProfile.venue],
-    ['03', 'Apply Risk', detectedProfile.envelope],
+    ['02', 'Edit Ticket', draft.name],
+    ['03', 'Apply Risk', draft.drawdown],
     ['04', 'Open Workspace', '/performance'],
-  ], [detectedProfile.envelope, detectedProfile.venue, selectedHint.label])
+  ], [draft.drawdown, draft.name, selectedHint.label])
   const readinessRows = useMemo(() => [
     ['Operator', operatorLabel],
-    ['Network', 'Base Sepolia'],
-    ['Mode', 'Paper Start'],
-    ['Risk', 'Gated'],
-  ], [operatorLabel])
-  const routeStatus = error ? error : status || `${detectedProfile.venue} / ${detectedProfile.envelope}`
+    ['Pack', draft.provisionStrategyType],
+    ['Mode', draft.mode],
+    ['Risk', draft.drawdown],
+  ], [draft.drawdown, draft.mode, draft.provisionStrategyType, operatorLabel])
+  const routeStatus = error ? error : status || `${draft.name} / ${draft.venue} / ${draft.drawdown}`
+  const setDraftField = useCallback((field: DraftField, value: string) => {
+    setDraftOverrides((current) => ({
+      ...current,
+      [field]: value,
+    }))
+  }, [])
+  const persistDraft = useCallback(() => {
+    const promptWithDraft = buildCreatePrompt(draft)
+    saveCreateStrategyDraft({
+      ...draft,
+      prompt: promptWithDraft,
+    })
+  }, [draft])
   const workspaceStyle = {
     '--create-rail-width': `${layout.railWidth}px`,
   } as CSSProperties
@@ -266,13 +429,21 @@ export default function CreateAgent() {
 
   const handleCreate = useCallback(async () => {
     if (!prompt.trim() || isCreating) return
+    const cleanDraft: CreateStrategyDraft = {
+      ...draft,
+      name: clampDraftValue(draft.name, 64) || draftNameFor(detectedStrategyType, draft.market),
+      market: clampDraftValue(draft.market),
+      venue: clampDraftValue(draft.venue),
+      sizing: clampDraftValue(draft.sizing),
+      drawdown: clampDraftValue(draft.drawdown),
+      mode: clampDraftValue(draft.mode, 32) || 'Paper start',
+    }
+    const createPrompt = buildCreatePrompt(cleanDraft)
     setIsCreating(true)
     setStatus('Parsing mandate…')
     setError('')
 
     try {
-      const strategyType = inferStrategyType(prompt)
-
       setStatus('Creating paper agent…')
 
       if (!HAS_TRADING_OPERATOR_API || !ALL_TRADING_OPERATOR_API_URLS[0]) {
@@ -291,9 +462,9 @@ export default function CreateAgent() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          prompt,
-          name: prompt.slice(0, 50),
-          strategy_type: strategyType,
+          prompt: createPrompt,
+          name: cleanDraft.name,
+          strategy_type: cleanDraft.provisionStrategyType,
         }),
       })
 
@@ -309,9 +480,9 @@ export default function CreateAgent() {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            prompt,
-            name: prompt.slice(0, 50),
-            strategy_type: strategyType,
+            prompt: createPrompt,
+            name: cleanDraft.name,
+            strategy_type: cleanDraft.provisionStrategyType,
           }),
         })
       }
@@ -332,6 +503,10 @@ export default function CreateAgent() {
       }
       const activationError = typeof data.activation_error === 'string' ? data.activation_error : ''
       setStatus(activationError ? 'Agent created. Activation needs attention…' : 'Agent created. Opening workspace…')
+      saveCreateStrategyDraft({
+        ...cleanDraft,
+        prompt: createPrompt,
+      })
 
       setTimeout(() => {
         navigate(`/arena/bot/${encodeURIComponent(botId)}/performance`)
@@ -342,7 +517,7 @@ export default function CreateAgent() {
       setError(message)
       setIsCreating(false)
     }
-  }, [prompt, isCreating, getToken, navigate])
+  }, [detectedStrategyType, draft, prompt, isCreating, getToken, navigate])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -352,14 +527,14 @@ export default function CreateAgent() {
   }, [handleCreate])
 
   return (
-    <div className="arena-trace-terminal flex min-h-full overflow-y-auto bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)] lg:h-full lg:min-h-0 lg:overflow-hidden">
-      <section className="mx-auto flex w-full max-w-[1560px] flex-1 flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:min-h-0">
+    <div className="arena-trace-terminal flex min-h-full w-full overflow-y-auto bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)] lg:h-full lg:min-h-0 lg:overflow-hidden">
+      <section className="flex w-full flex-1 flex-col gap-2 lg:h-full lg:min-h-0">
         <ArenaPageHeader
           title="Create"
           titleWidthClassName="min-[1180px]:w-[11rem]"
           metrics={[
-            { label: 'Draft', value: detectedProfile.label },
-            { label: 'Venue', value: detectedProfile.venue },
+            { label: 'Draft', value: selectedHint.profile },
+            { label: 'Venue', value: compactCreateHeaderVenue(draft.venue), title: draft.venue },
             { label: 'Route', value: 'Paper' },
           ]}
           controls={(
@@ -431,7 +606,7 @@ export default function CreateAgent() {
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
                   <div className="min-w-0">
                     <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
-                      Compiled Brief
+                      Launch Ticket
                     </h2>
                     <p className="truncate font-mono text-[11px] text-[var(--arena-terminal-text-muted)]">
                       {selectedHint.shorthand}
@@ -442,9 +617,43 @@ export default function CreateAgent() {
                   </span>
                 </div>
                 <div className="grid grid-cols-1 min-[1440px]:grid-cols-2">
-                  {compilerSpecRows.map(([label, value]) => (
-                    <CompilerSpecRow key={label} label={label} value={value} />
-                  ))}
+                  <DraftTicketField
+                    label="Name"
+                    value={draft.name}
+                    disabled={isCreating}
+                    onChange={(value) => setDraftField('name', value)}
+                    maxLength={64}
+                  />
+                  <DraftTicketField
+                    label="Market"
+                    value={draft.market}
+                    disabled={isCreating}
+                    onChange={(value) => setDraftField('market', value)}
+                  />
+                  <DraftTicketField
+                    label="Venue"
+                    value={draft.venue}
+                    disabled={isCreating}
+                    onChange={(value) => setDraftField('venue', value)}
+                  />
+                  <DraftTicketField
+                    label="Sizing"
+                    value={draft.sizing}
+                    disabled={isCreating}
+                    onChange={(value) => setDraftField('sizing', value)}
+                  />
+                  <DraftTicketField
+                    label="Risk"
+                    value={draft.drawdown}
+                    disabled={isCreating}
+                    onChange={(value) => setDraftField('drawdown', value)}
+                  />
+                  <DraftTicketField
+                    label="Mode"
+                    value={draft.mode}
+                    disabled={isCreating}
+                    onChange={(value) => setDraftField('mode', value)}
+                  />
                 </div>
               </section>
 
@@ -511,6 +720,7 @@ export default function CreateAgent() {
                       disabled={isCreating}
                       onSelect={() => {
                         setPrompt(hint.prompt)
+                        setDraftOverrides({})
                         setError('')
                         setStatus('')
                         textareaRef.current?.focus()
@@ -573,6 +783,14 @@ export default function CreateAgent() {
               >
                 {isCreating ? 'Creating…' : 'Create Paper Agent'}
               </Button>
+              <Link
+                to="/provision?draft=create"
+                onClick={persistDraft}
+                className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 font-display text-xs font-semibold text-[var(--arena-terminal-text-secondary)] transition-[background-color,border-color,color,transform] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
+              >
+                <span className="i-ph:rocket-launch text-base text-[var(--arena-terminal-accent)]" aria-hidden="true" />
+                Review in Deploy
+              </Link>
             </section>
           </aside>
           )}
@@ -616,22 +834,32 @@ function StrategyBookButton({
   )
 }
 
-function CompilerSpecRow({
+function DraftTicketField({
   label,
   value,
+  disabled,
+  onChange,
+  maxLength = 80,
 }: {
   label: string
   value: string
+  disabled: boolean
+  onChange: (value: string) => void
+  maxLength?: number
 }) {
   return (
-    <div className="min-w-0 border-b border-[var(--arena-terminal-border)] px-3 py-3 last:border-b-0 min-[1440px]:border-r min-[1440px]:even:border-r-0">
+    <label className="grid min-w-0 gap-1 border-b border-[var(--arena-terminal-border)] px-3 py-2 last:border-b-0 min-[1440px]:border-r min-[1440px]:even:border-r-0">
       <span className="block truncate font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">
         {label}
       </span>
-      <span className="mt-1 block min-w-0 truncate font-mono text-[13px] font-semibold text-[var(--arena-terminal-text)]">
-        {value}
-      </span>
-    </div>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        maxLength={maxLength}
+        className="h-7 min-w-0 rounded-[4px] border border-transparent bg-transparent px-0 font-mono text-[13px] font-semibold text-[var(--arena-terminal-text)] outline-none transition-[background-color,border-color,padding] duration-150 placeholder:text-[var(--arena-terminal-text-subtle)] hover:border-[var(--arena-terminal-border)] hover:bg-[var(--arena-terminal-bg)] hover:px-2 focus:border-[var(--arena-terminal-border-hover)] focus:bg-[var(--arena-terminal-bg)] focus:px-2 focus:ring-2 focus:ring-[var(--arena-terminal-accent-soft)] disabled:opacity-60"
+      />
+    </label>
   )
 }
 

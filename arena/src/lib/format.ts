@@ -13,6 +13,7 @@ export const STRATEGY_NAMES: Record<string, string> = {
   prediction_celebrity: 'Prediction — Celebrity',
   yield: 'Yield Optimization',
   perp: 'Perpetual Futures',
+  hyperliquid_perp: 'Hyperliquid Perps',
   volatility: 'Volatility Trading',
   mm: 'Market Making',
   multi: 'Cross-Strategy',

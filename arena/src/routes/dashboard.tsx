@@ -261,8 +261,8 @@ export default function HomePage() {
   // ── Loading ────────────────────────────────────────────────────────────
   if (isLoading && services.length === 0 && visibleMyBots.length === 0) {
     return (
-      <div className="arena-trace-terminal min-h-full bg-[#081013] px-2 py-2 text-[#f6fefd] sm:px-3">
-        <div className="mx-auto flex w-full max-w-[1560px] flex-col gap-2">
+      <div className="arena-trace-terminal min-h-full bg-[#081013] text-[#f6fefd]">
+        <div className="flex w-full flex-col gap-2">
           <ArenaPageHeader
             title="My Agents"
             metrics={[
@@ -464,8 +464,8 @@ export default function HomePage() {
 
   // ── Main content ───────────────────────────────────────────────────────
   return (
-    <div className="arena-trace-terminal min-h-full bg-[#081013] px-2 py-2 text-[#f6fefd] sm:px-3 lg:h-full lg:overflow-hidden">
-      <div className="mx-auto flex w-full max-w-[1560px] flex-col gap-2 lg:h-full lg:min-h-0">
+    <div className="arena-trace-terminal min-h-full bg-[#081013] text-[#f6fefd] lg:h-full lg:overflow-hidden">
+      <div className="flex w-full flex-col gap-2 lg:h-full lg:min-h-0">
         <ArenaPageHeader
           title="My Agents"
           metrics={dashboardMetrics}

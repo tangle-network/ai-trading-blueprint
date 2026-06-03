@@ -459,7 +459,7 @@ export default function IndexPage() {
     : totalTrades;
 
   return (
-    <div className="arena-trace-terminal mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:overflow-hidden">
+    <div className="arena-trace-terminal flex min-h-full w-full flex-col gap-2 lg:h-full lg:overflow-hidden">
       <ArenaPageHeader
         title="Tangle"
         titleWidthClassName="min-[1180px]:w-[11rem]"

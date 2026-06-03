@@ -70,6 +70,7 @@ import { InfrastructureDialog } from '~/components/provision/InfrastructureDialo
 import { AdvancedSettingsDialog } from '~/components/provision/AdvancedSettingsDialog';
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
+import { safeLoadStoredCreateStrategyDraft } from '~/lib/createStrategyDraft';
 import { resolveBotId as resolveBot } from '~/lib/utils/resolveBotId';
 import {
   buildBotScopedPath,
@@ -1050,6 +1051,19 @@ function formatSupportedChains(chainIds: number[]): string {
   return chainIds.map((id) => `${chainLabel(id)} (${id})`).join(', ');
 }
 
+function compactHeaderChainName(name: string): string {
+  return name
+    .replace(/\s+Sepolia$/i, '')
+    .replace(/\s+Mainnet$/i, '')
+    .replace(/\s+Testnet$/i, '')
+    .trim() || name;
+}
+
+function compactHeaderBlueprintName(name: string | undefined): string {
+  if (!name) return 'Blueprint';
+  return name.replace(/^Trading\s+/i, '').trim() || name;
+}
+
 export function executionTargetsForStrategy(
   strategyType: string,
   targets: DexExecutionTargetOption[],
@@ -1399,6 +1413,7 @@ export default function ProvisionPage() {
   const targetServiceId = searchParams.get('serviceId');
   const targetBotId = searchParams.get('botId');
   const targetSandboxId = searchParams.get('sandboxId');
+  const createDraftRequested = searchParams.get('draft') === 'create';
 
   // Blueprint selection state
   const initialBlueprint = preselectedBlueprintId
@@ -1868,9 +1883,34 @@ export default function ProvisionPage() {
     '0 2 0,2,4,6,8,10,12,14,16,18,20,22 * * *';
   const fullInstructions = buildFullInstructions(effectiveExpert, strategyType);
   const isInstance = selectedBlueprint ? !selectedBlueprint.isFleet : false;
+  const prevStrategyRef = useRef(strategyType);
+  const createDraftAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!createDraftRequested || createDraftAppliedRef.current) return;
+    const draft = safeLoadStoredCreateStrategyDraft();
+    createDraftAppliedRef.current = true;
+    if (!draft) return;
+
+    const draftStrategy = strategyPacks.some(
+      (pack) => pack.id === draft.provisionStrategyType,
+    )
+      ? draft.provisionStrategyType
+      : draft.strategyType;
+    if (!strategyPacks.some((pack) => pack.id === draftStrategy)) return;
+
+    prevStrategyRef.current = draftStrategy;
+    setName(draft.name);
+    setStrategyType(draftStrategy);
+    setExecutionTargetId(
+      defaultExecutionTargetIdForStrategy(draftStrategy, executionTargets),
+    );
+    setCustomInstructions(draft.prompt);
+    setProvisionPaperTrade(draft.mode.toLowerCase().includes('paper'));
+    setStep('configure');
+  }, [createDraftRequested, executionTargets]);
 
   // Reset customizations when strategy changes
-  const prevStrategyRef = useRef(strategyType);
   useEffect(() => {
     if (prevStrategyRef.current === strategyType) return;
     prevStrategyRef.current = strategyType;
@@ -3572,13 +3612,17 @@ export default function ProvisionPage() {
 
   return (
     <div className="arena-trace-terminal min-h-full bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)]">
-      <div className="mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3">
+      <div className="flex min-h-full w-full flex-col gap-2">
         <ArenaPageHeader
           title="Deploy"
           titleWidthClassName="min-[1180px]:w-[11rem]"
           metrics={[
-            { label: 'Service', value: targetChain.name },
-            { label: 'Runtime', value: selectedBlueprint?.name ?? 'Blueprint' },
+            { label: 'Network', value: compactHeaderChainName(targetChain.name), title: targetChain.name },
+            {
+              label: 'Runtime',
+              value: compactHeaderBlueprintName(selectedBlueprint?.name),
+              title: selectedBlueprint?.name ?? 'Blueprint',
+            },
             { label: 'Step', value: STEP_LABELS[step] },
           ]}
           controls={(
