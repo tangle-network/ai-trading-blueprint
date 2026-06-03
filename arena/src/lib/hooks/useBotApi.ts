@@ -36,6 +36,7 @@ import {
   selectLatestTradeFallbackBots,
   shouldFetchOperatorFallback,
 } from '~/lib/botVisibility';
+import type { FillCountEvidence } from '~/lib/tradeEvidence';
 
 interface ApiTrade {
   id: string;
@@ -135,6 +136,21 @@ interface ApiTradeListResponse {
   count?: number | string | null;
   limit?: number | string | null;
   offset?: number | string | null;
+  evidence?: ApiTradeCountEvidence | null;
+}
+
+interface ApiTradeCountEvidence {
+  source?: string | null;
+  scope?: string | null;
+  exact?: boolean | null;
+  total_fills?: number | string | null;
+  loaded_fills?: number | string | null;
+  outside_page_fills?: number | string | null;
+  priced_fills?: number | string | null;
+  unpriced_fills?: number | string | null;
+  valuation_coverage?: number | string | null;
+  latest_indexed_at?: string | null;
+  oldest_indexed_at?: string | null;
 }
 
 interface ApiCandle {
@@ -498,6 +514,7 @@ function extractStrategyModuleId(signal: unknown): string | undefined {
 export interface TradePage {
   trades: Trade[];
   total: number | null;
+  evidence: FillCountEvidence | null;
   loaded: number;
   limit: number;
   offset: number;
@@ -509,6 +526,7 @@ export interface TradePage {
 interface NormalizedApiTradePage {
   trades: ApiTrade[];
   total: number | null;
+  evidence: ApiTradeCountEvidence | null;
   limit: number;
   offset: number;
   legacyArray: boolean;
@@ -530,6 +548,7 @@ function normalizeTradePage(
     return {
       trades: data,
       total: null,
+      evidence: null,
       limit: requestedLimit,
       offset: requestedOffset,
       legacyArray: true,
@@ -547,9 +566,52 @@ function normalizeTradePage(
   return {
     trades,
     total: explicitTotal == null ? null : Math.max(explicitTotal, visibleFloor),
+    evidence: data.evidence ?? null,
     limit,
     offset,
     legacyArray: false,
+  };
+}
+
+function parseOptionalTimestampMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function mapApiTradeCountEvidence(
+  evidence: ApiTradeCountEvidence | null,
+  fallbackTotal: number | null,
+  loaded: number,
+): FillCountEvidence | null {
+  if (!evidence) return null;
+
+  const totalFills = toNonNegativeInteger(evidence.total_fills) ?? fallbackTotal ?? 0;
+  const loadedFills = toNonNegativeInteger(evidence.loaded_fills) ?? loaded;
+  if (totalFills <= 0 && loadedFills <= 0) return null;
+
+  const total = Math.max(totalFills, loadedFills, loaded);
+  const rawValuationCoverage = typeof evidence.valuation_coverage === 'number'
+    ? evidence.valuation_coverage
+    : evidence.valuation_coverage != null
+      ? Number(evidence.valuation_coverage)
+      : null;
+  return {
+    value: total,
+    source: 'trade-store',
+    loaded: Math.max(loadedFills, loaded),
+    total,
+    isExact: evidence.exact !== false,
+    backendSource: evidence.source ?? undefined,
+    scope: evidence.scope ?? undefined,
+    outsidePage: toNonNegativeInteger(evidence.outside_page_fills),
+    priced: toNonNegativeInteger(evidence.priced_fills),
+    unpriced: toNonNegativeInteger(evidence.unpriced_fills),
+    valuationCoverage: rawValuationCoverage != null && Number.isFinite(rawValuationCoverage)
+      ? rawValuationCoverage
+      : null,
+    latestIndexedAt: parseOptionalTimestampMs(evidence.latest_indexed_at),
+    oldestIndexedAt: parseOptionalTimestampMs(evidence.oldest_indexed_at),
   };
 }
 
@@ -565,10 +627,12 @@ export function mapApiTradePage(
   const trades = page.trades.map((t) => mapApiTrade(t, botName, fallbackChainId, assetMetadata));
   const loaded = trades.length;
   const hasTotal = page.total != null;
+  const evidence = mapApiTradeCountEvidence(page.evidence, page.total, loaded);
 
   return {
     trades,
     total: page.total,
+    evidence,
     loaded,
     limit: page.limit,
     offset: page.offset,

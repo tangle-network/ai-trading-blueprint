@@ -302,6 +302,24 @@ pub fn get_trade(id: &str) -> Result<Option<TradeRecord>, String> {
 pub struct PaginatedTrades {
     pub trades: Vec<TradeRecord>,
     pub total: usize,
+    pub evidence: TradeCountEvidence,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TradeCountEvidence {
+    pub source: &'static str,
+    pub scope: &'static str,
+    pub exact: bool,
+    pub total_fills: usize,
+    pub loaded_fills: usize,
+    pub outside_page_fills: usize,
+    pub priced_fills: usize,
+    pub unpriced_fills: usize,
+    pub valuation_coverage: f64,
+    pub latest_indexed_at: Option<DateTime<Utc>>,
+    pub oldest_indexed_at: Option<DateTime<Utc>>,
+    pub latest_loaded_at: Option<DateTime<Utc>>,
+    pub oldest_loaded_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -381,11 +399,13 @@ pub fn trades_for_bot(
     all.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     let total = all.len();
-    let page = all.into_iter().skip(offset).take(limit).collect();
+    let page: Vec<TradeRecord> = all.iter().skip(offset).take(limit).cloned().collect();
+    let evidence = trade_count_evidence(&all, &page, "bot");
 
     Ok(PaginatedTrades {
         trades: page,
         total,
+        evidence,
     })
 }
 
@@ -396,12 +416,49 @@ pub fn platform_trades(limit: usize, offset: usize) -> Result<PaginatedTrades, S
     all.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     let total = all.len();
-    let page = all.into_iter().skip(offset).take(limit).collect();
+    let page: Vec<TradeRecord> = all.iter().skip(offset).take(limit).cloned().collect();
+    let evidence = trade_count_evidence(&all, &page, "platform");
 
     Ok(PaginatedTrades {
         trades: page,
         total,
+        evidence,
     })
+}
+
+fn trade_count_evidence(
+    all: &[TradeRecord],
+    page: &[TradeRecord],
+    scope: &'static str,
+) -> TradeCountEvidence {
+    let total_fills = all.len();
+    let loaded_fills = page.len();
+    let priced_fills = all
+        .iter()
+        .filter(|trade| parse_positive_notional(trade.notional_usd.as_deref()).is_some())
+        .count();
+    let unpriced_fills = total_fills.saturating_sub(priced_fills);
+    let valuation_coverage = if total_fills == 0 {
+        0.0
+    } else {
+        priced_fills as f64 / total_fills as f64
+    };
+
+    TradeCountEvidence {
+        source: "trade_store",
+        scope,
+        exact: true,
+        total_fills,
+        loaded_fills,
+        outside_page_fills: total_fills.saturating_sub(loaded_fills),
+        priced_fills,
+        unpriced_fills,
+        valuation_coverage,
+        latest_indexed_at: all.first().map(|trade| trade.timestamp),
+        oldest_indexed_at: all.last().map(|trade| trade.timestamp),
+        latest_loaded_at: page.first().map(|trade| trade.timestamp),
+        oldest_loaded_at: page.last().map(|trade| trade.timestamp),
+    }
 }
 
 fn floor_to_bucket(timestamp: DateTime<Utc>, bucket: PlatformVolumeBucketSize) -> DateTime<Utc> {

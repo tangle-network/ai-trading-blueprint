@@ -119,12 +119,12 @@ describe('ConfigureStep', () => {
   it('renders agent name input', () => {
     render(<ConfigureStep {...defaultProps()} />);
     expect(screen.getByText('Agent Name')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('e.g. Alpha DEX Bot')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('e.g. Base USDC/WETH swing bot…')).toBeInTheDocument();
   });
 
   it('renders strategy packs grid', () => {
     render(<ConfigureStep {...defaultProps()} />);
-    expect(screen.getByText('DEX Swing')).toBeInTheDocument();
+    expect(screen.getAllByText('DEX Swing').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('DeFi Yield')).toBeInTheDocument();
   });
 
@@ -138,13 +138,13 @@ describe('ConfigureStep', () => {
 
   it('disables next button when canNext is false', () => {
     render(<ConfigureStep {...defaultProps({ canNext: false })} />);
-    const nextBtn = screen.getByText('Next: Provision Agent');
+    const nextBtn = screen.getByText('Review Provision');
     expect(nextBtn).toBeDisabled();
   });
 
   it('enables next button when canNext is true', () => {
     render(<ConfigureStep {...defaultProps({ canNext: true })} />);
-    const nextBtn = screen.getByText('Next: Provision Agent');
+    const nextBtn = screen.getByText('Review Provision');
     expect(nextBtn).not.toBeDisabled();
   });
 
@@ -152,7 +152,7 @@ describe('ConfigureStep', () => {
     const goNext = vi.fn();
     const user = userEvent.setup();
     render(<ConfigureStep {...defaultProps({ canNext: true, goNext })} />);
-    await user.click(screen.getByText('Next: Provision Agent'));
+    await user.click(screen.getByText('Review Provision'));
     expect(goNext).toHaveBeenCalledOnce();
   });
 
@@ -160,7 +160,7 @@ describe('ConfigureStep', () => {
     const setName = vi.fn();
     const user = userEvent.setup();
     render(<ConfigureStep {...defaultProps({ setName })} />);
-    const input = screen.getByPlaceholderText('e.g. Alpha DEX Bot');
+    const input = screen.getByPlaceholderText('e.g. Base USDC/WETH swing bot…');
     await user.type(input, 'My Bot');
     expect(setName).toHaveBeenCalled();
   });
@@ -178,9 +178,9 @@ describe('ConfigureStep', () => {
     expect(screen.getByText('Swing trading on DEXes')).toBeInTheDocument();
   });
 
-  it('shows infrastructure/runtime hint for advanced settings', () => {
+  it('keeps runtime controls behind advanced settings', () => {
     render(<ConfigureStep {...defaultProps()} />);
-    expect(screen.getByText('Runtime backend and infrastructure controls are available in Advanced Settings.')).toBeInTheDocument();
+    expect(screen.getByText('Customize')).toBeInTheDocument();
     expect(screen.queryByLabelText('Runtime Backend')).not.toBeInTheDocument();
     expect(screen.queryByText('Open Infrastructure Settings')).not.toBeInTheDocument();
   });
@@ -204,8 +204,45 @@ describe('ConfigureStep', () => {
         })}
       />,
     );
-    expect(screen.getByText('Infrastructure Status')).toBeInTheDocument();
+    expect(screen.getByText('Operator Route')).toBeInTheDocument();
     expect(screen.getByText(/Service #1: active, permitted/)).toBeInTheDocument();
+  });
+
+  it('renders token logos and selected asset summary for DEX strategies', () => {
+    const usdc = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+    const weth = '0x4200000000000000000000000000000000000006';
+    const { container } = render(
+      <ConfigureStep
+        {...defaultProps({
+          assetOptions: [
+            {
+              address: usdc,
+              symbol: 'USDC',
+              name: 'USD Coin',
+              decimals: 6,
+              known: true,
+              valuationSource: 'chainlink',
+              logoUri: '/token-icons/usdc.svg',
+            },
+            {
+              address: weth,
+              symbol: 'WETH',
+              name: 'Wrapped Ether',
+              decimals: 18,
+              known: true,
+              valuationSource: 'chainlink',
+              logoUri: '/token-icons/weth.svg',
+            },
+          ],
+          selectedAssetAddresses: [usdc, weth],
+          baseAssetAddress: usdc,
+        })}
+      />,
+    );
+
+    expect(container.querySelector('img[src="/token-icons/usdc.svg"]')).not.toBeNull();
+    expect(container.querySelector('img[src="/token-icons/weth.svg"]')).not.toBeNull();
+    expect(screen.getByText('USDC / WETH')).toBeInTheDocument();
   });
 
   it('shows not validated yet when fleet service info is not loaded', () => {
@@ -215,7 +252,7 @@ describe('ConfigureStep', () => {
 
   it('shows service loading and error states for fleet infra summary', () => {
     const { rerender } = render(<ConfigureStep {...defaultProps({ serviceLoading: true })} />);
-    expect(screen.getByText(/Service #1: checking status.../)).toBeInTheDocument();
+    expect(screen.getByText(/Service #1: checking status…/)).toBeInTheDocument();
 
     rerender(<ConfigureStep {...defaultProps({ serviceLoading: false, serviceError: 'boom' })} />);
     expect(screen.getByText(/Service #1: status unavailable/)).toBeInTheDocument();

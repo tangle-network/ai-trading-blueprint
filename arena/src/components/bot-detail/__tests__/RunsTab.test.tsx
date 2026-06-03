@@ -13,8 +13,8 @@ const authState = {
 
 const useBotSessionStreamMock = vi.hoisted(() =>
   vi.fn(() => ({
-    messages: [],
-    partMap: new Map(),
+    messages: [] as Array<Record<string, unknown>>,
+    partMap: {} as Record<string, Array<Record<string, unknown>>>,
     isStreaming: false,
     error: null,
   })),
@@ -649,5 +649,106 @@ describe("RunsTab", () => {
     expect(screen.getByLabelText("Autonomous runs")).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: /decision inspector/i })).toBeInTheDocument();
     expect(screen.getAllByText("Decision").length).toBeGreaterThan(0);
+  });
+
+  it("shows the immersive trace cockpit from run and tool evidence", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    useBotSessionStreamMock.mockReturnValue({
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          time: { created: 1_775_850_000 },
+        },
+      ],
+      partMap: {
+        "assistant-1": [
+          {
+            type: "tool",
+            id: "tool-fast-backtest",
+            tool: "fast_backtest",
+            state: "completed",
+          },
+          {
+            type: "tool",
+            id: "tool-risk-gate",
+            tool: "risk_gate",
+            state: "completed",
+          },
+        ],
+      },
+      isStreaming: false,
+      error: null,
+    });
+    const result = JSON.stringify({
+      checked_state: {
+        nav_status: "fresh",
+        protocol: "hyperliquid",
+      },
+      decision: {
+        action: "open_long",
+        reason: "Breakout retest passed with liquidity inside the risk cap.",
+        setup: {
+          asset: "ETH-PERP",
+          amount_in: "913",
+        },
+      },
+      trade_action: {
+        attempted: true,
+        validation_status: "approved",
+        execution_status: "paper_recorded",
+        target_protocol: "hyperliquid",
+        notional_usd: 913,
+      },
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-trace-cockpit",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_849_924,
+              completed_at: 1_775_850_052,
+              session_id: null,
+              transcript_available: false,
+              trace_id: "trace-smoke-1",
+              duration_ms: 128_000,
+              input_tokens: 1_200,
+              output_tokens: 576,
+              result,
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+        immersive
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    const cockpit = await screen.findByRole("region", { name: /trace cockpit/i });
+    expect(cockpit).toHaveTextContent("Completed");
+    expect(cockpit).toHaveTextContent("OPEN LONG");
+    expect(cockpit).toHaveTextContent("ETH-PERP");
+    expect(cockpit).toHaveTextContent("$913");
+    expect(cockpit).toHaveTextContent("Breakout retest passed");
+    expect(cockpit).toHaveTextContent("1.8k tok");
+    expect(cockpit).toHaveTextContent("2 tools");
+    expect(cockpit).toHaveTextContent("trace-smoke-1");
   });
 });

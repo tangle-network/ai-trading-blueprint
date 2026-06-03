@@ -30,9 +30,63 @@ describe('useBotApi trade mapping helpers', () => {
     expect(page.total).toBe(12);
     expect(page.limit).toBe(1);
     expect(page.offset).toBe(0);
+    expect(page.evidence).toBeNull();
     expect(page.hasTotal).toBe(true);
     expect(page.isCapped).toBe(true);
     expect(page.legacyArray).toBe(false);
+  });
+
+  it('maps backend trade-count evidence into the trade page contract', () => {
+    const page = mapApiTradePage({
+      trades: [
+        {
+          id: 'trade-1',
+          bot_id: 'bot-1',
+          timestamp: '2026-04-07T00:00:00Z',
+          action: 'buy',
+          token_in: 'USDC',
+          token_out: 'WETH',
+          amount_in: '1000',
+          amount_out: '0.5',
+          min_amount_out: '0.49',
+          target_protocol: 'uniswap_v3',
+          paper_trade: true,
+          valuation_status: 'priced',
+          notional_usd: '1000',
+        },
+      ],
+      total: 12,
+      limit: 1,
+      offset: 0,
+      evidence: {
+        source: 'trade_store',
+        scope: 'bot',
+        exact: true,
+        total_fills: 12,
+        loaded_fills: 1,
+        outside_page_fills: 11,
+        priced_fills: 10,
+        unpriced_fills: 2,
+        valuation_coverage: 10 / 12,
+        latest_indexed_at: '2026-04-07T00:00:00Z',
+        oldest_indexed_at: '2026-04-01T00:00:00Z',
+      },
+    }, 'Bot', undefined, [], 1);
+
+    expect(page.evidence).toEqual(expect.objectContaining({
+      value: 12,
+      source: 'trade-store',
+      loaded: 1,
+      total: 12,
+      isExact: true,
+      backendSource: 'trade_store',
+      scope: 'bot',
+      outsidePage: 11,
+      priced: 10,
+      unpriced: 2,
+    }));
+    expect(page.evidence?.latestIndexedAt).toBe(Date.parse('2026-04-07T00:00:00Z'));
+    expect(page.evidence?.oldestIndexedAt).toBe(Date.parse('2026-04-01T00:00:00Z'));
   });
 
   it('marks bare array trade responses as legacy loaded rows', () => {
@@ -55,6 +109,7 @@ describe('useBotApi trade mapping helpers', () => {
 
     expect(page.loaded).toBe(1);
     expect(page.total).toBeNull();
+    expect(page.evidence).toBeNull();
     expect(page.hasTotal).toBe(false);
     expect(page.isCapped).toBe(true);
     expect(page.legacyArray).toBe(true);

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import type { Bot } from '~/lib/types/bot';
@@ -110,10 +110,11 @@ describe('LatestAgentTrades', () => {
     expect(screen.getByTestId('live-fill-tape')).toHaveClass('overflow-hidden', 'h-full', 'min-h-0');
     expect(screen.getByTestId('live-fill-tape-scroll')).toHaveClass('overflow-y-auto', 'min-h-0', 'flex-1');
     expect(screen.getByRole('heading', { name: 'Fills' })).toBeInTheDocument();
-    expect(screen.getAllByRole('link', { name: 'Open Tape Bot performance' })[0]).toHaveAttribute(
+    expect(screen.getAllByRole('link', { name: /Open Tape Bot performance for/i })[0]).toHaveAttribute(
       'href',
       '/arena/bot/bot-1/performance',
     );
+    expect(screen.getAllByRole('link', { name: /Open Tape Bot performance for/i })[0]).toHaveAccessibleName(/ETH-PERP/);
     expect(screen.queryByText('Last 20')).not.toBeInTheDocument();
   });
 
@@ -139,11 +140,53 @@ describe('LatestAgentTrades', () => {
 
     expect(screen.getByTestId('live-fill-tape')).toHaveClass('overflow-hidden', 'h-full', 'min-h-0');
     expect(screen.getByTestId('live-fill-explorer-scroll')).toHaveClass('overflow-auto', 'min-h-0', 'flex-1');
-    expect(screen.getByRole('heading', { name: 'Latest Fills' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Fills' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Agent' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Market' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'USD' })).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Mode' })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
+
+    const inspector = screen.getByTestId('fill-inspector');
+    expect(within(inspector).getByText('$100')).toBeInTheDocument();
+    expect(within(inspector).getByText('Tape Bot')).toBeInTheDocument();
+    expect(within(inspector).getAllByText(/paper/i).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Inspect Tape Bot fill' })[1]);
+    expect(within(inspector).getByText('$101')).toBeInTheDocument();
+  });
+
+  it('paginates the explorer fill ledger without resizing the inspector', () => {
+    const bot = makeBot();
+    hoisted.latestTrades = Array.from({ length: 30 }, (_, index) => ({
+      trade: makeTrade(index),
+      bot,
+      botId: bot.id,
+      botName: bot.name,
+    }));
+
+    render(
+      <MemoryRouter>
+        <LatestAgentTrades
+          bots={[bot]}
+          variant="explorer"
+          limit={50}
+          className="h-full min-h-0"
+        />
+      </MemoryRouter>,
+    );
+
+    const inspector = screen.getByTestId('fill-inspector');
+    expect(within(inspector).getByText('$100')).toBeInTheDocument();
+    expect(screen.getByText('1-25 / 30')).toBeInTheDocument();
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next fills page' }));
+
+    expect(within(inspector).getByText('$125')).toBeInTheDocument();
+    expect(screen.getByText('26-30 / 30')).toBeInTheDocument();
+    expect(screen.getByText('2 / 2')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next fills page' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Previous fills page' })).toBeEnabled();
   });
 });

@@ -76,6 +76,7 @@ describe('EnvelopeNeededBanner', () => {
       />,
     );
     expect(screen.getByText(/Envelope required/i)).toBeInTheDocument();
+    expect(screen.getByText(/This bot is in Envelope mode/i)).toHaveClass('dark:text-amber-100/85');
     expect(screen.getByRole('button', { name: /Open Envelope tab/i })).toBeInTheDocument();
   });
 

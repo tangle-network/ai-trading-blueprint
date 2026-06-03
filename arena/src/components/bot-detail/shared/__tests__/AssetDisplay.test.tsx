@@ -59,6 +59,24 @@ describe('TradeInstrumentDisplay', () => {
     expect(screen.getByText('0.04 ETH')).toBeInTheDocument();
   });
 
+  it('uses explicit readable colors inside dark terminal rails', () => {
+    render(
+      <TradeInstrumentDisplay
+        terminal
+        trade={makeTrade({
+          targetProtocol: 'hyperliquid',
+          venue: 'perp',
+          paperTrade: false,
+          status: 'executed',
+          hyperliquidMetadata: { asset: 'eth', assetSize: '0.04' },
+        })}
+      />,
+    );
+
+    expect(screen.getByText('ETH-PERP').className).toContain('text-[#d2dad7]');
+    expect(screen.getByText('0.04 ETH').parentElement?.className).toContain('text-[#949e9c]');
+  });
+
   it('renders prediction market question and outcome labels', () => {
     render(
       <TradeInstrumentDisplay

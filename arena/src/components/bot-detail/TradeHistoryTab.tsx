@@ -11,7 +11,7 @@ import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import { countUsableValidatorSignatures, getTradeValidationDisplay } from '~/lib/tradeValidation';
 import { formatNumber } from '~/lib/format';
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
-import { formatTradeModeLabel } from '~/lib/tradeDisplay';
+import { formatTradeModeLabel, getTerminalTradeActionPillClass } from '~/lib/tradeDisplay';
 
 interface TradeHistoryTabProps {
   botId: string;
@@ -36,6 +36,13 @@ const EXPLORER_URLS: Record<number, { name: string; base: string }> = {
   31337: { name: 'Local', base: '' },
 };
 
+const tradeTimestampFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
 function explorerUrl(txHash: string, chainId?: number): string | null {
   if (!chainId || chainId === 31337) return null;
   const explorer = EXPLORER_URLS[chainId];
@@ -47,12 +54,12 @@ function TradeTableHead({ compact = false }: { compact?: boolean }) {
     return (
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="w-36 py-3 text-base">Time</TableHead>
-          <TableHead className="w-36 py-3 text-base">Trade</TableHead>
-          <TableHead className="py-3 text-base">Market</TableHead>
-          <TableHead className="w-40 py-3 text-right text-base">Size</TableHead>
-          <TableHead className="w-32 py-3 text-right text-base">USD</TableHead>
-          <TableHead className="w-28 py-3 text-right text-base">Mode</TableHead>
+          <TableHead className="w-[8.6rem] py-1 font-data text-[11px] uppercase text-[#949e9c]">Time</TableHead>
+          <TableHead className="w-[8.45rem] py-1 font-data text-[11px] uppercase text-[#949e9c]">Trade</TableHead>
+          <TableHead className="py-1 font-data text-[11px] uppercase text-[#949e9c]">Market</TableHead>
+          <TableHead className="w-[8rem] py-1 text-right font-data text-[11px] uppercase text-[#949e9c]">Size</TableHead>
+          <TableHead className="w-[7.35rem] py-1 text-right font-data text-[11px] uppercase text-[#949e9c]">USD</TableHead>
+          <TableHead className="hidden w-[7rem] py-1 text-right font-data text-[11px] uppercase text-[#949e9c] min-[1500px]:table-cell">Ref</TableHead>
         </TableRow>
       </TableHeader>
     );
@@ -61,12 +68,12 @@ function TradeTableHead({ compact = false }: { compact?: boolean }) {
   return (
     <TableHeader>
       <TableRow className="hover:bg-transparent">
-        <TableHead className="w-44 py-4 text-base">Time</TableHead>
-        <TableHead className="w-40 py-4 text-base">Decision</TableHead>
-        <TableHead className="min-w-[420px] py-4 text-base">Market</TableHead>
-        <TableHead className="hidden py-4 text-right text-base sm:table-cell">Risk</TableHead>
-        <TableHead className="py-4 text-base">Reference</TableHead>
-        <TableHead className="py-4 text-base">Status</TableHead>
+        <TableHead className="w-44 py-2.5 text-[13px] uppercase">Time</TableHead>
+        <TableHead className="w-44 py-2.5 text-[13px] uppercase">Decision</TableHead>
+        <TableHead className="min-w-[420px] py-2.5 text-[13px] uppercase">Market</TableHead>
+        <TableHead className="hidden py-2.5 text-right text-[13px] uppercase sm:table-cell">Risk</TableHead>
+        <TableHead className="py-2.5 text-[13px] uppercase">Reference</TableHead>
+        <TableHead className="py-2.5 text-[13px] uppercase">Status</TableHead>
       </TableRow>
     </TableHeader>
   );
@@ -76,13 +83,17 @@ function formatTradePageRange(page: TradePage | undefined): string | null {
   if (!page || page.loaded === 0) return null;
   const start = page.offset + 1;
   const end = page.offset + page.loaded;
-  if (page.total != null) return `${start.toLocaleString()}-${end.toLocaleString()} / ${page.total.toLocaleString()}`;
-  return `${start.toLocaleString()}-${end.toLocaleString()}`;
+  const startLabel = formatNumber(start, { maximumFractionDigits: 0 });
+  const endLabel = formatNumber(end, { maximumFractionDigits: 0 });
+  if (page.total != null) {
+    return `${startLabel}-${endLabel} / ${formatNumber(page.total, { maximumFractionDigits: 0 })}`;
+  }
+  return `${startLabel}-${endLabel}`;
 }
 
 function truncateHash(hash: string): string {
   if (hash.length <= 14) return hash;
-  return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
+  return `${hash.slice(0, 6)}…${hash.slice(-4)}`;
 }
 
 function formatTradeAmount(amount: number): string {
@@ -90,17 +101,30 @@ function formatTradeAmount(amount: number): string {
 }
 
 function formatTradeCurrency(value?: number | null): string {
-  if (value == null || !Number.isFinite(value)) return '—';
+  if (value == null || !Number.isFinite(value)) return '-';
   return `$${formatNumber(value, { maximumFractionDigits: 2 })}`;
 }
 
 function formatTradeTimestamp(timestamp: number): string {
-  return new Date(timestamp).toLocaleString('en-US', {
+  return tradeTimestampFormatter.format(new Date(timestamp));
+}
+
+function formatCompactTradeTimestamp(timestamp: number): { date: string; time: string; inline: string } {
+  const date = new Date(timestamp);
+  const dayLabel = new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
+  }).format(date);
+  const timeLabel = new Intl.DateTimeFormat('en-US', {
     hour: '2-digit',
+    hour12: false,
     minute: '2-digit',
-  });
+  }).format(date);
+  return {
+    date: dayLabel,
+    time: timeLabel,
+    inline: `${dayLabel} ${timeLabel}`,
+  };
 }
 
 function formatExecutionStatus(status: string): string {
@@ -178,7 +202,7 @@ function getActionVariant(action: Trade['action']): 'success' | 'destructive' | 
 
 function renderExecutionRef(trade: Trade) {
   if (!trade.txHash) {
-    return <span className="text-base font-data text-arena-elements-textTertiary">—</span>;
+    return <span className="text-base font-data text-arena-elements-textTertiary">-</span>;
   }
 
   if (isHyperliquidTrade(trade)) {
@@ -255,9 +279,10 @@ function renderTradeInstrumentCell(trade: Trade, compact: boolean) {
       return (
         <TradeInstrumentDisplay
           trade={trade}
-          size="md"
+          size="sm"
           showVenue={false}
-          labelClassName="max-w-full"
+          showSecondary={false}
+          labelClassName="max-w-full text-[16px]"
         />
       );
     }
@@ -265,14 +290,14 @@ function renderTradeInstrumentCell(trade: Trade, compact: boolean) {
   }
 
   return (
-    <div className="space-y-2">
+    <div className={compact ? 'space-y-0.5' : 'space-y-2'}>
       <TradeInstrumentDisplay
         trade={trade}
         size={compact ? 'md' : 'md'}
         showVenue={!compact}
-        labelClassName="max-w-full"
+        labelClassName={compact ? 'max-w-full text-[16px]' : 'max-w-full'}
       />
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base font-data text-arena-elements-textSecondary">
+      <div className={`${compact ? 'mt-0.5 text-[13px] leading-4' : 'text-base'} flex flex-wrap items-center gap-x-1.5 gap-y-1 font-data text-arena-elements-textSecondary`}>
         <span>{formatTradeAmount(trade.amountIn)}</span>
         <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
         <span className="mx-1.5 text-arena-elements-textTertiary">→</span>
@@ -418,18 +443,17 @@ export function TradeHistoryTab({
     if (compact) {
       return (
         <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
-          <div className="grid grid-cols-[8rem_8rem_minmax(0,1fr)_8rem_7rem_6rem] gap-3 border-b border-[#273035] px-4 py-3 font-data text-xs uppercase text-[#697371]">
+          <div className="grid grid-cols-[8.6rem_8.45rem_minmax(0,1fr)_8rem_7.35rem] gap-2 border-b border-[#273035] px-3 py-1 font-data text-[11px] uppercase text-[#697371]">
             <span>Time</span>
             <span>Trade</span>
             <span>Market</span>
             <span className="text-right">Size</span>
             <span className="text-right">USD</span>
-            <span className="text-right">Mode</span>
           </div>
           <div className="divide-y divide-[#273035]">
             {Array.from({ length: 6 }).map((_, index) => (
-              <div key={index} className="grid grid-cols-[8rem_8rem_minmax(0,1fr)_8rem_7rem_6rem] gap-3 px-4 py-3">
-                {Array.from({ length: 6 }).map((__, cellIndex) => (
+              <div key={index} className="grid grid-cols-[8.6rem_8.45rem_minmax(0,1fr)_8rem_7.35rem] gap-2 px-3 py-1.5">
+                {Array.from({ length: 5 }).map((__, cellIndex) => (
                   <div key={cellIndex} className="h-4 animate-pulse rounded bg-[#253138]" />
                 ))}
               </div>
@@ -442,7 +466,7 @@ export function TradeHistoryTab({
     return (
       <div className={compact ? 'flex h-full min-h-0 flex-col gap-2' : 'space-y-3'}>
         <div className={`${compact ? 'min-h-0 flex-1' : ''} overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36`}>
-          <Table className={compact ? 'min-w-[980px]' : 'min-w-[1120px]'}>
+          <Table className={compact ? 'w-full table-fixed' : 'min-w-[1120px]'}>
             <TradeTableHead compact={compact} />
             <TableBody>
               {Array.from({ length: 5 }).map((_, i) => (
@@ -496,7 +520,7 @@ export function TradeHistoryTab({
       />
 
       <div className={`${compact ? 'min-h-0 flex-1 overflow-auto rounded-[5px] border-[#273035] bg-[#0b1418]' : 'overflow-x-auto rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} border`}>
-        <Table className={compact ? 'min-w-[980px]' : 'min-w-[1120px]'}>
+        <Table className={compact ? 'w-full table-fixed' : 'min-w-[1120px]'}>
           <TradeTableHead compact={compact} />
           <TableBody>
             {trades.map((trade) => {
@@ -506,11 +530,12 @@ export function TradeHistoryTab({
             const hasValidation = responses.length > 0 || trade.validatorScore != null;
             const isExpanded = expandedId === trade.id;
             const fallbackReason = trade.validatorReasoning ?? trade.agentReasoning;
+            const compactTimestamp = formatCompactTradeTimestamp(trade.timestamp);
 
             return (
               <TableRow
                 key={trade.id}
-                className="cursor-pointer"
+                className={`${compact ? 'h-[34px]' : ''} cursor-pointer`}
                 onClick={(event) => {
                   if (isInteractiveTradeTarget(event.target)) return;
                   setExpandedId(isExpanded ? null : trade.id);
@@ -525,7 +550,7 @@ export function TradeHistoryTab({
                   }
                 }}
               >
-              <TableCell className={`${compact ? 'py-3' : 'py-4'} align-top text-base font-data text-arena-elements-textTertiary`} colSpan={isExpanded ? columnCount : undefined}>
+              <TableCell className={`${compact ? 'py-0.5 align-middle text-[15px] leading-none text-[#d2dad7]' : 'py-3'} font-data text-arena-elements-textTertiary`} colSpan={isExpanded ? columnCount : undefined}>
                 {isExpanded ? (
                   /* Expanded view replaces the row */
                   <div className="py-2">
@@ -534,7 +559,7 @@ export function TradeHistoryTab({
                       <button
                         type="button"
                         onClick={() => setExpandedId(null)}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-arena-elements-textTertiary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                        className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-arena-elements-textTertiary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:ring-2 focus-visible:ring-violet-500/60"
                         aria-label="Collapse trade details"
                       >
                         <div className="i-ph:caret-up text-base" />
@@ -572,7 +597,7 @@ export function TradeHistoryTab({
                       />
                       <TradeDetailMetric
                         label="Checks"
-                        value={validationDisplay?.label ?? (hasValidation ? 'Pending' : '—')}
+                        value={validationDisplay?.label ?? (hasValidation ? 'Pending' : '-')}
                         tone={validationDisplay?.badgeVariant === 'success' ? 'success' : validationDisplay?.badgeVariant === 'destructive' ? 'danger' : 'neutral'}
                       />
                     </div>
@@ -687,29 +712,41 @@ export function TradeHistoryTab({
                   </div>
                 ) : (
                   /* Normal compact row content */
-                  formatTradeTimestamp(trade.timestamp)
+                  compact ? (
+                    <span className="block truncate whitespace-nowrap tabular-nums">
+                      {compactTimestamp.inline}
+                    </span>
+                  ) : (
+                    formatTradeTimestamp(trade.timestamp)
+                  )
               )}
               </TableCell>
               {!isExpanded && (
                 <>
-                  <TableCell className={compact ? 'py-3 align-top' : 'py-4 align-top'}>
-                    <Badge variant={getActionVariant(trade.action)} className="h-8 px-3 text-base">
-                      {getActionLabel(trade.action)}
-                    </Badge>
+                  <TableCell className={compact ? 'py-0.5 align-middle' : 'py-4 align-top'}>
+                    {compact ? (
+                      <span className={`inline-flex h-[22px] min-w-[6.7rem] items-center justify-center rounded-[3px] px-2 font-data text-[13px] font-bold leading-none ${getTerminalTradeActionPillClass(trade.action)}`}>
+                        {getActionLabel(trade.action)}
+                      </span>
+                    ) : (
+                      <Badge variant={getActionVariant(trade.action)} className="h-8 px-3 text-base">
+                        {getActionLabel(trade.action)}
+                      </Badge>
+                    )}
                   </TableCell>
-                  <TableCell className={compact ? 'py-3 align-top font-display text-base font-medium' : 'min-w-[420px] py-4 align-top font-display text-lg font-medium'}>
+                  <TableCell className={compact ? 'min-w-0 py-0.5 align-middle font-display text-[16px] font-semibold' : 'min-w-[420px] py-3 align-top font-display text-lg font-medium'}>
                     {renderTradeInstrumentCell(trade, compact)}
                   </TableCell>
                   {compact && (
                     <>
-                      <TableCell className="py-3 text-right align-top font-data text-base text-arena-elements-textSecondary">
+                      <TableCell className="min-w-0 truncate py-0.5 text-right align-middle font-data text-[15px] tabular-nums text-[#d2dad7]" title={getTradeSizeLabel(trade)}>
                         {getTradeSizeLabel(trade)}
                       </TableCell>
-                      <TableCell className="py-3 text-right align-top font-data text-base font-semibold text-arena-elements-textPrimary">
+                      <TableCell className="py-0.5 text-right align-middle font-data text-[16px] font-semibold tabular-nums text-[#f6fefd]">
                         {formatTradeCurrency(trade.notionalUsd)}
                       </TableCell>
-                      <TableCell className={`py-3 text-right align-top font-data text-base ${getModeToneClass(trade)}`}>
-                        {formatTradeModeLabel(trade)}
+                      <TableCell className="hidden py-0.5 text-right align-middle font-data text-[13px] text-[#949e9c] min-[1500px]:table-cell">
+                        {renderExecutionRef(trade)}
                       </TableCell>
                     </>
                   )}

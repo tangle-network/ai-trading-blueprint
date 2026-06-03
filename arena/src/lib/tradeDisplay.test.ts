@@ -6,6 +6,8 @@ import {
   formatTradeModeLabel,
   formatTradeUsd,
   getHyperliquidMarketLabel,
+  getTerminalTradeActionPillClass,
+  getTradeActionToneClass,
   getTradeActionBadgeVariant,
   getTradeMarketLabel,
 } from './tradeDisplay';
@@ -39,6 +41,11 @@ describe('trade display helpers', () => {
     expect(formatTradeActionLabel('close_short')).toBe('CLOSE SHORT');
     expect(getTradeActionBadgeVariant('open_short')).toBe('destructive');
     expect(getTradeActionBadgeVariant('close_short')).toBe('success');
+    expect(getTradeActionToneClass('open_long')).toBe('text-[#50d2c1]');
+    expect(getTradeActionToneClass('close_short')).toBe('text-[#50d2c1]');
+    expect(getTerminalTradeActionPillClass('open_long')).toContain('bg-[#123f3a]');
+    expect(getTerminalTradeActionPillClass('open_short')).toContain('bg-[#3a1720]');
+    expect(getTerminalTradeActionPillClass('open_long')).toContain('text-white');
   });
 
   it('formats Hyperliquid markets from metadata', () => {

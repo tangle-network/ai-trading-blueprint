@@ -26,6 +26,8 @@ const TOOL_CATEGORY_ICON_CLASS: Record<string, string> = {
   other: 'i-ph:cube',
 };
 
+export type ChatPartVariant = 'default' | 'terminal';
+
 function getTextValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -301,7 +303,13 @@ export function AppMarkdown({
   return <div className={cn('space-y-3 text-[15px] leading-7 text-arena-elements-textPrimary', className)}>{blocks}</div>;
 }
 
-export function UserBubble({ parts }: { parts: SessionPart[] }) {
+export function UserBubble({
+  parts,
+  variant = 'default',
+}: {
+  parts: SessionPart[];
+  variant?: ChatPartVariant;
+}) {
   const textContent = parts
     .filter((part): part is TextPart => part.type === 'text' && typeof part.text === 'string')
     .map((part) => part.text)
@@ -313,18 +321,37 @@ export function UserBubble({ parts }: { parts: SessionPart[] }) {
 
   return (
     <div className="flex justify-end">
-      <div className="ml-auto max-w-[85%] rounded-2xl rounded-br-md border border-violet-500/15 bg-violet-500/8 px-4 py-2.5 text-left shadow-[0_8px_24px_rgba(109,40,217,0.06)] dark:border-violet-500/20 dark:bg-violet-500/12">
-      <div className="mb-1 text-xs font-display font-semibold uppercase tracking-[0.14em] text-violet-700 dark:text-violet-300">
-        You
-      </div>
+      <div
+        className={cn(
+          'ml-auto max-w-[85%] border px-4 py-2.5 text-left',
+          variant === 'terminal'
+            ? 'rounded-[5px] border-[#273035] bg-[#143c38] shadow-none'
+            : 'rounded-2xl rounded-br-md border-violet-500/15 bg-violet-500/8 shadow-[0_8px_24px_rgba(109,40,217,0.06)] dark:border-violet-500/20 dark:bg-violet-500/12',
+        )}
+      >
+        <div
+          className={cn(
+            'mb-1 text-xs font-display font-semibold uppercase tracking-[0.14em]',
+            variant === 'terminal' ? 'text-[#50d2c1]' : 'text-violet-700 dark:text-violet-300',
+          )}
+        >
+          You
+        </div>
         <AppMarkdown>{textContent}</AppMarkdown>
       </div>
     </div>
   );
 }
 
-export function ToolRow({ part }: { part: ToolPart }) {
+export function ToolRow({
+  part,
+  variant = 'default',
+}: {
+  part: ToolPart;
+  variant?: ChatPartVariant;
+}) {
   const [open, setOpen] = useState(false);
+  const isTerminal = variant === 'terminal';
   const safePart: ToolPart = {
     ...part,
     tool: typeof part.tool === 'string' ? part.tool : 'unknown',
@@ -350,14 +377,18 @@ export function ToolRow({ part }: { part: ToolPart }) {
   const iconClass = TOOL_CATEGORY_ICON_CLASS[category] ?? TOOL_CATEGORY_ICON_CLASS.other;
 
   return (
-    <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/70">
+    <div className={cn(
+      isTerminal
+        ? 'rounded-[5px] border border-[#273035] bg-[#0f1a1f]'
+        : 'rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/70',
+    )}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          'w-full rounded-lg px-2.5 py-1.5 text-left transition-colors',
-          'hover:bg-arena-elements-item-backgroundHover/80',
-          open && 'bg-arena-elements-item-backgroundHover/50',
+          'w-full px-2.5 py-1.5 text-left transition-colors',
+          isTerminal ? 'rounded-[5px] hover:bg-[#16242a]' : 'rounded-lg hover:bg-arena-elements-item-backgroundHover/80',
+          open && (isTerminal ? 'bg-[#16242a]' : 'bg-arena-elements-item-backgroundHover/50'),
         )}
       >
         <div className="flex items-center gap-2.5">
@@ -425,11 +456,14 @@ export function ToolRow({ part }: { part: ToolPart }) {
 export function ReasoningRow({
   part,
   defaultOpen = false,
+  variant = 'default',
 }: {
   part: ReasoningPart;
   defaultOpen?: boolean;
+  variant?: ChatPartVariant;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const isTerminal = variant === 'terminal';
   const autoCollapsedRef = useRef(false);
   const startTime = part.time?.start;
   const endTime = part.time?.end;
@@ -457,14 +491,18 @@ export function ReasoningRow({
   }, [durationMs, isActive]);
 
   return (
-    <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/70">
+    <div className={cn(
+      isTerminal
+        ? 'rounded-[5px] border border-[#273035] bg-[#0f1a1f]'
+        : 'rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/70',
+    )}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          'w-full rounded-lg px-2.5 py-1.5 text-left transition-colors',
-          'hover:bg-arena-elements-item-backgroundHover/80',
-          open && 'bg-arena-elements-item-backgroundHover/50',
+          'w-full px-2.5 py-1.5 text-left transition-colors',
+          isTerminal ? 'rounded-[5px] hover:bg-[#16242a]' : 'rounded-lg hover:bg-arena-elements-item-backgroundHover/80',
+          open && (isTerminal ? 'bg-[#16242a]' : 'bg-arena-elements-item-backgroundHover/50'),
         )}
       >
         <div className="flex items-center gap-2.5">
@@ -481,7 +519,7 @@ export function ReasoningRow({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-display font-medium text-arena-elements-textPrimary">
-                {isActive ? 'Thinking...' : 'Reasoning'}
+                {isActive ? 'Thinking…' : 'Reasoning'}
               </span>
               {isActive && startTime ? <LiveDuration startTime={startTime} /> : null}
               {!isActive && durationMs != null ? (

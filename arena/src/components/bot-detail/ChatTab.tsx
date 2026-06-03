@@ -255,7 +255,7 @@ function SessionWorkspaceSidebar({
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[320px] basis-[320px]"}`
+          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[288px] basis-[288px]"}`
       }
     >
       <div className={`flex items-center border-b border-arena-elements-dividerColor/50 ${collapsed ? "justify-center px-2 py-3" : "justify-between px-4 py-3"}`}>
@@ -356,7 +356,7 @@ function SessionWorkspaceSidebar({
                 <div className="min-w-0 flex-1">
                   {editingId === session.id ? (
                     <input
-                      className="w-full border-b border-arena-elements-borderColor bg-transparent text-sm font-display text-arena-elements-textPrimary outline-none"
+                      className="w-full border-b border-arena-elements-borderColor bg-transparent text-sm font-display text-arena-elements-textPrimary focus-visible:border-violet-500/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/35"
                       value={editTitle}
                       onChange={(e) => setEditTitle(e.target.value)}
                       onKeyDown={(e) => {
@@ -375,7 +375,8 @@ function SessionWorkspaceSidebar({
                     />
                   ) : (
                     <button
-                      className="min-w-0 w-full text-left cursor-pointer"
+                      type="button"
+                      className="min-w-0 w-full rounded-md text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
                       onClick={() => onSelect(session.id)}
                     >
                       <div className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
@@ -812,6 +813,7 @@ export function ChatTab({
         operatorKind={operatorKind}
         verificationState={verificationState}
         immersive={immersive}
+        surface="chat"
       />
     );
   }
@@ -830,6 +832,7 @@ export function ChatTab({
         operatorKind={operatorKind}
         verificationState={verificationState}
         immersive={immersive}
+        surface="chat"
       />
     );
   }
@@ -839,8 +842,8 @@ export function ChatTab({
       data-sandbox-ui="true"
       data-sandbox-theme="vault"
       className={immersive
-        ? "arena-chat-shell h-full overflow-hidden bg-arena-elements-background-depth-1"
-        : "arena-chat-shell glass-card rounded-xl overflow-hidden"}
+        ? "arena-chat-shell arena-trace-terminal h-full overflow-hidden bg-[#081013] text-[#f6fefd]"
+        : "arena-chat-shell arena-trace-terminal glass-card rounded-xl overflow-hidden bg-[#081013] text-[#f6fefd]"}
       style={immersive
         ? { height: "100%", minHeight: 0 }
         : {
@@ -882,7 +885,7 @@ export function ChatTab({
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {!immersive && (
-            <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 px-5 py-3 bg-arena-elements-background-depth-1/25">
+            <div className="flex items-center gap-3 border-b border-[#273035] bg-[#0b1418] px-5 py-3">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <span className="i-ph:chat-circle-dots text-base text-violet-700 dark:text-violet-400" />
                 <div className="min-w-0 flex-1">
@@ -923,22 +926,24 @@ export function ChatTab({
               items={decisionItems}
               selectedId={selectedDecisionItem?.id}
               onSelect={(item) => setSelectedPublicRunId(item.sourceId)}
+              variant="terminal"
             />
           )}
 
           <div
-            className={`min-h-0 flex-1 bg-arena-elements-background-depth-1/15 ${
+            className={`arena-trace-surface min-h-0 flex-1 bg-[#081013] ${
               !showDecisionInspector
                 ? ""
                 : isStackedLayout
                   ? "flex flex-col"
-                  : "grid grid-cols-[minmax(0,1fr)_340px]"
+                  : "grid grid-cols-[minmax(0,1fr)_320px]"
             }`}
           >
             {showDecisionInspector && isStackedLayout && (
               <DecisionInspector
                 item={selectedDecisionItem}
-                className="max-h-80 border-b border-arena-elements-dividerColor/50"
+                variant="terminal"
+                className="max-h-80 border-b border-[#273035]"
               />
             )}
             <div className={showDecisionInspector && isStackedLayout ? "min-h-0 min-w-0 flex-1" : "min-h-0 min-w-0"}>
@@ -948,6 +953,7 @@ export function ChatTab({
                 isStreaming={stream.isStreaming}
                 onSend={canWrite ? handleSend : undefined}
                 branding={chatBranding}
+                variant="terminal"
                 placeholder={
                   stream.isStreaming
                     ? "Agent is working…"
@@ -958,13 +964,14 @@ export function ChatTab({
             {showDecisionInspector && !isStackedLayout && (
               <DecisionInspector
                 item={selectedDecisionItem}
-                className="border-l border-arena-elements-dividerColor/50"
+                variant="terminal"
+                className="border-l border-[#273035]"
               />
             )}
           </div>
 
           {(canWrite || canCommand) && (
-          <div className="flex items-center gap-3 border-t border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 px-4 py-3">
+          <div className="flex items-center gap-3 border-t border-[#273035] bg-[#0b1418] px-4 py-3">
             {canWrite ? (
               <AgentStatus
                 status={agentStatus}

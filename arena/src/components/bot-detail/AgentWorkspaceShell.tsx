@@ -13,6 +13,10 @@ import {
   WorkspaceNavStrip,
   type WorkspaceNavItem,
 } from './shared/WorkspacePrimitives';
+import {
+  fillCountEvidenceTitle,
+  resolveFillCountEvidence,
+} from '~/lib/tradeEvidence';
 
 export type AgentWorkspaceSection = 'performance' | 'portfolio' | 'runs' | 'chat' | 'operations';
 
@@ -31,7 +35,7 @@ interface AgentWorkspaceShellProps {
 }
 
 function formatCompactAddress(value: string): string {
-  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+  return `${value.slice(0, 6)}…${value.slice(-4)}`;
 }
 
 function getExplorerAddressUrl(chainId: number | undefined, address: string): { label: string; url: string } | null {
@@ -126,7 +130,11 @@ export function AgentWorkspaceShell({
     return `$${formatNumber(displayValue, { maximumFractionDigits: 0 })}`;
   };
 
-  const tradeCount = Math.max(summary.tradeCount ?? 0, bot.totalTrades ?? 0);
+  const fillCountEvidence = resolveFillCountEvidence({
+    metricTradeCount: summary.tradeCount,
+    rosterTradeCount: bot.totalTrades,
+  });
+  const tradeCount = fillCountEvidence.value;
   const focusNavItems = navItems.filter((item) => item.value === 'runs' || item.value === 'chat');
   const copyOperatorAddress = () => {
     if (!navigator.clipboard) return;
@@ -135,35 +143,21 @@ export function AgentWorkspaceShell({
       window.setTimeout(() => setAddressCopied(false), 1400);
     });
   };
-  const metrics = [
+  const accountValue = formatPortfolioValue(summary.portfolioValue);
+  const returnValue = formatSignedPercent(summary.pnlPercent);
+  const returnTone = summary.pnlPercent == null
+    ? 'text-[#949e9c]'
+    : summary.pnlPercent >= 0
+      ? 'text-[#00d395]'
+      : 'text-[#ff4d6d]';
+  const compactStats = [
+    { label: 'Sharpe', value: formatDecimal(summary.sharpeRatio), tone: 'text-[#f6fefd]' },
+    { label: 'DD', value: formatPercent(summary.maxDrawdown), tone: summary.maxDrawdown == null ? 'text-[#f6fefd]' : 'text-[#ff4d6d]' },
     {
-      label: 'Return',
-      value: formatSignedPercent(summary.pnlPercent),
-      color: summary.pnlPercent == null
-        ? ''
-        : summary.pnlPercent >= 0
-          ? 'text-arena-elements-icon-success'
-          : 'text-arena-elements-icon-error',
-    },
-    {
-      label: 'Sharpe',
-      value: formatDecimal(summary.sharpeRatio),
-      color: '',
-    },
-    {
-      label: 'Max DD',
-      value: formatPercent(summary.maxDrawdown),
-      color: summary.maxDrawdown == null ? '' : 'text-crimson-400',
-    },
-    {
-      label: 'Trades',
+      label: 'Fills',
       value: tradeCount > 0 ? tradeCount.toLocaleString() : '—',
-      color: '',
-    },
-    {
-      label: 'Account',
-      value: formatPortfolioValue(summary.portfolioValue),
-      color: '',
+      tone: 'text-[#f6fefd]',
+      title: fillCountEvidenceTitle(fillCountEvidence),
     },
   ];
 
@@ -212,7 +206,7 @@ export function AgentWorkspaceShell({
         </Link>
 
         <div className="flex min-w-0 items-start gap-3">
-          <Identicon address={bot.operatorAddress as Address} size={38} />
+          <Identicon address={bot.operatorAddress as Address} size={40} />
           <div className="min-w-0 flex-1">
             <h1 className="line-clamp-2 font-display text-lg font-semibold leading-tight text-[#f6fefd]">
               {title}
@@ -225,6 +219,43 @@ export function AgentWorkspaceShell({
             </div>
           </div>
         </div>
+
+        <section
+          className="mt-4 rounded-[6px] border border-[#273035] bg-[#081013] p-3"
+          aria-label="Agent account state"
+          data-testid="agent-account-state"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-data text-[10px] uppercase tracking-[0.14em] text-[#697371]">
+                Account
+              </div>
+              <div className="mt-1 truncate font-data text-2xl font-semibold leading-none text-[#f6fefd] tabular-nums">
+                {accountValue}
+              </div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="font-data text-[10px] uppercase tracking-[0.14em] text-[#697371]">
+                Return
+              </div>
+              <div className={`mt-1 font-data text-base font-semibold leading-none tabular-nums ${returnTone}`}>
+                {returnValue}
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-3 divide-x divide-[#273035] border-t border-[#273035] pt-3">
+            {compactStats.map((stat) => (
+              <div key={stat.label} className="min-w-0 px-2 first:pl-0 last:pr-0" title={stat.title}>
+                <div className="truncate font-data text-[10px] uppercase tracking-[0.08em] text-[#697371]">
+                  {stat.label}
+                </div>
+                <div className={`mt-1 truncate font-data text-sm font-semibold tabular-nums ${stat.tone}`}>
+                  {stat.value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
 
         <div className="mt-3 overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f]">
           <div className="flex min-w-0 items-center">
@@ -254,22 +285,9 @@ export function AgentWorkspaceShell({
             )}
           </div>
         </div>
-
-        <div className="mt-3 grid grid-cols-2 gap-1.5">
-          {metrics.map((metric) => (
-            <div key={metric.label} className="min-w-0 rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2 py-2">
-              <div className="truncate font-data text-[10px] text-[#949e9c]">
-                {metric.label}
-              </div>
-              <div className={`mt-1 truncate font-data text-sm font-semibold tabular-nums ${metric.color || 'text-[#f6fefd]'}`}>
-                {metric.value}
-              </div>
-            </div>
-          ))}
-        </div>
       </div>
 
-      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2" aria-label="Agent workspace sections">
+      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2.5" aria-label="Agent workspace sections">
         {navItems.map((item) => {
           const selected = item.value === activeSection;
           return (
@@ -322,12 +340,12 @@ export function AgentWorkspaceShell({
     <div className="flex h-full min-h-0 overflow-hidden bg-[#081013]">
       {focusMode ? (
         <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1">
+          <div className="arena-trace-terminal shrink-0 border-b border-[#273035] bg-[#081013] text-[#f6fefd]">
             <div className="flex h-12 min-w-0 items-center gap-2 px-2">
               <Link
                 to={backHref ?? `/arena/bot/${encodeURIComponent(bot.id)}/performance`}
                 replace
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-display text-sm font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[5px] font-display text-sm font-medium text-[#949e9c] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
                 aria-label="Back to agent"
                 title="Back to agent"
               >
@@ -341,13 +359,14 @@ export function AgentWorkspaceShell({
                   getState={buildSectionState}
                   ariaLabel="Agent focus navigation"
                   className="min-w-0 border-0 bg-transparent p-0"
-                  buttonClassName="h-9 rounded-lg px-2"
+                  buttonClassName="h-9 rounded-[5px] px-2"
+                  itemClassName="focus-visible:ring-[#50d2c1]/60"
                   iconOnly
                 />
               )}
               <div className="ml-auto hidden min-w-0 items-center gap-2 pr-2 sm:flex">
                 <Identicon address={bot.operatorAddress as Address} size={22} />
-                <span className="max-w-[280px] truncate font-display text-sm font-medium text-arena-elements-textSecondary">
+                <span className="max-w-[280px] truncate font-display text-sm font-medium text-[#d2dad7]">
                   {title}
                 </span>
               </div>

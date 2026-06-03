@@ -7,6 +7,8 @@ import { copyText, timeAgo } from '@tangle-network/sandbox-ui/utils';
 import { useTxWatcher } from '~/lib/hooks/useTxWatcher';
 import { useProvisionWatcher } from '~/lib/hooks/useProvisionWatcher';
 
+const gasFormatter = new Intl.NumberFormat('en-US');
+
 function StatusIcon({ status }: { status: TrackedTx['status'] }) {
   if (status === 'pending') {
     return <div className="w-4 h-4 rounded-full border-2 border-violet-500/40 border-t-violet-400 animate-spin shrink-0" />;
@@ -39,7 +41,7 @@ function TxRow({ tx }: { tx: TrackedTx }) {
             {tx.label}
           </div>
           <div className="text-xs font-data text-arena-elements-textTertiary mt-0.5">
-            {tx.hash.slice(0, 10)}...{tx.hash.slice(-6)}
+            {tx.hash.slice(0, 10)}…{tx.hash.slice(-6)}
             <span className="ml-2">{timeAgo(tx.timestamp)}</span>
           </div>
         </div>
@@ -78,7 +80,7 @@ function TxRow({ tx }: { tx: TrackedTx }) {
           {tx.gasUsed != null && (
             <div className="flex items-center gap-2">
               <span className="text-xs font-data text-arena-elements-textTertiary w-16 shrink-0">Gas</span>
-              <span className="text-xs font-data text-arena-elements-textSecondary">{tx.gasUsed.toLocaleString()}</span>
+              <span className="text-xs font-data text-arena-elements-textSecondary">{gasFormatter.format(Number(tx.gasUsed))}</span>
             </div>
           )}
           <div className="flex items-center gap-2">
@@ -105,7 +107,7 @@ export function TxDropdown({ align = 'end', side = 'down' }: { align?: 'start' |
       <button
         type="button"
         onClick={toggle}
-        className="relative p-2.5 rounded-lg glass-card hover:border-violet-500/20 transition-all"
+        className="relative rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-bg-depth-3 p-2.5 text-arena-elements-textSecondary transition-[background-color,border-color,color,opacity] duration-150 hover:border-[#50d2c1]/35 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
         aria-label="Transaction history"
         aria-expanded={open}
       >

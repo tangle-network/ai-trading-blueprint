@@ -18,7 +18,7 @@ describe('tradeTokenMetadata', () => {
 
     expect(asset.name).toBe('Unknown Asset');
     expect(asset.primaryLabel).toBe('Unknown Asset');
-    expect(asset.secondaryLabel).toBe('0x1111...1111');
+    expect(asset.secondaryLabel).toBe('0x1111…1111');
     expect(asset.isKnown).toBe(false);
   });
 });

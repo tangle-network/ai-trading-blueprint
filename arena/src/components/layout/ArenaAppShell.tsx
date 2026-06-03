@@ -1,6 +1,6 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router';
 import { type Dispatch, type SetStateAction, useEffect, useState } from 'react';
-import { ChainSwitcher, TangleLogo, ThemeToggle } from '@tangle-network/blueprint-ui/components';
+import { ChainSwitcher, ThemeToggle } from '@tangle-network/blueprint-ui/components';
 import { cn } from '@tangle-network/blueprint-ui';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
@@ -8,6 +8,7 @@ import { WalletButton } from './WalletButton';
 const primaryNavItems = [
   { label: 'Home', href: '/', icon: 'i-ph:trophy' },
   { label: 'Agents', href: '/leaderboard', icon: 'i-ph:table' },
+  { label: 'Activity', href: '/activity', icon: 'i-ph:pulse' },
   { label: 'My Agents', href: '/dashboard', icon: 'i-ph:house' },
   { label: 'Deploy', href: '/provision', icon: 'i-ph:rocket-launch' },
   { label: 'Create', href: '/create', icon: 'i-ph:chat-circle-dots' },
@@ -51,9 +52,13 @@ export function ArenaAppShell() {
 
       <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
         {!isBotWorkspace && (
-          <div className="flex h-14 shrink-0 items-center justify-between border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/88 px-3 backdrop-blur-xl lg:hidden">
-            <Link to="/" className="min-w-0">
-              <TangleLogo label="Arena" />
+          <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#273035] bg-[#081013] px-3 lg:hidden">
+            <Link
+              to="/"
+              className="inline-flex min-w-0 items-center gap-2 rounded-[5px] px-1 text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+            >
+              <TangleMark />
+              <span className="font-display text-base font-semibold">Arena</span>
             </Link>
             <div className="flex shrink-0 items-center gap-1.5">
               <ChainSwitcher />
@@ -92,24 +97,29 @@ function DesktopArenaSidebar({
   return (
     <aside
       className={cn(
-        'relative z-40 hidden shrink-0 flex-col border-r border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 transition-[width] duration-200 lg:flex',
-        sidebarCollapsed ? 'w-16' : 'w-64',
+        'arena-trace-terminal relative z-40 hidden shrink-0 flex-col border-r border-[#273035] bg-[#081013] text-[#f6fefd] transition-[width] duration-200 lg:flex',
+        sidebarCollapsed ? 'w-16' : 'w-60',
       )}
     >
       <div className={cn(
-        'flex shrink-0 items-center border-b border-arena-elements-dividerColor/70',
+        'flex shrink-0 items-center border-b border-[#273035]',
         sidebarCollapsed ? 'h-16 justify-center px-2' : 'h-14 justify-between gap-2 px-3',
       )}>
         <Link
           to="/"
           className={cn(
-            'inline-flex min-w-0 items-center rounded-xl transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60',
-            sidebarCollapsed ? 'h-10 w-10 justify-center' : 'px-1',
+            'inline-flex min-w-0 items-center rounded-[5px] text-[#f6fefd] transition-colors hover:bg-[#16242a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60',
+            sidebarCollapsed ? 'h-10 w-10 justify-center' : 'h-10 gap-2 px-2',
           )}
           aria-label={sidebarCollapsed ? 'AI Trading Arena' : undefined}
           title={sidebarCollapsed ? 'AI Trading Arena' : undefined}
         >
-          {sidebarCollapsed ? <TangleMark /> : <TangleLogo label="Arena" />}
+          <TangleMark />
+          {!sidebarCollapsed && (
+            <span className="truncate font-display text-lg font-semibold tracking-tight">
+              Arena
+            </span>
+          )}
         </Link>
         {!sidebarCollapsed && (
           <SidebarIconButton
@@ -134,64 +144,156 @@ function DesktopArenaSidebar({
               key={item.href}
               to={item.href}
               className={cn(
-                'group relative flex h-11 items-center rounded-xl text-sm font-display font-medium transition-all duration-150 active:scale-[0.98]',
+                'group relative flex h-10 items-center rounded-[5px] text-sm font-display font-medium transition-[background-color,color,box-shadow,transform] duration-150 active:scale-[0.98]',
                 sidebarCollapsed ? 'w-11 justify-center px-0' : 'gap-3 px-3',
                 active
-                  ? 'bg-violet-500/14 text-arena-elements-textPrimary shadow-[inset_0_0_0_1px_rgba(139,92,246,0.18)]'
-                  : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary',
+                  ? 'bg-[#143c38] text-[#f6fefd] shadow-[inset_3px_0_0_rgba(80,210,193,0.92)]'
+                  : 'text-[#949e9c] hover:bg-[#16242a] hover:text-[#f6fefd]',
               )}
               title={sidebarCollapsed ? item.label : undefined}
               aria-label={sidebarCollapsed ? item.label : undefined}
             >
-              <span className={`${item.icon} shrink-0 text-lg ${active ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary group-hover:text-arena-elements-textSecondary'}`} aria-hidden="true" />
+              <span className={`${item.icon} shrink-0 text-lg ${active ? 'text-[#50d2c1]' : 'text-[#697371] group-hover:text-[#d2dad7]'}`} aria-hidden="true" />
               {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
             </NavLink>
           );
         })}
       </nav>
 
-      <div className="min-h-0 flex-1 border-t border-arena-elements-dividerColor/60" />
+      <div className="min-h-0 flex-1 border-t border-[#273035]" />
 
       <div
         className={cn(
-          'shrink-0 border-t border-arena-elements-dividerColor/70 p-2',
-          sidebarCollapsed ? 'flex flex-col items-center gap-1.5' : 'space-y-2',
+          'shrink-0 border-t border-[#273035]',
+          sidebarCollapsed ? 'flex flex-col items-center gap-1.5 p-2' : 'p-2',
         )}
       >
         {sidebarCollapsed ? (
-          <>
-            <SidebarIconButton
-              label="Expand sidebar"
-              onClick={toggleSidebar}
-              icon="i-ph:caret-right-bold"
-            />
-            <SidebarIconButton
-              label="Base Sepolia testnet"
-              onClick={toggleSidebar}
-              icon="i-ph:globe-hemisphere-west"
-            />
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary [&>button]:h-10 [&>button]:w-10 [&>button]:rounded-xl">
-              <ThemeToggle />
-            </div>
-          </>
+          <CollapsedAccountDock onExpand={toggleSidebar} />
         ) : (
-          <>
-            <div className="grid grid-cols-[minmax(0,1fr)_2.5rem_2.5rem] items-center gap-1.5 rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/44 p-1.5">
-              <div className="min-w-0 [&>div>button]:w-full">
-                <ChainSwitcher />
-              </div>
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary [&>button]:h-9 [&>button]:w-9 [&>button]:rounded-xl">
-                <ThemeToggle />
-              </div>
-              <div className="[&>div>button]:h-10 [&>div>button]:w-10 [&>div>button]:rounded-xl [&>div>button]:border-0 [&>div>button]:bg-transparent [&>div>button]:p-0">
-                <TxDropdown align="start" side="up" />
-              </div>
-            </div>
-            <WalletButton />
-          </>
+          <ExpandedAccountDock />
         )}
       </div>
     </aside>
+  );
+}
+
+const terminalControlClass = [
+  '[&>button]:!h-10',
+  '[&>button]:!w-full',
+  '[&>button]:!justify-center',
+  '[&>button]:!rounded-[5px]',
+  '[&>button]:!border',
+  '[&>button]:!border-[#273035]',
+  '[&>button]:!bg-[#0f1a1f]',
+  '[&>button]:!px-2',
+  '[&>button]:!text-[#d2dad7]',
+  '[&>button]:!shadow-none',
+  '[&>button]:transition-[background-color,border-color,color,opacity]',
+  '[&>button]:duration-150',
+  '[&>button:hover]:!border-[#50d2c1]/45',
+  '[&>button:hover]:!bg-[#143c38]',
+  '[&>button:hover]:!text-[#f6fefd]',
+  '[&>div>button]:!h-10',
+  '[&>div>button]:!w-full',
+  '[&>div>button]:!justify-center',
+  '[&>div>button]:!rounded-[5px]',
+  '[&>div>button]:!border',
+  '[&>div>button]:!border-[#273035]',
+  '[&>div>button]:!bg-[#0f1a1f]',
+  '[&>div>button]:!px-2',
+  '[&>div>button]:!text-[#d2dad7]',
+  '[&>div>button]:!shadow-none',
+  '[&>div>button]:transition-[background-color,border-color,color,opacity]',
+  '[&>div>button]:duration-150',
+  '[&>div>button:hover]:!border-[#50d2c1]/45',
+  '[&>div>button:hover]:!bg-[#143c38]',
+  '[&>div>button:hover]:!text-[#f6fefd]',
+].join(' ');
+
+const primaryWalletControlClass = [
+  terminalControlClass,
+  '[&>button]:!border-[#50d2c1]/55',
+  '[&>button]:!bg-[#50d2c1]',
+  '[&>button]:!font-semibold',
+  '[&>button]:!text-[#06100e]',
+  '[&>button:hover]:!border-[#7ce6d9]',
+  '[&>button:hover]:!bg-[#7ce6d9]',
+  '[&>button:hover]:!text-[#06100e]',
+  '[&>div>button]:!border-[#50d2c1]/55',
+  '[&>div>button]:!bg-[#50d2c1]',
+  '[&>div>button]:!font-semibold',
+  '[&>div>button]:!text-[#06100e]',
+  '[&>div>button:hover]:!border-[#7ce6d9]',
+  '[&>div>button:hover]:!bg-[#7ce6d9]',
+  '[&>div>button:hover]:!text-[#06100e]',
+].join(' ');
+
+const collapsedControlClass = [
+  'flex h-11 w-11 items-center justify-center overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418] text-[#949e9c] transition-[background-color,border-color,color] duration-150 hover:border-[#50d2c1]/45 hover:bg-[#143c38] hover:text-[#f6fefd]',
+  '[&>button]:!h-10',
+  '[&>button]:!w-10',
+  '[&>button]:!min-w-0',
+  '[&>button]:!overflow-hidden',
+  '[&>button]:!rounded-[5px]',
+  '[&>button]:!border-0',
+  '[&>button]:!bg-transparent',
+  '[&>button]:!p-0',
+  '[&>button]:!text-[#d2dad7]',
+  '[&>div>button]:!h-10',
+  '[&>div>button]:!w-10',
+  '[&>div>button]:!min-w-0',
+  '[&>div>button]:!overflow-hidden',
+  '[&>div>button]:!rounded-[5px]',
+  '[&>div>button]:!border-0',
+  '[&>div>button]:!bg-transparent',
+  '[&>div>button]:!p-0',
+  '[&>div>button]:!text-[#d2dad7]',
+  '[&_*]:!max-w-full',
+].join(' ');
+
+function ExpandedAccountDock() {
+  return (
+    <div className="rounded-[6px] border border-[#273035] bg-[#0b1418] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+      <div className={cn('min-w-0', primaryWalletControlClass)}>
+        <WalletButton />
+      </div>
+      <div className={cn('mt-1.5 min-w-0', terminalControlClass)}>
+        <ChainSwitcher />
+      </div>
+      <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+        <div className={cn('min-w-0', terminalControlClass)}>
+          <TxDropdown align="start" side="up" />
+        </div>
+        <div className={cn('min-w-0', terminalControlClass)}>
+          <ThemeToggle />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CollapsedAccountDock({ onExpand }: { onExpand: () => void }) {
+  return (
+    <>
+      <SidebarIconButton
+        label="Expand sidebar"
+        onClick={onExpand}
+        icon="i-ph:caret-right-bold"
+      />
+      <div className={collapsedControlClass}>
+        <ChainSwitcher />
+      </div>
+      <div className={collapsedControlClass}>
+        <TxDropdown align="start" side="up" />
+      </div>
+      <div className={collapsedControlClass}>
+        <ThemeToggle />
+      </div>
+      <div className={collapsedControlClass}>
+        <WalletButton />
+      </div>
+    </>
   );
 }
 
@@ -200,7 +302,7 @@ function TangleMark() {
     <img
       src="/favicon.svg"
       alt=""
-      className="h-8 w-8 rounded-md"
+      className="h-7 w-7 rounded-[5px]"
       aria-hidden="true"
     />
   );
@@ -217,7 +319,7 @@ function SidebarIconButton({ label, icon, onClick }: SidebarIconButtonProps) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-arena-elements-textSecondary transition-all duration-150 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[5px] text-[#949e9c] transition-[background-color,color,transform] duration-150 hover:bg-[#16242a] hover:text-[#f6fefd] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
       aria-label={label}
       title={label}
     >

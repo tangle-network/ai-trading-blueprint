@@ -57,12 +57,12 @@ export const PROVISION_STEPS = [
 ] as const;
 
 export const PROGRESS_LABELS: Record<string, string> = {
-  queued: 'Preparing environment...',
-  image_pull: 'Pulling container image...',
-  container_create: 'Launching container...',
-  container_start: 'Container ready, configuring...',
-  health_check: 'Saving bot configuration...',
-  ready: 'Submitting on-chain result...',
+  queued: 'Preparing environment…',
+  image_pull: 'Pulling container image…',
+  container_create: 'Launching container…',
+  container_start: 'Container ready, configuring…',
+  health_check: 'Saving bot configuration…',
+  ready: 'Submitting on-chain result…',
 };
 
 export function progressPhaseLabel(phase?: string): string | undefined {
@@ -106,7 +106,7 @@ export function formatDuration(totalSeconds: number): string {
 }
 
 export function truncateAddress(address: string): string {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
 interface FormatNumberOptions {
@@ -153,6 +153,14 @@ export function formatCompactUsd(value: number): string {
     })}K`;
   }
   return `$${formatNumber(value, { maximumFractionDigits: 2 })}`;
+}
+
+export function formatSignedPercent(value: number, maximumFractionDigits = 1): string {
+  if (!Number.isFinite(value) || value === 0) return '—';
+  return `${value > 0 ? '+' : ''}${formatNumber(value, {
+    maximumFractionDigits,
+    minimumFractionDigits: maximumFractionDigits,
+  })}%`;
 }
 
 export function botStatusLabel(status: BotStatus): string {

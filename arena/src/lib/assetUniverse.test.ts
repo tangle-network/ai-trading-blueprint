@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { buildDexAssetUniverse, resolveDexAssetInput } from './assetUniverse';
+import {
+  buildDexAssetUniverse,
+  resolveDexAssetInput,
+  strategyUsesDexAssetUniverse,
+} from './assetUniverse';
 
 describe('assetUniverse', () => {
+  it('limits asset-universe strategies to DEX strategy ids', () => {
+    expect(strategyUsesDexAssetUniverse('dex')).toBe(true);
+    expect(strategyUsesDexAssetUniverse('dex-swing')).toBe(true);
+    expect(strategyUsesDexAssetUniverse('volatility')).toBe(false);
+    expect(strategyUsesDexAssetUniverse('mm')).toBe(false);
+  });
+
   it('keeps known assets on Chainlink valuation', () => {
     const usdc = resolveDexAssetInput('USDC', 1);
     const weth = resolveDexAssetInput('WETH', 1);

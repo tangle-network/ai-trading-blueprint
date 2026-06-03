@@ -1,19 +1,31 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
+import type { Address } from 'viem';
 import { useAccount } from 'wagmi';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
-import { usePlatformVolumeSeries } from '~/lib/hooks/useBotApi';
+import { useLatestAgentTrades, usePlatformVolumeSeries, type LatestAgentTrade } from '~/lib/hooks/useBotApi';
 import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
 import { PlatformVolumeChart } from '~/components/arena/PlatformVolumeChart';
+import { ArenaTopAgentsPanel } from '~/components/arena/ArenaTopAgentsPanel';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
-import { formatCompactUsd } from '~/lib/format';
+import { formatCompactUsd, formatNumber, truncateAddress } from '~/lib/format';
 import { isPublicLeaderboardBot } from '~/lib/botVisibility';
+import { buildAgentActivityStats, type AgentActivityStats } from '~/lib/agentActivity';
+import type { Bot } from '~/lib/types/bot';
+import {
+  formatTradeActionLabel,
+  formatTradeAge,
+  formatTradeUsd,
+  getTradeActionToneClass,
+  getTradeMarketLabel,
+} from '~/lib/tradeDisplay';
+import { Identicon } from '@tangle-network/blueprint-ui/components';
 
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
@@ -22,13 +34,255 @@ export const meta: MetaFunction = () => [
 function HeaderMetric({ value, label }: { value: string; label: string }) {
   return (
     <div className="min-w-0">
-      <div className="font-data text-lg font-bold leading-none text-arena-elements-textPrimary">
+      <div className="font-data text-sm font-bold leading-none text-[#f6fefd]">
         {value}
       </div>
-      <div className="mt-0.5 truncate font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
+      <div className="mt-0.5 truncate font-data text-[10px] uppercase text-[#949e9c]">
         {label}
       </div>
     </div>
+  );
+}
+
+function formatMode(bot: Bot | null): string {
+  if (!bot) return 'No agent';
+  if (bot.paperTrade === true) return 'Paper';
+  if (bot.paperTrade === false) return 'Live';
+  return 'Unknown';
+}
+
+function formatTrust(bot: Bot | null): string {
+  switch (bot?.validationTrust) {
+    case 'envelope':
+      return 'Envelope';
+    case 'self_operated':
+      return 'Self';
+    case 'per_trade':
+      return 'Per trade';
+    default:
+      return 'Per trade';
+  }
+}
+
+function TrustMetric({ label, value, title }: { label: string; value: string; title?: string }) {
+  return (
+    <div className="min-w-0" title={title}>
+      <div className="font-data text-[10px] uppercase tracking-[0.12em] text-[#949e9c]">
+        {label}
+      </div>
+      <div className="mt-0.5 truncate font-data text-xs font-semibold tabular-nums text-[#d2dad7]">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function HeaderTrustBar({
+  bot,
+  hasTradeStoreEvidence,
+}: {
+  bot: Bot | null;
+  hasTradeStoreEvidence: boolean;
+}) {
+  return (
+    <div
+      aria-label="Execution trust"
+      className="grid shrink-0 grid-cols-2 gap-x-4 gap-y-1 rounded-[6px] border border-[#273035] bg-[#0f1a1f] px-3 py-2 min-[760px]:grid-cols-5"
+    >
+      <TrustMetric label="Network" value={bot?.chainId ? `Chain ${bot.chainId}` : 'Mixed'} />
+      <TrustMetric label="Mode" value={formatMode(bot)} />
+      <TrustMetric label="Trust" value={formatTrust(bot)} />
+      <TrustMetric
+        label="Operator"
+        value={bot ? truncateAddress(bot.operatorAddress) : 'No operator'}
+        title={bot?.operatorAddress}
+      />
+      <TrustMetric label="Evidence" value={hasTradeStoreEvidence ? 'Trade Store' : 'Operator Roster'} />
+    </div>
+  );
+}
+
+function formatPulseNumber(value: number): string {
+  return formatNumber(value, { maximumFractionDigits: 0 });
+}
+
+function formatPulsePercent(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0%';
+  return `${formatNumber(value * 100, { maximumFractionDigits: 0 })}%`;
+}
+
+function PulseCell({
+  label,
+  value,
+  detail,
+  children,
+  to,
+}: {
+  label: string;
+  value?: string;
+  detail?: string;
+  children?: ReactNode;
+  to?: string;
+}) {
+  const content = (
+    <>
+      <div className="font-data text-[10px] font-semibold uppercase tracking-[0.12em] text-[#949e9c]">
+        {label}
+      </div>
+      {children ?? (
+        <>
+          <div className="mt-1 truncate font-data text-xl font-bold leading-none tabular-nums text-[#f6fefd]">
+            {value ?? '—'}
+          </div>
+          {detail && (
+            <div className="mt-1 truncate font-data text-[11px] text-[#949e9c]">
+              {detail}
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+  const className = 'min-w-0 border-b border-[#273035] px-3 py-2.5 last:border-b-0 min-[980px]:border-b-0 min-[980px]:border-r min-[980px]:last:border-r-0';
+
+  if (to) {
+    return (
+      <Link
+        to={to}
+        className={`${className} block transition-colors hover:bg-[#13232a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60`}
+      >
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <div className={className}>
+      {content}
+    </div>
+  );
+}
+
+function HomePulseBoard({
+  latestActivity,
+  topActivityBot,
+  topActivityStats,
+  recentFlowUsd,
+  recentFills,
+  platformVolumeUsd,
+  platformLiveUsd,
+  platformFills,
+}: {
+  latestActivity: LatestAgentTrade | null;
+  topActivityBot: Bot | null;
+  topActivityStats: AgentActivityStats | null;
+  recentFlowUsd: number;
+  recentFills: number;
+  platformVolumeUsd: number;
+  platformLiveUsd: number;
+  platformFills: number;
+}) {
+  const latestTrade = latestActivity?.trade ?? null;
+  const latestBot = latestActivity?.bot ?? null;
+  const latestMarket = latestTrade
+    ? getTradeMarketLabel(latestTrade)
+    : topActivityStats?.lastMarket ?? '—';
+  const topAgentHref = topActivityBot ? `/arena/bot/${encodeURIComponent(topActivityBot.id)}/performance` : undefined;
+  const latestHref = latestActivity ? `/arena/bot/${encodeURIComponent(latestActivity.botId)}/performance` : topAgentHref;
+  const liveShare = platformVolumeUsd > 0 ? platformLiveUsd / platformVolumeUsd : 0;
+
+  return (
+    <section
+      aria-label="Market pulse"
+      className="grid shrink-0 overflow-hidden rounded-[6px] border border-[#273035] bg-[#0f1a1f] min-[980px]:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)]"
+    >
+      <PulseCell label="Latest" to={latestHref}>
+        {latestTrade ? (
+          <>
+            <div className="mt-1 flex min-w-0 items-center gap-2">
+              <span className={`shrink-0 font-data text-sm font-bold uppercase ${getTradeActionToneClass(latestTrade.action)}`}>
+                {formatTradeActionLabel(latestTrade.action)}
+              </span>
+              <span className="min-w-0 truncate font-display text-lg font-semibold leading-none text-[#f6fefd]">
+                {latestMarket}
+              </span>
+              <span className="shrink-0 font-data text-base font-bold tabular-nums text-[#f6fefd]">
+                {formatTradeUsd(latestTrade.notionalUsd)}
+              </span>
+            </div>
+            <div className="mt-2 flex min-w-0 items-center gap-2">
+              {latestBot && (
+                <Identicon address={latestBot.operatorAddress as Address} size={20} />
+              )}
+              <span className="min-w-0 truncate font-display text-sm font-semibold text-[#d2dad7]">
+                {latestActivity?.botName ?? latestTrade.botName}
+              </span>
+              <span className="shrink-0 font-data text-[11px] tabular-nums text-[#949e9c]">
+                {formatTradeAge(latestTrade.timestamp)}
+              </span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mt-1 truncate font-data text-xl font-bold leading-none text-[#f6fefd]">
+              No fills yet
+            </div>
+            <div className="mt-1 truncate font-data text-[11px] text-[#949e9c]">
+              Waiting for active agents
+            </div>
+          </>
+        )}
+      </PulseCell>
+
+      <PulseCell
+        label="24H Flow"
+        value={formatCompactUsd(recentFlowUsd)}
+        detail={`${formatPulseNumber(recentFills)} fills`}
+      />
+
+      <PulseCell label="Top Agent" to={topAgentHref}>
+        {topActivityBot ? (
+          <>
+            <div className="mt-1 flex min-w-0 items-center gap-2">
+              <Identicon address={topActivityBot.operatorAddress as Address} size={24} />
+              <span className="min-w-0 truncate font-display text-lg font-semibold leading-none text-[#f6fefd]">
+                {topActivityBot.name}
+              </span>
+            </div>
+            <div className="mt-2 flex min-w-0 items-center gap-2 font-data text-[11px] text-[#949e9c]">
+              <span className="shrink-0 tabular-nums text-[#d2dad7]">
+                24h {formatCompactUsd(topActivityStats?.recentNotionalUsd ?? 0)}
+              </span>
+              <span className="h-1 w-1 shrink-0 rounded-full bg-[#697371]" aria-hidden="true" />
+              <span className="truncate">
+                {formatPulseNumber(topActivityStats?.recentFills ?? 0)} fills
+              </span>
+              {topActivityStats?.lastTradeAt && (
+                <>
+                  <span className="h-1 w-1 shrink-0 rounded-full bg-[#697371]" aria-hidden="true" />
+                  <span className="shrink-0 tabular-nums">{formatTradeAge(topActivityStats.lastTradeAt)}</span>
+                </>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mt-1 truncate font-data text-xl font-bold leading-none text-[#f6fefd]">
+              —
+            </div>
+            <div className="mt-1 truncate font-data text-[11px] text-[#949e9c]">
+              No active public agent
+            </div>
+          </>
+        )}
+      </PulseCell>
+
+      <PulseCell
+        label="30D Platform"
+        value={formatCompactUsd(platformVolumeUsd)}
+        detail={`${formatPulseNumber(platformFills)} fills · ${formatPulsePercent(liveShare)} live`}
+      />
+    </section>
   );
 }
 
@@ -50,40 +304,75 @@ export default function IndexPage() {
 
   const totalTrades = leaderboardBots.reduce((sum, b) => sum + b.totalTrades, 0);
   const { series: homeVolumeSeries } = usePlatformVolumeSeries(leaderboardBots, '30d');
+  const { trades: homeActivityTrades } = useLatestAgentTrades(leaderboardBots, {
+    limit: 120,
+    perBotLimit: 50,
+    maxBots: 64,
+  });
+  const activityStatsByBotId = useMemo(
+    () => buildAgentActivityStats(homeActivityTrades),
+    [homeActivityTrades],
+  );
+  const latestActivity = homeActivityTrades[0] ?? null;
+  const recentActivitySummary = useMemo(() => {
+    return Array.from(activityStatsByBotId.values()).reduce(
+      (summary, stats) => ({
+        recentFlowUsd: summary.recentFlowUsd + stats.recentNotionalUsd,
+        recentFills: summary.recentFills + stats.recentFills,
+      }),
+      { recentFlowUsd: 0, recentFills: 0 },
+    );
+  }, [activityStatsByBotId]);
+  const topActivity = useMemo(() => {
+    return leaderboardBots.reduce<{ bot: Bot; stats: AgentActivityStats | null } | null>((best, bot) => {
+      const stats = activityStatsByBotId.get(bot.id) ?? null;
+      if (!best) return { bot, stats };
+      const bestStats = best.stats;
+      const notionalDelta = (stats?.recentNotionalUsd ?? 0) - (bestStats?.recentNotionalUsd ?? 0);
+      if (notionalDelta > 0) return { bot, stats };
+      if (notionalDelta < 0) return best;
+      const fillsDelta = (stats?.recentFills ?? 0) - (bestStats?.recentFills ?? 0);
+      if (fillsDelta > 0) return { bot, stats };
+      if (fillsDelta < 0) return best;
+      if ((stats?.lastTradeAt ?? 0) > (bestStats?.lastTradeAt ?? 0)) return { bot, stats };
+      return best;
+    }, null);
+  }, [activityStatsByBotId, leaderboardBots]);
   const hasPlatformTradeCount = homeVolumeSeries.summary.totalTradeCount > 0;
   const platformTradeCount = hasPlatformTradeCount
     ? homeVolumeSeries.summary.totalTradeCount
     : totalTrades;
+  const trustAnchorBot = topActivity?.bot ?? leaderboardBots[0] ?? null;
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[1500px] flex-col gap-3 px-3 py-3 sm:px-4 lg:h-full lg:overflow-hidden">
-      <section className="shrink-0 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 px-3 py-2.5">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          <div className="flex min-w-0 items-center gap-3 xl:min-w-[18rem]">
-            <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-700 animate-glow-pulse dark:bg-emerald-400" />
-            <h1 className="truncate font-display text-xl font-bold tracking-tight">
-              AI Trading Arena
+    <div className="mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:overflow-hidden">
+      <section className="shrink-0 overflow-hidden rounded-[6px] border border-[#273035] bg-[#0f1a1f]">
+        <div className="flex min-h-12 flex-col gap-2 px-3 py-2 min-[1120px]:flex-row min-[1120px]:items-center">
+          <div className="flex min-w-0 items-center gap-3 min-[1120px]:w-[18rem]">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-[#50d2c1] shadow-[0_0_16px_rgba(80,210,193,0.5)]" aria-hidden="true" />
+            <h1 className="truncate font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
+              Arena
             </h1>
           </div>
-          <div className="grid min-w-0 flex-1 grid-cols-3 gap-4 xl:max-w-xl">
-            <HeaderMetric value={leaderboardBots.length.toLocaleString()} label="Agents" />
-            <HeaderMetric value={formatCompactUsd(homeVolumeSeries.summary.totalUsd)} label="30D Volume" />
-            <HeaderMetric value={platformTradeCount > 0 ? platformTradeCount.toLocaleString() : '—'} label={hasPlatformTradeCount ? '30D Fills' : 'Fills'} />
+          <div className="grid min-w-0 flex-1 grid-cols-3 gap-4 min-[1120px]:max-w-md">
+            <HeaderMetric value={formatNumber(leaderboardBots.length, { maximumFractionDigits: 0 })} label="Agents" />
+            <HeaderMetric value={formatCompactUsd(homeVolumeSeries.summary.totalUsd)} label="30D Vol" />
+            <HeaderMetric value={platformTradeCount > 0 ? formatNumber(platformTradeCount, { maximumFractionDigits: 0 }) : '—'} label={hasPlatformTradeCount ? '30D Fills' : 'Fills'} />
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5">
             <Link
               to="/leaderboard"
-              className="inline-flex h-9 w-fit items-center gap-2 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55 px-3 text-sm font-display font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary"
+              className="inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border border-[#273035] bg-[#0b1418] px-3 text-sm font-display font-medium text-[#d2dad7] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
             >
-              <span className="i-ph:table text-sm" />
-              Agent Explorer
+              <span className="i-ph:table text-sm" aria-hidden="true" />
+              Agents
             </Link>
             <Link
               to="/provision"
-              className="inline-flex h-9 w-fit items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-3 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+              className="inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border border-[#50d2c1]/30 bg-[#123f3a] px-3 text-sm font-display font-medium text-[#c8fffb] transition-colors hover:bg-[#18544e] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
             >
-              <span className="i-ph:plus-bold text-xs" />
-              Deploy Agent
+              <span className="i-ph:plus-bold text-xs" aria-hidden="true" />
+              Deploy
             </Link>
           </div>
         </div>
@@ -91,9 +380,17 @@ export default function IndexPage() {
 
       <OperatorSessionBanner />
 
+      {leaderboardBots.length > 0 && (
+        <HeaderTrustBar
+          bot={trustAnchorBot}
+          hasTradeStoreEvidence={hasPlatformTradeCount}
+        />
+      )}
+
       {isLoading ? (
-        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.44fr)]">
+        <div className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.34fr)]">
           <SkeletonCard className="h-full min-h-[420px]" />
+          <SkeletonCard className="h-full min-h-[240px]" />
           <SkeletonCard className="h-full min-h-[420px]" />
         </div>
       ) : leaderboardBots.length === 0 ? (
@@ -119,22 +416,42 @@ export default function IndexPage() {
         </div>
         )
       ) : (
-        <section
-          className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.44fr)]"
-          aria-label="Arena market terminal"
-        >
-          <PlatformVolumeChart
-            bots={leaderboardBots}
-            variant="command"
-            className="h-full min-h-0"
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          <HomePulseBoard
+            latestActivity={latestActivity}
+            topActivityBot={topActivity?.bot ?? null}
+            topActivityStats={topActivity?.stats ?? null}
+            recentFlowUsd={recentActivitySummary.recentFlowUsd}
+            recentFills={recentActivitySummary.recentFills}
+            platformVolumeUsd={homeVolumeSeries.summary.totalUsd}
+            platformLiveUsd={homeVolumeSeries.summary.liveUsd}
+            platformFills={platformTradeCount}
           />
-          <LatestAgentTrades
-            bots={leaderboardBots}
-            variant="panel"
-            limit={18}
-            className="h-full min-h-0"
-          />
-        </section>
+          <section
+            className="grid min-h-0 flex-1 gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.34fr)] xl:grid-rows-[minmax(0,1fr)_minmax(164px,0.24fr)]"
+            aria-label="Arena fleet terminal"
+          >
+            <PlatformVolumeChart
+              bots={leaderboardBots}
+              variant="command"
+              className="min-h-[360px] xl:min-h-0"
+            />
+            <LatestAgentTrades
+              bots={leaderboardBots}
+              variant="panel"
+              limit={12}
+              className="h-full min-h-[320px] xl:row-span-2 xl:min-h-0"
+            />
+            <ArenaTopAgentsPanel
+              bots={leaderboardBots}
+              variant="table"
+              metricMode="activity"
+              activityStatsByBotId={activityStatsByBotId}
+              limit={6}
+              className="min-h-[164px] xl:min-h-0"
+            />
+          </section>
+        </div>
       )}
     </div>
   );

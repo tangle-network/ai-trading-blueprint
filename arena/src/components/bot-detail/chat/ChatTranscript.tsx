@@ -7,12 +7,13 @@ import {
 } from '@tangle-network/sandbox-ui/hooks';
 import { cn } from '@tangle-network/sandbox-ui/utils';
 import type { AppSessionMessage } from '~/lib/hooks/useBotSessionStream';
-import { AppMarkdown, ReasoningRow, ToolRow, UserBubble } from './SessionChatParts';
+import { AppMarkdown, ReasoningRow, ToolRow, UserBubble, type ChatPartVariant } from './SessionChatParts';
 import {
   collectSessionTimelineParts,
   collectVisibleSessionTimelineParts,
   filterLeadingPromptEcho,
 } from './sessionChatTimeline';
+import { TerminalEmptyState } from '../shared/WorkspacePrimitives';
 
 function getSafeText(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -48,6 +49,7 @@ function AgentRunGroup({
   onToggle,
   branding,
   previousUserText,
+  variant = 'default',
 }: {
   run: Run;
   partMap: Record<string, SessionPart[]>;
@@ -55,6 +57,7 @@ function AgentRunGroup({
   onToggle: () => void;
   branding: AgentBranding;
   previousUserText: string | null;
+  variant?: ChatPartVariant;
 }) {
   const rawAllParts = useMemo(
     () => collectSessionTimelineParts(run.messages as AppSessionMessage[], partMap),
@@ -78,6 +81,7 @@ function AgentRunGroup({
   );
   const hasVisibleParts = visibleParts.length > 0;
   const failureState = useMemo(() => getRunFailureState(run), [run]);
+  const isTerminal = variant === 'terminal';
 
   if (!hasVisibleParts && !run.isStreaming && !failureState) {
     return null;
@@ -91,12 +95,14 @@ function AgentRunGroup({
         aria-expanded={hasCollapsible ? !collapsed : undefined}
         aria-label={hasCollapsible ? `${collapsed ? 'Expand' : 'Collapse'} ${branding.label} details` : undefined}
         className={cn(
-          'w-full flex items-center gap-2 px-3 py-2 text-left rounded-lg transition-colors',
-          branding.bgClass,
-          hasCollapsible && 'hover:bg-arena-elements-item-backgroundHover/80 cursor-pointer',
+          'w-full flex items-center gap-2 px-3 py-2 text-left transition-colors',
+          isTerminal
+            ? 'rounded-[5px] border border-[#273035] bg-[#0f1a1f]'
+            : `rounded-lg ${branding.bgClass}`,
+          hasCollapsible && (isTerminal ? 'hover:bg-[#16242a] cursor-pointer' : 'hover:bg-arena-elements-item-backgroundHover/80 cursor-pointer'),
           !hasCollapsible && 'cursor-default',
-          collapsed && branding.borderClass && `border ${branding.borderClass}`,
-          !collapsed && 'border border-transparent',
+          !isTerminal && collapsed && branding.borderClass && `border ${branding.borderClass}`,
+          !isTerminal && !collapsed && 'border border-transparent',
         )}
       >
         <div className={cn('w-4 h-4 shrink-0', branding.iconClass, branding.accentClass)} />
@@ -127,7 +133,14 @@ function AgentRunGroup({
       </button>
 
       {visibleParts.length > 0 && (
-        <div className={cn('mt-1 space-y-2 rounded-lg p-1.5', branding.containerBgClass)}>
+        <div
+          className={cn(
+            'mt-1 space-y-2 p-1.5',
+            isTerminal
+              ? 'rounded-[5px] border border-[#273035] bg-[#0b1418]'
+              : `rounded-lg ${branding.containerBgClass}`,
+          )}
+        >
           {visibleParts.map(({ part, msgId, index }) => {
             const key = `${msgId}-${index}`;
             if (part.type === 'text') {
@@ -137,15 +150,15 @@ function AgentRunGroup({
               }
               return (
                 <div key={key} className="px-2.5 py-1.5">
-                  <AppMarkdown className="text-base leading-7">{text}</AppMarkdown>
+                  <AppMarkdown className={isTerminal ? 'text-base leading-7 text-[#f6fefd]' : 'text-base leading-7'}>{text}</AppMarkdown>
                 </div>
               );
             }
             if (part.type === 'tool') {
-              return <ToolRow key={key} part={part} />;
+              return <ToolRow key={key} part={part} variant={variant} />;
             }
             if (part.type === 'reasoning') {
-              return <ReasoningRow key={key} part={part} />;
+              return <ReasoningRow key={key} part={part} variant={variant} />;
             }
             return null;
           })}
@@ -175,6 +188,9 @@ export function ChatTranscript({
   onSend,
   branding,
   placeholder = 'Ask the agent anything…',
+  variant = 'default',
+  emptyTitle,
+  emptyDescription,
 }: {
   messages: AppSessionMessage[];
   partMap: Record<string, SessionPart[]>;
@@ -182,6 +198,9 @@ export function ChatTranscript({
   onSend?: (text: string) => void | Promise<void>;
   branding: AgentBranding;
   placeholder?: string;
+  variant?: ChatPartVariant;
+  emptyTitle?: string;
+  emptyDescription?: string;
 }) {
   const [inputValue, setInputValue] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -191,6 +210,11 @@ export function ChatTranscript({
   const runs = groups.filter((group) => group.type === 'run').map((group) => group.run);
   const { isCollapsed, toggleCollapse } = useRunCollapseState(runs);
   const { isAtBottom, scrollToBottom } = useAutoScroll(scrollRef, [messages, partMap, isStreaming]);
+  const isTerminal = variant === 'terminal';
+  const resolvedEmptyTitle = emptyTitle ?? (onSend ? 'Open Trading Thread' : 'Transcript Idle');
+  const resolvedEmptyDescription =
+    emptyDescription ??
+    'Messages, reasoning, tool calls, and decisions will appear here.';
 
   const handleSubmit = useCallback((e?: FormEvent) => {
     e?.preventDefault();
@@ -212,23 +236,38 @@ export function ChatTranscript({
   }, [handleSubmit]);
 
   return (
-    <div className="flex flex-col h-full flex-1 min-h-0">
+    <div className={cn('flex flex-col h-full flex-1 min-h-0', isTerminal && 'arena-terminal-transcript bg-[#081013]')}>
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
+        className={cn(
+          'min-h-0 flex-1 overflow-y-auto',
+          isTerminal ? 'px-4 py-5 min-[900px]:px-6' : 'px-4 py-4',
+        )}
         tabIndex={0}
         aria-label="Conversation transcript"
       >
         {messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-base text-arena-elements-textTertiary">
-            No messages yet
-          </div>
+          <TerminalEmptyState
+            title={resolvedEmptyTitle}
+            description={resolvedEmptyDescription}
+            icon={onSend ? 'i-ph:chat-circle-dots' : 'i-ph:list-checks'}
+            className={cn(
+              'mx-auto max-w-[760px]',
+              isTerminal
+                ? 'border-[#273035] bg-[#0b1418]'
+                : 'border-arena-elements-dividerColor bg-arena-elements-background-depth-1',
+            )}
+          />
         ) : (
-          <div className="space-y-3">
+          <div className={cn('mx-auto w-full space-y-3', isTerminal && 'max-w-[1120px] space-y-4')}>
             {groups.map((group, groupIndex) => {
               if (group.type === 'user') {
                 return (
-                  <UserBubble key={group.message.id} parts={partMap[group.message.id] ?? []} />
+                  <UserBubble
+                    key={group.message.id}
+                    parts={partMap[group.message.id] ?? []}
+                    variant={variant}
+                  />
                 );
               }
 
@@ -252,6 +291,7 @@ export function ChatTranscript({
                   onToggle={() => toggleCollapse(group.run.id)}
                   branding={branding}
                   previousUserText={previousUserText}
+                  variant={variant}
                 />
               );
             })}
@@ -265,7 +305,7 @@ export function ChatTranscript({
             type="button"
             onClick={scrollToBottom}
             aria-label="Scroll to bottom"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/90 dark:bg-arena-elements-background-depth-3 border border-arena-elements-dividerColor shadow-lg text-xs text-arena-elements-textSecondary hover:bg-white dark:hover:bg-arena-elements-background-depth-2 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/90 dark:bg-arena-elements-background-depth-3 border border-arena-elements-dividerColor shadow-lg text-xs text-arena-elements-textSecondary hover:bg-white dark:hover:bg-arena-elements-background-depth-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
           >
             <div className="i-ph:arrow-down w-3 h-3" aria-hidden="true" />
             Scroll to bottom
@@ -274,7 +314,7 @@ export function ChatTranscript({
       )}
 
       {onSend && (
-        <form onSubmit={handleSubmit} className="shrink-0 border-t border-arena-elements-dividerColor/50 p-3">
+        <form onSubmit={handleSubmit} className={cn('shrink-0 border-t border-arena-elements-dividerColor/50 p-3', isTerminal && 'bg-[#0b1418]')}>
           <div className="flex items-end gap-2">
             <textarea
               ref={inputRef}
@@ -284,14 +324,25 @@ export function ChatTranscript({
               placeholder={placeholder}
               rows={1}
               disabled={isStreaming}
-              className="flex-1 resize-none rounded-lg px-4 py-3 bg-arena-elements-background-depth-2/70 border border-arena-elements-dividerColor/70 text-base text-arena-elements-textPrimary placeholder:text-arena-elements-textTertiary focus:outline-none focus:border-violet-500/40 disabled:opacity-50 disabled:cursor-not-allowed max-h-36"
+              aria-label="Message input"
+              name="message"
+              autoComplete="off"
+              className={cn(
+                'flex-1 resize-none border px-4 py-3 text-base text-arena-elements-textPrimary placeholder:text-arena-elements-textTertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50 max-h-36',
+                isTerminal
+                  ? 'rounded-[5px] border-[#273035] bg-[#0f1a1f] focus-visible:border-[#50d2c1]/60 focus-visible:ring-[#50d2c1]/30'
+                  : 'rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 focus-visible:border-violet-500/40 focus-visible:ring-violet-500/20',
+              )}
               style={{ minHeight: '3rem' }}
             />
             <button
               type="submit"
               disabled={isStreaming || !inputValue.trim()}
               aria-label="Send Message"
-              className="flex h-12 w-12 items-center justify-center rounded-lg bg-violet-600 transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-30"
+              className={cn(
+                'flex h-12 w-12 items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-30',
+                isTerminal ? 'rounded-[5px] bg-[#143c38] hover:bg-[#19524c] focus-visible:ring-[#50d2c1]/60' : 'rounded-lg bg-violet-600 hover:bg-violet-500 focus-visible:ring-violet-500/60',
+              )}
             >
               <div className="i-ph:paper-plane-tilt w-4 h-4 text-white" aria-hidden="true" />
             </button>

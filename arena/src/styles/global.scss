@@ -222,6 +222,41 @@
   --chat-send-ring: rgba(139, 92, 246, 0.28);
 }
 
+.arena-trace-terminal {
+  color-scheme: dark;
+  --arena-elements-borderColor: #273035;
+  --arena-elements-dividerColor: #273035;
+  --arena-elements-bg-depth-1: #081013;
+  --arena-elements-bg-depth-2: #0b1418;
+  --arena-elements-bg-depth-3: #0f1a1f;
+  --arena-elements-bg-depth-4: #16242a;
+  --arena-elements-textPrimary: #f6fefd;
+  --arena-elements-textSecondary: #d2dad7;
+  --arena-elements-textTertiary: #949e9c;
+  --arena-elements-item-backgroundHover: #16242a;
+  --arena-elements-item-backgroundActive: #143c38;
+  --arena-elements-focus: #50d2c1;
+  --glass-bg: #0b1418;
+  --glass-bg-strong: #0f1a1f;
+  --glass-border: #273035;
+  --glass-border-hover: rgba(80, 210, 193, 0.42);
+  --chat-input-bg: #0f1a1f;
+  --chat-input-border: #273035;
+  --chat-input-focus-border: rgba(80, 210, 193, 0.56);
+  --chat-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --chat-input-focus-shadow: 0 0 0 1px rgba(80, 210, 193, 0.18);
+  --chat-send-border: rgba(80, 210, 193, 0.34);
+  --chat-send-bg: #143c38;
+  --chat-send-hover-bg: #19524c;
+  --chat-send-color: #f6fefd;
+  --chat-send-ring: rgba(80, 210, 193, 0.34);
+}
+
+.arena-terminal-transcript code,
+.arena-terminal-transcript pre {
+  color-scheme: dark;
+}
+
 :root[data-theme='dark'] .arena-chat-shell[data-sandbox-ui='true'] {
   --hsl-background: 240 30% 4%;
   --hsl-foreground: 240 10% 95%;
@@ -274,6 +309,45 @@
   --chat-send-hover-bg: linear-gradient(135deg, rgba(139, 92, 246, 0.32), rgba(91, 63, 214, 0.42));
   --chat-send-color: #ddd6fe;
   --chat-send-ring: rgba(167, 139, 250, 0.36);
+}
+
+.arena-chat-shell.arena-trace-terminal[data-sandbox-ui='true'] {
+  color-scheme: dark;
+  background: #081013 !important;
+  --arena-elements-borderColor: #273035;
+  --arena-elements-dividerColor: #273035;
+  --arena-elements-bg-depth-1: #081013;
+  --arena-elements-bg-depth-2: #0b1418;
+  --arena-elements-bg-depth-3: #0f1a1f;
+  --arena-elements-bg-depth-4: #16242a;
+  --arena-elements-textPrimary: #f6fefd;
+  --arena-elements-textSecondary: #d2dad7;
+  --arena-elements-textTertiary: #949e9c;
+  --arena-elements-item-backgroundHover: #16242a;
+  --arena-elements-item-backgroundActive: #143c38;
+  --arena-elements-focus: #50d2c1;
+  --glass-bg: #0b1418;
+  --glass-bg-strong: #0f1a1f;
+  --glass-border: #273035;
+  --glass-border-hover: rgba(80, 210, 193, 0.42);
+  --chat-input-bg: #0f1a1f;
+  --chat-input-border: #273035;
+  --chat-input-focus-border: rgba(80, 210, 193, 0.56);
+  --chat-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --chat-input-focus-shadow: 0 0 0 1px rgba(80, 210, 193, 0.18);
+  --chat-send-border: rgba(80, 210, 193, 0.34);
+  --chat-send-bg: #143c38;
+  --chat-send-hover-bg: #19524c;
+  --chat-send-color: #f6fefd;
+  --chat-send-ring: rgba(80, 210, 193, 0.34);
+}
+
+.arena-chat-shell.arena-trace-terminal[data-sandbox-ui='true'] .arena-terminal-transcript {
+  background: #081013 !important;
+}
+
+.arena-chat-shell.arena-trace-terminal[data-sandbox-ui='true'] .arena-trace-surface {
+  background: #081013 !important;
 }
 
 .arena-chat-shell[data-sandbox-ui='true'] .text-\[var\(--chat-label-size\,11px\)\] {

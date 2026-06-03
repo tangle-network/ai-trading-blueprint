@@ -4,7 +4,6 @@ import type { Bot } from '~/lib/types/bot';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import { ErrorBoundary } from '~/components/ErrorBoundary';
 import { botStatusBadgeVariant, botStatusLabel, formatNumber } from '~/lib/format';
-import { WorkspaceNavStrip } from './shared/WorkspacePrimitives';
 
 export type OperationsPanel =
   | 'overview'
@@ -65,7 +64,7 @@ function isOperationsPanel(value: string | null | undefined): value is Operation
 
 function OperationsPanelLoading({ label }: { label?: string }) {
   return (
-    <div className="flex min-h-[280px] items-center justify-center rounded-[5px] border border-[#273035] bg-[#0f1a1f]">
+    <div className="flex min-h-[280px] items-center justify-center rounded-[5px] border border-[#273035] bg-[#081013]">
       <div className="text-center">
         <div className="i-ph:spinner-gap mx-auto text-2xl text-[#949e9c] animate-spin" />
         <div className="mt-3 font-data text-xs uppercase tracking-wider text-[#949e9c]">
@@ -78,7 +77,7 @@ function OperationsPanelLoading({ label }: { label?: string }) {
 
 function shortAddress(value: string | null | undefined): string {
   if (!value) return 'n/a';
-  return value.length > 12 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
+  return value.length > 12 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
 }
 
 function formatLastVerified(value: number | null | undefined): string {
@@ -124,37 +123,10 @@ function runtimeModeLabel(bot: Bot): string {
   return 'Unknown';
 }
 
-function StatCard({
-  label,
-  value,
-  detail,
-  icon,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-  icon: string;
-}) {
-  return (
-    <div className="min-w-0 rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-3 py-3">
-      <div className="flex items-center gap-2 text-xs font-data font-semibold uppercase tracking-wider text-[#949e9c]">
-        <span className={`${icon} text-sm`} aria-hidden="true" />
-        {label}
-      </div>
-      <div className="mt-2 truncate font-data text-xl font-bold tracking-tight text-[#f6fefd]">
-        {value}
-      </div>
-      <div className="mt-1 truncate text-sm text-[#949e9c]">
-        {detail}
-      </div>
-    </div>
-  );
-}
-
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-3 border-b border-[#273035] py-2 last:border-b-0">
-      <span className="shrink-0 text-sm text-[#949e9c]">{label}</span>
+    <div className="grid min-w-0 grid-cols-[92px_minmax(0,1fr)] items-center gap-3 border-b border-[#273035] py-2 last:border-b-0">
+      <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.12em] text-[#697371]">{label}</span>
       <span className="min-w-0 truncate text-right font-data text-sm font-semibold text-[#f6fefd]" title={value}>
         {value}
       </span>
@@ -162,7 +134,7 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ActionCard({
+function CommandLane({
   title,
   description,
   icon,
@@ -176,28 +148,29 @@ function ActionCard({
   onClick: () => void;
 }) {
   const toneClass = {
-    amber: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-    violet: 'border-[#50d2c1]/24 bg-[#123f3a]/54 text-[#50d2c1]',
-    emerald: 'border-emerald-500/24 bg-emerald-500/10 text-emerald-300',
-    neutral: 'border-[#273035] bg-[#0f1a1f] text-[#d2dad7]',
+    amber: 'border-[#6f5723] bg-[#201808] text-[#f2c066]',
+    violet: 'border-[#1d5b52] bg-[#0d302c] text-[#50d2c1]',
+    emerald: 'border-[#1d5b52] bg-[#0f2421] text-[#9cf5e7]',
+    neutral: 'border-[#273035] bg-[#0b1418] text-[#d2dad7]',
   }[tone];
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`group flex min-h-[112px] min-w-0 flex-col items-start rounded-[5px] border px-3 py-3 text-left transition-colors hover:bg-[#16242a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${toneClass}`}
+      className={`group grid min-h-[58px] min-w-0 grid-cols-[30px_minmax(0,1fr)] items-center gap-2.5 rounded-[5px] border px-2.5 py-2 text-left transition-[background-color,border-color,transform] duration-150 hover:bg-[#12302e] active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${toneClass}`}
     >
-      <div className="flex w-full items-start justify-between gap-3">
-        <span className={`${icon} text-lg`} aria-hidden="true" />
-        <span className="i-ph:arrow-up-right text-sm opacity-60 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" aria-hidden="true" />
-      </div>
-      <div className="mt-3 font-display text-base font-semibold text-[#f6fefd]">
-        {title}
-      </div>
-      <div className="mt-1 text-sm leading-snug text-[#949e9c]">
-        {description}
-      </div>
+      <span className="flex h-[30px] w-[30px] items-center justify-center rounded-[5px] bg-[#081013]">
+        <span className={`${icon} text-base`} aria-hidden="true" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate font-display text-[15px] font-semibold text-[#f6fefd]">
+          {title}
+        </span>
+        <span className="mt-0.5 block truncate font-mono text-[11px] text-[#949e9c]">
+          {description}
+        </span>
+      </span>
     </button>
   );
 }
@@ -228,27 +201,85 @@ function formatGuardrailPercent(value: number | null): string {
   return `${formatNumber(percent, { maximumFractionDigits: percent >= 10 ? 0 : 1 })}%`;
 }
 
-function GuardrailTile({
+function ConsoleRow({
   label,
   value,
   detail,
+  tone = 'neutral',
 }: {
   label: string;
   value: string;
   detail: string;
+  tone?: 'neutral' | 'good' | 'warn';
 }) {
+  const valueClass = {
+    neutral: 'text-[#f6fefd]',
+    good: 'text-[#50d2c1]',
+    warn: 'text-[#f2c066]',
+  }[tone];
+
   return (
-    <div className="min-w-0 rounded-[5px] border border-[#273035] bg-[#0b1418] px-3 py-2.5">
-      <div className="truncate font-data text-[10px] font-semibold uppercase tracking-wider text-[#949e9c]">
-        {label}
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#273035] py-2 last:border-b-0">
+      <div className="min-w-0">
+        <div className="truncate font-data text-[10px] font-semibold uppercase tracking-wider text-[#697371]">
+          {label}
+        </div>
+        <div className="mt-0.5 truncate text-sm text-[#949e9c]">
+          {detail}
+        </div>
       </div>
-      <div className="mt-1 truncate font-data text-lg font-bold text-[#f6fefd]">
+      <div className={`max-w-[9.5rem] truncate text-right font-data text-base font-bold ${valueClass}`} title={value}>
         {value}
       </div>
-      <div className="mt-1 truncate text-sm text-[#949e9c]">
-        {detail}
+    </div>
+  );
+}
+
+function StatusCell({
+  label,
+  value,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: string;
+  tone?: 'neutral' | 'good' | 'warn';
+}) {
+  const valueClass = {
+    neutral: 'text-[#f6fefd]',
+    good: 'text-[#50d2c1]',
+    warn: 'text-[#f2c066]',
+  }[tone];
+
+  return (
+    <div className="min-w-0 border-r border-[#273035] px-3 py-2.5 last:border-r-0">
+      <div className="truncate font-data text-[10px] font-semibold uppercase tracking-[0.12em] text-[#697371]">
+        {label}
+      </div>
+      <div className={`mt-1 truncate font-data text-base font-bold tabular-nums ${valueClass}`} title={value}>
+        {value}
       </div>
     </div>
+  );
+}
+
+function RecordSection({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: Array<{ label: string; value: string }>;
+}) {
+  return (
+    <section className="min-w-0">
+      <div className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[#50d2c1]">
+        {title}
+      </div>
+      <div className="rounded-[5px] border border-[#273035] bg-[#081013] px-3">
+        {rows.map((row) => (
+          <DetailRow key={`${title}-${row.label}`} label={row.label} value={row.value} />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -277,11 +308,113 @@ function OperationsOverview({
   const maxLifetime = bot.maxLifetimeDays != null && bot.maxLifetimeDays > 0
     ? `${bot.maxLifetimeDays}d`
     : 'Open';
+  const runtimeState = bot.sandboxState ?? bot.lifecycleStatus ?? 'unknown';
+  const riskRows = [
+    {
+      label: 'Max DD',
+      value: formatGuardrailPercent(maxDrawdown),
+      detail: 'portfolio loss ceiling',
+    },
+    {
+      label: 'Position Cap',
+      value: formatGuardrailPercent(positionCap),
+      detail: 'capital per position',
+    },
+    {
+      label: 'Stop Loss',
+      value: formatGuardrailPercent(stopLoss),
+      detail: 'per-trade exit limit',
+    },
+    {
+      label: 'Validator',
+      value: bot.avgValidatorScore > 0
+        ? formatNumber(bot.avgValidatorScore, { maximumFractionDigits: 0 })
+        : 'n/a',
+      detail: 'average evidence score',
+    },
+    {
+      label: 'Trades',
+      value: formatNumber(bot.totalTrades, { maximumFractionDigits: 0 }),
+      detail: 'fills under this mandate',
+    },
+    {
+      label: 'Runtime',
+      value: maxLifetime,
+      detail: bot.windDownStartedAt ? 'wind-down active' : 'mandate window',
+    },
+  ];
+  const runtimeRows = [
+    {
+      label: 'Trading Loop',
+      value: bot.tradingActive ? 'Active' : 'Idle',
+      detail: bot.tradingActive ? 'loop active' : 'loop idle',
+      tone: bot.tradingActive ? 'good' as const : 'neutral' as const,
+    },
+    {
+      label: 'Sandbox',
+      value: runtimeState,
+      detail: bot.sandboxId ?? 'no sandbox',
+      tone: String(runtimeState).toLowerCase() === 'running' ? 'good' as const : 'neutral' as const,
+    },
+    {
+      label: 'Trust',
+      value: validationTrustLabel(bot.validationTrust),
+      detail: operatorKindLabel(bot.operatorKind),
+      tone: envelopeMode ? 'good' as const : 'warn' as const,
+    },
+    {
+      label: 'Access',
+      value: canCommand && bot.controlAvailable ? 'Command' : 'View',
+      detail: canCommand ? 'operator permitted' : 'public read',
+      tone: canCommand && bot.controlAvailable ? 'good' as const : 'neutral' as const,
+    },
+    {
+      label: 'Verified',
+      value: formatLastVerified(bot.lastVerifiedAt),
+      detail: 'latest operator check',
+      tone: bot.lastVerifiedAt ? 'good' as const : 'neutral' as const,
+    },
+    {
+      label: 'Service',
+      value: bot.serviceId > 0 ? `#${bot.serviceId}` : 'n/a',
+      detail: bot.callId && bot.callId > 0 ? `call #${bot.callId}` : 'no call id',
+      tone: bot.serviceId > 0 ? 'good' as const : 'neutral' as const,
+    },
+  ];
+  const recordGroups = [
+    {
+      title: 'Identity',
+      rows: [
+        { label: 'Bot ID', value: bot.id },
+        { label: 'Operator', value: shortAddress(bot.operatorAddress) },
+        { label: 'Submitter', value: shortAddress(bot.submitterAddress) },
+        { label: 'Vault', value: shortAddress(bot.vaultAddress) },
+      ],
+    },
+    {
+      title: 'Chain',
+      rows: [
+        { label: 'Network', value: bot.chainId ? String(bot.chainId) : 'n/a' },
+        { label: 'Service', value: bot.serviceId > 0 ? String(bot.serviceId) : 'n/a' },
+        { label: 'Call', value: bot.callId && bot.callId > 0 ? String(bot.callId) : 'n/a' },
+        { label: 'Verified', value: formatLastVerified(bot.lastVerifiedAt) },
+      ],
+    },
+    {
+      title: 'Runtime',
+      rows: [
+        { label: 'Sandbox', value: bot.sandboxId ?? 'n/a' },
+        { label: 'State', value: runtimeState },
+        { label: 'Mode', value: runtimeModeLabel(bot) },
+        { label: 'Operator', value: operatorKindLabel(bot.operatorKind) },
+      ],
+    },
+  ];
   const actionCards = [
     canCommand && needsSecrets && activePanelValues.has('secrets')
       ? {
-          title: 'Configure Secrets',
-          description: 'Provider keys are still required before the operator can run this agent.',
+          title: 'Secrets',
+          description: 'Provider keys required',
           icon: 'i-ph:key',
           tone: 'amber' as const,
           panel: 'secrets' as OperationsPanel,
@@ -289,24 +422,33 @@ function OperationsOverview({
       : null,
     canCommand && envelopeMode && activePanelValues.has('envelope')
       ? {
-          title: 'Review Envelope',
-          description: 'Execution is governed by a signed allowance and policy envelope.',
+          title: 'Envelope',
+          description: 'Allowance policy',
           icon: 'i-ph:signature',
           tone: 'amber' as const,
           panel: 'envelope' as OperationsPanel,
         }
       : null,
     {
-      title: 'Inspect Validation',
-      description: 'See validator signatures, simulation state, and recent approval evidence.',
+      title: 'Validation',
+      description: 'Evidence',
       icon: 'i-ph:shield-check',
       tone: 'violet' as const,
       panel: 'validation' as OperationsPanel,
     },
+    activePanelValues.has('revisions')
+      ? {
+          title: 'Revisions',
+          description: 'Candidates',
+          icon: 'i-ph:git-branch',
+          tone: 'neutral' as const,
+          panel: 'revisions' as OperationsPanel,
+        }
+      : null,
     canCommand && activePanelValues.has('controls')
       ? {
-          title: 'Runtime Controls',
-          description: 'Change trading posture, trigger a run, or wind down the agent lifecycle.',
+          title: 'Controls',
+          description: 'Risk and lifecycle',
           icon: 'i-ph:sliders-horizontal',
           tone: bot.controlAvailable ? 'emerald' as const : 'neutral' as const,
           panel: 'controls' as OperationsPanel,
@@ -314,8 +456,8 @@ function OperationsOverview({
       : null,
     isHyperliquidPerpBot && activePanelValues.has('vault')
       ? {
-          title: 'Vault Wiring',
-          description: 'Check Hyperliquid balances, accounting freshness, and withdrawal state.',
+          title: 'Vault',
+          description: 'Balances',
           icon: 'i-ph:bank',
           tone: 'neutral' as const,
           panel: 'vault' as OperationsPanel,
@@ -323,63 +465,68 @@ function OperationsOverview({
       : null,
     canCommand && hasTerminal && activePanelValues.has('terminal')
       ? {
-          title: 'Terminal Access',
-          description: 'Open owner-only runtime logs and process inspection.',
+          title: 'Terminal',
+          description: 'Runtime logs',
           icon: 'i-ph:terminal-window',
           tone: 'neutral' as const,
           panel: 'terminal' as OperationsPanel,
         }
       : null,
   ].filter((card): card is NonNullable<typeof card> => Boolean(card));
+  const statusCells = [
+    {
+      label: 'State',
+      value: botStatusLabel(bot.status),
+      tone: bot.status === 'active' ? 'good' as const : bot.status === 'needs_config' ? 'warn' as const : 'neutral' as const,
+    },
+    {
+      label: 'Mode',
+      value: runtimeModeLabel(bot),
+      tone: runtimeModeLabel(bot) === 'Live' ? 'good' as const : 'warn' as const,
+    },
+    {
+      label: 'Trust',
+      value: validationTrustLabel(bot.validationTrust),
+      tone: envelopeMode ? 'good' as const : 'warn' as const,
+    },
+    {
+      label: 'Secrets',
+      value: bot.secretsConfigured ? 'Set' : 'Needed',
+      tone: bot.secretsConfigured ? 'good' as const : 'warn' as const,
+    },
+    {
+      label: 'Access',
+      value: canCommand && bot.controlAvailable ? 'Command' : 'View',
+      tone: canCommand && bot.controlAvailable ? 'good' as const : 'neutral' as const,
+    },
+  ];
 
   return (
-    <div className="space-y-3">
-      <div className="grid gap-2 lg:grid-cols-4">
-        <StatCard
-          label="Runtime"
-          value={botStatusLabel(bot.status)}
-          detail={bot.tradingActive ? 'Trading loop active' : 'Trading loop idle'}
-          icon="i-ph:pulse"
-        />
-        <StatCard
-          label="Execution"
-          value={runtimeModeLabel(bot)}
-          detail={validationTrustLabel(bot.validationTrust)}
-          icon="i-ph:swap"
-        />
-        <StatCard
-          label="Control"
-          value={canCommand && bot.controlAvailable ? 'Available' : 'Viewer'}
-          detail={canCommand ? `${operatorKindLabel(bot.operatorKind)} operator` : 'Public access'}
-          icon="i-ph:sliders-horizontal"
-        />
-        <StatCard
-          label="Secrets"
-          value={bot.secretsConfigured ? 'Configured' : 'Needed'}
-          detail={bot.sandboxState ?? bot.lifecycleStatus ?? 'Runtime state unknown'}
-          icon="i-ph:key"
-        />
-      </div>
+    <div className="grid h-full min-h-0 gap-2 xl:grid-cols-[minmax(0,1fr)_332px]">
+      <section className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
+        <div className="grid border-b border-[#273035] bg-[#081013] min-[980px]:grid-cols-5">
+          {statusCells.map((cell) => (
+            <StatusCell
+              key={cell.label}
+              label={cell.label}
+              value={cell.value}
+              tone={cell.tone}
+            />
+          ))}
+        </div>
 
-      <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
-        <section className="rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-[#949e9c]">
-                Operational State
-              </div>
-              <h3 className="mt-1 font-display text-xl font-semibold tracking-tight text-[#f6fefd]">
-                Safety and runtime map
-              </h3>
-            </div>
-            <Badge variant={botStatusBadgeVariant(bot.status)} className="font-data text-xs">
-              {botStatusLabel(bot.status)}
-            </Badge>
+        <section className="border-b border-[#273035] bg-[#0b1418] p-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 className="font-display text-base font-semibold text-[#f6fefd]">
+              Command Runway
+            </h3>
+            <span className="font-mono text-xs text-[#949e9c]">
+              {actionCards.length} paths
+            </span>
           </div>
-
-          <div className="grid gap-2 2xl:grid-cols-2">
+          <div className="grid content-start gap-2 md:grid-cols-2 xl:grid-cols-3">
             {actionCards.map((card) => (
-              <ActionCard
+              <CommandLane
                 key={card.title}
                 title={card.title}
                 description={card.description}
@@ -389,63 +536,118 @@ function OperationsOverview({
               />
             ))}
           </div>
+        </section>
 
-          <div className="mt-3 rounded-[5px] border border-[#273035] bg-[#0b1418] p-3">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-[#949e9c]">
+        <div className="grid min-h-0 gap-2 overflow-auto p-3 [scrollbar-gutter:stable] lg:grid-cols-2">
+          <section className="flex min-h-0 flex-col rounded-[5px] border border-[#273035] bg-[#081013] p-3">
+            <div className="mb-1 flex items-center justify-between gap-3">
+              <h3 className="font-display text-base font-semibold text-[#f6fefd]">
                 Guardrails
-              </div>
-              <span className="font-data text-xs text-[#949e9c]">
+              </h3>
+              <span className="font-mono text-xs text-[#949e9c]">
                 {runtimeModeLabel(bot)}
               </span>
             </div>
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-              <GuardrailTile
-                label="Max DD"
-                value={formatGuardrailPercent(maxDrawdown)}
-                detail="loss ceiling"
-              />
-              <GuardrailTile
-                label="Position Cap"
-                value={formatGuardrailPercent(positionCap)}
-                detail="capital fraction"
-              />
-              <GuardrailTile
-                label="Stop Loss"
-                value={formatGuardrailPercent(stopLoss)}
-                detail="per position"
-              />
-              <GuardrailTile
-                label="Runtime"
-                value={maxLifetime}
-                detail={bot.windDownStartedAt ? 'wind-down started' : 'mandate window'}
-              />
+            <div>
+              {riskRows.map((row) => (
+                <ConsoleRow
+                  key={row.label}
+                  label={row.label}
+                  value={row.value}
+                  detail={row.detail}
+                />
+              ))}
             </div>
-          </div>
-        </section>
+          </section>
 
-        <aside className="rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-4">
-          <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-[#949e9c]">
-            Identity
-          </div>
-          <h3 className="mt-1 font-display text-lg font-semibold text-[#f6fefd]">
-            Agent references
-          </h3>
-          <div className="mt-3">
-            <DetailRow label="Bot ID" value={bot.id} />
-            <DetailRow label="Operator" value={shortAddress(bot.operatorAddress)} />
-            <DetailRow label="Submitter" value={shortAddress(bot.submitterAddress)} />
-            <DetailRow label="Vault" value={shortAddress(bot.vaultAddress)} />
-            <DetailRow label="Service" value={bot.serviceId > 0 ? String(bot.serviceId) : 'n/a'} />
-            <DetailRow label="Call" value={bot.callId && bot.callId > 0 ? String(bot.callId) : 'n/a'} />
-            <DetailRow label="Sandbox" value={bot.sandboxId ?? 'n/a'} />
-            <DetailRow label="Chain" value={bot.chainId ? String(bot.chainId) : 'n/a'} />
-            <DetailRow label="Verified" value={formatLastVerified(bot.lastVerifiedAt)} />
-          </div>
-        </aside>
-      </div>
+          <section className="flex min-h-0 flex-col rounded-[5px] border border-[#273035] bg-[#081013] p-3">
+            <div className="mb-1 flex items-center justify-between gap-3">
+              <h3 className="font-display text-base font-semibold text-[#f6fefd]">
+                Runtime Stack
+              </h3>
+              <span className="font-mono text-xs text-[#949e9c]">
+                {operatorKindLabel(bot.operatorKind)}
+              </span>
+            </div>
+            <div>
+              {runtimeRows.map((row) => (
+                <ConsoleRow
+                  key={row.label}
+                  label={row.label}
+                  value={row.value}
+                  detail={row.detail}
+                  tone={row.tone}
+                />
+              ))}
+            </div>
+          </section>
+        </div>
+      </section>
 
+      <aside className="flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-3 py-2.5">
+          <div className="min-w-0">
+            <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[#50d2c1]">
+              Record
+            </div>
+            <h3 className="mt-1 truncate font-display text-lg font-semibold text-[#f6fefd]">
+              {shortAddress(bot.operatorAddress)}
+            </h3>
+          </div>
+          <Badge variant={botStatusBadgeVariant(bot.status)} className="font-data text-xs">
+            {runtimeModeLabel(bot)}
+          </Badge>
+        </div>
+
+        <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto p-3 [scrollbar-gutter:stable]">
+          {recordGroups.map((group) => (
+            <RecordSection key={group.title} title={group.title} rows={group.rows} />
+          ))}
+        </div>
+      </aside>
     </div>
+  );
+}
+
+function OperationsPanelNav({
+  items,
+  activeValue,
+  onSelect,
+}: {
+  items: PanelItem[];
+  activeValue: OperationsPanel;
+  onSelect: (panel: OperationsPanel) => void;
+}) {
+  return (
+    <nav
+      className="flex max-w-full gap-1 overflow-x-auto rounded-[5px] border border-[#273035] bg-[#081013] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+      aria-label="Operations panels"
+    >
+      {items.map((item) => {
+        const selected = item.value === activeValue;
+        return (
+          <button
+            key={item.value}
+            type="button"
+            onClick={() => onSelect(item.value)}
+            aria-current={selected ? 'page' : undefined}
+            className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-[5px] px-3 font-display text-sm font-medium transition-[background-color,color,box-shadow,transform] duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+              selected
+                ? 'bg-[#12302e] text-[#f6fefd] shadow-[inset_3px_0_0_rgba(80,210,193,0.92)]'
+                : 'text-[#949e9c] hover:bg-[#16242a] hover:text-[#f6fefd]'
+            }`}
+          >
+            <span className={`${item.icon} text-base ${selected ? 'text-[#50d2c1]' : 'text-[#697371]'}`} aria-hidden="true" />
+            <span>{item.label}</span>
+            {item.badge && (
+              <Badge variant="amber" className="text-[10px]">
+                {item.badge}
+              </Badge>
+            )}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -532,15 +734,6 @@ export function OperationsWorkspace({
   const [activePanel, setActivePanel] = useState<OperationsPanel>(
     requestedPanel ?? 'overview',
   );
-  const panelNavItems = useMemo(
-    () => panels.map((panel) => ({
-      value: panel.value,
-      label: panel.label,
-      icon: panel.icon,
-      badge: panel.badge ? <Badge variant="amber" className="text-[10px]">{panel.badge}</Badge> : undefined,
-    })),
-    [panels],
-  );
 
   useEffect(() => {
     if (requestedPanel) setActivePanel(requestedPanel);
@@ -625,29 +818,23 @@ export function OperationsWorkspace({
   ].join(' ');
 
   return (
-    <div className={`flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418] ${terminalOperationsClass}`}>
-      <div className="shrink-0 border-b border-[#273035] bg-[#0f1a1f] px-4 py-2.5">
+    <div
+      className={`arena-trace-terminal flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#081013] text-[#f6fefd] ${terminalOperationsClass}`}
+    >
+      <div className="shrink-0 border-b border-[#273035] bg-[#0b1418] px-3 py-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="font-data text-[10px] font-semibold uppercase tracking-wider text-[#949e9c]">
-              Operations
-            </div>
-            <h2 className="mt-0.5 truncate font-display text-xl font-semibold tracking-tight text-[#f6fefd]">
-              {activeItem?.label ?? 'Runtime State'}
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate font-display text-xl font-semibold tracking-tight text-[#f6fefd]">
+              {effectiveActivePanel === 'overview' ? 'Control Plane' : activeItem?.label ?? 'Runtime State'}
             </h2>
-            {activeItem?.description && (
-              <p className="mt-0.5 truncate text-sm text-[#949e9c]">
-                {activeItem.description}
-              </p>
-            )}
+            <span className="hidden rounded-[4px] border border-[#273035] bg-[#081013] px-2 py-1 font-data text-xs text-[#949e9c] min-[780px]:inline" translate="no">
+              {botName}
+            </span>
           </div>
-          <WorkspaceNavStrip
-            items={panelNavItems}
+          <OperationsPanelNav
+            items={panels}
             activeValue={effectiveActivePanel}
             onSelect={selectPanel}
-            ariaLabel="Operations panels"
-            className="border-[#273035] bg-[#273035] p-0.5"
-            buttonClassName="h-9"
           />
         </div>
       </div>

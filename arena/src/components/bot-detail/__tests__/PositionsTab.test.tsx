@@ -312,4 +312,61 @@ describe('PositionsTab', () => {
     expect(screen.getByText('$31.24')).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Liquidation' })).not.toBeInTheDocument();
   });
+
+  it('renders an account terminal strip and side pill in ledger workspace mode', () => {
+    mockPortfolio = makePortfolio({
+      totalValueUsd: 26842.55,
+      cashBalance: 21940.2,
+      displayTotalValueUsd: 26842.55,
+      displayCashBalance: 21940.2,
+      positions: [
+        {
+          asset: resolveAssetDisplay('ETH'),
+          token: 'ETH',
+          symbol: 'ETH',
+          amount: 1.42,
+          valueUsd: 4986.64,
+          entryPrice: 3510,
+          currentPrice: 3521,
+          pnlPercent: null,
+          weight: 18.6,
+          protocol: 'hyperliquid',
+          positionType: 'long_perp',
+          marginUsedUsd: 498.66,
+          notionalUsd: 4986.64,
+          unrealizedPnlUsd: 104.39,
+          leverage: 10,
+          liquidationPrice: 3182.4,
+          displayValueUsd: 4986.64,
+          displayPnlPercent: null,
+          displayWeight: 18.6,
+          warnings: [],
+          valuationStatus: 'priced',
+        },
+      ],
+    });
+
+    render(
+      <PositionsTab
+        botId="bot-1"
+        status="active"
+        operatorApiUrl="/operator-api"
+        operatorKind="cloud"
+        workspace
+        workspaceLayout="ledger"
+      />,
+    );
+
+    expect(screen.getByText('Equity')).toBeInTheDocument();
+    expect(screen.getByText('Cash')).toBeInTheDocument();
+    expect(screen.getAllByText('Notional').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('uPNL')).toBeInTheDocument();
+    expect(screen.getByText('$26,842.55')).toBeInTheDocument();
+    expect(screen.getByText('$21,940.2')).toBeInTheDocument();
+    expect(screen.getAllByText('$4,986.64').length).toBeGreaterThanOrEqual(2);
+    screen.getAllByText('$104.39').forEach((node) => {
+      expect(node).toHaveClass('text-[#50d2c1]');
+    });
+    expect(screen.getByText('Long')).toHaveClass('text-[#50d2c1]');
+  });
 });

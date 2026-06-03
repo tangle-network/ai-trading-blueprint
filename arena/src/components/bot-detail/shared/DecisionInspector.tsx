@@ -49,6 +49,10 @@ interface DecisionInspectorProps {
 }
 
 function StageRow({ stage, isTerminal = false }: { stage: DecisionFeedStage; isTerminal?: boolean }) {
+  const stageValue = isTerminal && stage.value === 'Not captured' && stage.detail
+    ? 'Summary'
+    : stage.value;
+
   return (
     <div className={cx(
       'grid grid-cols-[24px_minmax(0,1fr)] gap-2 p-2.5',
@@ -66,7 +70,7 @@ function StageRow({ stage, isTerminal = false }: { stage: DecisionFeedStage; isT
             {stage.label}
           </span>
           <span className={cx('rounded-full border px-1.5 py-0.5 font-data text-[11px]', isTerminal ? terminalToneBadgeClass[stage.tone] : toneBadgeClass[stage.tone])}>
-            {stage.value}
+            {stageValue}
           </span>
         </div>
         {stage.detail && (
@@ -243,7 +247,7 @@ export function DecisionInspector({
         </div>
       )}
 
-      {capturedStages.length > 0 && !isTerminal && (
+      {capturedStages.length > 0 && (
         <div className={cx('mt-3 grid gap-2', isTerminal ? 'grid-cols-1 min-[1440px]:grid-cols-2' : 'grid-cols-1')}>
           {capturedStages.map((stage) => (
             <StageRow key={stage.key} stage={stage} isTerminal={isTerminal} />
@@ -251,7 +255,7 @@ export function DecisionInspector({
         </div>
       )}
 
-      {item.provenance.length > 0 && !isTerminal && (
+      {item.provenance.length > 0 && (
         <div className="mt-4">
           <div className={cx('text-xs font-display font-semibold uppercase', isTerminal ? 'text-[#949e9c]' : 'text-arena-elements-textTertiary')}>
             Evidence

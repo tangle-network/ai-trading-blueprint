@@ -6,6 +6,8 @@ import { formatNumber } from '~/lib/format';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
 import { usePlatformVolumeSeries } from '~/lib/hooks/useBotApi';
 import {
+  derivePlatformVolumeFocusWindow,
+  getPlatformVolumeBucketValue,
   PLATFORM_VOLUME_RANGES,
   type PlatformVolumeBucket,
   type PlatformVolumeMode,
@@ -42,15 +44,9 @@ function formatUsd(value: number): string {
   return `$${formatNumber(value, { maximumFractionDigits: 2 })}`;
 }
 
-function bucketValue(bucket: PlatformVolumeBucket, mode: PlatformVolumeMode): number {
-  switch (mode) {
-    case 'bucket':
-      return bucket.bucketUsd;
-    case 'rolling7d':
-      return bucket.rolling7dUsd;
-    case 'cumulative':
-      return bucket.cumulativeUsd;
-  }
+function formatPercent(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0%';
+  return `${formatNumber(value * 100, { maximumFractionDigits: 0 })}%`;
 }
 
 function toChartTime(timestamp: number): UTCTimestamp {
@@ -64,7 +60,7 @@ function toHistogramData(
 ): HistogramData<Time>[] {
   return buckets.map((bucket) => ({
     time: toChartTime(bucket.timestamp),
-    value: bucketValue(bucket, mode),
+    value: getPlatformVolumeBucketValue(bucket, mode),
     color: `${positiveColor}c8`,
   }));
 }
@@ -75,8 +71,15 @@ function toAreaData(
 ): AreaData<Time>[] {
   return buckets.map((bucket) => ({
     time: toChartTime(bucket.timestamp),
-    value: bucketValue(bucket, mode),
+    value: getPlatformVolumeBucketValue(bucket, mode),
   }));
+}
+
+function sparseFocusBucketCount(bucketCount: number, bucketMs: number): number {
+  if (bucketMs < 24 * 60 * 60 * 1000) return 8;
+  if (bucketCount > 120) return 16;
+  if (bucketCount > 45) return 12;
+  return 6;
 }
 
 function PlatformVolumeTradingChart({
@@ -84,11 +87,13 @@ function PlatformVolumeTradingChart({
   mode,
   bucketMs,
   heightClassName,
+  focusSparseActivity = false,
 }: {
   buckets: PlatformVolumeBucket[];
   mode: PlatformVolumeMode;
   bucketMs: number;
   heightClassName: string;
+  focusSparseActivity?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartTheme = useChartTheme();
@@ -99,9 +104,21 @@ function PlatformVolumeTradingChart({
     mode: PlatformVolumeMode | null;
     resizeObserver: ResizeObserver;
   } | null>(null);
-  const latestInputRef = useRef({ buckets, mode, bucketMs, chartTheme });
+  const latestInputRef = useRef({
+    buckets,
+    mode,
+    bucketMs,
+    chartTheme,
+    focusSparseActivity,
+  });
   const lastFitKeyRef = useRef<string | null>(null);
-  latestInputRef.current = { buckets, mode, bucketMs, chartTheme };
+  latestInputRef.current = {
+    buckets,
+    mode,
+    bucketMs,
+    chartTheme,
+    focusSparseActivity,
+  };
 
   function createSeries(
     runtime: NonNullable<typeof runtimeRef.current>,
@@ -119,10 +136,10 @@ function PlatformVolumeTradingChart({
       });
     }
 
-    const lineColor = nextMode === 'cumulative' ? '#8b5cf6' : nextChartTheme.positive;
+    const lineColor = nextMode === 'cumulative' ? '#f0b35a' : nextChartTheme.positive;
     return runtime.chart.addSeries(runtime.charts.AreaSeries, {
       lineColor,
-      topColor: nextMode === 'cumulative' ? 'rgba(139,92,246,0.18)' : nextChartTheme.positiveGradientStart,
+      topColor: nextMode === 'cumulative' ? 'rgba(240,179,90,0.18)' : nextChartTheme.positiveGradientStart,
       bottomColor: nextChartTheme.gradientEnd,
       lineWidth: 2,
       crosshairMarkerVisible: true,
@@ -144,6 +161,7 @@ function PlatformVolumeTradingChart({
       mode: nextMode,
       bucketMs: nextBucketMs,
       chartTheme: nextChartTheme,
+      focusSparseActivity: shouldFocusSparseActivity,
     } = latestInputRef.current;
 
     runtime.chart.applyOptions({
@@ -170,7 +188,21 @@ function PlatformVolumeTradingChart({
       (runtime.series as ISeriesApi<'Area'>).setData(toAreaData(nextBuckets, nextMode));
     }
 
-    if (shouldFitContent) runtime.chart.timeScale().fitContent();
+    if (shouldFitContent) {
+      const focusWindow = shouldFocusSparseActivity
+        ? derivePlatformVolumeFocusWindow(nextBuckets, nextMode, {
+          minVisibleBuckets: sparseFocusBucketCount(nextBuckets.length, nextBucketMs),
+        })
+        : null;
+      if (focusWindow) {
+        runtime.chart.timeScale().setVisibleRange({
+          from: toChartTime(focusWindow.fromMs),
+          to: toChartTime(focusWindow.toMs + nextBucketMs),
+        });
+      } else {
+        runtime.chart.timeScale().fitContent();
+      }
+    }
   }
 
   useEffect(() => {
@@ -289,37 +321,54 @@ export function PlatformVolumeChart({
   className = '',
   variant = 'standard',
 }: PlatformVolumeChartProps) {
+  const isCommand = variant === 'command';
   const [range, setRange] = useState<PlatformVolumeRange>('30d');
   const [mode, setMode] = useState<PlatformVolumeMode>('bucket');
   const { series, isLoading, isFetching } = usePlatformVolumeSeries(bots, range);
   const selectedRange = PLATFORM_VOLUME_RANGES.find((item) => item.value === range) ?? PLATFORM_VOLUME_RANGES[2];
   const modeLabel = mode === 'bucket' ? selectedRange.bucketLabel : MODES.find((item) => item.value === mode)?.label ?? 'Volume';
   const buckets = series.buckets;
-  const values = useMemo(() => buckets.map((bucket) => bucketValue(bucket, mode)), [buckets, mode]);
+  const values = useMemo(() => buckets.map((bucket) =>
+    getPlatformVolumeBucketValue(bucket, mode)), [buckets, mode]);
   const latestValue = values[values.length - 1] ?? 0;
   const hasVolume = series.summary.totalUsd > 0;
-  const isCommand = variant === 'command';
+  const activeBuckets = useMemo(() => buckets.filter((bucket) =>
+    bucket.bucketUsd > 0 || bucket.totalTradeCount > 0), [buckets]);
+  const latestActiveBucket = activeBuckets[activeBuckets.length - 1];
+  const peakBucket = useMemo(() => activeBuckets.reduce<PlatformVolumeBucket | null>((best, bucket) => {
+    if (!best || bucket.bucketUsd > best.bucketUsd) return bucket;
+    return best;
+  }, null), [activeBuckets]);
+  const liveShare = series.summary.totalUsd > 0 ? series.summary.liveUsd / series.summary.totalUsd : 0;
+  const pricedCoverage = series.summary.totalTradeCount > 0
+    ? series.summary.pricedTradeCount / series.summary.totalTradeCount
+    : 0;
 
   return (
-    <section className={`${isCommand ? 'flex h-full flex-col' : 'mb-4'} overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60 ${className}`}>
-      <div className="flex flex-col gap-3 border-b border-arena-elements-dividerColor/60 px-4 py-3 sm:px-5 2xl:flex-row 2xl:items-center 2xl:justify-between">
+    <section className={`${isCommand ? 'flex h-full min-h-0 flex-col rounded-[6px] border-[#273035] bg-[#0f1a1f]' : 'mb-4 rounded-xl border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60'} overflow-hidden border ${className}`}>
+      <div className={`flex flex-col gap-2 border-b px-3 py-2 2xl:flex-row 2xl:items-center 2xl:justify-between ${isCommand ? 'border-[#273035] bg-[#0b1418]' : 'border-arena-elements-dividerColor/60 sm:px-5 sm:py-3'}`}>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="font-display text-xl font-semibold tracking-tight text-arena-elements-textPrimary">
+            <h2 className={`${isCommand ? 'text-[#f6fefd]' : 'text-arena-elements-textPrimary'} font-display text-lg font-semibold tracking-tight`}>
               Volume
             </h2>
             {isFetching && !isLoading && (
               <span
-                className="i-ph:arrows-clockwise text-sm text-arena-elements-textTertiary animate-spin"
+                className={`${isCommand ? 'text-[#697371]' : 'text-arena-elements-textTertiary'} i-ph:arrows-clockwise text-sm animate-spin`}
                 aria-label="Refreshing volume"
               />
+            )}
+            {isCommand && (
+              <span className="font-data text-sm font-semibold text-[#d2dad7]">
+                {selectedRange.label}
+              </span>
             )}
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 2xl:justify-end">
+        <div className="flex flex-wrap items-center gap-1.5 2xl:justify-end">
           <div
-            className="inline-flex rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/60 p-1"
+            className={`${isCommand ? 'border-[#273035] bg-[#0f1a1f]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/60'} inline-flex rounded-[5px] border p-0.5`}
             aria-label="Volume range"
             role="group"
           >
@@ -330,10 +379,10 @@ export function PlatformVolumeChart({
                   key={item.value}
                   type="button"
                   onClick={() => setRange(item.value)}
-                  className={`inline-flex h-8 items-center rounded-md px-3 font-data text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                  className={`inline-flex h-7 items-center rounded-[4px] px-2.5 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
                     selected
-                      ? 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
-                      : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
+                      ? isCommand ? 'bg-[#d2dad7] text-[#04060c]' : 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
+                      : isCommand ? 'text-[#949e9c] hover:bg-[#273035] hover:text-[#f6fefd]' : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
                   }`}
                   aria-pressed={selected}
                 >
@@ -344,7 +393,7 @@ export function PlatformVolumeChart({
           </div>
 
           <div
-            className="inline-flex rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/60 p-1"
+            className={`${isCommand ? 'border-[#273035] bg-[#0f1a1f]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/60'} inline-flex rounded-[5px] border p-0.5`}
             aria-label="Volume chart mode"
             role="group"
           >
@@ -356,10 +405,10 @@ export function PlatformVolumeChart({
                   key={item.value}
                   type="button"
                   onClick={() => setMode(item.value)}
-                  className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 font-data text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                  className={`inline-flex h-7 items-center gap-1.5 rounded-[4px] px-2.5 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
                     selected
-                      ? 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
-                      : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
+                      ? isCommand ? 'bg-[#50d2c1] text-[#04060c]' : 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
+                      : isCommand ? 'text-[#949e9c] hover:bg-[#273035] hover:text-[#f6fefd]' : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
                   }`}
                   aria-pressed={selected}
                 >
@@ -373,28 +422,38 @@ export function PlatformVolumeChart({
       </div>
 
       <div className={`grid gap-0 ${isCommand ? 'min-h-0 flex-1' : 'xl:grid-cols-[minmax(0,1fr)_220px]'}`}>
-        <div className={`${isCommand ? 'flex min-h-0 flex-col' : 'min-h-[292px]'} p-4 sm:p-5`}>
+        <div className={`${isCommand ? 'flex min-h-0 flex-col p-2' : 'min-h-[292px] p-4 sm:p-5'}`}>
           {isLoading ? (
             <Skeleton className={`${isCommand ? 'min-h-0 flex-1' : 'h-[260px]'} w-full`} />
           ) : hasVolume ? (
-            <div className="flex h-full min-h-0 flex-col">
-              <div className="mb-2 flex items-start justify-between gap-4">
+            <div className="relative flex h-full min-h-0 flex-col">
+              <div className={`${isCommand ? 'absolute left-2 top-2 z-10 rounded-[5px] border border-[#273035] bg-[#0b1418]/90 px-2.5 py-2 backdrop-blur' : 'mb-2 flex items-start justify-between gap-4'}`}>
                 <div>
-                  <div className="text-xs font-medium text-arena-elements-textTertiary">
-                    {modeLabel} (USD)
+                  <div className={`${isCommand ? 'flex items-center gap-2 text-[10px] text-[#697371]' : 'text-xs text-arena-elements-textTertiary'} font-data uppercase`}>
+                    <span>{modeLabel}</span>
+                    {isCommand && latestActiveBucket && (
+                      <span className="text-[#949e9c]">{latestActiveBucket.label}</span>
+                    )}
                   </div>
-                  <div className="mt-1 font-data text-3xl font-bold tracking-tight text-arena-elements-textPrimary">
+                  <div className={`${isCommand ? 'text-lg text-[#f6fefd]' : 'text-3xl text-arena-elements-textPrimary'} mt-1 font-data font-bold tracking-tight`}>
                     {formatUsd(latestValue)}
                   </div>
+                  {isCommand && peakBucket && (
+                    <div className="mt-1 font-mono text-[11px] text-[#949e9c]">
+                      Peak {formatUsd(peakBucket.bucketUsd)} / {peakBucket.label}
+                    </div>
+                  )}
                 </div>
-                <div className="text-right">
-                  <div className="text-xs font-medium text-arena-elements-textTertiary">
-                    Total
+                {!isCommand && (
+                  <div className="text-right">
+                    <div className="text-xs font-medium text-arena-elements-textTertiary">
+                      Total
+                    </div>
+                    <div className="mt-1 font-data text-xl font-bold text-arena-elements-textPrimary">
+                      {formatUsd(series.summary.totalUsd)}
+                    </div>
                   </div>
-                  <div className="mt-1 font-data text-xl font-bold text-arena-elements-textPrimary">
-                    {formatUsd(series.summary.totalUsd)}
-                  </div>
-                </div>
+                )}
               </div>
 
               <PlatformVolumeTradingChart
@@ -402,7 +461,17 @@ export function PlatformVolumeChart({
                 mode={mode}
                 bucketMs={series.bucketMs}
                 heightClassName={isCommand ? 'min-h-0 flex-1' : 'h-[222px]'}
+                focusSparseActivity={isCommand}
               />
+
+              {isCommand && (
+                <div className="grid shrink-0 grid-cols-4 border-t border-[#273035] bg-[#0b1418]">
+                  <VolumeTerminalStat label="Total" value={formatUsd(series.summary.totalUsd)} />
+                  <VolumeTerminalStat label="Live" value={formatUsd(series.summary.liveUsd)} detail={formatPercent(liveShare)} />
+                  <VolumeTerminalStat label="Peak" value={formatUsd(peakBucket?.bucketUsd ?? 0)} detail={peakBucket?.label ?? '-'} />
+                  <VolumeTerminalStat label="Fills" value={formatNumber(series.summary.totalTradeCount, { maximumFractionDigits: 0 })} detail={`${formatPercent(pricedCoverage)} priced`} />
+                </div>
+              )}
             </div>
           ) : (
             <div
@@ -428,7 +497,7 @@ export function PlatformVolumeChart({
               { label: 'Total volume', value: formatUsd(series.summary.totalUsd), icon: 'i-ph:chart-line-up' },
               { label: 'Live notional', value: formatUsd(series.summary.liveUsd), icon: 'i-ph:lightning' },
               { label: 'Paper notional', value: formatUsd(series.summary.paperUsd), icon: 'i-ph:notepad' },
-              { label: 'Priced trades', value: series.summary.pricedTradeCount.toLocaleString(), icon: 'i-ph:swap' },
+              { label: 'Priced trades', value: formatNumber(series.summary.pricedTradeCount, { maximumFractionDigits: 0 }), icon: 'i-ph:swap' },
             ].map((stat) => (
               <div
                 key={stat.label}
@@ -447,5 +516,25 @@ export function PlatformVolumeChart({
         </aside>
       </div>
     </section>
+  );
+}
+
+function VolumeTerminalStat({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div className="min-w-0 border-r border-[#273035] px-3 py-2 last:border-r-0">
+      <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#697371]">{label}</div>
+      <div className="mt-1 truncate font-data text-sm font-semibold text-[#f6fefd]">{value}</div>
+      {detail && (
+        <div className="mt-0.5 truncate font-mono text-[11px] text-[#949e9c]">{detail}</div>
+      )}
+    </div>
   );
 }

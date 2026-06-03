@@ -80,6 +80,31 @@ describe('decision inspector surfaces', () => {
     expect(screen.queryByText('Venue')).not.toBeInTheDocument();
   });
 
+  it('uses a neutral summary badge for terminal stages with detail but no structured value', () => {
+    render(
+      <DecisionInspector
+        variant="terminal"
+        item={{
+          ...decisionItem,
+          stages: [
+            {
+              key: 'decision',
+              label: 'Decision',
+              value: 'Not captured',
+              detail: 'Placed a bounded ETH probe after fast replay.',
+              tone: 'neutral',
+              iconClass: 'i-ph:brain',
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Summary')).toBeInTheDocument();
+    expect(screen.queryByText('Not captured')).not.toBeInTheDocument();
+    expect(screen.getByText('Placed a bounded ETH probe after fast replay.')).toBeInTheDocument();
+  });
+
   it('emits the selected decision from the activity strip', async () => {
     const onSelect = vi.fn();
     render(

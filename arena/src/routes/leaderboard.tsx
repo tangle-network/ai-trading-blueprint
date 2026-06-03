@@ -2,41 +2,39 @@ import { useEffect, useMemo, useState } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
 import { useAccount } from 'wagmi';
+import type { Address } from 'viem';
+import { Identicon } from '@tangle-network/blueprint-ui/components';
 import { useBots } from '~/lib/hooks/useBots';
 import { useBotEnrichment } from '~/lib/hooks/useBotEnrichment';
-import { usePlatformVolumeSeries } from '~/lib/hooks/useBotApi';
+import { useLatestAgentTrades, usePlatformVolumeSeries, type LatestAgentTrade } from '~/lib/hooks/useBotApi';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 import { LeaderboardTable } from '~/components/arena/LeaderboardTable';
-import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
-import { PlatformVolumeChart } from '~/components/arena/PlatformVolumeChart';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
 import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
 import { isPublicLeaderboardBot } from '~/lib/botVisibility';
 import { rankLeaderboardBots } from '~/lib/leaderboardRanking';
-import { formatCompactUsd, formatNumber } from '~/lib/format';
+import { botStatusLabel, formatCompactUsd, formatNumber, formatSignedPercent, STRATEGY_SHORT, truncateAddress } from '~/lib/format';
+import { buildAgentActivityStats, type AgentActivityStats } from '~/lib/agentActivity';
+import { formatTradeActionLabel, formatTradeAge, getTradeMarketLabel } from '~/lib/tradeDisplay';
 import type { Bot } from '~/lib/types/bot';
+import {
+  fillCountEvidenceTitle,
+  resolveFillCountEvidence,
+} from '~/lib/tradeEvidence';
 
 export const meta: MetaFunction = () => [
   { title: 'Agent Explorer — AI Trading Arena' },
 ];
 
-type ExplorerView = 'agents' | 'fills' | 'volume';
-
-const EXPLORER_VIEWS: Array<{ value: ExplorerView; label: string; icon: string }> = [
-  { value: 'agents', label: 'Agents', icon: 'i-ph:list-bullets' },
-  { value: 'fills', label: 'Fills', icon: 'i-ph:arrows-left-right' },
-  { value: 'volume', label: 'Volume', icon: 'i-ph:chart-line-up' },
-];
-
 function ExplorerMetric({ value, label }: { value: string; label: string }) {
   return (
-    <div className="min-w-0 border-l border-arena-elements-dividerColor/60 pl-3 first:border-l-0 first:pl-0">
-      <div className="font-data text-base font-bold leading-none text-arena-elements-textPrimary">
+    <div className="min-w-0">
+      <div className="font-data text-sm font-bold leading-none text-[#f6fefd]">
         {value}
       </div>
-      <div className="mt-0.5 truncate font-data text-[11px] uppercase tracking-wider text-arena-elements-textTertiary">
+      <div className="mt-0.5 truncate font-data text-[10px] uppercase text-[#697371]">
         {label}
       </div>
     </div>
@@ -55,10 +53,321 @@ function botMatchesSearch(bot: Bot, search: string): boolean {
   ].some((value) => value.toLowerCase().includes(query));
 }
 
+function valueTone(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return 'text-[#697371]';
+  return value > 0 ? 'text-[#50d2c1]' : 'text-[#ff5d6c]';
+}
+
+function formatFlowUsd(value: number): string {
+  return value > 0 ? formatCompactUsd(value) : '$0';
+}
+
+function formatMode(bot: Bot): string {
+  if (bot.paperTrade === true) return 'Paper';
+  if (bot.paperTrade === false) return 'Live';
+  return 'Unknown';
+}
+
+function formatTrust(bot: Bot): string {
+  switch (bot.validationTrust) {
+    case 'envelope':
+      return 'Envelope';
+    case 'self_operated':
+      return 'Self';
+    case 'per_trade':
+      return 'Per trade';
+    default:
+      return 'Per trade';
+  }
+}
+
+function AgentStat({
+  label,
+  value,
+  tone = 'text-[#f6fefd]',
+  title,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  title?: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-[5px] border border-[#273035] bg-[#081013] px-3 py-2.5" title={title}>
+      <div className="truncate font-mono text-[11px] uppercase tracking-[0.12em] text-[#697371]">{label}</div>
+      <div className={`mt-1 truncate font-data text-xl font-bold tabular-nums ${tone}`}>{value}</div>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 border-b border-[#273035] py-2 last:border-b-0">
+      <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-[#697371]">{label}</span>
+      <span className="min-w-0 truncate text-right font-mono text-xs text-[#f6fefd]">{value}</span>
+    </div>
+  );
+}
+
+function AgentDossierCell({
+  label,
+  value,
+  tone = 'text-[#f6fefd]',
+  title,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  title?: string;
+}) {
+  return (
+    <div className="min-w-0 border-r border-[#273035] px-3 py-2 last:border-r-0" title={title}>
+      <span className="block truncate font-mono text-[10px] uppercase tracking-[0.12em] text-[#697371]">{label}</span>
+      <span className={`mt-1 block truncate font-data text-base font-bold tabular-nums ${tone}`}>{value}</span>
+    </div>
+  );
+}
+
+function SelectedAgentDossier({
+  bot,
+  activityStats,
+  trades,
+}: {
+  bot: Bot;
+  activityStats?: AgentActivityStats;
+  trades: LatestAgentTrade[];
+}) {
+  const hrefBase = `/arena/bot/${encodeURIComponent(bot.id)}`;
+  const accountValue = bot.tvl > 0 ? formatCompactUsd(bot.tvl) : 'No NAV';
+  const returnValue = bot.pnlPercent !== 0 ? formatSignedPercent(bot.pnlPercent) : '0.0%';
+  const recentFills = activityStats?.recentFills ?? 0;
+  const recentNotionalUsd = activityStats?.recentNotionalUsd ?? 0;
+  const totalFillEvidence = resolveFillCountEvidence({
+    visibleTradeCount: activityStats?.totalVisibleFills,
+    rosterTradeCount: bot.totalTrades,
+  });
+  const lastActionValue = activityStats?.lastAction
+    ? formatTradeActionLabel(activityStats.lastAction)
+    : 'No fills';
+
+  return (
+    <section
+      aria-label="Selected agent dossier"
+      className="hidden min-h-0 flex-1 grid-rows-[auto_auto_minmax(0,1fr)] border-t border-[#273035] bg-[#0b1418] min-[1024px]:grid"
+    >
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#273035] px-3 py-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <Identicon address={bot.operatorAddress as Address} size={34} />
+          <div className="min-w-0">
+            <div className="truncate font-display text-base font-semibold text-[#f6fefd]">{bot.name}</div>
+            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2 font-mono text-xs text-[#949e9c]">
+              <span>{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
+              <span className="h-1 w-1 rounded-full bg-[#697371]" aria-hidden="true" />
+              <span className={bot.status === 'active' ? 'text-[#50d2c1]' : 'text-[#949e9c]'}>
+                {botStatusLabel(bot.status)}
+              </span>
+              <span className="h-1 w-1 rounded-full bg-[#697371]" aria-hidden="true" />
+              <span>{formatMode(bot)}</span>
+            </div>
+          </div>
+        </div>
+        <nav className="flex shrink-0 items-center gap-1.5 min-[1360px]:hidden" aria-label={`${bot.name} workspace`}>
+          {[
+            ['Performance', `${hrefBase}/performance`],
+            ['Portfolio', `${hrefBase}/portfolio`],
+            ['Runs', `${hrefBase}/runs`],
+            ['Chat', `${hrefBase}/chat`],
+          ].map(([label, href]) => (
+            <Link
+              key={href}
+              to={href}
+              className="inline-flex h-8 items-center justify-center rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2.5 font-display text-xs font-semibold text-[#d2dad7] transition-[background-color,border-color,color] duration-150 hover:border-[#50d2c1]/50 hover:bg-[#143c38] hover:text-[#f6fefd] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+            >
+              {label}
+            </Link>
+          ))}
+        </nav>
+      </div>
+
+      <div className="grid grid-cols-6 border-b border-[#273035]">
+        <AgentDossierCell label="Account" value={accountValue} />
+        <AgentDossierCell label="24H Vol" value={formatFlowUsd(recentNotionalUsd)} />
+        <AgentDossierCell label="Return" value={returnValue} tone={valueTone(bot.pnlPercent)} />
+        <AgentDossierCell label="24H" value={formatNumber(recentFills, { maximumFractionDigits: 0 })} />
+        <AgentDossierCell label="Total" value={totalFillEvidence.value > 0 ? formatNumber(totalFillEvidence.value, { maximumFractionDigits: 0 }) : '—'} title={fillCountEvidenceTitle(totalFillEvidence)} />
+        <AgentDossierCell label="Last" value={activityStats?.lastTradeAt ? formatTradeAge(activityStats.lastTradeAt) : '—'} />
+      </div>
+
+      <div className="grid min-h-0 grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-0 min-[1360px]:grid-cols-[minmax(0,0.62fr)_minmax(0,1.38fr)]">
+        <div className="min-w-0 border-r border-[#273035] px-3 py-2">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="font-display text-sm font-semibold text-[#f6fefd]">Execution</span>
+            <span className={`rounded-[4px] border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] ${
+              bot.tradingActive === false
+                ? 'border-[#6f5723] bg-[#201808] text-[#f2c066]'
+                : 'border-[#1d5b52] bg-[#143c38] text-[#9cf5e7]'
+            }`}>
+              {bot.tradingActive === false ? 'Idle' : 'Armed'}
+            </span>
+          </div>
+          <div className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 font-mono text-xs">
+            <span className="uppercase tracking-[0.12em] text-[#697371]">Last</span>
+            <span className="min-w-0 truncate text-right text-[#f6fefd]">{lastActionValue}</span>
+            <span className="uppercase tracking-[0.12em] text-[#697371]">Trust</span>
+            <span className="min-w-0 truncate text-right text-[#f6fefd]">{formatTrust(bot)}</span>
+            <span className="uppercase tracking-[0.12em] text-[#697371]">Score</span>
+            <span className="min-w-0 truncate text-right text-[#f6fefd]">
+              {bot.avgValidatorScore > 0 ? formatNumber(bot.avgValidatorScore, { maximumFractionDigits: 0 }) : 'No score'}
+            </span>
+            <span className="uppercase tracking-[0.12em] text-[#697371]">Strategy</span>
+            <span className="min-w-0 truncate text-right text-[#f6fefd]">{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
+            <span className="uppercase tracking-[0.12em] text-[#697371]">Mode</span>
+            <span className="min-w-0 truncate text-right text-[#f6fefd]">{formatMode(bot)}</span>
+            <span className="uppercase tracking-[0.12em] text-[#697371] min-[1360px]:hidden">Chain</span>
+            <span className="min-w-0 truncate text-right text-[#f6fefd] min-[1360px]:hidden">{bot.chainId ? String(bot.chainId) : '—'}</span>
+            <span className="uppercase tracking-[0.12em] text-[#697371] min-[1360px]:hidden">Operator</span>
+            <span className="min-w-0 truncate text-right text-[#f6fefd] min-[1360px]:hidden">{truncateAddress(bot.operatorAddress)}</span>
+            <span className="uppercase tracking-[0.12em] text-[#697371] min-[1360px]:hidden">Vault</span>
+            <span className="min-w-0 truncate text-right text-[#f6fefd] min-[1360px]:hidden">{truncateAddress(bot.vaultAddress)}</span>
+            <span className="uppercase tracking-[0.12em] text-[#697371] min-[1360px]:hidden">Service</span>
+            <span className="min-w-0 truncate text-right text-[#f6fefd] min-[1360px]:hidden">{bot.serviceId ? String(bot.serviceId) : '—'}</span>
+          </div>
+        </div>
+        <div className="min-w-0 px-3 py-2">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="font-display text-sm font-semibold text-[#f6fefd]">Recent fills</span>
+            <span className="font-mono text-xs text-[#697371]">{formatNumber(trades.length, { maximumFractionDigits: 0 })}</span>
+          </div>
+          {trades.length > 0 ? (
+            <div className="min-h-0 overflow-hidden rounded-[5px] border border-[#273035]">
+              {trades.slice(0, 8).map(({ trade }) => (
+                <div
+                  key={trade.id}
+                  className="grid grid-cols-[3.75rem_6.25rem_minmax(0,1fr)_5.5rem] items-center gap-2 border-b border-[#273035] px-2.5 py-1.5 last:border-b-0"
+                >
+                  <span className="font-mono text-[11px] text-[#697371]">{formatTradeAge(trade.timestamp)}</span>
+                  <span className="min-w-0 truncate font-data text-xs font-bold text-[#50d2c1]">
+                    {formatTradeActionLabel(trade.action)}
+                  </span>
+                  <span className="min-w-0 truncate font-mono text-xs text-[#d2dad7]">{getTradeMarketLabel(trade)}</span>
+                  <span className="min-w-0 truncate text-right font-data text-xs font-bold text-[#f6fefd]">
+                    {formatFlowUsd(trade.notionalUsd ?? 0)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex h-[120px] items-center justify-center rounded-[5px] border border-[#273035] font-display text-sm text-[#949e9c]">
+              No recent fills.
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SelectedAgentCockpit({
+  bot,
+  activityStats,
+}: {
+  bot: Bot;
+  activityStats?: AgentActivityStats;
+}) {
+  const hrefBase = `/arena/bot/${encodeURIComponent(bot.id)}`;
+  const accountValue = bot.tvl > 0 ? formatCompactUsd(bot.tvl) : 'No NAV';
+  const returnValue = bot.pnlPercent !== 0 ? formatSignedPercent(bot.pnlPercent) : '0.0%';
+  const recentFills = activityStats?.recentFills ?? 0;
+  const recentNotionalUsd = activityStats?.recentNotionalUsd ?? 0;
+  const totalFillEvidence = resolveFillCountEvidence({
+    visibleTradeCount: activityStats?.totalVisibleFills,
+    rosterTradeCount: bot.totalTrades,
+  });
+  const lastActionValue = activityStats?.lastAction
+    ? formatTradeActionLabel(activityStats.lastAction)
+    : 'No fills';
+  const validatorScore = bot.avgValidatorScore > 0
+    ? formatNumber(bot.avgValidatorScore, { maximumFractionDigits: 0 })
+    : '—';
+
+  return (
+    <aside
+      aria-label="Selected agent cockpit"
+      className="hidden min-h-0 flex-col overflow-hidden border-l border-[#273035] bg-[#0b1418] min-[1360px]:flex"
+    >
+      <div className="border-b border-[#273035] p-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <Identicon address={bot.operatorAddress as Address} size={44} />
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate font-display text-xl font-semibold tracking-tight text-[#f6fefd]">{bot.name}</h2>
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 font-mono text-xs text-[#949e9c]">
+              <span>{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
+              <span className="h-1 w-1 rounded-full bg-[#697371]" aria-hidden="true" />
+              <span className={bot.status === 'active' ? 'text-[#50d2c1]' : 'text-[#949e9c]'}>
+                {botStatusLabel(bot.status)}
+              </span>
+              <span className="h-1 w-1 rounded-full bg-[#697371]" aria-hidden="true" />
+              <span>{formatMode(bot)}</span>
+            </div>
+          </div>
+        </div>
+
+        <nav className="mt-3 grid grid-cols-2 gap-2" aria-label={`${bot.name} actions`}>
+          {[
+            ['Performance', `${hrefBase}/performance`],
+            ['Portfolio', `${hrefBase}/portfolio`],
+            ['Runs', `${hrefBase}/runs`],
+            ['Chat', `${hrefBase}/chat`],
+          ].map(([label, href]) => (
+            <Link
+              key={href}
+              to={href}
+              className="inline-flex h-9 items-center justify-center rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2 font-display text-sm font-semibold text-[#d2dad7] transition-[background-color,border-color,color] duration-150 hover:border-[#50d2c1]/50 hover:bg-[#143c38] hover:text-[#f6fefd] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+            >
+              {label}
+            </Link>
+          ))}
+        </nav>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 border-b border-[#273035] p-3">
+        <AgentStat label="Account" value={accountValue} />
+        <AgentStat label="24H Vol" value={formatFlowUsd(recentNotionalUsd)} />
+        <AgentStat label="Return" value={returnValue} tone={valueTone(bot.pnlPercent)} />
+        <AgentStat label="24H" value={formatNumber(recentFills, { maximumFractionDigits: 0 })} />
+        <AgentStat label="Total" value={totalFillEvidence.value > 0 ? formatNumber(totalFillEvidence.value, { maximumFractionDigits: 0 }) : '—'} title={fillCountEvidenceTitle(totalFillEvidence)} />
+        <AgentStat label="Last" value={activityStats?.lastTradeAt ? formatTradeAge(activityStats.lastTradeAt) : '—'} />
+      </div>
+
+      <div className="min-h-0 flex-1 border-t border-[#273035] p-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="font-display text-sm font-semibold text-[#f6fefd]">Routing</h3>
+          <span className={`rounded-[4px] border px-2 py-1 font-mono text-[11px] uppercase tracking-[0.12em] ${
+            bot.tradingActive === false
+              ? 'border-[#6f5723] bg-[#201808] text-[#f2c066]'
+              : 'border-[#1d5b52] bg-[#143c38] text-[#9cf5e7]'
+          }`}>
+            {bot.tradingActive === false ? 'Idle' : 'Armed'}
+          </span>
+        </div>
+        <div>
+          <DetailRow label="Operator" value={truncateAddress(bot.operatorAddress)} />
+          <DetailRow label="Vault" value={truncateAddress(bot.vaultAddress)} />
+          <DetailRow label="Chain" value={bot.chainId ? String(bot.chainId) : '—'} />
+          <DetailRow label="Trust" value={formatTrust(bot)} />
+          <DetailRow label="Action" value={lastActionValue} />
+          <DetailRow label="Score" value={validatorScore === '—' ? 'No score' : validatorScore} />
+          <DetailRow label="Service" value={bot.serviceId ? String(bot.serviceId) : '—'} />
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 export default function LeaderboardPage() {
   const { isConnected } = useAccount();
   const [search, setSearch] = useState('');
-  const [activeView, setActiveView] = useState<ExplorerView>('agents');
+  const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   useTradingRouteAutoAuth({
     enabled: isConnected && HAS_TRADING_OPERATOR_API,
     routeKey: 'leaderboard',
@@ -73,71 +382,112 @@ export default function LeaderboardPage() {
 
   const bots = useBotEnrichment(rawBots, { enabled: enrichmentEnabled });
   const leaderboardBots = useMemo(() => bots.filter(isPublicLeaderboardBot), [bots]);
-  const sortedBots = useMemo(() => rankLeaderboardBots(leaderboardBots), [leaderboardBots]);
+  const latestAgentActivity = useLatestAgentTrades(leaderboardBots, {
+    enabled: leaderboardBots.length > 0,
+    limit: 200,
+    perBotLimit: 50,
+    maxBots: 64,
+  });
+  const activityStatsByBotId = useMemo(
+    () => buildAgentActivityStats(latestAgentActivity.trades),
+    [latestAgentActivity.trades],
+  );
+  const sortedBots = useMemo(() => {
+    const ranked = rankLeaderboardBots(leaderboardBots);
+    const baselineRank = new Map(ranked.map((bot, index) => [bot.id, index]));
+    const hasRecentActivity = ranked.some((bot) => (activityStatsByBotId.get(bot.id)?.recentFills ?? 0) > 0);
+
+    if (!hasRecentActivity) return ranked;
+
+    return [...ranked].sort((left, right) => {
+      const leftStats = activityStatsByBotId.get(left.id);
+      const rightStats = activityStatsByBotId.get(right.id);
+      const rightNotional = rightStats?.recentNotionalUsd ?? 0;
+      const leftNotional = leftStats?.recentNotionalUsd ?? 0;
+      if (rightNotional !== leftNotional) return rightNotional - leftNotional;
+
+      const rightFills = rightStats?.recentFills ?? 0;
+      const leftFills = leftStats?.recentFills ?? 0;
+      if (rightFills !== leftFills) return rightFills - leftFills;
+
+      const rightLast = rightStats?.lastTradeAt ?? 0;
+      const leftLast = leftStats?.lastTradeAt ?? 0;
+      if (rightLast !== leftLast) return rightLast - leftLast;
+
+      return (baselineRank.get(left.id) ?? 0) - (baselineRank.get(right.id) ?? 0);
+    });
+  }, [activityStatsByBotId, leaderboardBots]);
   const visibleBots = useMemo(
     () => sortedBots.filter((bot) => botMatchesSearch(bot, search)),
     [search, sortedBots],
   );
   const oneDayVolume = usePlatformVolumeSeries(leaderboardBots, '1d');
   const oneDayTrades = oneDayVolume.series.summary.totalTradeCount;
-  const tradesPerHour = oneDayTrades > 0 ? oneDayTrades / 24 : 0;
   const activeAgents = leaderboardBots.filter((bot) => bot.status === 'active').length;
+  const selectedBot = useMemo(
+    () => visibleBots.find((bot) => bot.id === selectedBotId) ?? visibleBots[0],
+    [selectedBotId, visibleBots],
+  );
+  const selectedAgentTrades = useMemo(() => {
+    if (!selectedBot) return [];
+    return latestAgentActivity.trades
+      .filter((item) => item.botId === selectedBot.id || item.trade.botId === selectedBot.id)
+      .slice(0, 8);
+  }, [latestAgentActivity.trades, selectedBot]);
+
+  useEffect(() => {
+    if (visibleBots.length === 0) {
+      if (selectedBotId !== null) setSelectedBotId(null);
+      return;
+    }
+    if (!visibleBots.some((bot) => bot.id === selectedBotId)) {
+      setSelectedBotId(visibleBots[0].id);
+    }
+  }, [selectedBotId, visibleBots]);
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[1500px] flex-col gap-3 px-3 py-3 sm:px-4 lg:h-full lg:overflow-hidden">
-      <section className="shrink-0 rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 px-3 py-2">
-        <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-          <div className="flex min-w-0 items-center gap-3 xl:min-w-[14rem]">
-            <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-700 animate-glow-pulse dark:bg-emerald-400" />
-            <h1 className="truncate font-display text-xl font-bold tracking-tight">
-              Agent Explorer
+    <div className="mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:overflow-hidden">
+      <section className="shrink-0 overflow-hidden rounded-[6px] border border-[#273035] bg-[#0f1a1f]">
+        <div className="flex min-h-12 flex-col gap-2 px-3 py-2 min-[1280px]:flex-row min-[1280px]:items-center">
+          <div className="flex min-w-0 items-center gap-3 min-[1280px]:w-40 min-[1280px]:shrink-0">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-[#50d2c1] shadow-[0_0_16px_rgba(80,210,193,0.5)]" aria-hidden="true" />
+            <h1 className="truncate font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
+              Agents
             </h1>
+            <span className="rounded-[4px] border border-[#273035] px-2 py-1 font-data text-xs text-[#949e9c]">
+              {formatNumber(visibleBots.length, { maximumFractionDigits: 0 })}
+            </span>
           </div>
-          <div
-            className="flex max-w-full shrink-0 gap-1 overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/58 p-1"
-            role="tablist"
-            aria-label="Explorer screens"
-          >
-            {EXPLORER_VIEWS.map((view) => {
-              const selected = activeView === view.value;
-              return (
-                <button
-                  key={view.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  onClick={() => setActiveView(view.value)}
-                  className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-3 font-display text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
-                    selected
-                      ? 'bg-violet-500/14 text-arena-elements-textPrimary'
-                      : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
-                  }`}
-                >
-                  <span className={`${view.icon} text-sm ${selected ? 'text-violet-500 dark:text-violet-300' : 'text-arena-elements-textTertiary'}`} aria-hidden="true" />
-                  {view.label}
-                </button>
-              );
-            })}
+          <div className="grid min-w-0 grid-cols-3 gap-3 min-[1280px]:w-[16.5rem] min-[1280px]:shrink-0">
+            <ExplorerMetric value={formatCompactUsd(oneDayVolume.series.summary.totalUsd)} label="24H Vol" />
+            <ExplorerMetric value={oneDayTrades > 0 ? formatNumber(oneDayTrades, { maximumFractionDigits: 0 }) : '—'} label="24H Fills" />
+            <ExplorerMetric value={formatNumber(activeAgents, { maximumFractionDigits: 0 })} label="Active" />
           </div>
-          <div className="hidden min-w-0 flex-1 grid-cols-4 gap-3 min-[1380px]:grid min-[1380px]:max-w-xl">
-            <ExplorerMetric value={formatCompactUsd(oneDayVolume.series.summary.totalUsd)} label="24H Volume" />
-            <ExplorerMetric value={oneDayTrades > 0 ? oneDayTrades.toLocaleString() : '—'} label="24H Fills" />
-            <ExplorerMetric value={tradesPerHour > 0 ? formatNumber(tradesPerHour, { maximumFractionDigits: 1 }) : '—'} label="Fills/Hr" />
-            <ExplorerMetric value={activeAgents.toLocaleString()} label="Active" />
+          <div className="relative min-w-[12rem] flex-1 min-[1280px]:w-[15.5rem] min-[1280px]:flex-none">
+            <span className="i-ph:magnifying-glass pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-[#697371]" aria-hidden="true" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              aria-label="Search agents"
+              name="agent-search"
+              autoComplete="off"
+              placeholder="Search agents…"
+              className="h-9 w-full rounded-[5px] border border-[#273035] bg-[#0b1418] pl-8 pr-2 font-display text-sm text-[#f6fefd] placeholder:text-[#697371] focus:border-[#50d2c1]/70 focus:ring-2 focus:ring-[#50d2c1]/20"
+            />
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5">
             <Link
               to="/"
-              className="inline-flex h-9 w-fit items-center gap-2 rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/55 px-3 text-sm font-display font-medium text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary"
+              className="inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border border-[#273035] bg-[#0b1418] px-3 text-sm font-display font-medium text-[#d2dad7] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
             >
-              <span className="i-ph:chart-line-up text-sm" />
+              <span className="i-ph:chart-line-up text-sm" aria-hidden="true" />
               Terminal
             </Link>
             <Link
               to="/provision"
-              className="inline-flex h-9 w-fit items-center gap-2 rounded-lg border border-violet-500/22 bg-violet-500/12 px-3 text-sm font-display font-medium text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+              className="inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border border-[#50d2c1]/30 bg-[#123f3a] px-3 text-sm font-display font-medium text-[#c8fffb] transition-colors hover:bg-[#18544e] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
             >
-              <span className="i-ph:plus-bold text-xs" />
+              <span className="i-ph:plus-bold text-xs" aria-hidden="true" />
               Deploy
             </Link>
           </div>
@@ -147,10 +497,8 @@ export default function LeaderboardPage() {
       <OperatorSessionBanner />
 
       {isLoading ? (
-        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.42fr)]">
-          <SkeletonCard className="h-full min-h-[360px]" />
-          <SkeletonCard className="h-full min-h-[360px]" />
-          <SkeletonCard className="h-full min-h-[300px] lg:col-span-2" />
+        <div className="min-h-0 flex-1">
+          <SkeletonCard className="h-full min-h-[520px]" />
         </div>
       ) : sortedBots.length === 0 ? (
         operatorDataState !== 'ready' && isConnected ? (
@@ -175,56 +523,59 @@ export default function LeaderboardPage() {
           </div>
         )
       ) : (
-        <div className="min-h-0 flex-1">
-          {activeView === 'volume' && (
-            <PlatformVolumeChart
-              bots={leaderboardBots}
-              variant="command"
-              className="h-full min-h-0"
-            />
-          )}
-          {activeView === 'fills' && (
-            <LatestAgentTrades
-              bots={leaderboardBots}
-              variant="explorer"
-              limit={100}
-              className="h-full min-h-0"
-            />
-          )}
-          {activeView === 'agents' && (
-          <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/54">
-            <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-arena-elements-dividerColor/60 px-3">
-              <h2 className="font-display text-lg font-semibold tracking-tight text-arena-elements-textPrimary">
-                Agents
+        <section
+          className="grid min-h-0 flex-1 overflow-hidden rounded-[6px] border border-[#273035] bg-[#0f1a1f] min-[1360px]:grid-cols-[minmax(0,1fr)_340px] min-[1500px]:grid-cols-[minmax(0,1fr)_372px]"
+          aria-label="Agent explorer"
+        >
+          <div className="flex min-h-0 flex-col overflow-hidden">
+            <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0b1418] px-3">
+              <h2 className="font-data text-[11px] font-semibold uppercase tracking-[0.12em] text-[#949e9c]">
+                Leaderboard
               </h2>
-              <div className="flex min-w-0 flex-1 items-center justify-end gap-3">
-                <div className="relative min-w-[12rem] max-w-[24rem] flex-1 sm:flex-none">
-                  <span className="i-ph:magnifying-glass pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-arena-elements-textTertiary" aria-hidden="true" />
-                  <input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    aria-label="Search agents"
-                    placeholder="Search agent, strategy, address"
-                    className="h-8 w-full rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/58 pl-8 pr-2 font-display text-sm text-arena-elements-textPrimary outline-none transition-colors placeholder:text-arena-elements-textTertiary focus:border-violet-500/55 focus:ring-2 focus:ring-violet-500/18"
-                  />
-                </div>
-                <span className="hidden font-data text-sm text-arena-elements-textTertiary sm:inline">
-                  {visibleBots.length.toLocaleString()} / {sortedBots.length.toLocaleString()}
-                </span>
-              </div>
+              <span className="font-data text-xs tabular-nums text-[#d2dad7]">
+                {formatNumber(visibleBots.length, { maximumFractionDigits: 0 })} / {formatNumber(sortedBots.length, { maximumFractionDigits: 0 })}
+              </span>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
+              <div
+                className={`min-h-0 overflow-auto [scrollbar-gutter:stable] ${
+                  selectedBot && visibleBots.length <= 4
+                  ? 'max-h-[260px] shrink-0'
+                  : 'flex-1'
+                }`}
+              aria-label="Agent leaderboard"
+            >
               {visibleBots.length > 0 ? (
-                <LeaderboardTable bots={visibleBots} />
+                <LeaderboardTable
+                  bots={visibleBots}
+                  selectedBotId={selectedBot?.id}
+                  onSelectBot={(bot) => setSelectedBotId(bot.id)}
+                  activityStatsByBotId={activityStatsByBotId}
+                />
               ) : (
-                <div className="flex h-full min-h-[16rem] items-center justify-center px-6 text-center font-display text-sm text-arena-elements-textSecondary">
+                <div className="flex h-full min-h-[16rem] items-center justify-center px-6 text-center font-display text-sm text-[#949e9c]">
                   No agents match that search.
                 </div>
               )}
             </div>
-          </section>
+            {selectedBot ? (
+              <SelectedAgentDossier
+                bot={selectedBot}
+                activityStats={activityStatsByBotId.get(selectedBot.id)}
+                trades={selectedAgentTrades}
+              />
+            ) : null}
+          </div>
+          {selectedBot ? (
+            <SelectedAgentCockpit
+              bot={selectedBot}
+              activityStats={activityStatsByBotId.get(selectedBot.id)}
+            />
+          ) : (
+            <div className="flex min-h-0 items-center justify-center border-t border-[#273035] bg-[#0b1418] px-6 text-center font-display text-sm text-[#949e9c]">
+              Select an agent.
+            </div>
           )}
-        </div>
+        </section>
       )}
     </div>
   );

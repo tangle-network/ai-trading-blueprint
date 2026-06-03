@@ -2,124 +2,160 @@ import { Link, useNavigate } from 'react-router';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
+import type { AgentActivityStats } from '~/lib/agentActivity';
 import { botStatusLabel, formatCompactUsd, formatNumber, STRATEGY_SHORT, truncateAddress } from '~/lib/format';
 import { rankLeaderboardBots } from '~/lib/leaderboardRanking';
+import { formatTradeAge } from '~/lib/tradeDisplay';
+import {
+  fillCountEvidenceTitle,
+  resolveFillCountEvidence,
+} from '~/lib/tradeEvidence';
 
 interface LeaderboardTableProps {
   bots: Bot[];
+  selectedBotId?: string;
+  onSelectBot?: (bot: Bot) => void;
+  activityStatsByBotId?: Map<string, AgentActivityStats>;
 }
 
 function RankCell({ rank }: { rank: number }) {
   return (
-    <span className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/54 font-data text-sm font-semibold text-arena-elements-textTertiary">
-      {rank.toLocaleString()}
+    <span className="inline-flex h-8 w-8 items-center justify-center rounded-[4px] border border-[#273035] bg-[#0b1418] font-data text-sm font-semibold text-[#949e9c]">
+      {formatNumber(rank, { maximumFractionDigits: 0 })}
     </span>
   );
 }
 
-function formatPercent(value: number): string {
-  if (!Number.isFinite(value) || value === 0) return '—';
-  return `${value > 0 ? '+' : ''}${formatNumber(value, {
-    maximumFractionDigits: 1,
-    minimumFractionDigits: 1,
-  })}%`;
+function formatFlowUsd(value: number): string {
+  return value > 0 ? formatCompactUsd(value) : '$0';
 }
 
-export function LeaderboardTable({ bots }: LeaderboardTableProps) {
+function modeLabel(bot: Bot): string {
+  if (bot.paperTrade === true) return 'Paper';
+  if (bot.paperTrade === false) return 'Live';
+  return botStatusLabel(bot.status);
+}
+
+export function LeaderboardTable({
+  bots,
+  selectedBotId,
+  onSelectBot,
+  activityStatsByBotId,
+}: LeaderboardTableProps) {
   const navigate = useNavigate();
   const sorted = rankLeaderboardBots(bots);
 
   return (
-    <Table className="w-full min-w-[1080px] table-fixed">
+    <Table className="w-full min-w-[760px] table-fixed bg-[#0f1a1f]">
       <TableHeader>
-        <TableRow className="hover:bg-transparent">
-          <TableHead className="w-[4%] py-3 text-xs uppercase">#</TableHead>
-          <TableHead className="w-[30%] py-3 text-xs uppercase">Agent</TableHead>
-          <TableHead className="w-[17%] py-3 text-xs uppercase">Operator</TableHead>
-          <TableHead className="w-[9%] py-3 text-right text-xs uppercase">Account</TableHead>
-          <TableHead className="w-[7%] py-3 text-right text-xs uppercase">30D</TableHead>
-          <TableHead className="w-[7%] py-3 text-right text-xs uppercase">Sharpe</TableHead>
-          <TableHead className="w-[6%] py-3 text-right text-xs uppercase">DD</TableHead>
-          <TableHead className="w-[6%] py-3 text-right text-xs uppercase">Win</TableHead>
-          <TableHead className="w-[7%] py-3 text-right text-xs uppercase">Fills</TableHead>
-          <TableHead className="w-[7%] py-3 text-right text-xs uppercase">State</TableHead>
+        <TableRow className="border-b border-[#273035] bg-[#0b1418] hover:bg-[#0b1418]">
+          <TableHead className="w-14 py-3 font-data text-[11px] uppercase text-[#697371]">#</TableHead>
+          <TableHead className="w-[33%] py-3 font-data text-[11px] uppercase text-[#697371]">Agent</TableHead>
+          <TableHead className="hidden w-[13%] py-3 font-data text-[11px] uppercase text-[#697371] min-[1460px]:table-cell">Operator</TableHead>
+          <TableHead className="w-[11%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">24H Vol</TableHead>
+          <TableHead className="w-[7%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">24H</TableHead>
+          <TableHead className="w-[8%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">Total</TableHead>
+          <TableHead className="w-[10%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">Last</TableHead>
+          <TableHead className="hidden w-[8%] py-3 text-right font-data text-[11px] uppercase text-[#697371] min-[1320px]:table-cell">Mode</TableHead>
+          <TableHead className="w-[10%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">Return</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {sorted.map((bot, index) => {
           const href = `/arena/bot/${encodeURIComponent(bot.id)}/performance`;
-          const positive = bot.pnlPercent >= 0;
+          const stats = activityStatsByBotId?.get(bot.id);
+          const lastTradeAt = stats?.lastTradeAt ?? null;
+          const totalFillEvidence = resolveFillCountEvidence({
+            visibleTradeCount: stats?.totalVisibleFills,
+            rosterTradeCount: bot.totalTrades,
+          });
+          const returnValue = bot.pnlPercent === 0 ? '0.0%' : `${bot.pnlPercent > 0 ? '+' : ''}${formatNumber(bot.pnlPercent, { maximumFractionDigits: 1 })}%`;
+          const selected = bot.id === selectedBotId;
+          const openRow = () => {
+            if (onSelectBot) {
+              onSelectBot(bot);
+            } else {
+              navigate(href);
+            }
+          };
           return (
           <TableRow
             key={bot.id}
-            className="group cursor-pointer border-b border-arena-elements-dividerColor/70 transition-colors hover:bg-arena-elements-item-backgroundHover"
+            className={`group cursor-pointer border-b border-[#273035] transition-colors hover:bg-[#16242a] [content-visibility:auto] [contain-intrinsic-size:66px] ${
+              selected ? 'bg-[#132329] shadow-[inset_3px_0_0_rgba(80,210,193,0.9)]' : 'bg-[#0f1a1f]'
+            }`}
             role="button"
             tabIndex={0}
-            aria-label={`Open ${bot.name} performance`}
-            onClick={() => navigate(href)}
+            aria-label={onSelectBot ? `Inspect ${bot.name}` : `Open ${bot.name} performance`}
+            aria-current={selected ? 'true' : undefined}
+            onClick={openRow}
             onKeyDown={(event) => {
               if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
-                navigate(href);
+                openRow();
               }
             }}
           >
-            <TableCell className="py-4 align-middle">
+            <TableCell className="py-3 align-middle">
               <RankCell rank={index + 1} />
             </TableCell>
-            <TableCell className="min-w-0 py-4 align-middle">
+            <TableCell className="min-w-0 py-3 align-middle">
               <div className="flex min-w-0 items-center gap-3">
-                <Identicon address={bot.operatorAddress as Address} size={34} />
+                <Identicon address={bot.operatorAddress as Address} size={36} />
                 <div className="min-w-0 flex-1">
                   <Link
                     to={href}
-                    className="block truncate font-display text-lg font-semibold leading-tight text-arena-elements-textPrimary transition-colors duration-200 hover:text-violet-700 dark:hover:text-violet-300"
+                    className="block truncate font-display text-lg font-semibold leading-tight text-[#f6fefd] transition-colors duration-200 hover:text-[#50d2c1]"
                     onClick={(event) => event.stopPropagation()}
                   >
                     {bot.name}
                   </Link>
-                  <div className="mt-1 flex min-w-0 items-center gap-2">
-                    <span className="truncate font-data text-sm text-arena-elements-textTertiary">
+                  <div className="mt-1 flex min-w-0 items-center gap-2 font-data text-sm">
+                    <span className="truncate text-[#949e9c]">
                       {STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}
                     </span>
-                    <span className="hidden h-1 w-1 shrink-0 rounded-full bg-arena-elements-textTertiary/45 min-[1180px]:block" aria-hidden="true" />
-                    <span className="hidden truncate font-data text-sm text-arena-elements-textSecondary min-[1180px]:block">
+                    <span className="h-1 w-1 shrink-0 rounded-full bg-[#697371]" aria-hidden="true" />
+                    <span className={bot.status === 'active' ? 'truncate text-[#50d2c1]' : 'truncate text-[#949e9c]'}>
                       {botStatusLabel(bot.status)}
                     </span>
                   </div>
                 </div>
               </div>
             </TableCell>
-            <TableCell className="min-w-0 py-4 align-middle">
-              <div className="flex min-w-0 items-center gap-2 font-data text-base text-arena-elements-textSecondary">
+            <TableCell className="hidden min-w-0 py-3 align-middle min-[1460px]:table-cell">
+              <div className="flex min-w-0 items-center gap-2 font-data text-base text-[#d2dad7]">
                 <Identicon address={bot.operatorAddress as Address} size={24} />
                 <span className="truncate">{truncateAddress(bot.operatorAddress)}</span>
               </div>
             </TableCell>
-            <TableCell className="py-4 text-right align-middle font-data text-base text-arena-elements-textPrimary">
-              {bot.tvl > 0 ? formatCompactUsd(bot.tvl) : '—'}
+            <TableCell className="py-3 text-right align-middle font-data text-base text-[#f6fefd]">
+              {formatFlowUsd(stats?.recentNotionalUsd ?? 0)}
             </TableCell>
-            <TableCell className={`py-4 text-right align-middle font-data text-base font-bold ${bot.pnlPercent === 0 ? 'text-arena-elements-textTertiary' : positive ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'}`}>
-              {formatPercent(bot.pnlPercent)}
+            <TableCell className="py-3 text-right align-middle font-data text-base font-bold text-[#f6fefd]">
+              {formatNumber(stats?.recentFills ?? 0, { maximumFractionDigits: 0 })}
             </TableCell>
-            <TableCell className="py-4 text-right align-middle font-data text-base text-arena-elements-textPrimary">
-              {bot.sharpeRatio !== 0 ? formatNumber(bot.sharpeRatio, { maximumFractionDigits: 1 }) : '—'}
+            <TableCell
+              className="py-3 text-right align-middle font-data text-base text-[#f6fefd]"
+              title={fillCountEvidenceTitle(totalFillEvidence)}
+            >
+              {totalFillEvidence.value > 0
+                ? formatNumber(totalFillEvidence.value, { maximumFractionDigits: 0 })
+                : '—'}
             </TableCell>
-            <TableCell className="py-4 text-right align-middle font-data text-base">
-              {bot.maxDrawdown !== 0 ? (
-                <span className="text-arena-elements-icon-error">{formatNumber(bot.maxDrawdown, { maximumFractionDigits: 1 })}%</span>
+            <TableCell className="py-3 text-right align-middle font-data text-base text-[#d2dad7]">
+              {lastTradeAt != null ? formatTradeAge(lastTradeAt) : 'No fills'}
+            </TableCell>
+            <TableCell className="hidden py-3 text-right align-middle font-data text-base text-[#d2dad7] min-[1320px]:table-cell">
+              {modeLabel(bot)}
+            </TableCell>
+            <TableCell className="py-3 text-right align-middle font-data text-base font-bold">
+              {bot.pnlPercent === 0 ? (
+                <span className="text-[#697371]">{returnValue}</span>
+              ) : bot.pnlPercent > 0 ? (
+                <span className="text-[#50d2c1]">{returnValue}</span>
               ) : (
-                <span className="text-arena-elements-textTertiary">—</span>
+                <span className="text-[#ff5d6c]">{returnValue}</span>
               )}
-            </TableCell>
-            <TableCell className="py-4 text-right align-middle font-data text-base text-arena-elements-textPrimary">
-              {bot.winRate !== 0 ? `${formatNumber(bot.winRate, { maximumFractionDigits: 0 })}%` : '—'}
-            </TableCell>
-            <TableCell className="py-4 text-right align-middle font-data text-base text-arena-elements-textPrimary">
-              {bot.totalTrades > 0 ? bot.totalTrades.toLocaleString() : <span className="text-arena-elements-textTertiary">—</span>}
-            </TableCell>
-            <TableCell className="py-4 text-right align-middle font-data text-sm text-arena-elements-textSecondary">
-              {botStatusLabel(bot.status)}
             </TableCell>
           </TableRow>
           );

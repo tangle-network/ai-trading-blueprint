@@ -518,7 +518,7 @@ describe('TradeHistoryTab', () => {
 
     expect(screen.getByText('SWAP')).toBeInTheDocument();
     expect(screen.getByText('0.4975')).toBeInTheDocument();
-    expect(screen.getByText('0x1234...cdef')).toBeInTheDocument();
+    expect(screen.getByText('0x1234…cdef')).toBeInTheDocument();
   });
 
   it('does not show source filters or venue labels in the compact table', () => {

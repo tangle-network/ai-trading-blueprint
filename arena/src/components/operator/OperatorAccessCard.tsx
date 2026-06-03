@@ -161,16 +161,13 @@ export function OperatorSessionBanner() {
   };
 
   return (
-    <div className="glass-card rounded-xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center gap-3">
-      <div className="flex-1">
-        <div className="font-display font-semibold text-sm text-arena-elements-textPrimary">
-          Sign once to load operator-managed data
+    <div className="flex shrink-0 flex-col gap-2 rounded-[6px] border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 px-3 py-2 sm:flex-row sm:items-center">
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-display text-sm font-semibold text-arena-elements-textPrimary">
+          Operator session locked
         </div>
-        <p className="text-sm text-arena-elements-textSecondary mt-1">
-          Arena rankings, agent controls, and activation progress use operator-backed data and may stay unverified until the relevant operator session is established.
-        </p>
         {error && (
-          <p className="text-xs text-crimson-500 mt-2">{error}</p>
+          <p className="mt-1 truncate text-xs text-crimson-500">{error}</p>
         )}
       </div>
       <Button

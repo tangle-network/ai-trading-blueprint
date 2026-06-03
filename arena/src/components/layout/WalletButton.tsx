@@ -5,7 +5,6 @@ import { useStore } from '@nanostores/react';
 import type { Address } from 'viem';
 import { Identicon } from '@tangle-network/blueprint-ui/components';
 import { publicClient, selectedChainIdStore, useWalletEthBalance } from '@tangle-network/blueprint-ui';
-import { ConnectWalletCta } from '@tangle-network/blueprint-ui/components';
 import { useDropdownMenu } from '@tangle-network/sandbox-ui/hooks';
 import { copyText } from '@tangle-network/sandbox-ui/utils';
 import { networks } from '~/lib/contracts/chains';
@@ -13,7 +12,7 @@ import { toast } from 'sonner';
 
 function truncateAddress(address?: string): string {
   if (!address) return '';
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
 export function WalletButton() {
@@ -48,7 +47,7 @@ export function WalletButton() {
     // Use wagmi's switchChain which handles add+switch via the active connector
     try {
       switchChain({ chainId: targetChain.id });
-      toast.success(`Switching to ${targetChain.name}...`);
+      toast.success(`Switching to ${targetChain.name}…`);
     } catch (err: any) {
       if (err?.code === 4001) return; // user rejected
       // Fallback: try raw provider if available
@@ -82,17 +81,31 @@ export function WalletButton() {
     <ConnectKitButton.Custom>
       {({ show }) => {
         if (!isConnected) {
-          return <ConnectWalletCta onClick={show} isReconnecting={isReconnecting} />;
+          return (
+            <button
+              type="button"
+              onClick={show}
+              disabled={isReconnecting}
+              className="inline-flex h-10 min-w-[8.75rem] max-w-full items-center justify-center gap-2 rounded-[5px] border border-[#50d2c1]/55 bg-[#50d2c1] px-3 font-display text-sm font-semibold text-[#06100e] shadow-none transition-[background-color,border-color,opacity,transform] duration-150 hover:border-[#7ce6d9] hover:bg-[#7ce6d9] active:scale-[0.98] disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#081013]"
+              aria-label="Connect Wallet"
+            >
+              <span className="i-ph:plug-charging-bold shrink-0 text-base" aria-hidden="true" />
+              <span className="truncate">
+                {isReconnecting ? 'Reconnecting…' : 'Connect Wallet'}
+              </span>
+            </button>
+          );
         }
 
         const truncated = truncateAddress(address);
-        const displayBalance = ethBalance ?? (balanceError ? '—' : '...');
+        const displayBalance = ethBalance ?? (balanceError ? '—' : '…');
 
         return (
           <div ref={menuRef} className="relative">
             <button
+              type="button"
               onClick={toggle}
-              className="relative rounded-full hover:ring-2 hover:ring-violet-500/30 transition-all"
+              className="relative rounded-full transition-[box-shadow,opacity] duration-150 hover:ring-2 hover:ring-[#50d2c1]/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
               aria-label="Account menu"
               aria-expanded={open}
             >
@@ -109,6 +122,7 @@ export function WalletButton() {
                   {address && <Identicon address={address as Address} size={32} />}
                   <div className="min-w-0 flex-1">
                     <button
+                      type="button"
                       onClick={copyAddress}
                       className="flex items-center gap-2 group w-full"
                       title="Copy address"
@@ -139,6 +153,7 @@ export function WalletButton() {
                 <div className="space-y-1">
                   {isWrongChain && (
                     <button
+                      type="button"
                       onClick={handleSwitchChain}
                       className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg hover:bg-violet-500/10 transition-colors text-left"
                     >
@@ -149,6 +164,7 @@ export function WalletButton() {
                     </button>
                   )}
                   <button
+                    type="button"
                     onClick={addChain}
                     className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg hover:bg-violet-500/10 transition-colors text-left"
                   >
@@ -158,6 +174,7 @@ export function WalletButton() {
                     </span>
                   </button>
                   <button
+                    type="button"
                     onClick={copyAddress}
                     className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg hover:bg-arena-elements-item-backgroundHover transition-colors text-left"
                   >
@@ -167,6 +184,7 @@ export function WalletButton() {
                     </span>
                   </button>
                   <button
+                    type="button"
                     onClick={() => { disconnect(); close(); }}
                     className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg hover:bg-crimson-500/10 transition-colors text-left"
                   >

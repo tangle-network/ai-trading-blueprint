@@ -51,6 +51,13 @@ export interface PlatformVolumeSeries {
   };
 }
 
+export interface PlatformVolumeFocusWindow {
+  fromMs: number;
+  toMs: number;
+  activeBucketCount: number;
+  visibleBucketCount: number;
+}
+
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -87,6 +94,70 @@ function formatBucketLabel(timestamp: number, bucketMs: number): string {
 
 function readPositiveNotional(value: number | null | undefined): number | null {
   return value != null && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+export function getPlatformVolumeBucketValue(
+  bucket: PlatformVolumeBucket,
+  mode: PlatformVolumeMode,
+): number {
+  switch (mode) {
+    case 'bucket':
+      return bucket.bucketUsd;
+    case 'rolling7d':
+      return bucket.rolling7dUsd;
+    case 'cumulative':
+      return bucket.cumulativeUsd;
+  }
+}
+
+export function derivePlatformVolumeFocusWindow(
+  buckets: PlatformVolumeBucket[],
+  mode: PlatformVolumeMode,
+  {
+    minVisibleBuckets = 10,
+    sparseThreshold = 0.45,
+  }: {
+    minVisibleBuckets?: number;
+    sparseThreshold?: number;
+  } = {},
+): PlatformVolumeFocusWindow | null {
+  if (buckets.length === 0) return null;
+  const activeIndexes = buckets.flatMap((bucket, index) => {
+    const hasVolume = getPlatformVolumeBucketValue(bucket, mode) > 0;
+    const hasTrade = bucket.totalTradeCount > 0;
+    return hasVolume || hasTrade ? [index] : [];
+  });
+  if (activeIndexes.length === 0) return null;
+  if (buckets.length <= minVisibleBuckets) return null;
+  if (activeIndexes.length / buckets.length >= sparseThreshold) return null;
+
+  const firstActive = activeIndexes[0];
+  const lastActive = activeIndexes[activeIndexes.length - 1];
+  const activeSpan = lastActive - firstActive + 1;
+  const targetVisibleBuckets = Math.min(
+    buckets.length,
+    Math.max(minVisibleBuckets, activeSpan + Math.ceil(activeSpan * 0.75)),
+  );
+  const sidePadding = Math.max(0, targetVisibleBuckets - activeSpan);
+  let startIndex = firstActive - Math.floor(sidePadding / 2);
+  let endIndex = startIndex + targetVisibleBuckets - 1;
+
+  if (startIndex < 0) {
+    endIndex = Math.min(buckets.length - 1, endIndex - startIndex);
+    startIndex = 0;
+  }
+  if (endIndex >= buckets.length) {
+    startIndex = Math.max(0, startIndex - (endIndex - buckets.length + 1));
+    endIndex = buckets.length - 1;
+  }
+  if (startIndex === 0 && endIndex === buckets.length - 1) return null;
+
+  return {
+    fromMs: buckets[startIndex].timestamp,
+    toMs: buckets[endIndex].timestamp,
+    activeBucketCount: activeIndexes.length,
+    visibleBucketCount: endIndex - startIndex + 1,
+  };
 }
 
 export function buildPlatformVolumeSeries(

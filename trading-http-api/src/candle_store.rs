@@ -82,7 +82,9 @@ pub fn query_candles(q: &CandleQuery) -> Result<Vec<StoredCandle>, String> {
         .collect();
 
     all.sort_by_key(|c| c.timestamp);
-    all.truncate(q.limit);
+    if all.len() > q.limit {
+        all = all.split_off(all.len() - q.limit);
+    }
     Ok(all)
 }
 

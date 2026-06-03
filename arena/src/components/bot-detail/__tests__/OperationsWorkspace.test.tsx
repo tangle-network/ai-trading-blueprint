@@ -91,10 +91,15 @@ describe('OperationsWorkspace', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Safety and runtime map' })).toBeInTheDocument();
-    expect(screen.getByText('Trading loop active')).toBeInTheDocument();
-    expect(screen.getByText('Guardrails')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Control Plane' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Command Runway' })).toBeInTheDocument();
+    expect(screen.getByText('loop active')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Guardrails' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Runtime Stack' })).toBeInTheDocument();
+    expect(screen.getByText('Record')).toBeInTheDocument();
+    expect(screen.getAllByText('State').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Envelope').length).toBeGreaterThan(0);
+    expect(screen.getByText('Needed')).toBeInTheDocument();
     expect(screen.getByText('Max DD')).toBeInTheDocument();
     expect(screen.getByText('5%')).toBeInTheDocument();
     expect(screen.getByText('Position Cap')).toBeInTheDocument();
@@ -103,8 +108,9 @@ describe('OperationsWorkspace', () => {
     expect(screen.getByText('1.8%')).toBeInTheDocument();
     expect(screen.getAllByText('Runtime').length).toBeGreaterThan(0);
     expect(screen.getByText('30d')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Configure Secrets/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Review Envelope/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Secrets Provider keys required/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Envelope Allowance policy/i })).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Operations panels' })).toBeInTheDocument();
     expect(screen.queryByText('Loading Validation')).not.toBeInTheDocument();
   });
 
@@ -121,7 +127,7 @@ describe('OperationsWorkspace', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: /Inspect Validation/i }));
+    await user.click(screen.getByRole('button', { name: /Validation Evidence/i }));
 
     expect(await screen.findByRole('heading', { name: 'Validation' })).toBeInTheDocument();
     expect(await screen.findByText('validation panel loaded')).toBeInTheDocument();
@@ -138,10 +144,10 @@ describe('OperationsWorkspace', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Configure Secrets/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Runtime Controls/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Terminal/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Envelope/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Control Plane' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Secrets Provider keys required/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Controls Risk and lifecycle/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Terminal Runtime logs/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Envelope Allowance policy/i })).not.toBeInTheDocument();
   });
 });

@@ -29,9 +29,13 @@ import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 import { PERFORMANCE_SECTION_COPY } from './metricCopy';
 import { buildDecisionItemsFromTrades } from '~/lib/decisionFeed';
 import { TradeInstrumentDisplay } from './shared/AssetDisplay';
+import {
+  fillCountEvidenceSubvalue,
+  resolveFillCountEvidence,
+} from '~/lib/tradeEvidence';
 
 const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
-const TRADE_MARKER_LOOKBACK_LIMIT = 100;
+const TRADE_MARKER_LOOKBACK_LIMIT = 250;
 const PerformanceCopilotPanel = lazy(() =>
   import('./PerformanceCopilotPanel').then((module) => ({
     default: module.PerformanceCopilotPanel,
@@ -40,7 +44,6 @@ const PerformanceCopilotPanel = lazy(() =>
 
 type PerformanceRange = '1d' | '7d' | '30d' | '6m' | '1y';
 type PerformanceChartMode = 'market' | 'nav';
-type ExecutionCountSource = 'trade-total' | 'metric-total' | 'loaded-trades' | 'none';
 
 const PERFORMANCE_RANGES: Array<{ value: PerformanceRange; label: string; days: number }> = [
   { value: '1d', label: '1D', days: 1 },
@@ -146,59 +149,10 @@ function formatChartNumber(value: number | null): string {
   });
 }
 
-function resolveExecutionCount({
-  metricCount,
-  summaryCount,
-  rosterCount,
-  loadedTrades,
-  tradeTotal,
-}: {
-  metricCount?: number | null;
-  summaryCount?: number | null;
-  rosterCount?: number | null;
-  loadedTrades: number;
-  tradeTotal?: number | null;
-}): { value: number; source: ExecutionCountSource; loaded: number; total: number | null } {
-  if (tradeTotal != null && tradeTotal > 0) {
-    return {
-      value: tradeTotal,
-      source: 'trade-total',
-      loaded: loadedTrades,
-      total: tradeTotal,
-    };
-  }
-
-  if (loadedTrades > 0) {
-    return {
-      value: loadedTrades,
-      source: 'loaded-trades',
-      loaded: loadedTrades,
-      total: null,
-    };
-  }
-
-  const bestMetricCount = Math.max(metricCount ?? 0, summaryCount ?? 0, rosterCount ?? 0);
-  if (bestMetricCount > 0) {
-    return {
-      value: bestMetricCount,
-      source: 'metric-total',
-      loaded: loadedTrades,
-      total: null,
-    };
-  }
-
-  return {
-    value: 0,
-    source: 'none',
-    loaded: loadedTrades,
-    total: null,
-  };
-}
-
-function executionCountSubvalue({ source, loaded, total }: { source: ExecutionCountSource; loaded: number; total: number | null }): string | null {
-  if (total != null && loaded > 0 && loaded < total) return `${loaded.toLocaleString()} loaded`;
-  if (source === 'metric-total' && loaded > 0) return `${loaded.toLocaleString()} ledger rows`;
-  return null;
+function marketCandleLimitForRange(range: PerformanceRange): number {
+  if (range === '1d') return 1_440;
+  if (range === '7d') return 5_000;
+  return 10_000;
 }
 
 function terminalStatValueClass(tone: string): string {
@@ -259,11 +213,6 @@ function formatTradeMicrostructure(trade: Trade): string {
   return trade.paperTrade ? 'Paper fill' : formatTradeStatus(trade.execution?.status ?? trade.status);
 }
 
-function formatExecutionMode(trade: Trade): string {
-  if (trade.paperTrade || trade.status === 'paper') return 'Paper';
-  return trade.execution?.status ? formatTradeStatus(trade.execution.status) : formatTradeStatus(trade.status);
-}
-
 function buildTradeMarkers(
   trades: Trade[] | undefined,
   chartTheme: ReturnType<typeof useChartTheme>,
@@ -273,6 +222,9 @@ function buildTradeMarkers(
     .map((trade) => ({
       id: trade.id,
       timestampMs: trade.timestamp,
+      executionPriceUsd: trade.execution?.filledPriceUsd
+        ?? trade.execution?.requestedPriceUsd
+        ?? trade.priceUsd,
       tooltip: formatTradeMarkerTooltip(trade),
       color: tradeMarkerColor(trade, chartTheme),
       shape: tradeMarkerShape(trade),
@@ -322,7 +274,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 60_000 : false,
-    limit: selectedRange.value === '1d' ? 360 : 800,
+    limit: marketCandleLimitForRange(selectedRange.value),
   });
   const { data: metricsSummary } = useBotMetricsSummary(bot.id, {
     operatorApiUrl: bot.operatorApiUrl,
@@ -395,15 +347,16 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const effectiveChartMode = chartMode === 'market' && hasMarketCandles ? 'market' : 'nav';
   const chartIsRenderable = chartPoints.length > 0 || hasMarketCandles;
 
-  const executionCount = resolveExecutionCount({
-    metricCount: latestRenderableMetric?.trade_count,
-    summaryCount: metricsSummary?.trade_count,
-    rosterCount: bot.totalTrades,
-    loadedTrades: tradePage?.loaded ?? trades?.length ?? 0,
-    tradeTotal: tradePage?.total,
+  const fillCountEvidence = resolveFillCountEvidence({
+    backendEvidence: tradePage?.evidence,
+    metricTradeCount: latestRenderableMetric?.trade_count,
+    summaryTradeCount: metricsSummary?.trade_count,
+    rosterTradeCount: bot.totalTrades,
+    visibleTradeCount: tradePage?.loaded ?? trades?.length ?? 0,
+    tradePageTotal: tradePage?.total,
   });
-  const totalTradesValue = executionCount.value;
-  const executionStatSubvalue = executionCountSubvalue(executionCount);
+  const totalTradesValue = fillCountEvidence.value;
+  const executionStatSubvalue = fillCountEvidenceSubvalue(fillCountEvidence);
   const firstChartPoint = chartPoints[0] ?? null;
   const latestChartPoint = chartPoints[chartPoints.length - 1] ?? null;
   const latestChartValue = latestChartPoint?.value ?? null;
@@ -505,7 +458,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         {
           label: 'Fills',
           shortLabel: 'Fills',
-          value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
+          value: totalTradesValue > 0 ? formatNumber(totalTradesValue, { maximumFractionDigits: 0 }) : '—',
           tone: 'text-arena-elements-textPrimary',
           subvalue: executionStatSubvalue,
           subvaluePrefix: '',
@@ -533,7 +486,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         {
           label: 'Fills',
           shortLabel: 'Fills',
-          value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '—',
+          value: totalTradesValue > 0 ? formatNumber(totalTradesValue, { maximumFractionDigits: 0 }) : '—',
           tone: 'text-arena-elements-textPrimary',
           subvalue: executionStatSubvalue,
           subvaluePrefix: '',
@@ -586,7 +539,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         <UnverifiedDataNotice subject="performance snapshots" />
       )}
 
-      <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(190px,25dvh)] gap-2 overflow-hidden min-[1600px]:grid-cols-[minmax(0,1fr)_332px] min-[1600px]:grid-rows-none min-[1760px]:grid-cols-[minmax(0,1fr)_346px]">
+      <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(270px,32dvh)] gap-2 overflow-hidden min-[1600px]:grid-cols-[minmax(0,1fr)_332px] min-[1600px]:grid-rows-none min-[1760px]:grid-cols-[minmax(0,1fr)_346px]">
         <div className="flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
           <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[72px] min-[1120px]:flex-row min-[1120px]:items-stretch">
             <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1120px]:w-[178px] min-[1120px]:border-b-0 min-[1120px]:border-r">
@@ -681,6 +634,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   mode={effectiveChartMode}
                   marketCandles={marketCandles}
                   marketLabel={marketCandleToken}
+                  fillCountEvidence={fillCountEvidence}
                 />
               </div>
             ) : (
@@ -701,7 +655,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   </div>
                   <div className="mt-5 grid gap-2 sm:grid-cols-3">
                     {[
-                      { label: 'Agent Trades', value: totalTradesValue > 0 ? totalTradesValue.toLocaleString() : '0' },
+                      { label: 'Agent Trades', value: totalTradesValue > 0 ? formatNumber(totalTradesValue, { maximumFractionDigits: 0 }) : '0' },
                       { label: 'Strategy', value: bot.strategyType },
                       { label: 'Market Feed', value: hasMarketCandles ? `${marketCandles.length}` : 'Account pending' },
                     ].map((item) => (
@@ -762,18 +716,18 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   Fills
                 </h3>
                 <span className="font-data text-xs text-[#949e9c]">
-                  {recentTradeTape.length.toLocaleString()}
+                  {formatNumber(recentTradeTape.length, { maximumFractionDigits: 0 })}
                   {' / '}
-                  {(tradePage?.total ?? trades?.length ?? recentTradeTape.length).toLocaleString()}
+                  {formatNumber(tradePage?.total ?? trades?.length ?? recentTradeTape.length, { maximumFractionDigits: 0 })}
                 </span>
               </div>
-              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_56px] overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
+              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_48px] overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
                 <div
                   className="min-h-0 overflow-y-auto [scrollbar-gutter:stable]"
                   aria-label="Recent fills"
                   tabIndex={0}
                 >
-                  <div className="sticky top-0 z-10 grid grid-cols-[72px_minmax(0,1fr)_92px] border-b border-[#273035] bg-[#0b1418]/95 px-2 py-1.5 font-data text-[10px] uppercase text-[#697371] backdrop-blur min-[1440px]:grid-cols-[82px_minmax(0,1fr)_112px]">
+                  <div className="sticky top-0 z-10 grid grid-cols-[104px_minmax(0,1fr)_112px] border-b border-[#273035] bg-[#0b1418]/95 px-2 py-1 font-data text-[11px] uppercase text-[#697371] backdrop-blur min-[1440px]:grid-cols-[118px_minmax(0,1fr)_126px]">
                     <span>Side</span>
                     <span>Market</span>
                     <span className="text-right">Notional</span>
@@ -782,12 +736,14 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     {recentTradeTape.map((trade) => {
                       const decisionId = `trade:${trade.id}`;
                       const selected = selectedDecision?.id === decisionId;
+                      const fillDetail = formatTradeMicrostructure(trade);
+                      const showFillDetail = fillDetail !== 'Paper fill' ? fillDetail : null;
 
                       return (
                         <button
                           key={trade.id}
                           type="button"
-                          className={`grid w-full grid-cols-[72px_minmax(0,1fr)_92px] items-center gap-2 px-2 py-1.5 text-left transition-colors min-[1440px]:grid-cols-[82px_minmax(0,1fr)_112px] ${
+                          className={`grid h-10 w-full grid-cols-[104px_minmax(0,1fr)_112px] items-center gap-2 px-2 py-1 text-left transition-colors min-[1440px]:grid-cols-[118px_minmax(0,1fr)_126px] ${
                             selected
                               ? 'bg-[#123f3a] shadow-[inset_3px_0_0_rgba(80,210,193,0.82)]'
                               : 'hover:bg-[#101f25]'
@@ -797,10 +753,10 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                           title={`${formatTradeActionLabel(trade.action)} ${getTradeMarketLabel(trade)} · ${formatTradeMicrostructure(trade)}`}
                         >
                           <div className="min-w-0">
-                            <div className={`truncate font-data text-xs font-semibold uppercase ${getTradeActionToneClass(trade.action)}`}>
+                            <div className={`truncate font-data text-[14px] font-bold uppercase leading-4 ${getTradeActionToneClass(trade.action)}`}>
                               {formatTradeActionLabel(trade.action)}
                             </div>
-                            <div className="mt-0.5 truncate font-data text-[10px] text-[#697371]">
+                            <div className="mt-0.5 truncate font-data text-[11px] leading-3 text-[#697371]">
                               {formatTradeTime(trade.timestamp)}
                             </div>
                           </div>
@@ -808,15 +764,18 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                             trade={trade}
                             size="sm"
                             showVenue={false}
-                            labelClassName="max-w-[220px] text-sm !text-[#f6fefd]"
+                            showSecondary={false}
+                            labelClassName="max-w-[240px] text-[16px] !text-[#f6fefd]"
                           />
                           <div className="min-w-0 text-right">
-                            <div className="font-data text-sm font-semibold tabular-nums text-[#f6fefd]">
+                            <div className="font-data text-[15px] font-semibold tabular-nums leading-5 text-[#f6fefd]">
                               {formatTradeUsd(trade.notionalUsd)}
                             </div>
-                            <div className="truncate font-data text-[10px] text-[#697371]">
-                              {formatExecutionMode(trade)}
-                            </div>
+                            {showFillDetail && (
+                              <div className="truncate font-data text-[11px] leading-3 text-[#697371]">
+                                {showFillDetail}
+                              </div>
+                            )}
                           </div>
                         </button>
                       );
@@ -824,7 +783,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   </div>
                 </div>
                 <aside
-                  className="min-h-0 border-t border-[#273035] bg-[#0f1a1f] px-2.5 py-2"
+                  className="min-h-0 border-t border-[#273035] bg-[#0f1a1f] px-2.5 py-1.5"
                   aria-label="Decision inspector"
                 >
                   {selectedDecision ? (
@@ -837,7 +796,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                           {selectedDecision.statusLabel}
                         </div>
                       </div>
-                      <p className="mt-0.5 line-clamp-1 text-sm leading-5 text-[#d2dad7]">
+                      <p className="mt-0.5 line-clamp-1 text-[13px] leading-4 text-[#d2dad7]">
                         {selectedDecision.reason}
                       </p>
                     </div>
@@ -850,7 +809,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           )}
 
           {canUseCopilot && (
-            <div className="flex h-[260px] shrink-0 overflow-hidden">
+            <div className="hidden h-[260px] shrink-0 overflow-hidden min-[1600px]:flex">
               <Suspense
                 fallback={
                   <div className="glass-card flex min-h-0 flex-1 flex-col justify-center rounded-xl p-4 text-center text-sm text-arena-elements-textTertiary">

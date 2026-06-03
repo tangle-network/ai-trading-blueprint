@@ -34,9 +34,14 @@ export type DexAssetSelection = {
   name: string;
   decimals: number;
   known: boolean;
+  logoUri?: string;
   valuationSource?: 'chainlink' | 'uniswap_v3_twap' | 'base_asset';
   verifiedBaseAsset?: Address;
 };
+
+export function strategyUsesDexAssetUniverse(strategyType: string): boolean {
+  return strategyType === 'dex' || strategyType.startsWith('dex-');
+}
 
 export function normalizeAssetAddress(address: string): Address {
   return address.trim() as Address;
@@ -122,6 +127,7 @@ function selectionFromMetadata(metadata: TokenMetadata): DexAssetSelection {
     name: metadata.name,
     decimals: metadata.decimals,
     known: true,
+    logoUri: metadata.logoUri,
     valuationSource: 'chainlink',
   };
 }
@@ -137,6 +143,7 @@ export function tokenMetadataFromDexAssetSelections(
     address: asset.address,
     chainIds: [chainId],
     accentClassName: 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-200',
+    logoUri: asset.logoUri,
   }));
 }
 

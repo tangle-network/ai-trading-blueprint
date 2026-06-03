@@ -82,6 +82,7 @@ import {
   buildDexAssetUniverse,
   dexAssetSelectionsForChain,
   resolveDexAssetInput,
+  strategyUsesDexAssetUniverse,
   type DexAssetUniverse,
   type DexAssetSelection,
 } from '~/lib/assetUniverse';
@@ -249,7 +250,7 @@ interface DexAssetPreflightResponse {
   symbol?: string | null;
   name?: string | null;
   decimals?: number | null;
-  // The discriminated union has no `| string` escape hatch — a future
+  // The discriminated union has no `| string` escape hatch. A future
   // backend change that adds a new tag must surface as a TypeScript error
   // here so the FE narrows are forced to widen consciously.
   valuation_source?: 'chainlink' | 'uniswap_v3_twap' | 'base_asset' | null;
@@ -1273,7 +1274,7 @@ export function selectLatestInstanceProvision(
 }
 
 export const meta: MetaFunction = () => [
-  { title: 'Deploy Agent — AI Trading Arena' },
+  { title: 'Deploy Agent - AI Trading Arena' },
 ];
 
 // ── Main page ────────────────────────────────────────────────────────────
@@ -1444,7 +1445,7 @@ export default function ProvisionPage() {
     instanceRouteTarget.sandboxId,
   );
 
-  // Configure — agent settings
+  // Configure agent settings
   const [name, setName] = useState('');
   const [strategyType, setStrategyType] = useState('dex');
   const [runtimeBackend, setRuntimeBackend] =
@@ -1519,7 +1520,7 @@ export default function ProvisionPage() {
     !!selectedBlueprint?.isTee,
     // tnt-core v0.13.0: bind quote to the connected wallet (the address that
     // will be `msg.sender` for `createServiceFromQuotes`). When undefined the
-    // hook holds the fetch — `address(0)` is rejected on-chain.
+    // hook holds the fetch because `address(0)` is rejected on-chain.
     userAddress,
   );
 
@@ -1549,6 +1550,7 @@ export default function ProvisionPage() {
   const [useOperatorKey, setUseOperatorKey] = useState(false);
 
   const selectedPack = strategyPacks.find((p) => p.id === strategyType)!;
+  const usesDexAssetUniverse = strategyUsesDexAssetUniverse(strategyType);
   const compatibleExecutionTargets = useMemo(
     () => executionTargetsForStrategy(strategyType, executionTargets),
     [strategyType, executionTargets],
@@ -1625,7 +1627,7 @@ export default function ProvisionPage() {
   // current base when it remains valid, seed WETH only when the selection
   // is otherwise empty (first run for this chain/strategy/target combo).
   useEffect(() => {
-    if (strategyType !== 'dex') return;
+    if (!usesDexAssetUniverse) return;
     const targetAsset = selectedExecutionTarget?.assetToken as Address | undefined;
     // Snapshot defaultAssetOptions, NOT assetOptions, so this effect doesn't
     // re-run when customAssetSelections changes.
@@ -1649,7 +1651,7 @@ export default function ProvisionPage() {
       const next = new Map<string, Address>();
       next.set(defaultBase.toLowerCase(), defaultBase);
       for (const address of kept) next.set(address.toLowerCase(), address);
-      // Seed WETH only when the selection is otherwise empty — i.e. on the
+      // Seed WETH only when the selection is otherwise empty, on the
       // first run for this chain/strategy/target combo. If the user later
       // explicitly removes WETH, this effect won't re-inject it on the next
       // dep change because `kept` will already include the user's choices.
@@ -1659,7 +1661,7 @@ export default function ProvisionPage() {
       }
       return [...next.values()];
     });
-  }, [defaultAssetOptions, selectedExecutionTarget?.assetToken, strategyType]);
+  }, [defaultAssetOptions, selectedExecutionTarget?.assetToken, usesDexAssetUniverse]);
   const addAssetToUniverse = useCallback(
     async (value: string) => {
       setCustomAssetError(null);
@@ -1796,7 +1798,7 @@ export default function ProvisionPage() {
   }, [baseAssetAddress]);
   const dexAssetUniverse = useMemo(
     () =>
-      strategyType === 'dex'
+      usesDexAssetUniverse
         ? buildDexAssetUniverse({
             chainId: assetUniverseChainId,
             baseAsset: baseAssetAddress,
@@ -1804,7 +1806,7 @@ export default function ProvisionPage() {
             assetSelections: assetOptions,
           })
         : undefined,
-    [assetOptions, assetUniverseChainId, baseAssetAddress, selectedAssetAddresses, strategyType],
+    [assetOptions, assetUniverseChainId, baseAssetAddress, selectedAssetAddresses, usesDexAssetUniverse],
   );
   const hasEnabledExecutionTarget =
     selectedPack.executionMode !== 'single-chain' ||
@@ -2504,7 +2506,7 @@ export default function ProvisionPage() {
 
       if (isInstance) {
         toast.success(
-          `Service #${activatedServiceId} active! Provisioning instance bot...`,
+          `Service #${activatedServiceId} active! Provisioning instance bot…`,
         );
         void autoProvisionInstance(activatedServiceId);
       } else {
@@ -2559,7 +2561,7 @@ export default function ProvisionPage() {
             }
 
             toast.success(
-              'Service request submitted! Waiting for activation...',
+              'Service request submitted! Waiting for activation…',
             );
           } else {
             toast.error('Service request transaction reverted');
@@ -2621,7 +2623,7 @@ export default function ProvisionPage() {
     }
     if (!serviceInfo?.isActive) {
       toast.error(
-        'Service is not active — select an active service in Infrastructure Settings',
+        'Service is not active. Select an active service in Infrastructure Settings',
       );
       return;
     }
@@ -2650,7 +2652,7 @@ export default function ProvisionPage() {
     );
     if (requiresExecutionTarget && !executionConfig) {
       toast.error(
-        'Execution target is incomplete — select a valid execution target in Advanced Settings',
+        'Execution target is incomplete. Select a valid execution target in Advanced Settings',
       );
       return;
     }
@@ -2717,7 +2719,7 @@ export default function ProvisionPage() {
         }
         if (vaultSigners.length === 0) {
           toast.error(
-            'Selected validator services have no operators — cannot create vault signers',
+            'Selected validator services have no operators. Cannot create vault signers',
           );
           return;
         }
@@ -2758,7 +2760,7 @@ export default function ProvisionPage() {
       riskParams: '{}',
       vaultAddress: executionConfig?.provisionVaultAddress ?? zeroAddress,
       assetAddress:
-        strategyType === 'dex'
+        usesDexAssetUniverse
           ? baseAssetAddress
           : executionConfig?.assetAddress ??
         ((import.meta.env.VITE_USDC_ADDRESS ??
@@ -2803,7 +2805,7 @@ export default function ProvisionPage() {
           const shortName = (err as any).shortMessage || '';
           if (msg.includes('NotPermittedCaller') || msg.includes('d5dd5b44')) {
             toast.error(
-              'Not permitted — your wallet is not a permitted caller for this service',
+              'Not permitted. Your wallet is not a permitted caller for this service',
             );
           } else if (shortName) {
             toast.error(`Transaction failed: ${shortName.slice(0, 150)}`);
@@ -2849,7 +2851,7 @@ export default function ProvisionPage() {
       return;
     }
     if (quotes.length === 0) {
-      toast.error('No quotes available — select operators first');
+      toast.error('No quotes available. Select operators first');
       return;
     }
 
@@ -2935,7 +2937,7 @@ export default function ProvisionPage() {
       collateralBps,
       targetChainId: targetChain.id,
       assetAddress:
-        strategyType === 'dex'
+        usesDexAssetUniverse
           ? baseAssetAddress
           : ((import.meta.env.VITE_USDC_ADDRESS ??
               '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') as Address),
@@ -3483,7 +3485,7 @@ export default function ProvisionPage() {
         });
       }
 
-      toast.success('API keys configured — agent is now active!');
+      toast.success('API keys configured. Agent is now active!');
       dispatchBotsRefresh();
       setApiKey('');
       setExtraEnvs([]);
@@ -3522,56 +3524,55 @@ export default function ProvisionPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────
 
-  // Wallet gate: provisioning sends transactions, so without a connected
-  // wallet the wizard is inert. Render a theme-aware connect panel instead of
-  // the dark-background wizard shell — the parent iframe used to show a solid
-  // black void on light-mode shells until the wallet reconnected.
+  // Provisioning sends transactions, so without a connected wallet the wizard is inert.
   if (!isConnected) {
     return (
       <ConnectWalletPanel
-        title="Connect your wallet to provision"
-        description="Sign in with the wallet that will own the trading service. You'll choose a blueprint, fund the deposit, and activate the agent in the next few steps."
+        title="Deploy Agent"
+        description="Wallet signs service ownership, operator quotes, funding, and activation."
         bullets={[
-          'Pick from existing trading blueprints',
-          'Quote operator costs before commit',
-          'Deploy on Tangle, run on your DEX of choice',
-          'Configure secrets after on-chain activation',
+          'Blueprint',
+          'Quote',
+          'Service',
+          'Activation',
         ]}
-        footnote={
-          <>
-            New here? Visit the{' '}
-            <Link to="/" className="text-violet-700 dark:text-violet-300 hover:underline">leaderboard</Link>{' '}
-            to see what other agents are running.
-          </>
-        }
       />
     );
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6">
-      <Link
-        to="/"
-        className="inline-flex items-center gap-1.5 text-sm text-arena-elements-textTertiary hover:text-violet-700 dark:hover:text-violet-400 mb-6 font-display font-medium transition-colors"
-      >
-        <span>&larr;</span> Arena
-      </Link>
+    <div className="arena-trace-terminal min-h-full bg-[#081013] text-[#f6fefd]">
+      <div className="mx-auto flex min-h-full max-w-[1280px] flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
+        <header className="flex shrink-0 flex-col gap-3 border-b border-[#273035] pb-4 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0">
+            <Link
+              to="/"
+              className="mb-2 inline-flex items-center gap-1.5 rounded-[5px] font-display text-sm font-medium text-[#949e9c] transition-[background-color,color] duration-150 hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+            >
+              <span className="i-ph:arrow-left text-base" aria-hidden="true" />
+              Arena
+            </Link>
+            <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#50d2c1]">Deployment</p>
+            <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight text-[#f6fefd] md:text-4xl">
+              Deploy Agent
+            </h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-[#949e9c]">
+            <span className="rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2.5 py-1.5">
+              {targetChain.name}
+            </span>
+            {selectedBlueprint && (
+              <span className="rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2.5 py-1.5">
+                {selectedBlueprint.name}
+              </span>
+            )}
+            <span className="rounded-[5px] border border-[#1d5b52] bg-[#143c38] px-2.5 py-1.5 text-[#9cf5e7]">
+              {STEP_LABELS[step]}
+            </span>
+          </div>
+        </header>
 
-      <h1 className="font-display font-bold text-3xl tracking-tight mb-1.5">
-        Provision Trading Agent
-      </h1>
-      <p className="text-base text-arena-elements-textSecondary mb-6">
-        {step === 'blueprint' &&
-          'Choose a blueprint type for your trading agent.'}
-        {step === 'configure' &&
-          `Configure your ${selectedBlueprint?.name ?? 'trading'} agent, then provision it on-chain.`}
-        {step === 'deploy' && 'Your agent is being provisioned on the network.'}
-        {step === 'secrets' &&
-          'Provide your API keys to activate the trading agent.'}
-      </p>
-
-      {/* Step indicator */}
-      <div className="flex items-center mb-8">
+        <nav className="grid shrink-0 gap-2 md:grid-cols-4" aria-label="Provision steps">
         {STEP_ORDER.map((s, i) => {
           const isCurrent = s === step;
           const isDone = i < stepIndex;
@@ -3585,50 +3586,45 @@ export default function ProvisionPage() {
                     txHash &&
                     STEP_ORDER.indexOf(s) < STEP_ORDER.indexOf('deploy')
                   )
-                    return;
+                  return;
                   setStep(s);
                 }}
                 disabled={!isDone && !isCurrent}
-                className={`flex items-center gap-2.5 text-sm font-display font-medium transition-colors whitespace-nowrap shrink-0 ${
+                className={`flex h-12 items-center gap-3 rounded-[5px] border px-3 text-left font-display text-sm font-medium transition-[background-color,border-color,color,opacity,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
                   isCurrent
-                    ? 'text-violet-700 dark:text-violet-400'
+                    ? 'border-[#50d2c1]/70 bg-[#143c38] text-[#f6fefd]'
                     : isDone
-                      ? 'text-arena-elements-textSecondary hover:text-violet-600 dark:hover:text-violet-400 cursor-pointer'
-                      : 'text-arena-elements-textTertiary cursor-default'
+                      ? 'border-[#273035] bg-[#0f1a1f] text-[#d2dad7] hover:border-[#50d2c1]/40 hover:bg-[#132329]'
+                      : 'cursor-default border-[#273035] bg-[#0b1418] text-[#697371]'
                 }`}
               >
                 <span
-                  className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-data font-bold shrink-0 transition-all duration-300 ${
+                  className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border font-mono text-xs font-semibold ${
                     isCurrent
-                      ? 'bg-violet-500 text-white shadow-[0_0_10px_rgba(139,92,246,0.3)]'
+                      ? 'border-[#50d2c1]/70 bg-[#081013] text-[#50d2c1]'
                       : isDone
-                        ? 'bg-emerald-400 text-white shadow-[0_0_8px_rgba(0,255,136,0.2)]'
-                        : 'bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 text-arena-elements-textTertiary border border-arena-elements-borderColor'
+                        ? 'border-[#1d5b52] bg-[#143c38] text-[#9cf5e7]'
+                        : 'border-[#273035] bg-[#081013] text-[#697371]'
                   }`}
                 >
                   {isDone ? '\u2713' : i + 1}
                 </span>
                 {STEP_LABELS[s]}
               </button>
-              {i < STEP_ORDER.length - 1 && (
-                <div
-                  className={`flex-1 h-px mx-3 transition-colors duration-300 ${i < stepIndex ? 'bg-emerald-400/50' : 'bg-arena-elements-borderColor'}`}
-                />
-              )}
             </Fragment>
           );
         })}
-      </div>
+        </nav>
 
-      <div className="space-y-5">
+        <div className="space-y-4">
         {ambiguousInstanceProvisionMessage && (
-          <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
-            <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" />
+          <div className="flex items-start gap-3 rounded-[7px] border border-[#6f5723] bg-[#201808] p-4">
+            <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[#f2c066]" />
             <div>
-              <div className="text-sm font-display font-medium text-amber-700 dark:text-amber-400">
+              <div className="font-display text-sm font-semibold text-[#f2c066]">
                 Instance Draft Needs Disambiguation
               </div>
-              <div className="mt-0.5 text-xs text-arena-elements-textSecondary">
+              <div className="mt-0.5 font-mono text-xs text-[#d2dad7]">
                 {ambiguousInstanceProvisionMessage}
               </div>
             </div>
@@ -3637,13 +3633,13 @@ export default function ProvisionPage() {
 
         {/* Wrong chain banner */}
         {isWrongChain && (
-          <div className="flex items-center gap-3 p-4 rounded-lg border border-amber-500/30 bg-amber-500/5">
-            <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse shrink-0" />
+          <div className="flex items-center gap-3 rounded-[7px] border border-[#6f5723] bg-[#201808] p-4">
+            <div className="h-3 w-3 shrink-0 rounded-full bg-[#f2c066] animate-pulse" />
             <div className="flex-1">
-              <div className="text-sm font-display font-medium text-amber-700 dark:text-amber-400">
+              <div className="font-display text-sm font-semibold text-[#f2c066]">
                 Wrong Network
               </div>
-              <div className="text-xs text-arena-elements-textSecondary mt-0.5">
+              <div className="mt-0.5 font-mono text-xs text-[#d2dad7]">
                 Your wallet is on chain {walletChainId}. Switch to{' '}
                 {targetChain.name} to submit transactions.
               </div>
@@ -3653,10 +3649,11 @@ export default function ProvisionPage() {
               onClick={() =>
                 switchChainAsync({ chainId: targetChain.id }).catch(() =>
                   toast.error(
-                    'Failed to switch — add the chain to your wallet manually',
+                    'Failed to switch. Add the chain to your wallet manually',
                   ),
                 )
               }
+              className="h-9 rounded-[5px] bg-[#f2c066] px-3 font-display text-xs font-semibold text-[#120d02] transition-[background-color,opacity,transform] duration-150 hover:bg-[#ffda87] active:scale-[0.98]"
             >
               Switch Network
             </Button>
@@ -3681,7 +3678,7 @@ export default function ProvisionPage() {
               <Button
                 disabled={!selectedBlueprint}
                 onClick={goNext}
-                className="bg-violet-600 hover:bg-violet-700 text-white"
+                className="h-10 rounded-[5px] bg-[#50d2c1] px-4 font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity,transform] duration-150 hover:bg-[#7ce6d9] active:scale-[0.98] disabled:opacity-45"
               >
                 Continue
               </Button>
@@ -3780,7 +3777,7 @@ export default function ProvisionPage() {
             validationTrust={validationTrust}
           />
         )}
-      </div>
+        </div>
 
       {/* Dialogs */}
       <InfrastructureDialog
@@ -3867,6 +3864,7 @@ export default function ProvisionPage() {
           setShowInfra(true);
         }}
       />
+      </div>
     </div>
   );
 }

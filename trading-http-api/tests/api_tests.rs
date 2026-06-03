@@ -2080,6 +2080,16 @@ async fn test_trades_pagination() {
     assert!(json["total"].as_u64().unwrap() >= 3);
     assert_eq!(json["limit"], 1);
     assert_eq!(json["offset"], 0);
+    assert_eq!(json["evidence"]["source"], "trade_store");
+    assert_eq!(json["evidence"]["scope"], "bot");
+    assert_eq!(json["evidence"]["exact"], true);
+    assert!(json["evidence"]["total_fills"].as_u64().unwrap() >= 3);
+    assert_eq!(json["evidence"]["loaded_fills"], 1);
+    assert!(
+        json["evidence"]["outside_page_fills"].as_u64().unwrap()
+            >= json["evidence"]["total_fills"].as_u64().unwrap() - 1
+    );
+    assert!(json["evidence"]["latest_indexed_at"].is_string());
 
     // Request page 2 with offset=1
     let response2 = app
@@ -2266,6 +2276,13 @@ async fn test_platform_trades_returns_latest_trades_across_bots() {
     assert!(json["total"].as_u64().unwrap() >= 2);
     assert_eq!(json["limit"], 200);
     assert_eq!(json["offset"], 0);
+    assert_eq!(json["evidence"]["source"], "trade_store");
+    assert_eq!(json["evidence"]["scope"], "platform");
+    assert_eq!(json["evidence"]["exact"], true);
+    assert!(json["evidence"]["total_fills"].as_u64().unwrap() >= 2);
+    assert!(json["evidence"]["loaded_fills"].as_u64().unwrap() >= 2);
+    assert!(json["evidence"]["priced_fills"].as_u64().unwrap() >= 2);
+    assert!(json["evidence"]["valuation_coverage"].as_f64().unwrap() > 0.0);
 }
 
 // ── Metrics tests ───────────────────────────────────────────────────────────
@@ -8145,6 +8162,7 @@ async fn test_candle_store_record_and_query() {
         "candles": [
             {"timestamp": 1000, "token": "ETH", "open": "2500", "high": "2520", "low": "2490", "close": "2510", "volume": "50000"},
             {"timestamp": 2000, "token": "ETH", "open": "2510", "high": "2530", "low": "2500", "close": "2525", "volume": "45000"},
+            {"timestamp": 3000, "token": "ETH", "open": "2525", "high": "2540", "low": "2515", "close": "2532", "volume": "47000"},
             {"timestamp": 1000, "token": "BTC", "open": "40000", "high": "40500", "low": "39800", "close": "40200", "volume": "30000"}
         ]
     });
@@ -8166,7 +8184,7 @@ async fn test_candle_store_record_and_query() {
     assert_eq!(response.status(), 200);
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(json["recorded"].as_u64().unwrap(), 3);
+    assert_eq!(json["recorded"].as_u64().unwrap(), 4);
 
     // Query candles for ETH
     let response = app
@@ -8188,6 +8206,29 @@ async fn test_candle_store_record_and_query() {
     let candles = json["candles"].as_array().unwrap();
     // May see candles from other tests sharing the same store, so check >= 2
     assert!(candles.len() >= 2, "Should return at least 2 ETH candles");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/market-data/candles?token=ETH&limit=2")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let candles = json["candles"].as_array().unwrap();
+    let timestamps: Vec<_> = candles
+        .iter()
+        .map(|candle| candle["timestamp"].as_i64().unwrap())
+        .collect();
+    assert_eq!(timestamps, vec![2000, 3000]);
 }
 
 #[tokio::test]

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPlatformVolumeSeries,
   buildPlatformVolumeSeriesFromBuckets,
+  derivePlatformVolumeFocusWindow,
   getPlatformVolumeRangeConfig,
 } from './platformVolume';
 
@@ -111,5 +112,44 @@ describe('platform volume series', () => {
     expect(series.summary.paperUsd).toBe(75);
     expect(series.summary.liveUsd).toBe(75);
     expect(series.summary.totalTradeCount).toBe(4);
+  });
+
+  it('focuses sparse long-range charts around active buckets without changing selected-range totals', () => {
+    const now = Date.parse('2026-06-10T12:00:00Z');
+    const series = buildPlatformVolumeSeries([
+      {
+        timestamp: Date.parse('2026-06-09T18:00:00Z'),
+        notionalUsd: 80_000,
+      },
+      {
+        timestamp: Date.parse('2026-06-10T08:00:00Z'),
+        notionalUsd: 354_300,
+      },
+    ], '30d', now);
+    const firstActive = series.buckets.find((bucket) => bucket.bucketUsd > 0);
+    const lastActive = [...series.buckets].reverse().find((bucket) => bucket.bucketUsd > 0);
+    const focusWindow = derivePlatformVolumeFocusWindow(series.buckets, 'bucket', {
+      minVisibleBuckets: 6,
+    });
+
+    expect(series.summary.totalUsd).toBe(434_300);
+    expect(focusWindow).not.toBeNull();
+    expect(focusWindow?.activeBucketCount).toBe(2);
+    expect(focusWindow?.visibleBucketCount).toBe(6);
+    expect(focusWindow?.fromMs).toBeLessThan(firstActive?.timestamp ?? 0);
+    expect(focusWindow?.toMs).toBeGreaterThanOrEqual(lastActive?.timestamp ?? 0);
+  });
+
+  it('keeps dense volume history fitted to the full selected range', () => {
+    const now = Date.parse('2026-06-10T12:00:00Z');
+    const trades = Array.from({ length: 7 }, (_, index) => ({
+      timestamp: Date.parse(`2026-06-${String(4 + index).padStart(2, '0')}T12:00:00Z`),
+      notionalUsd: 100 + index,
+    }));
+    const series = buildPlatformVolumeSeries(trades, '7d', now);
+
+    expect(derivePlatformVolumeFocusWindow(series.buckets, 'bucket', {
+      minVisibleBuckets: 4,
+    })).toBeNull();
   });
 });

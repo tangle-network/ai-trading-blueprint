@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AreaData,
   CandlestickData,
+  Coordinate,
   HistogramData,
   IChartApi,
   IPriceLine,
@@ -15,6 +16,7 @@ import type {
 import { formatNumber } from '~/lib/format';
 import type { useChartTheme } from '~/lib/hooks/useChartTheme';
 import type { MarketCandle } from '~/lib/hooks/useBotApi';
+import type { FillCountEvidence } from '~/lib/tradeEvidence';
 import { loadLightweightCharts } from './lightweightChartRuntime';
 import type { PerformanceChartPoint } from './performanceChart';
 
@@ -23,6 +25,7 @@ type ChartTheme = ReturnType<typeof useChartTheme>;
 export interface TradeChartMarker {
   id: string;
   timestampMs: number;
+  executionPriceUsd?: number | null;
   tooltip: string;
   color: string;
   shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square';
@@ -37,6 +40,7 @@ interface TradingPerformanceChartProps {
   mode?: 'nav' | 'market';
   marketCandles?: MarketCandle[];
   marketLabel?: string | null;
+  fillCountEvidence?: FillCountEvidence | null;
 }
 
 interface PreparedPoint {
@@ -70,6 +74,7 @@ interface ChartRuntime {
 const SYNTHETIC_TIME_BASE_SECONDS = 1_700_000_000;
 const DENSE_MARKER_THRESHOLD = 16;
 const DENSE_MARKER_BUCKET_TARGET = 10;
+const MARKET_MARKER_MIN_TOLERANCE_SECONDS = 90;
 const TERMINAL_SURFACE = '#0f1a1f';
 const TERMINAL_GRID = 'rgba(148, 158, 156, 0.085)';
 const TERMINAL_TICK = '#949e9c';
@@ -207,12 +212,29 @@ function toVolumeSeriesData(candles: MarketCandle[], chartTheme: ChartTheme): Hi
   }));
 }
 
-function nearestMarketTime(marketTimes: UTCTimestamp[], timestampMs: number): UTCTimestamp | null {
+function estimateMarketMarkerToleranceSeconds(marketTimes: UTCTimestamp[]): number {
+  const intervals = marketTimes
+    .slice(1)
+    .map((time, index) => time - marketTimes[index])
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+
+  if (intervals.length === 0) return MARKET_MARKER_MIN_TOLERANCE_SECONDS;
+  const median = intervals[Math.floor(intervals.length / 2)] ?? MARKET_MARKER_MIN_TOLERANCE_SECONDS;
+  return Math.max(MARKET_MARKER_MIN_TOLERANCE_SECONDS, Math.ceil(median * 0.75));
+}
+
+function nearestMarketTime(
+  marketTimes: UTCTimestamp[],
+  timestampMs: number,
+  toleranceSeconds: number,
+): UTCTimestamp | null {
   if (marketTimes.length === 0 || !Number.isFinite(timestampMs)) return null;
   const firstTime = marketTimes[0];
   const lastTime = marketTimes[marketTimes.length - 1];
   if (firstTime == null || lastTime == null) return null;
   const target = Math.floor(timestampMs / 1000);
+  if (target < firstTime - toleranceSeconds || target > lastTime + toleranceSeconds) return null;
   let low = 0;
   let high = marketTimes.length - 1;
 
@@ -229,7 +251,8 @@ function nearestMarketTime(marketTimes: UTCTimestamp[], timestampMs: number): UT
 
   const previous = marketTimes[Math.max(0, high)] ?? firstTime;
   const next = marketTimes[Math.min(marketTimes.length - 1, low)] ?? lastTime;
-  return Math.abs(previous - target) <= Math.abs(next - target) ? previous : next;
+  const nearest = Math.abs(previous - target) <= Math.abs(next - target) ? previous : next;
+  return Math.abs(nearest - target) <= toleranceSeconds ? nearest : null;
 }
 
 interface MarkerCandidate {
@@ -243,6 +266,22 @@ interface MarkerPlacement {
   time: UTCTimestamp;
   count: number;
   members: TradeChartMarker[];
+}
+
+interface MarketMarkerPlacementResult {
+  placements: MarkerPlacement[];
+  omittedCount: number;
+  totalCount: number;
+}
+
+interface ExactMarketMarkerOverlay {
+  id: string;
+  x: number;
+  y: Coordinate;
+  side: 'buy' | 'sell' | 'other';
+  color: string;
+  marker: TradeChartMarker;
+  value: number;
 }
 
 function markerSide(marker: TradeChartMarker): 'buy' | 'sell' | 'other' {
@@ -266,6 +305,30 @@ function exactMarkerPlacements(candidates: MarkerCandidate[]): MarkerPlacement[]
       candidate.marker.color,
       candidate.marker.text,
     ].join(':');
+    const group = groups.get(key);
+    if (group) {
+      group.count += 1;
+      group.members.push(candidate.marker);
+      group.id = placementId(group.marker, group.time, group.count);
+      continue;
+    }
+    groups.set(key, {
+      id: placementId(candidate.marker, candidate.time, 1),
+      marker: candidate.marker,
+      time: candidate.time,
+      count: 1,
+      members: [candidate.marker],
+    });
+  }
+
+  return Array.from(groups.values());
+}
+
+function marketExactMarkerPlacements(candidates: MarkerCandidate[]): MarkerPlacement[] {
+  const groups = new Map<string, MarkerPlacement>();
+
+  for (const candidate of candidates) {
+    const key = `${candidate.time}:${markerSide(candidate.marker)}`;
     const group = groups.get(key);
     if (group) {
       group.count += 1;
@@ -330,7 +393,19 @@ function markerPlacements(candidates: MarkerCandidate[], dense: boolean): Marker
     .sort((left, right) => left.time - right.time);
 }
 
-function toMarkerLabel(marker: TradeChartMarker, count: number, dense: boolean): string {
+function marketMarkerPlacements(candidates: MarkerCandidate[], dense: boolean): MarkerPlacement[] {
+  return (dense ? denseMarkerPlacements(candidates) : marketExactMarkerPlacements(candidates))
+    .sort((left, right) => left.time - right.time);
+}
+
+function toMarkerLabel(
+  marker: TradeChartMarker,
+  count: number,
+  dense: boolean,
+  labelMode: 'action' | 'count' | 'none',
+): string {
+  if (labelMode === 'none') return '';
+  if (labelMode === 'count') return count > 1 ? `x${count}` : '';
   if (!dense) return count > 1 ? `${marker.text} x${count}` : marker.text;
   return '';
 }
@@ -357,18 +432,25 @@ function toSeriesMarkerPlacements(
 
 function toMarketMarkerPlacements(
   tradeMarkers: TradeChartMarker[],
-  marketCandles: MarketCandle[],
-): MarkerPlacement[] {
+    marketCandles: MarketCandle[],
+): MarketMarkerPlacementResult {
   const dense = tradeMarkers.length > DENSE_MARKER_THRESHOLD;
   const marketTimes = marketCandles
     .map((candle) => Math.floor(candle.timestamp / 1000) as UTCTimestamp)
     .sort((left, right) => left - right);
-  const candidates = tradeMarkers.flatMap((marker) => {
-    const time = nearestMarketTime(marketTimes, marker.timestampMs);
-    return time == null ? [] : [{ marker, time }];
-  });
+  const toleranceSeconds = estimateMarketMarkerToleranceSeconds(marketTimes);
+  const candidates: MarkerCandidate[] = [];
 
-  return markerPlacements(candidates, dense);
+  for (const marker of tradeMarkers) {
+    const time = nearestMarketTime(marketTimes, marker.timestampMs, toleranceSeconds);
+    if (time != null) candidates.push({ marker, time });
+  }
+
+  return {
+    placements: marketMarkerPlacements(candidates, dense),
+    omittedCount: tradeMarkers.length - candidates.length,
+    totalCount: tradeMarkers.length,
+  };
 }
 
 function toSeriesMarkers(
@@ -376,11 +458,11 @@ function toSeriesMarkers(
   {
     dense,
     denseSingletonSize,
-    showLabels = true,
+    labelMode = 'action',
   }: {
     dense: boolean;
     denseSingletonSize: number;
-    showLabels?: boolean;
+    labelMode?: 'action' | 'count' | 'none';
   },
 ): Array<SeriesMarker<Time>> {
   return placements.map(({ id, marker, time, count }) => ({
@@ -389,7 +471,7 @@ function toSeriesMarkers(
     position: marker.position,
     shape: marker.shape,
     color: marker.color,
-    text: showLabels ? toMarkerLabel(marker, count, dense) : '',
+    text: toMarkerLabel(marker, count, dense, labelMode),
     size: toMarkerSize(count, dense, denseSingletonSize),
   }));
 }
@@ -414,6 +496,228 @@ function formatMarketReadout(candle: MarketCandle): string {
   return `O ${formatAxisCurrency(candle.open)}  H ${formatAxisCurrency(candle.high)}  L ${formatAxisCurrency(candle.low)}`;
 }
 
+function formatExecutionTime(timestampMs: number): string {
+  return markerTimeFormatter.format(new Date(timestampMs));
+}
+
+function formatExecutionDetail(item: ExactMarketMarkerOverlay): string {
+  return `${formatExecutionTime(item.marker.timestampMs)} · ${item.marker.tooltip}`;
+}
+
+function executionReadout(item: ExactMarketMarkerOverlay): HoverReadout {
+  return {
+    label: item.marker.tooltip,
+    value: item.value,
+    detail: formatExecutionTime(item.marker.timestampMs),
+  };
+}
+
+function surroundingTimes(marketTimes: UTCTimestamp[], target: UTCTimestamp): [UTCTimestamp, UTCTimestamp] | null {
+  if (marketTimes.length === 0) return null;
+  const first = marketTimes[0];
+  const last = marketTimes[marketTimes.length - 1];
+  if (first == null || last == null || target < first || target > last) return null;
+
+  let low = 0;
+  let high = marketTimes.length - 1;
+
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const time = marketTimes[middle];
+    if (time === target) return [time, time];
+    if (time < target) {
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  const previous = marketTimes[Math.max(0, high)];
+  const next = marketTimes[Math.min(marketTimes.length - 1, low)];
+  return previous != null && next != null ? [previous, next] : null;
+}
+
+function interpolateMarketCoordinate(
+  chart: IChartApi,
+  marketTimes: UTCTimestamp[],
+  target: UTCTimestamp,
+): number | null {
+  const timeScale = chart.timeScale() as ReturnType<IChartApi['timeScale']> & {
+    timeToCoordinate?: (time: Time) => number | null;
+  };
+  if (!timeScale.timeToCoordinate) return null;
+  const direct = timeScale.timeToCoordinate(target);
+  if (direct != null) return direct;
+
+  const bounds = surroundingTimes(marketTimes, target);
+  if (!bounds) return null;
+
+  const [previous, next] = bounds;
+  const previousX = timeScale.timeToCoordinate(previous);
+  const nextX = timeScale.timeToCoordinate(next);
+  if (previousX == null || nextX == null) return null;
+  if (previous === next) return previousX;
+
+  const progress = (target - previous) / (next - previous);
+  return previousX + (nextX - previousX) * progress;
+}
+
+function estimateMarketValueAtTimestamp(candles: MarketCandle[], timestampMs: number): number | null {
+  if (candles.length === 0 || !Number.isFinite(timestampMs)) return null;
+  const target = timestampMs / 1000;
+  const sorted = [...candles].sort((left, right) => left.timestamp - right.timestamp);
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  if (!first || !last) return null;
+  const firstTime = first.timestamp / 1000;
+  const lastTime = last.timestamp / 1000;
+  if (target < firstTime || target > lastTime) return null;
+  if (target <= firstTime) return first.close;
+  if (target >= lastTime) return last.close;
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1];
+    const next = sorted[index];
+    if (!previous || !next || target > next.timestamp / 1000) continue;
+
+    const previousTime = previous.timestamp / 1000;
+    const nextTime = next.timestamp / 1000;
+    if (nextTime <= previousTime) return previous.close;
+
+    const progress = (target - previousTime) / (nextTime - previousTime);
+    return previous.close + (next.close - previous.close) * progress;
+  }
+
+  return last.close;
+}
+
+function resolveMarketMarkerValue(candles: MarketCandle[], marker: TradeChartMarker): number | null {
+  if (marker.executionPriceUsd != null && Number.isFinite(marker.executionPriceUsd) && marker.executionPriceUsd > 0) {
+    return marker.executionPriceUsd;
+  }
+  return estimateMarketValueAtTimestamp(candles, marker.timestampMs);
+}
+
+function exactOverlayEquals(left: ExactMarketMarkerOverlay[], right: ExactMarketMarkerOverlay[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => {
+    const other = right[index];
+    return other != null
+      && item.id === other.id
+      && Math.abs(item.x - other.x) < 0.5
+      && Math.abs(item.y - other.y) < 0.5
+      && item.value === other.value;
+  });
+}
+
+function buildExactMarketMarkerOverlay({
+  chart,
+  candleSeries,
+  containerWidth,
+  marketCandles,
+  tradeMarkers,
+}: {
+  chart: IChartApi;
+  candleSeries: CandleSeriesApi;
+  containerWidth: number;
+  marketCandles: MarketCandle[];
+  tradeMarkers: TradeChartMarker[];
+}): ExactMarketMarkerOverlay[] {
+  const marketTimes = marketCandles
+    .map((candle) => Math.floor(candle.timestamp / 1000) as UTCTimestamp)
+    .sort((left, right) => left - right);
+  if (marketTimes.length === 0) return [];
+
+  return tradeMarkers
+    .filter((marker) => Number.isFinite(marker.timestampMs))
+    .map((marker) => {
+      const target = Math.floor(marker.timestampMs / 1000) as UTCTimestamp;
+      const firstTime = marketTimes[0];
+      const lastTime = marketTimes[marketTimes.length - 1];
+      if (firstTime == null || lastTime == null || target < firstTime || target > lastTime) return null;
+      const x = interpolateMarketCoordinate(chart, marketTimes, target);
+      const hasMeasuredWidth = containerWidth > 0;
+      if (x == null || x < -16 || (hasMeasuredWidth && x > containerWidth + 16)) return null;
+      const value = resolveMarketMarkerValue(marketCandles, marker);
+      if (value == null) return null;
+      const y = candleSeries.priceToCoordinate(value);
+      if (y == null || !Number.isFinite(y)) return null;
+      return {
+        id: marker.id,
+        x,
+        y,
+        side: markerSide(marker),
+        color: marker.color,
+        marker,
+        value,
+      };
+    })
+    .filter((item): item is ExactMarketMarkerOverlay => item != null)
+    .sort((left, right) => left.x - right.x);
+}
+
+interface ExecutionCoverage {
+  shown: number;
+  total: number;
+  detail: string;
+  title: string;
+}
+
+function buildExecutionCoverage({
+  activeMode,
+  exactOverlayCount,
+  fillCountEvidence,
+  marketCandles,
+  marketMarkerVisibleCount,
+  tradeMarkers,
+}: {
+  activeMode: 'nav' | 'market';
+  exactOverlayCount: number;
+  fillCountEvidence?: FillCountEvidence | null;
+  marketCandles: MarketCandle[];
+  marketMarkerVisibleCount: number;
+  tradeMarkers: TradeChartMarker[];
+}): ExecutionCoverage | null {
+  const renderedRows = tradeMarkers.length;
+  const total = Math.max(fillCountEvidence?.value ?? 0, fillCountEvidence?.total ?? 0, renderedRows);
+  if (total <= 0) return null;
+
+  const chartable = activeMode === 'market'
+    ? marketMarkerVisibleCount
+    : renderedRows;
+  const shown = activeMode === 'market'
+    ? exactOverlayCount || chartable
+    : renderedRows;
+  const loaded = Math.max(fillCountEvidence?.loaded ?? 0, renderedRows);
+  const outsidePage = Math.max(fillCountEvidence?.outsidePage ?? 0, total - loaded, 0);
+  const offWindow = activeMode === 'market'
+    ? Math.max(0, renderedRows - chartable)
+    : 0;
+  const inferredUnpriced = tradeMarkers.filter((marker) =>
+    marker.executionPriceUsd == null
+      || !Number.isFinite(marker.executionPriceUsd)
+      || marker.executionPriceUsd <= 0,
+  ).length;
+  const unpriced = Math.max(fillCountEvidence?.unpriced ?? 0, inferredUnpriced);
+  const detailParts = [
+    offWindow > 0 ? `${formatNumber(offWindow, { maximumFractionDigits: 0 })} off-window` : null,
+    outsidePage > 0 ? `${formatNumber(outsidePage, { maximumFractionDigits: 0 })} outside page` : null,
+    unpriced > 0 ? `${formatNumber(unpriced, { maximumFractionDigits: 0 })} unpriced` : null,
+    activeMode === 'market' && marketCandles.length > 0
+      ? `${formatNumber(marketCandles.length, { maximumFractionDigits: 0 })} candles`
+      : null,
+  ].filter((part): part is string => part != null);
+  const shownText = formatNumber(shown, { maximumFractionDigits: 0 });
+  const totalText = formatNumber(total, { maximumFractionDigits: 0 });
+
+  return {
+    shown,
+    total,
+    detail: detailParts.length > 0 ? detailParts.join(' · ') : 'fully covered',
+    title: `${shownText} of ${totalText} fills shown. ${detailParts.length > 0 ? detailParts.join(', ') : 'All loaded fills are charted.'}`,
+  };
+}
+
 export function TradingPerformanceChart({
   points,
   tradeMarkers,
@@ -421,9 +725,12 @@ export function TradingPerformanceChart({
   mode = 'nav',
   marketCandles = [],
   marketLabel,
+  fillCountEvidence,
 }: TradingPerformanceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverReadout, setHoverReadout] = useState<HoverReadout | null>(null);
+  const [exactMarketOverlay, setExactMarketOverlay] = useState<ExactMarketMarkerOverlay[]>([]);
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
   const activeMode = mode === 'market' && marketCandles.length > 0 ? 'market' : 'nav';
   const hasIntegratedNavPane = activeMode === 'market' && points.length > 0;
   const denseTradeMarkers = tradeMarkers.length > DENSE_MARKER_THRESHOLD;
@@ -455,18 +762,12 @@ export function TradingPerformanceChart({
     () => toVolumeSeriesData(marketCandles, chartTheme),
     [chartTheme, marketCandles],
   );
-  const marketMarkerPlacements = useMemo(
+  const marketMarkerPlacementResult = useMemo(
     () => toMarketMarkerPlacements(tradeMarkers, marketCandles),
     [marketCandles, tradeMarkers],
   );
-  const marketMarkers = useMemo(
-    () => toSeriesMarkers(marketMarkerPlacements, {
-      dense: denseTradeMarkers,
-      denseSingletonSize: 0.78,
-      showLabels: false,
-    }),
-    [denseTradeMarkers, marketMarkerPlacements],
-  );
+  const marketMarkerPlacements = marketMarkerPlacementResult.placements;
+  const marketMarkerVisibleCount = marketMarkerPlacements.reduce((sum, placement) => sum + placement.count, 0);
   const markerReadoutsById = useMemo(
     () => new Map(
       (activeMode === 'market' ? marketMarkerPlacements : navMarkerPlacements)
@@ -484,10 +785,14 @@ export function TradingPerformanceChart({
   const marketLabelRef = useRef<string | null | undefined>(marketLabel);
   const firstMarketTimeRef = useRef<Time | undefined>(undefined);
   const lastMarketTimeRef = useRef<Time | undefined>(undefined);
+  const tradeMarkersRef = useRef(tradeMarkers);
+  const marketCandlesRef = useRef(marketCandles);
 
   useEffect(() => {
     activeModeRef.current = activeMode;
     marketLabelRef.current = marketLabel;
+    tradeMarkersRef.current = tradeMarkers;
+    marketCandlesRef.current = marketCandles;
     pointByTimeRef.current = new Map(preparedPoints.map((preparedPoint) => [
       String(preparedPoint.time),
       preparedPoint.point,
@@ -499,7 +804,7 @@ export function TradingPerformanceChart({
     markerReadoutsByIdRef.current = markerReadoutsById;
     firstMarketTimeRef.current = marketSeriesData[0]?.time;
     lastMarketTimeRef.current = marketSeriesData[marketSeriesData.length - 1]?.time;
-  }, [activeMode, marketCandles, marketLabel, markerReadoutsById, marketSeriesData, preparedPoints]);
+  }, [activeMode, marketCandles, marketLabel, markerReadoutsById, marketSeriesData, preparedPoints, tradeMarkers]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -508,6 +813,8 @@ export function TradingPerformanceChart({
 
     let cancelled = false;
     let crosshairHandler: ((param: MouseEventParams<Time>) => void) | null = null;
+    let unsubscribeVisibleRange: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
 
     void loadLightweightCharts().then((charts) => {
       if (cancelled || !containerRef.current) return;
@@ -666,6 +973,22 @@ export function TradingPerformanceChart({
       runtimeRef.current = runtime;
       fitOnNextDataRef.current = true;
 
+      const updateExactOverlay = () => {
+        const currentRuntime = runtimeRef.current;
+        if (!containerRef.current || currentRuntime?.mode !== 'market' || !currentRuntime.candleSeries) {
+          setExactMarketOverlay((current) => current.length === 0 ? current : []);
+          return;
+        }
+        const nextOverlay = buildExactMarketMarkerOverlay({
+          chart,
+          candleSeries: currentRuntime.candleSeries,
+          containerWidth: containerRef.current.clientWidth,
+          marketCandles: marketCandlesRef.current,
+          tradeMarkers: tradeMarkersRef.current,
+        });
+        setExactMarketOverlay((current) => exactOverlayEquals(current, nextOverlay) ? current : nextOverlay);
+      };
+
       if (runtime.mode === 'market' && runtime.candleSeries && runtime.volumeSeries) {
         runtime.candleSeries.setData(marketSeriesData);
         runtime.volumeSeries.setData(volumeSeriesData);
@@ -682,8 +1005,9 @@ export function TradingPerformanceChart({
             });
           }
         }
-        runtime.markerApi?.setMarkers(marketMarkers);
+        runtime.markerApi?.setMarkers([]);
         chart.timeScale().fitContent();
+        updateExactOverlay();
         fitOnNextDataRef.current = false;
       }
 
@@ -762,10 +1086,25 @@ export function TradingPerformanceChart({
       };
 
       chart.subscribeCrosshairMove(crosshairHandler);
+
+      const timeScale = chart.timeScale() as ReturnType<IChartApi['timeScale']> & {
+        subscribeVisibleLogicalRangeChange?: (handler: () => void) => void;
+        unsubscribeVisibleLogicalRangeChange?: (handler: () => void) => void;
+      };
+      if (runtime.mode === 'market' && timeScale.subscribeVisibleLogicalRangeChange && timeScale.unsubscribeVisibleLogicalRangeChange) {
+        timeScale.subscribeVisibleLogicalRangeChange(updateExactOverlay);
+        unsubscribeVisibleRange = () => timeScale.unsubscribeVisibleLogicalRangeChange?.(updateExactOverlay);
+      }
+      if (runtime.mode === 'market' && typeof ResizeObserver !== 'undefined' && containerRef.current) {
+        resizeObserver = new ResizeObserver(updateExactOverlay);
+        resizeObserver.observe(containerRef.current);
+      }
     });
 
     return () => {
       cancelled = true;
+      unsubscribeVisibleRange?.();
+      resizeObserver?.disconnect();
       const runtime = runtimeRef.current;
       if (runtime?.mode === activeMode) {
         if (crosshairHandler) runtime.chart.unsubscribeCrosshairMove(crosshairHandler);
@@ -773,6 +1112,7 @@ export function TradingPerformanceChart({
         runtime.chart.remove();
         runtimeRef.current = null;
       }
+      setExactMarketOverlay((current) => current.length === 0 ? current : []);
     };
   }, [
     activeMode,
@@ -873,12 +1213,20 @@ export function TradingPerformanceChart({
         });
       }
     }
-    runtime.markerApi?.setMarkers(marketMarkers);
+    runtime.markerApi?.setMarkers([]);
 
     if (fitOnNextDataRef.current) {
       runtime.chart.timeScale().fitContent();
       fitOnNextDataRef.current = false;
     }
+    const nextOverlay = buildExactMarketMarkerOverlay({
+      chart: runtime.chart,
+      candleSeries: runtime.candleSeries,
+      containerWidth: containerRef.current?.clientWidth ?? 0,
+      marketCandles,
+      tradeMarkers,
+    });
+    setExactMarketOverlay((current) => exactOverlayEquals(current, nextOverlay) ? current : nextOverlay);
   }, [
     activeMode,
     chartTheme.gradientEnd,
@@ -887,14 +1235,34 @@ export function TradingPerformanceChart({
     chartTheme.positive,
     fillTopColor,
     lineColor,
-    marketMarkers,
     marketSeriesData,
     navSeriesData,
+    tradeMarkers,
+    marketCandles,
     volumeSeriesData,
   ]);
 
+  useEffect(() => {
+    if (!selectedExecutionId) return;
+    if (exactMarketOverlay.some((item) => item.id === selectedExecutionId)) return;
+    setSelectedExecutionId(null);
+  }, [exactMarketOverlay, selectedExecutionId]);
+
   const latestMarketCandle = marketCandles[marketCandles.length - 1] ?? null;
-  const readout = hoverReadout ?? (activeMode === 'market' && latestMarketCandle
+  const executionCoverage = buildExecutionCoverage({
+    activeMode,
+    exactOverlayCount: exactMarketOverlay.length,
+    fillCountEvidence,
+    marketCandles,
+    marketMarkerVisibleCount,
+    tradeMarkers,
+  });
+  const selectedExecution = selectedExecutionId
+    ? exactMarketOverlay.find((item) => item.id === selectedExecutionId) ?? null
+    : null;
+  const featuredExecution = selectedExecution ?? exactMarketOverlay[exactMarketOverlay.length - 1] ?? null;
+  const selectedReadout = selectedExecution ? executionReadout(selectedExecution) : null;
+  const readout = hoverReadout ?? selectedReadout ?? (activeMode === 'market' && latestMarketCandle
     ? {
         label: marketLabel ?? latestMarketCandle.token,
         value: latestMarketCandle.close,
@@ -910,6 +1278,87 @@ export function TradingPerformanceChart({
   return (
     <div className="relative h-full min-h-[320px] w-full overflow-hidden bg-[#0f1a1f]" data-testid="tradingview-performance-chart">
       <div ref={containerRef} className="absolute inset-0" />
+      {activeMode === 'market' && exactMarketOverlay.length > 0 && (
+        <div
+          className="pointer-events-none absolute inset-x-0 z-10"
+          style={{
+            top: 0,
+            bottom: hasIntegratedNavPane ? '31%' : '18%',
+          }}
+          aria-label="Execution lane"
+        >
+          {exactMarketOverlay.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`pointer-events-auto absolute h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-crosshair rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f6fefd]/70 ${
+                selectedExecutionId === item.id ? 'ring-2 ring-[#f6fefd]/70' : ''
+              }`}
+              style={{ left: item.x, top: item.y }}
+              aria-label={`${item.marker.tooltip} at ${markerTimeFormatter.format(new Date(item.marker.timestampMs))}`}
+              title={`${item.marker.tooltip} · ${markerTimeFormatter.format(new Date(item.marker.timestampMs))}`}
+              onClick={() => {
+                const nextSelectedId = selectedExecutionId === item.id ? null : item.id;
+                setSelectedExecutionId(nextSelectedId);
+                setHoverReadout(nextSelectedId ? executionReadout(item) : null);
+              }}
+              onFocus={() => {
+                setHoverReadout(executionReadout(item));
+              }}
+              onMouseEnter={() => {
+                setHoverReadout(executionReadout(item));
+              }}
+              onMouseLeave={() => {
+                if (selectedExecutionId !== item.id) setHoverReadout(null);
+              }}
+              onBlur={() => {
+                if (selectedExecutionId !== item.id) setHoverReadout(null);
+              }}
+            >
+              <span
+                className="absolute left-1/2 top-1/2 h-[58px] w-px -translate-x-1/2 -translate-y-1/2"
+                style={{
+                  background: `linear-gradient(to bottom, transparent, ${item.color} 18%, ${item.color} 82%, transparent)`,
+                  opacity: item.side === 'other' ? 0.24 : 0.34,
+                }}
+                aria-hidden="true"
+              />
+              {item.side === 'buy' ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute left-1/2 top-1/2 h-0 w-0 -translate-x-1/2 -translate-y-[62%]"
+                  style={{
+                    borderLeft: '5px solid transparent',
+                    borderRight: '5px solid transparent',
+                    borderBottom: `9px solid ${item.color}`,
+                    filter: `drop-shadow(0 0 7px ${item.color}77) drop-shadow(0 0 1px rgba(246,254,253,0.55))`,
+                  }}
+                />
+              ) : item.side === 'sell' ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute left-1/2 top-1/2 h-0 w-0 -translate-x-1/2 -translate-y-[38%]"
+                  style={{
+                    borderLeft: '5px solid transparent',
+                    borderRight: '5px solid transparent',
+                    borderTop: `9px solid ${item.color}`,
+                    filter: `drop-shadow(0 0 7px ${item.color}77) drop-shadow(0 0 1px rgba(246,254,253,0.55))`,
+                  }}
+                />
+              ) : (
+                <span
+                  aria-hidden="true"
+                  className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full"
+                  style={{
+                    backgroundColor: item.color,
+                    boxShadow: `0 0 0 1px rgba(246,254,253,0.26), 0 0 10px ${item.color}77`,
+                  }}
+                />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
       {readout && (
         <div
           className="pointer-events-none absolute left-3 top-3 rounded-md border px-3 py-2 shadow-[0_18px_40px_rgba(0,0,0,0.32)]"
@@ -934,6 +1383,46 @@ export function TradingPerformanceChart({
           style={{ background: 'rgba(15, 26, 31, 0.78)', borderColor: TERMINAL_BORDER }}
         >
           NAV
+        </div>
+      )}
+      {featuredExecution && (
+        <div
+          className="pointer-events-none absolute bottom-3 right-3 z-20 max-w-[min(360px,calc(100%-1.5rem))] rounded-md border px-3 py-2 shadow-[0_18px_40px_rgba(0,0,0,0.34)]"
+          style={{ background: TERMINAL_TOOLTIP, borderColor: TERMINAL_BORDER }}
+          data-testid="chart-featured-execution"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ backgroundColor: featuredExecution.color }}
+              aria-hidden="true"
+            />
+            <span className="truncate font-data text-xs font-semibold text-[#f6fefd]">
+              {featuredExecution.marker.text}
+            </span>
+            <span className="font-data text-xs font-semibold tabular-nums text-[#f6fefd]">
+              {formatAxisCurrency(featuredExecution.value)}
+            </span>
+          </div>
+          <div className="mt-1 truncate font-data text-[11px] text-[#949e9c]">
+            {formatExecutionDetail(featuredExecution)}
+          </div>
+        </div>
+      )}
+      {executionCoverage && (
+        <div
+          className="pointer-events-none absolute right-3 top-3 z-20 rounded-md border px-3 py-2 font-data shadow-[0_14px_36px_rgba(0,0,0,0.3)]"
+          style={{ background: 'rgba(15, 26, 31, 0.78)', borderColor: TERMINAL_BORDER }}
+          title={executionCoverage.title}
+          data-testid="chart-execution-coverage"
+        >
+          <div className="text-right text-xs font-semibold tabular-nums text-[#f6fefd]">
+            {formatNumber(executionCoverage.shown, { maximumFractionDigits: 0 })}
+            /{formatNumber(executionCoverage.total, { maximumFractionDigits: 0 })} fills
+          </div>
+          <div className="mt-0.5 max-w-[260px] truncate text-right text-[10px] font-medium text-[#949e9c]">
+            {executionCoverage.detail}
+          </div>
         </div>
       )}
     </div>

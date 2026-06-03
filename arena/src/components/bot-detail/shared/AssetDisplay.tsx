@@ -28,7 +28,9 @@ interface TradeInstrumentDisplayProps {
   className?: string;
   size?: 'sm' | 'md';
   showVenue?: boolean;
+  showSecondary?: boolean;
   labelClassName?: string;
+  terminal?: boolean;
 }
 
 function joinClasses(...classes: Array<string | false | null | undefined>): string {
@@ -207,7 +209,9 @@ export function TradeInstrumentDisplay({
   className,
   size = 'md',
   showVenue = true,
+  showSecondary = true,
   labelClassName,
+  terminal = false,
 }: TradeInstrumentDisplayProps) {
   const venue = VENUE_CONFIG[trade.venue];
   const isCompact = size === 'sm';
@@ -219,10 +223,13 @@ export function TradeInstrumentDisplay({
           left={trade.assetIn}
           right={trade.assetOut}
           size={isCompact ? 'sm' : 'md'}
-          labelClassName={labelClassName}
+          labelClassName={joinClasses(terminal && '!text-[#d2dad7]', labelClassName)}
         />
         {showVenue && (
-          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 font-data text-xs text-arena-elements-textSecondary">
+          <div className={joinClasses(
+            'mt-0.5 flex min-w-0 items-center gap-1.5 font-data text-xs',
+            terminal ? 'text-[#949e9c]' : 'text-arena-elements-textSecondary',
+          )}>
             <span className={`${venue.color} inline-flex items-center gap-1`}>
               <span className={`${venue.icon} text-sm`} aria-hidden="true" />
               {venue.label}
@@ -236,13 +243,13 @@ export function TradeInstrumentDisplay({
   const marketLabel = trade.targetProtocol === 'hyperliquid'
     ? getHyperliquidMarketLabel(trade) ?? getTradeMarketLabel(trade)
     : getTradeMarketLabel(trade);
-  const secondary = tradeInstrumentSecondary(trade);
   const iconClassName = trade.targetProtocol === 'hyperliquid'
     ? 'bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200'
     : predictionToneClass(trade.predictionMetadata?.outcomeLabel);
   const iconText = trade.targetProtocol === 'hyperliquid'
     ? perpIconText(trade)
     : predictionIconText(trade.predictionMetadata?.outcomeLabel);
+  const secondary = showSecondary ? tradeInstrumentSecondary(trade) : null;
 
   return (
     <div
@@ -263,7 +270,8 @@ export function TradeInstrumentDisplay({
       <div className="min-w-0">
         <div
           className={joinClasses(
-            'truncate font-display font-semibold text-arena-elements-textPrimary',
+            'truncate font-display font-semibold',
+            terminal ? 'text-[#d2dad7]' : 'text-arena-elements-textPrimary',
             isCompact ? 'text-sm' : 'text-sm',
             labelClassName,
           )}
@@ -271,7 +279,10 @@ export function TradeInstrumentDisplay({
           {marketLabel}
         </div>
         {(showVenue || secondary) && (
-          <div className="mt-0.5 flex min-w-0 items-center gap-2 font-data text-xs text-arena-elements-textSecondary">
+          <div className={joinClasses(
+            'mt-0.5 flex min-w-0 items-center gap-2 font-data text-xs',
+            terminal ? 'text-[#949e9c]' : 'text-arena-elements-textSecondary',
+          )}>
             {showVenue && (
               <span className={`${venue.color} inline-flex shrink-0 items-center gap-1`}>
                 <span className={`${venue.icon} text-sm`} aria-hidden="true" />

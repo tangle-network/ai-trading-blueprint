@@ -1,13 +1,16 @@
 import { PositionsTab } from './PositionsTab';
 import { TradeHistoryTab } from './TradeHistoryTab';
+import { botStatusLabel } from '~/lib/format';
 import type { BotOperatorKind, BotStatus, BotVerificationState } from '~/lib/types/bot';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
+import type { ReactNode } from 'react';
 
 interface PortfolioWorkspaceProps {
   botId: string;
   botName: string;
   status: BotStatus;
   isLive: boolean;
+  paperTrade?: boolean;
   chainId?: number;
   operatorApiUrl?: string | null;
   operatorKind?: BotOperatorKind;
@@ -15,17 +18,123 @@ interface PortfolioWorkspaceProps {
   assetMetadata?: TokenMetadata[];
 }
 
+interface RouteStateItem {
+  value: string;
+  tone?: 'neutral' | 'good' | 'warn' | 'muted';
+}
+
+function formatChainLabel(chainId?: number): string {
+  if (chainId == null) return 'Unknown';
+  if (chainId === 84532) return 'Base Sepolia';
+  if (chainId === 8453) return 'Base';
+  if (chainId === 31337) return 'Anvil';
+  return `Chain ${chainId}`;
+}
+
+function formatOperatorKind(operatorKind?: BotOperatorKind): string {
+  if (!operatorKind) return 'Unknown';
+  if (operatorKind === 'tee') return 'TEE';
+  if (operatorKind === 'cloud') return 'Cloud';
+  return 'Instance';
+}
+
+function formatVerificationState(verificationState?: BotVerificationState): string {
+  if (verificationState === 'authoritative') return 'Verified';
+  if (verificationState === 'unverified') return 'Unverified';
+  return 'Pending';
+}
+
+function routeToneClass(tone: RouteStateItem['tone'] = 'neutral'): string {
+  if (tone === 'good') return 'text-[#50d2c1]';
+  if (tone === 'warn') return 'text-[#f7b955]';
+  if (tone === 'muted') return 'text-[#697371]';
+  return 'text-[#f6fefd]';
+}
+
+function TerminalPane({
+  title,
+  meta,
+  children,
+  className = '',
+  bodyClassName = '',
+}: {
+  title: string;
+  meta?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  bodyClassName?: string;
+}) {
+  return (
+    <section className={`flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] ${className}`}>
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0b1418] px-3">
+        <h3 className="font-data text-[11px] font-semibold uppercase tracking-[0.12em] text-[#949e9c]">
+          {title}
+        </h3>
+        {meta && (
+          <div className="min-w-0 font-data text-xs tabular-nums text-[#d2dad7]">
+            {meta}
+          </div>
+        )}
+      </div>
+      <div className={`min-h-0 flex-1 overflow-hidden ${bodyClassName}`}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function RouteStateTicker({ items }: { items: RouteStateItem[] }) {
+  return (
+    <div className="hidden min-w-0 items-center gap-1.5 font-data text-xs tabular-nums min-[860px]:flex">
+      {items.map((item, index) => (
+        <span
+          key={`${item.value}-${index}`}
+          className={`min-w-0 max-w-[9.5rem] truncate rounded-[4px] border border-[#273035] bg-[#0b1418] px-2 py-1 ${routeToneClass(item.tone)}`}
+          title={item.value}
+          translate="no"
+        >
+          {item.value}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function PortfolioWorkspace({
   botId,
   botName,
   status,
   isLive,
+  paperTrade,
   chainId,
   operatorApiUrl,
   operatorKind,
   verificationState,
   assetMetadata,
 }: PortfolioWorkspaceProps) {
+  const modeLabel = paperTrade == null ? (isLive ? 'Live' : 'Offline') : paperTrade ? 'Paper' : 'Live';
+  const routeStateItems: RouteStateItem[] = [
+    {
+      value: botStatusLabel(status),
+      tone: status === 'active' ? 'good' : status === 'paused' || status === 'winding_down' ? 'warn' : 'muted',
+    },
+    {
+      value: formatChainLabel(chainId),
+      tone: chainId == null ? 'muted' : 'neutral',
+    },
+    {
+      value: formatOperatorKind(operatorKind),
+      tone: operatorKind ? 'neutral' : 'muted',
+    },
+    {
+      value: operatorApiUrl ? 'Connected' : 'Unavailable',
+      tone: operatorApiUrl ? 'good' : 'warn',
+    },
+    {
+      value: formatVerificationState(verificationState),
+      tone: verificationState === 'authoritative' ? 'good' : verificationState === 'unverified' ? 'warn' : 'muted',
+    },
+  ];
   const terminalTableClass = [
     'text-[#d2dad7]',
     '[&_.glass-card]:!border-[#273035]',
@@ -41,7 +150,6 @@ export function PortfolioWorkspace({
     '[&_th]:!text-[#949e9c]',
     '[&_td]:!border-[#273035]',
     '[&_td]:!bg-[#0f1a1f]',
-    '[&_td]:!text-[#d2dad7]',
     '[&_code]:!text-[#d2dad7]',
     '[&_.text-arena-elements-textPrimary]:!text-[#f6fefd]',
     '[&_.text-arena-elements-textSecondary]:!text-[#d2dad7]',
@@ -49,62 +157,59 @@ export function PortfolioWorkspace({
   ].join(' ');
 
   return (
-    <section className={`flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.24)] ${terminalTableClass}`}>
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0b1418] px-3">
-        <div className="min-w-0">
-          <h2 className="truncate font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
-            Portfolio
+    <section className={`flex h-full min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.24)] ${terminalTableClass}`}>
+      <div className="flex min-h-10 shrink-0 items-center justify-between gap-3 border-b border-[#273035] bg-[#081115] px-3 py-1.5">
+        <div className="flex min-w-0 items-center gap-3">
+          <h2 className="min-w-0 truncate font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
+            Account
           </h2>
+          <div className="hidden min-w-0 items-center gap-2 font-data text-xs tabular-nums text-[#697371] min-[640px]:flex">
+            <span className="max-w-[16rem] truncate text-[#d2dad7]" translate="no">
+              {botName}
+            </span>
+            <span aria-hidden="true">/</span>
+            <span className={modeLabel === 'Live' ? 'text-[#50d2c1]' : modeLabel === 'Paper' ? 'text-[#f7b955]' : 'text-[#697371]'}>
+              {modeLabel}
+            </span>
+          </div>
         </div>
-        <div className="hidden items-center gap-2 font-data text-xs text-[#697371] min-[980px]:flex">
-          <span className="text-[#d2dad7]">{botName}</span>
-          <span aria-hidden="true">/</span>
-          <span>{isLive ? 'Live' : 'Paper'}</span>
-        </div>
+        <RouteStateTicker items={routeStateItems} />
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(142px,0.36fr)_minmax(0,1fr)] overflow-hidden min-[1620px]:grid-cols-[minmax(380px,0.38fr)_minmax(0,1fr)] min-[1620px]:grid-rows-none">
-        <section className="flex min-h-0 flex-col overflow-hidden border-b border-[#273035] bg-[#0f1a1f] min-[1620px]:border-b-0 min-[1620px]:border-r">
-          <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0d171b] px-3">
-            <h3 className="font-data text-xs font-semibold uppercase text-[#949e9c]">
-              Positions
-            </h3>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 [scrollbar-gutter:stable]">
-            <PositionsTab
-              botId={botId}
-              status={status}
-              chainId={chainId}
-              operatorApiUrl={operatorApiUrl}
-              operatorKind={operatorKind}
-              verificationState={verificationState}
-              assetMetadata={assetMetadata}
-              workspace
-              workspaceLayout="ledger"
-            />
-          </div>
-        </section>
+      <div className="grid min-h-0 flex-1 grid-rows-[252px_minmax(0,1fr)] gap-2 overflow-hidden p-2 min-[1500px]:grid-rows-[244px_minmax(0,1fr)]">
+        <TerminalPane
+          title="Positions"
+          bodyClassName="overflow-auto overscroll-contain p-2 [scrollbar-gutter:stable]"
+        >
+          <PositionsTab
+            botId={botId}
+            status={status}
+            chainId={chainId}
+            operatorApiUrl={operatorApiUrl}
+            operatorKind={operatorKind}
+            verificationState={verificationState}
+            assetMetadata={assetMetadata}
+            workspace
+            workspaceLayout="ledger"
+          />
+        </TerminalPane>
 
-        <section className="flex min-h-0 flex-col overflow-hidden bg-[#0f1a1f]">
-          <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0d171b] px-3">
-            <h3 className="font-data text-xs font-semibold uppercase text-[#949e9c]">
-              Executions
-            </h3>
-          </div>
-          <div className="min-h-0 flex-1 p-2">
-            <TradeHistoryTab
-              botId={botId}
-              botName={botName}
-              isLive={isLive}
-              chainId={chainId}
-              operatorApiUrl={operatorApiUrl}
-              operatorKind={operatorKind}
-              verificationState={verificationState}
-              assetMetadata={assetMetadata}
-              compact
-            />
-          </div>
-        </section>
+        <TerminalPane
+          title="Executions"
+          bodyClassName="overflow-visible p-2"
+        >
+          <TradeHistoryTab
+            botId={botId}
+            botName={botName}
+            isLive={isLive}
+            chainId={chainId}
+            operatorApiUrl={operatorApiUrl}
+            operatorKind={operatorKind}
+            verificationState={verificationState}
+            assetMetadata={assetMetadata}
+            compact
+          />
+        </TerminalPane>
       </div>
     </section>
   );

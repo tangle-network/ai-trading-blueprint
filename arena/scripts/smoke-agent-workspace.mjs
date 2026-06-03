@@ -19,6 +19,8 @@ const FIXTURE_OPERATOR = '0x1234567890abcdef1234567890abcdef12345678';
 const FIXTURE_VAULT = '0x0000000000000000000000000000000000001001';
 const FIXTURE_OWNER_TOKEN = 'fixture-owner-token';
 const FIXTURE_OWNER_AUTH_KEY = `arena.operator_auth.${FIXTURE_OPERATOR.toLowerCase()}::/operator-api`;
+const FIXTURE_WALLET_ADDRESS = FIXTURE_OPERATOR;
+const FIXTURE_WALLET_CHAIN_ID = 84532;
 
 const SECTION_EXPECTATIONS = {
   performance: [
@@ -40,7 +42,7 @@ const SECTION_EXPECTATIONS = {
     ['Reasoning', 'Final outcome', 'Run details', 'Workflow'],
     ['tool', 'tools', 'fast_backtest', 'hyperliquid_nav', 'Transcript'],
   ],
-  operations: ['Operations', 'Validation', 'Validator'],
+  operations: ['Operations', 'Validation', 'Evidence'],
 };
 const LIVE_SECTION_EXPECTATIONS = {
   performance: [
@@ -66,8 +68,20 @@ const LIVE_SECTION_EXPECTATIONS = {
     ['Validation', 'Validator', 'Controls', 'Terminal', 'Envelope'],
   ],
 };
-const FIXTURE_HOME_EXPECTATIONS = ['AI Trading Arena', 'Volume', 'Fills', 'Agent Explorer', 'ETH Macro Scalper'];
-const FIXTURE_LEADERBOARD_EXPECTATIONS = ['Agent Explorer', 'Agents', 'Fills', 'Volume', 'ETH Macro Scalper', 'HL Perp'];
+const FIXTURE_HOME_EXPECTATIONS = ['Arena', 'Volume', 'Fills', 'ETH Macro Scalper'];
+const FIXTURE_LEADERBOARD_EXPECTATIONS = ['Agents', '24H Vol', 'Active', 'ETH Macro Scalper', 'HL Perp'];
+const FIXTURE_ACTIVITY_EXPECTATIONS = ['Activity', '24H Vol', 'Fills', 'ETH Macro Scalper', 'ETH-PERP'];
+const FIXTURE_CREATE_EXPECTATIONS = ['Launch Agent', 'Mandate', 'Prediction Markets', 'Deploy Agent'];
+const FIXTURE_PROVISION_EXPECTATIONS = ['Deploy Agent', 'Launch Check', 'Owner Wallet', 'Connect Wallet'];
+const FIXTURE_PROVISION_CONNECTED_EXPECTATIONS = [
+  'Deploy Agent',
+  'Base Sepolia',
+  'Command',
+  'Strategy',
+  'Assets',
+  'Launch Summary',
+  'Review Provision',
+];
 
 function parseArgs(argv) {
   const args = {
@@ -76,6 +90,8 @@ function parseArgs(argv) {
     chrome: process.env.CHROME_BIN ?? '',
     fixture: false,
     ownerPerformance: false,
+    serveFixture: false,
+    readyFile: '',
     screenshotDir: process.env.ARENA_SMOKE_SCREENSHOT_DIR ?? '',
   };
 
@@ -93,6 +109,12 @@ function parseArgs(argv) {
       args.allowEmpty = true;
     } else if (arg === '--fixture') {
       args.fixture = true;
+    } else if (arg === '--serve-fixture') {
+      args.fixture = true;
+      args.serveFixture = true;
+    } else if (arg === '--ready-file') {
+      args.readyFile = argv[index + 1] ?? args.readyFile;
+      index += 1;
     } else if (arg === '--owner-performance') {
       args.ownerPerformance = true;
       args.fixture = true;
@@ -124,6 +146,9 @@ Options:
   --url <url>       App base URL. Defaults to ARENA_SMOKE_URL or http://127.0.0.1:1337/
   --chrome <path>   Chromium/Chrome binary. Defaults to CHROME_BIN or common system names.
   --fixture         Start a deterministic mock operator + local app server, then smoke a fixture agent.
+  --serve-fixture   Start the deterministic mock operator + local app server and keep them alive until SIGTERM.
+  --ready-file <path>
+                    With --serve-fixture, write the app URL to a file after the server is ready.
   --owner-performance
                     Start fixture mode with dev owner auth and verify the owner Performance copilot.
   --screenshot-dir <dir>
@@ -151,6 +176,14 @@ function findChrome(explicitPath) {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function waitForShutdownSignal() {
+  return new Promise((resolve) => {
+    const shutdown = () => resolve();
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
+  });
 }
 
 async function waitFor(predicate, { timeoutMs = 8000, intervalMs = 100 } = {}) {
@@ -344,6 +377,25 @@ function buildFixtureTrades() {
   }).reverse();
 }
 
+function buildTradeEvidence(scope, allTrades, pageTrades) {
+  const pricedFills = allTrades.filter((trade) => Number(trade.notional_usd) > 0).length;
+  return {
+    source: 'trade_store',
+    scope,
+    exact: true,
+    total_fills: allTrades.length,
+    loaded_fills: pageTrades.length,
+    outside_page_fills: Math.max(0, allTrades.length - pageTrades.length),
+    priced_fills: pricedFills,
+    unpriced_fills: Math.max(0, allTrades.length - pricedFills),
+    valuation_coverage: allTrades.length > 0 ? pricedFills / allTrades.length : 0,
+    latest_indexed_at: allTrades[0]?.timestamp ?? null,
+    oldest_indexed_at: allTrades.at(-1)?.timestamp ?? null,
+    latest_loaded_at: pageTrades[0]?.timestamp ?? null,
+    oldest_loaded_at: pageTrades.at(-1)?.timestamp ?? null,
+  };
+}
+
 function buildFixtureCandles() {
   const now = Math.floor(Date.now() / 1000);
   const start = now - 80 * 60;
@@ -496,18 +548,27 @@ function startFixtureOperatorServer() {
     if (pathname === '/api/platform/trades') {
       const limit = Number(url.searchParams.get('limit') ?? trades.length);
       const offset = Number(url.searchParams.get('offset') ?? 0);
+      const pageTrades = trades.slice(offset, offset + limit);
       json(res, 200, {
-        trades: trades.slice(offset, offset + limit),
+        trades: pageTrades,
         total: trades.length,
         limit,
         offset,
+        evidence: buildTradeEvidence('platform', trades, pageTrades),
       });
       return;
     }
     if (pathname === `/api/bots/${FIXTURE_BOT_ID}/trades`) {
       const limit = Number(url.searchParams.get('limit') ?? trades.length);
       const offset = Number(url.searchParams.get('offset') ?? 0);
-      json(res, 200, { trades: trades.slice(offset, offset + limit) });
+      const pageTrades = trades.slice(offset, offset + limit);
+      json(res, 200, {
+        trades: pageTrades,
+        total: trades.length,
+        limit,
+        offset,
+        evidence: buildTradeEvidence('bot', trades, pageTrades),
+      });
       return;
     }
     if (pathname === `/api/bots/${FIXTURE_BOT_ID}/portfolio/state`) {
@@ -658,6 +719,7 @@ async function startFixtureAppServer(operatorUrl, { ownerPerformance = false } =
       VITE_TEE_OPERATOR_API_URL: '',
       VITE_OPERATOR_PROXY_TARGET: operatorUrl,
       VITE_USE_LOCAL_CHAIN: 'false',
+      VITE_CHAIN_ID: String(FIXTURE_WALLET_CHAIN_ID),
       ...(ownerPerformance ? { VITE_OPERATOR_E2E_AUTH_ADDRESS: FIXTURE_OPERATOR } : {}),
       BROWSER: 'none',
     },
@@ -847,6 +909,98 @@ async function installFixtureOwnerAuth(page) {
       } catch {
         // Storage can be unavailable in constrained browser contexts.
       }
+    })();`,
+  });
+}
+
+async function installFixtureWallet(page) {
+  const chainIdHex = `0x${FIXTURE_WALLET_CHAIN_ID.toString(16)}`;
+  await page.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `(() => {
+      const address = ${JSON.stringify(FIXTURE_WALLET_ADDRESS)};
+      let chainId = ${JSON.stringify(chainIdHex)};
+      const listeners = new Map();
+      const emit = (event, payload) => {
+        const handlers = listeners.get(event);
+        if (!handlers) return;
+        for (const handler of Array.from(handlers)) {
+          try {
+            handler(payload);
+          } catch {
+            // Fixture wallet listeners are best-effort browser test plumbing.
+          }
+        }
+      };
+      const addListener = (event, handler) => {
+        if (!listeners.has(event)) listeners.set(event, new Set());
+        listeners.get(event).add(handler);
+        return provider;
+      };
+      const removeListener = (event, handler) => {
+        listeners.get(event)?.delete(handler);
+        return provider;
+      };
+      const provider = {
+        isMetaMask: true,
+        isConnected: () => true,
+        _state: { accounts: [address], isConnected: true, isUnlocked: true },
+        request: async ({ method, params }) => {
+          switch (method) {
+            case 'eth_accounts':
+            case 'eth_requestAccounts':
+              return [address];
+            case 'wallet_requestPermissions':
+              return [{ parentCapability: 'eth_accounts', caveats: [{ type: 'restrictReturnedAccounts', value: [address] }] }];
+            case 'eth_chainId':
+              return chainId;
+            case 'net_version':
+              return String(Number.parseInt(chainId, 16));
+            case 'wallet_switchEthereumChain': {
+              const nextChainId = params?.[0]?.chainId;
+              if (typeof nextChainId === 'string' && nextChainId) {
+                chainId = nextChainId;
+                emit('chainChanged', chainId);
+              }
+              return null;
+            }
+            case 'wallet_addEthereumChain': {
+              const nextChainId = params?.[0]?.chainId;
+              if (typeof nextChainId === 'string' && nextChainId) {
+                chainId = nextChainId;
+                emit('chainChanged', chainId);
+              }
+              return null;
+            }
+            case 'personal_sign':
+            case 'eth_sign':
+            case 'eth_signTypedData':
+            case 'eth_signTypedData_v4':
+              return '0x' + '11'.repeat(65);
+            default:
+              throw Object.assign(new Error('Unsupported fixture wallet method: ' + method), {
+                code: 4200,
+              });
+          }
+        },
+        on: addListener,
+        addListener,
+        removeListener,
+        off: removeListener,
+      };
+
+      Object.defineProperty(window, 'ethereum', {
+        value: provider,
+        configurable: true,
+        enumerable: true,
+        writable: false,
+      });
+      try {
+        window.localStorage?.setItem('wagmi.recentConnectorId', JSON.stringify('metaMask'));
+        window.localStorage?.removeItem('wagmi.metaMask.disconnected');
+      } catch {
+        // Storage can be unavailable in constrained browser contexts.
+      }
+      window.dispatchEvent(new Event('ethereum#initialized'));
     })();`,
   });
 }
@@ -1081,7 +1235,7 @@ async function captureScreenshot(page, screenshotDir, viewport, section, suffix 
 
 function getSectionExpectations(section, { fixture = false, ownerPerformance = false } = {}) {
   if (ownerPerformance && section === 'performance') {
-    return ['Price', 'ETH', 'Copilot'];
+    return ['Price', 'ETH', 'Fills'];
   }
   if (!fixture) {
     return LIVE_SECTION_EXPECTATIONS[section] ?? [];
@@ -1108,6 +1262,22 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
         const nextMetrics = await evaluate(page, `(() => {
         const scrolling = document.scrollingElement || document.documentElement;
         const main = document.querySelector('main');
+        const workspaceNav = document.querySelector('[aria-label="Agent workspace sections"]');
+        const workspaceShell = workspaceNav?.closest('aside')?.parentElement ?? workspaceNav?.parentElement ?? main;
+        let minWorkspaceOpacity = 1;
+        let transformedWorkspaceAncestor = null;
+        for (let el = workspaceShell; el && el !== document.body; el = el.parentElement) {
+          const style = window.getComputedStyle(el);
+          const opacity = Number.parseFloat(style.opacity || '1');
+          if (Number.isFinite(opacity)) minWorkspaceOpacity = Math.min(minWorkspaceOpacity, opacity);
+          if (!transformedWorkspaceAncestor && style.transform && style.transform !== 'none') {
+            transformedWorkspaceAncestor = {
+              tagName: el.tagName.toLowerCase(),
+              className: typeof el.className === 'string' ? el.className.slice(0, 140) : '',
+              transform: style.transform,
+            };
+          }
+        }
         return {
           title: document.title,
           pathname: location.pathname,
@@ -1117,6 +1287,8 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
           innerHeight: window.innerHeight,
           mainScrollHeight: main?.scrollHeight ?? 0,
           mainClientHeight: main?.clientHeight ?? 0,
+          minWorkspaceOpacity,
+          transformedWorkspaceAncestor,
         };
       })()`);
         const expected = getSectionExpectations(section, { fixture, ownerPerformance });
@@ -1146,6 +1318,12 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
       }
       if (/Bot Not Found|Unexpected Application Error/i.test(metrics.bodyText)) {
         failures.push(`${viewport.width}x${viewport.height} ${section}: route rendered an error state`);
+      }
+      if (metrics.minWorkspaceOpacity < 0.98) {
+        failures.push(`${viewport.width}x${viewport.height} ${section}: workspace captured mid-fade with ancestor opacity ${metrics.minWorkspaceOpacity}`);
+      }
+      if (metrics.transformedWorkspaceAncestor) {
+        failures.push(`${viewport.width}x${viewport.height} ${section}: workspace ancestor still transformed ${JSON.stringify(metrics.transformedWorkspaceAncestor)}`);
       }
       for (const text of getSectionExpectations(section, { fixture, ownerPerformance })) {
         if (!textIncludes(metrics.bodyText, [text])) {
@@ -1244,6 +1422,186 @@ async function assertFixtureLeaderboardDashboard(page, baseUrl, { screenshotDir 
 
   if (failures.length > 0) {
     throw new Error(`Leaderboard dashboard smoke failed:\n${failures.map((failure) => `- ${failure}`).join('\n')}`);
+  }
+}
+
+async function assertFixtureActivityDashboard(page, baseUrl, { screenshotDir = '' } = {}) {
+  const failures = [];
+
+  for (const viewport of VIEWPORTS) {
+    await setViewport(page, viewport);
+    await navigate(page, withPath(baseUrl, '/activity'));
+    let metrics;
+    try {
+      metrics = await waitFor(async () => {
+        const nextMetrics = await evaluate(page, `(() => {
+          const scrolling = document.scrollingElement || document.documentElement;
+          return {
+            pathname: location.pathname,
+            bodyText: document.body.innerText.slice(0, 5000),
+            scrollHeight: scrolling.scrollHeight,
+            innerHeight: window.innerHeight,
+          };
+        })()`);
+        return nextMetrics.pathname.endsWith('/activity')
+          && textIncludes(nextMetrics.bodyText, FIXTURE_ACTIVITY_EXPECTATIONS)
+          ? nextMetrics
+          : false;
+      }, { timeoutMs: 12_000, intervalMs: 250 });
+    } catch {
+      const debugMetrics = await evaluate(page, `(() => ({
+        pathname: location.pathname,
+        bodyText: document.body.innerText.slice(0, 900),
+      }))()`);
+      failures.push(`${viewport.width}x${viewport.height} activity: timed out waiting for ${JSON.stringify(FIXTURE_ACTIVITY_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
+      continue;
+    }
+
+    if (/Unexpected Application Error/i.test(metrics.bodyText)) {
+      failures.push(`${viewport.width}x${viewport.height} activity: route rendered an error state`);
+    }
+    await captureScreenshot(page, screenshotDir, viewport, 'activity');
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Activity dashboard smoke failed:\n${failures.map((failure) => `- ${failure}`).join('\n')}`);
+  }
+}
+
+async function assertFixtureCreateCommand(page, baseUrl, { screenshotDir = '' } = {}) {
+  const failures = [];
+
+  for (const viewport of VIEWPORTS) {
+    await setViewport(page, viewport);
+    await navigate(page, withPath(baseUrl, '/create'));
+    let metrics;
+    try {
+      metrics = await waitFor(async () => {
+        const nextMetrics = await evaluate(page, `(() => {
+          const scrolling = document.scrollingElement || document.documentElement;
+          return {
+            pathname: location.pathname,
+            bodyText: document.body.innerText.slice(0, 5000),
+            scrollHeight: scrolling.scrollHeight,
+            innerHeight: window.innerHeight,
+          };
+        })()`);
+        return nextMetrics.pathname.endsWith('/create')
+          && textIncludes(nextMetrics.bodyText, FIXTURE_CREATE_EXPECTATIONS)
+          ? nextMetrics
+          : false;
+      }, { timeoutMs: 12_000, intervalMs: 250 });
+    } catch {
+      const debugMetrics = await evaluate(page, `(() => ({
+        pathname: location.pathname,
+        bodyText: document.body.innerText.slice(0, 900),
+      }))()`);
+      failures.push(`${viewport.width}x${viewport.height} create: timed out waiting for ${JSON.stringify(FIXTURE_CREATE_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
+      continue;
+    }
+
+    if (/Unexpected Application Error/i.test(metrics.bodyText)) {
+      failures.push(`${viewport.width}x${viewport.height} create: route rendered an error state`);
+    }
+    await captureScreenshot(page, screenshotDir, viewport, 'create');
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Create command smoke failed:\n${failures.map((failure) => `- ${failure}`).join('\n')}`);
+  }
+}
+
+async function assertFixtureProvisionGate(page, baseUrl, { screenshotDir = '' } = {}) {
+  const failures = [];
+
+  for (const viewport of VIEWPORTS) {
+    await setViewport(page, viewport);
+    await navigate(page, withPath(baseUrl, '/provision'));
+    let metrics;
+    try {
+      metrics = await waitFor(async () => {
+        const nextMetrics = await evaluate(page, `(() => {
+          const scrolling = document.scrollingElement || document.documentElement;
+          return {
+            pathname: location.pathname,
+            bodyText: document.body.innerText.slice(0, 5000),
+            scrollHeight: scrolling.scrollHeight,
+            innerHeight: window.innerHeight,
+          };
+        })()`);
+        return nextMetrics.pathname.endsWith('/provision')
+          && textIncludes(nextMetrics.bodyText, FIXTURE_PROVISION_EXPECTATIONS)
+          ? nextMetrics
+          : false;
+      }, { timeoutMs: 12_000, intervalMs: 250 });
+    } catch {
+      const debugMetrics = await evaluate(page, `(() => ({
+        pathname: location.pathname,
+        bodyText: document.body.innerText.slice(0, 900),
+      }))()`);
+      failures.push(`${viewport.width}x${viewport.height} provision: timed out waiting for ${JSON.stringify(FIXTURE_PROVISION_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
+      continue;
+    }
+
+    if (/Unexpected Application Error/i.test(metrics.bodyText)) {
+      failures.push(`${viewport.width}x${viewport.height} provision: route rendered an error state`);
+    }
+    await captureScreenshot(page, screenshotDir, viewport, 'provision');
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Provision gate smoke failed:\n${failures.map((failure) => `- ${failure}`).join('\n')}`);
+  }
+}
+
+async function assertFixtureProvisionConnected(page, baseUrl, { screenshotDir = '' } = {}) {
+  const failures = [];
+  const provisionUrl = new URL('/provision', baseUrl);
+  provisionUrl.searchParams.set('blueprint', 'trading-cloud');
+
+  for (const viewport of VIEWPORTS) {
+    await setViewport(page, viewport);
+    await navigate(page, provisionUrl.toString());
+    let metrics;
+    try {
+      metrics = await waitFor(async () => {
+        const nextMetrics = await evaluate(page, `(() => {
+          const scrolling = document.scrollingElement || document.documentElement;
+          return {
+            pathname: location.pathname,
+            search: location.search,
+            bodyText: document.body.innerText.slice(0, 8000),
+            scrollHeight: scrolling.scrollHeight,
+            innerHeight: window.innerHeight,
+          };
+        })()`);
+        const hasLaunchConsole = nextMetrics.pathname.endsWith('/provision')
+          && nextMetrics.search.includes('blueprint=trading-cloud')
+          && textIncludes(nextMetrics.bodyText, FIXTURE_PROVISION_CONNECTED_EXPECTATIONS);
+        const isStillLoading = /Loading service|Loading operator|Loading blueprint/i.test(nextMetrics.bodyText);
+        return hasLaunchConsole && !isStillLoading ? nextMetrics : false;
+      }, { timeoutMs: 15_000, intervalMs: 250 });
+    } catch {
+      const debugMetrics = await evaluate(page, `(() => ({
+        pathname: location.pathname,
+        search: location.search,
+        bodyText: document.body.innerText.slice(0, 1200),
+      }))()`);
+      failures.push(`${viewport.width}x${viewport.height} provision-connected: timed out waiting for ${JSON.stringify(FIXTURE_PROVISION_CONNECTED_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
+      continue;
+    }
+
+    if (/Unexpected Application Error/i.test(metrics.bodyText)) {
+      failures.push(`${viewport.width}x${viewport.height} provision-connected: route rendered an error state`);
+    }
+    if (/Connect Wallet/i.test(metrics.bodyText)) {
+      failures.push(`${viewport.width}x${viewport.height} provision-connected: still rendered disconnected wallet gate`);
+    }
+    await captureScreenshot(page, screenshotDir, viewport, 'provision-connected');
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Connected provision smoke failed:\n${failures.map((failure) => `- ${failure}`).join('\n')}`);
   }
 }
 
@@ -1425,6 +1783,21 @@ async function main() {
     args.url = fixtureApp.url;
     args.allowEmpty = false;
     console.log(`[arena-smoke] fixture app ${args.url} -> operator ${fixtureOperator.url}`);
+
+    if (args.serveFixture) {
+      try {
+        if (args.readyFile) {
+          await mkdir(path.dirname(args.readyFile), { recursive: true });
+          await writeFile(args.readyFile, `${args.url}\n`);
+        }
+        console.log(`[arena-smoke] serving fixture app ${args.url}`);
+        await waitForShutdownSignal();
+      } finally {
+        if (fixtureApp) await fixtureApp.close();
+        if (fixtureOperator) await fixtureOperator.close();
+      }
+      return;
+    }
   }
 
   const chromePath = findChrome(args.chrome);
@@ -1447,6 +1820,19 @@ async function main() {
         screenshotDir: args.screenshotDir,
       });
       await assertFixtureLeaderboardDashboard(page, args.url, {
+        screenshotDir: args.screenshotDir,
+      });
+      await assertFixtureActivityDashboard(page, args.url, {
+        screenshotDir: args.screenshotDir,
+      });
+      await assertFixtureCreateCommand(page, args.url, {
+        screenshotDir: args.screenshotDir,
+      });
+      await assertFixtureProvisionGate(page, args.url, {
+        screenshotDir: args.screenshotDir,
+      });
+      await installFixtureWallet(page);
+      await assertFixtureProvisionConnected(page, args.url, {
         screenshotDir: args.screenshotDir,
       });
     }

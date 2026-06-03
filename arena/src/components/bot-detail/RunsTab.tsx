@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import type { AgentBranding } from "@tangle-network/sandbox-ui/types";
+import type { AgentBranding, SessionPart } from "@tangle-network/sandbox-ui/types";
 import { ChatTranscript } from "~/components/bot-detail/chat/ChatTranscript";
 import { useBotSessionStream } from "~/lib/hooks/useBotSessionStream";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
@@ -35,11 +35,13 @@ import {
   buildRunResultSections,
   getRunSignalLabel,
   parseRunResultJson,
+  type DecisionFeedItem,
 } from "~/lib/decisionFeed";
 import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 import { UnverifiedDataNotice } from "./shared/DataAccessNotices";
 import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
 import { DecisionInspector } from "./shared/DecisionInspector";
+import { TerminalEmptyState } from "./shared/WorkspacePrimitives";
 
 interface RunsTabProps {
   botId: string;
@@ -48,6 +50,7 @@ interface RunsTabProps {
   operatorKind?: BotOperatorKind;
   verificationState?: BotVerificationState;
   immersive?: boolean;
+  surface?: "runs" | "chat";
 }
 
 interface RunItem {
@@ -193,6 +196,9 @@ function RunsSidebar({
   runs,
   summary,
   activeRunId,
+  surfaceLabel,
+  emptyLabel,
+  ariaLabel,
   stacked,
   compactStacked,
   collapsed,
@@ -205,6 +211,9 @@ function RunsSidebar({
   runs: RunItem[];
   summary: RunsSummary;
   activeRunId: string;
+  surfaceLabel: string;
+  emptyLabel: string;
+  ariaLabel: string;
   stacked: boolean;
   compactStacked: boolean;
   collapsed: boolean;
@@ -219,7 +228,7 @@ function RunsSidebar({
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[312px] basis-[312px]"}`
+          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[288px] basis-[288px]"}`
       }
     >
       <div className={`border-b border-arena-elements-dividerColor/50 ${collapsed ? "px-2 py-3" : "px-4 py-3"}`}>
@@ -227,7 +236,7 @@ function RunsSidebar({
           {!collapsed && (
             <>
               <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
-                Runs
+                {surfaceLabel}
               </span>
               <span className="font-data text-sm text-arena-elements-textPrimary">
                 {summary.total}
@@ -239,33 +248,21 @@ function RunsSidebar({
               type="button"
               onClick={onToggleCollapsed}
               className="flex h-8 w-8 items-center justify-center rounded-md text-arena-elements-textTertiary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60"
-              title={collapsed ? "Expand runs" : "Collapse runs"}
-              aria-label={collapsed ? "Expand runs" : "Collapse runs"}
+              title={collapsed ? `Expand ${surfaceLabel.toLowerCase()}` : `Collapse ${surfaceLabel.toLowerCase()}`}
+              aria-label={collapsed ? `Expand ${surfaceLabel.toLowerCase()}` : `Collapse ${surfaceLabel.toLowerCase()}`}
             >
               <span className={collapsed ? "i-ph:caret-right-bold text-base" : "i-ph:caret-left-bold text-base"} />
             </button>
           )}
         </div>
         {!collapsed && (
-        <div className="mt-3 grid grid-cols-3 gap-1.5">
-          {[
-            ["Live", summary.running],
-            ["Done", summary.completed],
-            ["Fail", summary.failed],
-          ].map(([label, value]) => (
-            <div
-              key={label}
-              className="rounded-md border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/35 px-2 py-1.5"
-            >
-              <div className="text-[10px] font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                {label}
-              </div>
-              <div className="font-data text-sm font-semibold text-arena-elements-textPrimary">
-                {value}
-              </div>
-            </div>
-          ))}
-        </div>
+          <div className="mt-3 flex min-w-0 items-center gap-2 overflow-hidden font-data text-[11px] text-arena-elements-textTertiary">
+            <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.running}</b> Live</span>
+            <span className="text-arena-elements-dividerColor" aria-hidden="true">/</span>
+            <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.completed}</b> Done</span>
+            <span className="text-arena-elements-dividerColor" aria-hidden="true">/</span>
+            <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.failed}</b> Fail</span>
+          </div>
         )}
       </div>
 
@@ -276,11 +273,11 @@ function RunsSidebar({
             : "min-h-0 flex-1 overflow-y-auto py-1"
         }
         tabIndex={0}
-        aria-label="Autonomous runs"
+        aria-label={ariaLabel}
       >
         {runs.length === 0 ? (
           <div className={`${collapsed ? "px-2 text-center" : "px-4"} py-4 text-sm font-data text-arena-elements-textTertiary`}>
-            No autonomous runs yet
+            {emptyLabel}
           </div>
         ) : (
           <>
@@ -410,6 +407,98 @@ function RunMetricPill({ label, value }: { label: string; value: string }) {
       <span className="text-arena-elements-textTertiary">{label}</span>
       <span className="text-arena-elements-textPrimary">{value}</span>
     </span>
+  );
+}
+
+function countToolParts(partMap: Record<string, SessionPart[]>): number {
+  const toolIds = new Set<string>();
+  for (const parts of Object.values(partMap ?? {})) {
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      if (part.type !== "tool") continue;
+      const id = typeof part.id === "string" ? part.id : `${part.tool}:${toolIds.size}`;
+      toolIds.add(id);
+    }
+  }
+  return toolIds.size;
+}
+
+function TraceCockpitMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-[5px] border border-[#273035] bg-[#081013] px-2.5 py-2">
+      <div className="truncate font-data text-[10px] font-semibold uppercase tracking-[0.12em] text-[#697371]">
+        {label}
+      </div>
+      <div className="mt-0.5 truncate font-data text-sm font-bold text-[#f6fefd]" title={value}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function TraceCockpit({
+  run,
+  decisionItem,
+  toolCount,
+}: {
+  run: BotRun;
+  decisionItem?: DecisionFeedItem;
+  toolCount: number;
+}) {
+  const traceLabel = run.traceId ?? run.runId;
+  const thesis = decisionItem?.reason || decisionItem?.title || "Run evidence captured.";
+  const statusLabel = getStatusLabel(run.status);
+  const signalLabel = getRunSignalLabel(run);
+  const instrumentLabel =
+    decisionItem?.instrumentLabel && decisionItem.instrumentLabel !== "n/a"
+      ? decisionItem.instrumentLabel
+      : getWorkflowKindLabel(run.workflowKind);
+  const tradeContextParts = [
+    signalLabel !== statusLabel.toUpperCase() ? signalLabel : null,
+    instrumentLabel !== "Trace" && instrumentLabel !== getWorkflowKindLabel(run.workflowKind)
+      ? instrumentLabel
+      : null,
+    decisionItem?.notionalLabel ?? null,
+  ].filter(Boolean);
+  const contextParts = tradeContextParts.length > 0
+    ? [...tradeContextParts, traceLabel]
+    : ["TRACE RECORDED", traceLabel];
+  const contextLabel = contextParts.length > 0 ? contextParts.join(" / ") : "TRACE RECORDED";
+  const toolLabel = toolCount > 0
+    ? `${toolCount.toLocaleString()} ${toolCount === 1 ? "tool" : "tools"}`
+    : "n/a";
+
+  return (
+    <section className="shrink-0 border-b border-[#273035] bg-[#0b1418] px-3 py-2.5" aria-label="Trace cockpit">
+      <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(330px,0.5fr)]">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span
+              className={`shrink-0 rounded-[5px] border px-2 py-1 font-data text-[11px] font-bold uppercase tracking-[0.12em] ${getStatusBadgeClass(run.status)}`}
+            >
+              {statusLabel}
+            </span>
+            <span className="truncate font-display text-base font-semibold text-[#f6fefd]">
+              {getWorkflowKindLabel(run.workflowKind)}
+            </span>
+            <span className="truncate font-data text-xs text-[#949e9c]">
+              {formatRunTimestamp(run.startedAt)}
+            </span>
+          </div>
+          <div className="mt-1 flex min-w-0 items-center gap-2 font-data text-[12px] font-semibold uppercase tracking-[0.1em] text-[#50d2c1]">
+            <span className="truncate">{contextLabel}</span>
+          </div>
+          <p className="mt-1 truncate text-sm text-[#d2dad7]" title={thesis}>
+            {thesis}
+          </p>
+        </div>
+        <div className="grid min-w-0 grid-cols-3 gap-2">
+          <TraceCockpitMetric label="Time" value={formatDuration(run.durationMs)} />
+          <TraceCockpitMetric label="Tokens" value={getRunTokenLabel(run)} />
+          <TraceCockpitMetric label="Tools" value={toolLabel} />
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -576,6 +665,7 @@ export function RunsTab({
   operatorKind,
   verificationState,
   immersive = false,
+  surface = "runs",
 }: RunsTabProps) {
   const baseApiUrl = operatorApiUrl ?? "";
   const { data: operatorMeta } = useOperatorMeta(baseApiUrl);
@@ -737,6 +827,17 @@ export function RunsTab({
   const showRunsSidebar =
     immersive || runs.length > 1 || Boolean(runsQuery.hasNextPage);
   const showDecisionInspector = decisionItems.length > 0;
+  const surfaceCopy = surface === "chat"
+    ? {
+        label: "Chat",
+        ariaLabel: "Public chat traces",
+        emptyLabel: "No chat traces yet",
+      }
+    : {
+        label: "Runs",
+        ariaLabel: "Autonomous runs",
+        emptyLabel: "No autonomous runs yet",
+      };
 
   const runsErrorMessage = extractRunsErrorMessage(
     runsQuery.error instanceof Error ? runsQuery.error.message : null,
@@ -820,16 +921,12 @@ export function RunsTab({
         {verificationState === "unverified" && (
           <UnverifiedDataNotice subject="autonomous run history" />
         )}
-        <div className="flex h-full min-h-[360px] flex-col items-center justify-center rounded-xl border border-arena-elements-dividerColor bg-arena-elements-background-depth-1/45 p-6 text-center sm:p-8">
-          <div className="i-ph:robot mx-auto mb-3 text-3xl text-amber-500" />
-          <h3 className="mb-2 text-lg font-display font-semibold text-arena-elements-textPrimary">
-            No runs yet
-          </h3>
-          <p className="mx-auto max-w-xl text-sm text-arena-elements-textSecondary">
-            Autonomous runs will appear here once {botName} starts gathering
-            data, reasoning through a cycle, and making decisions on its own.
-          </p>
-        </div>
+        <TerminalEmptyState
+          title="No runs yet"
+          description={`Autonomous runs will appear here once ${botName} starts gathering data, reasoning through a cycle, and making decisions.`}
+          icon="i-ph:robot"
+          className={immersive ? "h-full min-h-[360px]" : "min-h-[360px]"}
+        />
       </div>
     );
   }
@@ -844,8 +941,8 @@ export function RunsTab({
         data-sandbox-ui="true"
         data-sandbox-theme="vault"
         className={immersive
-          ? "arena-chat-shell h-full overflow-hidden bg-arena-elements-background-depth-1"
-          : "arena-chat-shell glass-card overflow-hidden rounded-xl"}
+          ? "arena-chat-shell arena-trace-terminal h-full overflow-hidden bg-[#081013] text-[#f6fefd]"
+          : "arena-chat-shell arena-trace-terminal glass-card overflow-hidden rounded-xl bg-[#081013] text-[#f6fefd]"}
         style={
           immersive
             ? { height: "100%", minHeight: 0 }
@@ -860,6 +957,9 @@ export function RunsTab({
               runs={runItems}
               summary={runSummary}
               activeRunId={activeRun?.runId ?? ""}
+              surfaceLabel={surfaceCopy.label}
+              emptyLabel={surfaceCopy.emptyLabel}
+              ariaLabel={surfaceCopy.ariaLabel}
               stacked={isStackedLayout}
               compactStacked={immersive}
               collapsed={!isStackedLayout && runsSidebarCollapsed}
@@ -875,7 +975,7 @@ export function RunsTab({
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {!immersive && (
-              <div className="flex items-center gap-3 border-b border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 px-4 py-3">
+              <div className="flex items-center gap-3 border-b border-[#273035] bg-[#0b1418] px-4 py-3">
                 <div className="flex min-w-0 flex-1 items-center gap-3">
                   <span className="i-ph:robot text-base text-amber-700 dark:text-amber-300" />
                   <div className="min-w-0 flex-1">
@@ -912,27 +1012,37 @@ export function RunsTab({
               error={streamErrorMessage}
             />
 
+            {immersive && activeRun && (
+              <TraceCockpit
+                run={activeRun}
+                decisionItem={selectedDecisionItem}
+                toolCount={countToolParts(stream.partMap)}
+              />
+            )}
+
             {decisionItems.length > 0 && (
               <DecisionActivityStrip
                 items={decisionItems}
                 selectedId={selectedDecisionItem?.id}
                 onSelect={(item) => setActiveRunId(item.sourceId)}
+                variant="terminal"
               />
             )}
 
             <div
-              className={`min-h-0 flex-1 bg-arena-elements-background-depth-1/15 ${
+              className={`arena-trace-surface min-h-0 flex-1 bg-[#081013] ${
                 !showDecisionInspector
                   ? ""
                   : isStackedLayout
                     ? "flex flex-col"
-                    : "grid grid-cols-[minmax(0,1fr)_340px]"
+                    : "grid grid-cols-[minmax(0,1fr)_320px]"
               }`}
             >
               {showDecisionInspector && isStackedLayout && (
                 <DecisionInspector
                   item={selectedDecisionItem}
-                  className="max-h-80 border-b border-arena-elements-dividerColor/50"
+                  variant="terminal"
+                  className="max-h-80 border-b border-[#273035]"
                 />
               )}
               <div className={showDecisionInspector && isStackedLayout ? "min-h-0 min-w-0 flex-1" : "min-h-0 min-w-0"}>
@@ -943,6 +1053,7 @@ export function RunsTab({
                     isStreaming={stream.isStreaming}
                     branding={runsBranding}
                     placeholder="This run is read only"
+                    variant="terminal"
                   />
                 ) : activeRun ? (
                   <RunDetailPanel run={activeRun} />
@@ -951,7 +1062,8 @@ export function RunsTab({
               {showDecisionInspector && !isStackedLayout && (
                 <DecisionInspector
                   item={selectedDecisionItem}
-                  className="border-l border-arena-elements-dividerColor/50"
+                  variant="terminal"
+                  className="border-l border-[#273035]"
                 />
               )}
             </div>

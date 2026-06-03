@@ -42,12 +42,12 @@ export function EnvelopeNeededBanner({
       aria-label="Envelope required"
       className="mb-4 flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3"
     >
-      <div className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500 animate-pulse" />
+      <div className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500 animate-pulse" aria-hidden="true" />
       <div className="flex-1">
         <div className="text-sm font-display font-semibold text-amber-700 dark:text-amber-400">
           Envelope required
         </div>
-        <p className="mt-0.5 text-xs text-arena-elements-textSecondary">
+        <p className="mt-0.5 text-xs text-amber-950/80 dark:text-amber-100/85">
           This bot is in Envelope mode. Sign and submit an envelope on the
           Envelope tab to enable trading.
         </p>

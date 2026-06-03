@@ -18,7 +18,7 @@ export function formatTradeActionLabel(action: TradeAction): string {
 }
 
 export function getTradeActionToneClass(action: TradeAction): string {
-  if (isBuySideTradeAction(action)) return 'text-arena-elements-icon-success';
+  if (isBuySideTradeAction(action)) return 'text-[#50d2c1]';
   if (isSellSideTradeAction(action)) return 'text-arena-elements-icon-error';
   return 'text-amber-600 dark:text-amber-300';
 }
@@ -31,6 +31,16 @@ export function getTradeActionPillClass(action: TradeAction): string {
     return 'bg-crimson-500/10 text-crimson-700 dark:text-crimson-300';
   }
   return 'bg-violet-500/10 text-violet-700 dark:text-violet-300';
+}
+
+export function getTerminalTradeActionPillClass(action: TradeAction): string {
+  if (isBuySideTradeAction(action)) {
+    return 'border border-[#50d2c1]/35 bg-[#123f3a] text-white';
+  }
+  if (isSellSideTradeAction(action)) {
+    return 'border border-[#ff4d6d]/35 bg-[#3a1720] text-white';
+  }
+  return 'border border-[#8f7aff]/35 bg-[#241a3a] text-white';
 }
 
 export function getTradeActionBadgeVariant(action: TradeAction): 'success' | 'destructive' | 'accent' {

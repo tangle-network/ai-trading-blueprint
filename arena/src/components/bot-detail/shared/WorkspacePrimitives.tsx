@@ -133,3 +133,49 @@ export function WorkspaceMetric({
     </div>
   );
 }
+
+interface TerminalEmptyStateProps {
+  title: string;
+  description?: string;
+  icon?: string;
+  className?: string;
+  compact?: boolean;
+  children?: ReactNode;
+}
+
+export function TerminalEmptyState({
+  title,
+  description,
+  icon = 'i-ph:terminal-window',
+  className,
+  compact = false,
+  children,
+}: TerminalEmptyStateProps) {
+  return (
+    <section
+      className={cx(
+        'flex h-full min-h-[320px] flex-col items-center justify-center rounded-[7px] border border-[#273035] bg-[#081013] px-6 text-center text-[#f6fefd]',
+        compact ? 'py-8' : 'py-12',
+        className,
+      )}
+      aria-label={title}
+    >
+      <span
+        className={cx(
+          icon,
+          'mb-3 inline-flex h-10 w-10 items-center justify-center rounded-[5px] border border-[#273035] bg-[#0f1a1f] text-xl text-[#50d2c1]',
+        )}
+        aria-hidden="true"
+      />
+      <h3 className="max-w-xl text-balance font-display text-lg font-semibold text-[#f6fefd]">
+        {title}
+      </h3>
+      {description && (
+        <p className="mt-2 max-w-xl text-pretty font-mono text-sm leading-6 text-[#949e9c]">
+          {description}
+        </p>
+      )}
+      {children && <div className="mt-4">{children}</div>}
+    </section>
+  );
+}

@@ -105,7 +105,7 @@ describe('OperatorAccessCard', () => {
 
   it('renders the session banner when any trading operator exists, even without a cloud operator URL', () => {
     render(<OperatorSessionBanner />);
-    expect(screen.getByText('Sign once to load operator-managed data')).toBeInTheDocument();
+    expect(screen.getByText('Operator session locked')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Authenticate' })).toBeInTheDocument();
   });
 });

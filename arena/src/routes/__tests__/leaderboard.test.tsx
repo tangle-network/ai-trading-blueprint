@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWrapper } from '~/test/mocks';
 
@@ -11,6 +11,7 @@ const hoisted = vi.hoisted(() => ({
   )),
   useTradingRouteAutoAuthMock: vi.fn(),
   latestAgentTradesProps: [] as any[],
+  latestAgentTradeItems: [] as any[],
   platformVolumeChartProps: [] as any[],
   leaderboardTableProps: [] as any[],
 }));
@@ -43,6 +44,13 @@ vi.mock('~/lib/hooks/useBotEnrichment', () => ({
 }));
 
 vi.mock('~/lib/hooks/useBotApi', () => ({
+  useLatestAgentTrades: () => ({
+    trades: hoisted.latestAgentTradeItems,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+    candidateCount: 1,
+  }),
   usePlatformVolumeSeries: () => ({
     series: {
       buckets: [],
@@ -124,6 +132,26 @@ function makePublicBot(overrides: Record<string, any> = {}) {
   };
 }
 
+function makeActivityTrade(overrides: Record<string, any> = {}) {
+  return {
+    botId: 'bot-1',
+    botName: 'ETH Macro Scalper',
+    trade: {
+      id: 'trade-1',
+      botId: 'bot-1',
+      botName: 'ETH Macro Scalper',
+      action: 'open_long',
+      tokenIn: 'USD',
+      tokenOut: 'ETH',
+      notionalUsd: 1_000,
+      timestamp: Date.now() - 10 * 60 * 1000,
+      targetProtocol: 'hyperliquid',
+      hyperliquidMetadata: { asset: 'ETH' },
+      ...overrides,
+    },
+  };
+}
+
 describe('LeaderboardPage', () => {
   beforeEach(() => {
     botsState.bots = [];
@@ -133,6 +161,7 @@ describe('LeaderboardPage', () => {
     accountState.isConnected = true;
     hoisted.operatorAccessCardMock.mockClear();
     hoisted.useTradingRouteAutoAuthMock.mockClear();
+    hoisted.latestAgentTradeItems.length = 0;
     hoisted.latestAgentTradesProps.length = 0;
     hoisted.platformVolumeChartProps.length = 0;
     hoisted.leaderboardTableProps.length = 0;
@@ -153,38 +182,51 @@ describe('LeaderboardPage', () => {
     expect(screen.getByText('Operator authentication required')).toBeInTheDocument();
   });
 
-  it('defaults to the full agent list and separates fills and volume into screens', async () => {
+  it('renders a list-first agent explorer without duplicating the Home terminal', async () => {
     botsState.bots = [makePublicBot()];
     botsState.operatorDataState = 'ready';
+    hoisted.latestAgentTradeItems.push(
+      makeActivityTrade({ id: 'trade-1', notionalUsd: 1_000 }),
+      makeActivityTrade({ id: 'trade-2', notionalUsd: 1_500, timestamp: Date.now() - 20 * 60 * 1000 }),
+    );
 
     const { default: LeaderboardPage } = await import('../leaderboard');
     render(<LeaderboardPage />, { wrapper: createWrapper() });
 
-    expect(screen.getByRole('heading', { name: 'Agent Explorer' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument();
     expect(screen.getByText('$43.2K')).toBeInTheDocument();
-    expect(screen.getByText('2')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Agents' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Fills' })).toHaveAttribute('aria-selected', 'false');
-    expect(screen.getByRole('tab', { name: 'Volume' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('region', { name: 'Agent explorer' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Agent leaderboard')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Explorer activity')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Search agents' })).toBeInTheDocument();
-    expect(hoisted.platformVolumeChartProps).toHaveLength(0);
-    expect(hoisted.latestAgentTradesProps).toHaveLength(0);
+    expect(screen.getByRole('region', { name: 'Agent explorer' })).toHaveClass(
+      'grid',
+      'flex-1',
+      'min-h-0',
+    );
+    expect(screen.getByLabelText('Selected agent cockpit')).toBeInTheDocument();
+    expect(screen.getByLabelText('Selected agent dossier')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'ETH Macro Scalper' })).toBeInTheDocument();
+    expect(screen.getByText('Routing')).toBeInTheDocument();
+    expect(screen.getAllByText('24H').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Total').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Recent fills')).toBeInTheDocument();
     expect(hoisted.leaderboardTableProps.at(-1)).toEqual(expect.objectContaining({
       bots: [expect.objectContaining({ name: 'ETH Macro Scalper' })],
+      activityStatsByBotId: expect.any(Map),
+    }));
+    expect(hoisted.leaderboardTableProps.at(-1).activityStatsByBotId.get('bot-1')).toEqual(expect.objectContaining({
+      recentFills: 2,
+      recentNotionalUsd: 2_500,
+      lastMarket: 'ETH-PERP',
     }));
     expect(screen.getByText('agent leaderboard table')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Fills' }));
-    expect(hoisted.latestAgentTradesProps.at(-1)).toEqual(expect.objectContaining({
-      variant: 'explorer',
-      limit: 100,
-      className: 'h-full min-h-0',
-    }));
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Volume' }));
-    expect(hoisted.platformVolumeChartProps.at(-1)).toEqual(expect.objectContaining({
-      variant: 'command',
-      className: 'h-full min-h-0',
-    }));
+    expect(screen.getAllByText('$2.5K').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('ETH-PERP').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('platform volume')).not.toBeInTheDocument();
+    expect(screen.queryByText('latest trades')).not.toBeInTheDocument();
+    expect(hoisted.platformVolumeChartProps).toHaveLength(0);
+    expect(hoisted.latestAgentTradesProps).toHaveLength(0);
   });
 });

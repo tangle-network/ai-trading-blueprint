@@ -49,4 +49,54 @@ describe('create agent route', () => {
     }))
     await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledWith('/arena/bot/bot-1/performance'))
   })
+
+  it('uses the selected strategy module to submit the inferred strategy type', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      bot_id: 'prediction-bot',
+      status: 'active',
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))))
+    const { default: CreateAgent } = await import('../create')
+    render(<CreateAgent />)
+
+    fireEvent.click(screen.getByRole('button', { name: /prediction markets/i }))
+    expect(screen.getByLabelText('Trading agent strategy prompt')).toHaveValue(
+      'I want to trade political and news events on Polymarket. Find markets with edge and manage positions.',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /deploy agent/i }))
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    const [, request] = vi.mocked(fetch).mock.calls[0]
+    const body = JSON.parse(String((request as RequestInit).body))
+    expect(body.strategy_type).toBe('prediction')
+    expect(body.prompt).toContain('Polymarket')
+  })
+
+  it('supports launching a Hyperliquid perp tactic from the strategy book', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      bot_id: 'perp-bot',
+      status: 'active',
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))))
+    const { default: CreateAgent } = await import('../create')
+    render(<CreateAgent />)
+
+    fireEvent.click(screen.getByRole('button', { name: /hyperliquid perp/i }))
+    expect(screen.getByLabelText('Trading agent strategy prompt')).toHaveValue(
+      'I want an agent that trades ETH perps on Hyperliquid, using breakout retests and fast backtests with strict leverage and liquidation risk limits.',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /deploy agent/i }))
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    const [, request] = vi.mocked(fetch).mock.calls[0]
+    const body = JSON.parse(String((request as RequestInit).body))
+    expect(body.strategy_type).toBe('perp')
+    expect(body.prompt).toContain('Hyperliquid')
+  })
 })

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Bot } from '~/lib/types/bot';
 import type { Trade } from '~/lib/types/trade';
+import type { FillCountEvidence } from '~/lib/tradeEvidence';
 import { mockBlueprintUi, mockFramerMotion } from '~/test/mocks';
 import { PerformanceTab } from '../PerformanceTab';
 
@@ -11,6 +12,18 @@ mockFramerMotion();
 
 const lightweightChartMock = vi.hoisted(() => {
   const fitContent = vi.fn();
+  const timeToCoordinate = vi.fn((time: number) => {
+    const base = Date.parse('2026-04-23T10:00:00.000Z') / 1000;
+    return (time - base) * 2;
+  });
+  const subscribeVisibleLogicalRangeChange = vi.fn();
+  const unsubscribeVisibleLogicalRangeChange = vi.fn();
+  const timeScale = {
+    fitContent,
+    subscribeVisibleLogicalRangeChange,
+    timeToCoordinate,
+    unsubscribeVisibleLogicalRangeChange,
+  };
   const areaSeries = {
     applyOptions: vi.fn(),
     createPriceLine: vi.fn(),
@@ -19,6 +32,7 @@ const lightweightChartMock = vi.hoisted(() => {
   };
   const candleSeries = {
     applyOptions: vi.fn(),
+    priceToCoordinate: vi.fn((price: number) => price / 10),
     setData: vi.fn(),
   };
   const volumeSeries = {
@@ -53,7 +67,7 @@ const lightweightChartMock = vi.hoisted(() => {
     panes: vi.fn(() => [pane0, pane1]),
     priceScale: vi.fn(() => priceScale),
     subscribeCrosshairMove: vi.fn(),
-    timeScale: vi.fn(() => ({ fitContent })),
+    timeScale: vi.fn(() => timeScale),
     unsubscribeCrosshairMove: vi.fn(),
   };
   const markerApi = {
@@ -81,6 +95,10 @@ const lightweightChartMock = vi.hoisted(() => {
     pane0,
     pane1,
     priceScale,
+    subscribeVisibleLogicalRangeChange,
+    timeScale,
+    timeToCoordinate,
+    unsubscribeVisibleLogicalRangeChange,
     volumeSeries,
   };
 });
@@ -100,6 +118,7 @@ vi.mock('../PerformanceCopilotPanel', () => ({
 vi.mock('react-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
   useNavigate: () => vi.fn(),
+  useSearchParams: () => [new URLSearchParams(), vi.fn()],
 }));
 
 let mockMetrics: Array<Record<string, unknown>> | undefined = [];
@@ -111,6 +130,7 @@ let mockMetricsSummary: Record<string, number> | undefined = {
 let mockPortfolio: Record<string, unknown> | undefined;
 let mockTrades: Trade[] = [];
 let mockTradeTotal: number | null = null;
+let mockTradeEvidence: FillCountEvidence | null = null;
 let mockTradePageLoading = false;
 let mockMarketCandles: Array<{
   timestamp: number;
@@ -142,6 +162,7 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
       : {
           trades: mockTrades,
           total: mockTradeTotal,
+          evidence: mockTradeEvidence,
           loaded: mockTrades.length,
           limit: 100,
           offset: 0,
@@ -271,6 +292,7 @@ describe('PerformanceTab', () => {
     mockPortfolio = undefined;
     mockTrades = [];
     mockTradeTotal = null;
+    mockTradeEvidence = null;
     mockTradePageLoading = false;
     mockMarketCandles = [];
     operatorAuthMock.isAuthenticated = false;
@@ -280,6 +302,7 @@ describe('PerformanceTab', () => {
     lightweightChartMock.areaSeries.removePriceLine.mockClear();
     lightweightChartMock.areaSeries.setData.mockClear();
     lightweightChartMock.candleSeries.applyOptions.mockClear();
+    lightweightChartMock.candleSeries.priceToCoordinate.mockClear();
     lightweightChartMock.candleSeries.setData.mockClear();
     lightweightChartMock.navPaneSeries.applyOptions.mockClear();
     lightweightChartMock.navPaneSeries.createPriceLine.mockClear();
@@ -302,6 +325,9 @@ describe('PerformanceTab', () => {
     lightweightChartMock.pane0.setStretchFactor.mockClear();
     lightweightChartMock.pane1.setStretchFactor.mockClear();
     lightweightChartMock.priceScale.applyOptions.mockClear();
+    lightweightChartMock.subscribeVisibleLogicalRangeChange.mockClear();
+    lightweightChartMock.timeToCoordinate.mockClear();
+    lightweightChartMock.unsubscribeVisibleLogicalRangeChange.mockClear();
     lightweightChartMock.volumeSeries.setData.mockClear();
   });
 
@@ -568,6 +594,47 @@ describe('PerformanceTab', () => {
     expect(screen.getByText('6 / 110')).toBeInTheDocument();
   });
 
+  it('prefers exact backend trade-store evidence over stale roster and metrics counts', () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockMetricsSummary = {
+      portfolio_value_usd: 10000,
+      total_pnl: 0,
+      trade_count: 1,
+    };
+    mockTrades = Array.from({ length: 12 }, (_, index) => makeTrade({
+      id: `trade-${index + 1}`,
+      timestamp: Date.parse(`2026-04-23T10:${String(index + 5).padStart(2, '0')}:00.000Z`),
+    }));
+    mockTradeTotal = 12;
+    mockTradeEvidence = {
+      value: 49,
+      source: 'trade-store',
+      loaded: 12,
+      total: 49,
+      isExact: true,
+      backendSource: 'trade_store',
+      scope: 'bot',
+      priced: 37,
+      unpriced: 12,
+      valuationCoverage: 37 / 49,
+    };
+
+    render(<PerformanceTab bot={makeBot({ totalTrades: 1 })} isLive />);
+
+    expect(screen.getAllByText('49').length).toBeGreaterThan(0);
+    expect(screen.getByText('12 loaded')).toBeInTheDocument();
+    expect(screen.getByText('12 / 12')).toBeInTheDocument();
+  });
+
   it('keeps fill stats aligned to inspectable ledger rows when checkpoint counts are higher', () => {
     mockMetrics = [
       {
@@ -701,11 +768,247 @@ describe('PerformanceTab', () => {
       ]),
     );
     expect(screen.getAllByText('NAV').length).toBeGreaterThan(0);
-    expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({ text: '', shape: 'arrowUp', position: 'belowBar' }),
-      ]),
+    expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenLastCalledWith([]);
+    await waitFor(() => expect(lightweightChartMock.candleSeries.priceToCoordinate).toHaveBeenCalled());
+    expect(lightweightChartMock.candleSeries.priceToCoordinate).toHaveBeenCalledWith(3300);
+    expect(await screen.findByLabelText(/LONG .*Apr 23/i)).toBeInTheDocument();
+    expect(screen.getByText('1/1 fills')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-execution-coverage')).toHaveTextContent('2 candles');
+  });
+
+  it('does not pin off-window fills to the first or last market candle', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockTrades = [
+      makeTrade({
+        id: 'late-fill',
+        action: 'open_long',
+        timestamp: Date.parse('2026-04-23T10:12:00.000Z'),
+        hyperliquidMetadata: {
+          asset: 'ETH',
+          assetSize: '0.03',
+          orderType: 'market',
+          reduceOnly: false,
+        },
+        venue: 'perp',
+      }),
+    ];
+    mockMarketCandles = [
+      {
+        timestamp: Date.parse('2026-04-23T10:00:00.000Z'),
+        token: 'ETH',
+        open: 3300,
+        high: 3320,
+        low: 3294,
+        close: 3315,
+        volume: 120.5,
+      },
+      {
+        timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
+        token: 'ETH',
+        open: 3315,
+        high: 3332,
+        low: 3310,
+        close: 3324,
+        volume: 1650.25,
+      },
+    ];
+
+    render(
+      <PerformanceTab
+        bot={makeBot({
+          strategyType: 'hyperliquid_perp',
+          strategyConfig: { asset: 'ETH' },
+        })}
+        isLive
+      />,
     );
+
+    await waitFor(() => expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenCalled());
+    expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenLastCalledWith([]);
+    expect(screen.queryByLabelText(/LONG .*Apr 23/i)).not.toBeInTheDocument();
+    expect(screen.getByText('0/1 fills')).toBeInTheDocument();
+  });
+
+  it('surfaces chart fill coverage when ledger totals exceed visible market markers', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 49,
+      },
+    ];
+    mockTradeEvidence = {
+      value: 49,
+      source: 'trade-store',
+      loaded: 2,
+      total: 49,
+      isExact: true,
+      backendSource: 'trade_store',
+      scope: 'bot',
+      outsidePage: 47,
+      priced: 37,
+      unpriced: 12,
+      valuationCoverage: 37 / 49,
+    };
+    mockTrades = [
+      makeTrade({
+        id: 'visible-fill',
+        action: 'open_long',
+        timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
+        priceUsd: 3300,
+        venue: 'perp',
+        hyperliquidMetadata: {
+          asset: 'ETH',
+          assetSize: '0.03',
+          orderType: 'market',
+          reduceOnly: false,
+        },
+      }),
+      makeTrade({
+        id: 'outside-candle-fill',
+        action: 'close_long',
+        timestamp: Date.parse('2026-04-23T10:12:00.000Z'),
+        priceUsd: 3318,
+        venue: 'perp',
+        hyperliquidMetadata: {
+          asset: 'ETH',
+          assetSize: '0.03',
+          orderType: 'market',
+          reduceOnly: true,
+        },
+      }),
+    ];
+    mockMarketCandles = [
+      {
+        timestamp: Date.parse('2026-04-23T10:00:00.000Z'),
+        token: 'ETH',
+        open: 3300,
+        high: 3320,
+        low: 3294,
+        close: 3315,
+        volume: 120.5,
+      },
+      {
+        timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
+        token: 'ETH',
+        open: 3315,
+        high: 3332,
+        low: 3310,
+        close: 3324,
+        volume: 1650.25,
+      },
+    ];
+
+    render(
+      <PerformanceTab
+        bot={makeBot({
+          strategyType: 'hyperliquid_perp',
+          strategyConfig: { asset: 'ETH' },
+        })}
+        isLive
+      />,
+    );
+
+    const coverage = await screen.findByTestId('chart-execution-coverage');
+    expect(coverage).toHaveTextContent('1/49 fills');
+    expect(coverage).toHaveTextContent('1 off-window');
+    expect(coverage).toHaveTextContent('47 outside page');
+    expect(coverage).toHaveTextContent('12 unpriced');
+    expect(coverage).toHaveTextContent('2 candles');
+  });
+
+  it('pins a clicked market execution in the chart ticket', async () => {
+    const user = userEvent.setup();
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 2,
+      },
+    ];
+    mockTrades = [
+      makeTrade({
+        id: 'sell-eth',
+        action: 'sell',
+        timestamp: Date.parse('2026-04-23T10:00:00.000Z'),
+        priceUsd: 3300,
+        venue: 'perp',
+        hyperliquidMetadata: {
+          asset: 'ETH',
+          assetSize: '0.03',
+          orderType: 'market',
+          reduceOnly: true,
+        },
+      }),
+      makeTrade({
+        id: 'long-eth',
+        action: 'open_long',
+        timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
+        priceUsd: 3324,
+        venue: 'perp',
+        hyperliquidMetadata: {
+          asset: 'ETH',
+          assetSize: '0.03',
+          orderType: 'market',
+          reduceOnly: false,
+        },
+      }),
+    ];
+    mockMarketCandles = [
+      {
+        timestamp: Date.parse('2026-04-23T10:00:00.000Z'),
+        token: 'ETH',
+        open: 3300,
+        high: 3320,
+        low: 3294,
+        close: 3315,
+        volume: 120.5,
+      },
+      {
+        timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
+        token: 'ETH',
+        open: 3315,
+        high: 3332,
+        low: 3310,
+        close: 3324,
+        volume: 1650.25,
+      },
+    ];
+
+    render(
+      <PerformanceTab
+        bot={makeBot({
+          strategyType: 'hyperliquid_perp',
+          strategyConfig: { asset: 'ETH' },
+        })}
+        isLive
+      />,
+    );
+
+    const ticket = await screen.findByTestId('chart-featured-execution');
+    expect(within(ticket).getByText('LONG')).toBeInTheDocument();
+    expect(ticket).toHaveTextContent('$3,324');
+
+    await user.click(await screen.findByLabelText(/Sell .*Apr 23/i));
+
+    const pinnedTicket = screen.getByTestId('chart-featured-execution');
+    expect(within(pinnedTicket).getByText('SELL')).toBeInTheDocument();
+    expect(pinnedTicket).toHaveTextContent('$3,300');
   });
 
   it('keeps execution evidence visible while showing the owner copilot', async () => {

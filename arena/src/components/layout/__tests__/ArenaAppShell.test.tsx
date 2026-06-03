@@ -48,6 +48,7 @@ function renderShell(path = '/dashboard') {
         <Route element={<ArenaAppShell />}>
           <Route path="/dashboard" element={<div>Dashboard body</div>} />
           <Route path="/" element={<div>Leaderboard body</div>} />
+          <Route path="/activity" element={<div>Activity body</div>} />
           <Route path="/arena/bot/:id/:section" element={<div>Agent body</div>} />
         </Route>
       </Routes>
@@ -69,6 +70,7 @@ describe('ArenaAppShell', () => {
 
     expect(sidebar).not.toBeNull();
     expect(within(sidebar!).getByRole('link', { name: /home/i })).toHaveAttribute('href', '/');
+    expect(within(sidebar!).getByRole('link', { name: /activity/i })).toHaveAttribute('href', '/activity');
     expect(within(sidebar!).getByRole('link', { name: /my agents/i })).toHaveAttribute('href', '/dashboard');
     expect(within(sidebar!).getByRole('link', { name: /deploy/i })).toHaveAttribute('href', '/provision');
     expect(within(sidebar!).getByRole('link', { name: /create/i })).toHaveAttribute('href', '/create');
@@ -94,7 +96,25 @@ describe('ArenaAppShell', () => {
     await userEvent.click(screen.getByRole('button', { name: /collapse sidebar/i }));
 
     expect(window.localStorage.getItem('arena:sidebar-collapsed')).toBe('true');
-    expect(screen.getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
+    const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
+    expect(sidebar).not.toBeNull();
+    expect(within(sidebar!).getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
+    expect(within(sidebar!).getByRole('button', { name: 'Chain' })).toBeInTheDocument();
+    expect(within(sidebar!).getByRole('button', { name: 'Transactions' })).toBeInTheDocument();
+    expect(within(sidebar!).getByRole('button', { name: 'Theme' })).toBeInTheDocument();
+    expect(within(sidebar!).getByRole('button', { name: 'Wallet' })).toBeInTheDocument();
+  });
+
+  it('gives the expanded wallet action primary visual weight', () => {
+    renderShell('/');
+
+    const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
+    const walletButton = within(sidebar!).getByRole('button', { name: 'Wallet' });
+    const chainButton = within(sidebar!).getByRole('button', { name: 'Chain' });
+
+    expect(walletButton.parentElement).toHaveClass('[&>button]:!bg-[#50d2c1]');
+    expect(walletButton.parentElement).toHaveClass('[&>button]:!text-[#06100e]');
+    expect(walletButton.compareDocumentPosition(chainButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it.each([

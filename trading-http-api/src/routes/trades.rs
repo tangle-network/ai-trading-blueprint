@@ -21,6 +21,7 @@ pub struct TradeListResponse {
     pub total: usize,
     pub limit: usize,
     pub offset: usize,
+    pub evidence: trade_store::TradeCountEvidence,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +62,7 @@ pub fn resolve_platform_trades(
         total: result.total,
         limit,
         offset,
+        evidence: result.evidence,
     })
 }
 
@@ -120,6 +122,7 @@ async fn list_trades(
         total: result.total,
         limit,
         offset,
+        evidence: result.evidence,
     }))
 }
 
@@ -138,6 +141,7 @@ async fn list_trades_multi_bot(
         total: result.total,
         limit,
         offset,
+        evidence: result.evidence,
     }))
 }
 

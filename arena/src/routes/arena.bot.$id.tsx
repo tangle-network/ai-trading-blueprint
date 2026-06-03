@@ -4,7 +4,7 @@ import type { MetaFunction } from 'react-router';
 import { useStore } from '@nanostores/react';
 import { useAccount } from 'wagmi';
 import { selectedChainIdStore } from '@tangle-network/blueprint-ui';
-import { AnimatedPage, Button } from '@tangle-network/blueprint-ui/components';
+import { Button } from '@tangle-network/blueprint-ui/components';
 import { useBots } from '~/lib/hooks/useBots';
 import {
   AgentWorkspaceShell,
@@ -44,7 +44,7 @@ import { tokenMetadataFromStrategyConfig } from '~/lib/assetUniverse';
 import { networks } from '~/lib/contracts/chains';
 import { isBotCommandableByWallet } from '~/lib/utils/botAccess';
 
-export const meta: MetaFunction = () => [{ title: 'Agent — AI Trading Arena' }];
+export const meta: MetaFunction = () => [{ title: 'Agent | AI Trading Arena' }];
 
 const PerformanceTab = lazy(() =>
   import('~/components/bot-detail/PerformanceTab').then((module) => ({
@@ -378,7 +378,7 @@ export default function BotDetailPage() {
         <div className="glass-card rounded-xl p-12 max-w-md">
           <div className="i-ph:arrow-clockwise text-4xl text-arena-elements-textTertiary mb-4 mx-auto animate-spin" />
           <p className="text-arena-elements-textSecondary text-sm">
-            Loading agent data...
+            Loading agent data…
           </p>
         </div>
       </div>
@@ -452,6 +452,7 @@ export default function BotDetailPage() {
             botName={displayBotName}
             status={bot.status}
             isLive={botIsLive}
+            paperTrade={bot.paperTrade}
             chainId={bot.chainId}
             operatorApiUrl={bot.operatorApiUrl}
             operatorKind={bot.operatorKind}
@@ -522,7 +523,7 @@ export default function BotDetailPage() {
   );
 
   return (
-    <AnimatedPage className="h-full min-h-0 overflow-hidden">
+    <div className="h-full min-h-0 overflow-hidden">
       <AgentWorkspaceShell
         bot={bot}
         displayName={displayBotName}
@@ -557,6 +558,6 @@ export default function BotDetailPage() {
         target={secretsTarget}
         onClose={() => setSecretsTarget(null)}
       />
-    </AnimatedPage>
+    </div>
   );
 }
