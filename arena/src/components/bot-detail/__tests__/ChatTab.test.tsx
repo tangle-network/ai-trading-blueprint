@@ -367,6 +367,10 @@ describe("ChatTab", () => {
     expect(shell).not.toHaveClass("glass-card");
     expect(shell).not.toHaveClass("rounded-xl");
     expect(screen.queryByTestId("decision-activity-strip")).not.toBeInTheDocument();
+    const runSummary = await screen.findByRole("region", {
+      name: /selected run summary/i,
+    });
+    expect(runSummary).not.toHaveTextContent("Trading Trace");
     expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(
       0,
     );

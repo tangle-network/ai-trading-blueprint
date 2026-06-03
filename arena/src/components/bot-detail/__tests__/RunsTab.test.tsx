@@ -742,9 +742,10 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    const cockpit = await screen.findByRole("region", { name: /trace cockpit/i });
+    const cockpit = await screen.findByRole("region", { name: /selected run summary/i });
     expect(cockpit).toHaveTextContent("Completed");
     expect(cockpit).toHaveTextContent("OPEN LONG");
+    expect(cockpit).not.toHaveTextContent("Trading Trace");
     expect(cockpit).toHaveTextContent("ETH-PERP");
     expect(cockpit).toHaveTextContent("$913");
     expect(cockpit).toHaveTextContent("Breakout retest passed");

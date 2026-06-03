@@ -448,26 +448,31 @@ function TraceCockpit({
   const thesis = decisionItem?.reason || decisionItem?.title || "Run evidence captured.";
   const statusLabel = getStatusLabel(run.status);
   const signalLabel = getRunSignalLabel(run);
+  const workflowLabel = getWorkflowKindLabel(run.workflowKind);
   const instrumentLabel =
     decisionItem?.instrumentLabel && decisionItem.instrumentLabel !== "n/a"
       ? decisionItem.instrumentLabel
-      : getWorkflowKindLabel(run.workflowKind);
-  const tradeContextParts = [
-    signalLabel !== statusLabel.toUpperCase() ? signalLabel : null,
-    instrumentLabel !== "Trace" && instrumentLabel !== getWorkflowKindLabel(run.workflowKind)
+      : workflowLabel;
+  const hasActionSignal = signalLabel !== statusLabel.toUpperCase();
+  const hasInstrumentContext = instrumentLabel !== "Trace" && instrumentLabel !== workflowLabel;
+  const primaryLabel = hasActionSignal
+    ? signalLabel
+    : hasInstrumentContext
       ? instrumentLabel
-      : null,
+      : "Run summary";
+  const secondaryContextParts = [
+    hasActionSignal && hasInstrumentContext ? instrumentLabel : null,
     decisionItem?.notionalLabel ?? null,
   ].filter(Boolean);
-  const contextLabel = tradeContextParts.length > 0
-    ? tradeContextParts.join(" / ")
+  const contextLabel = secondaryContextParts.length > 0
+    ? secondaryContextParts.join(" / ")
     : "Evidence replay";
   const toolLabel = toolCount > 0
     ? `${toolCount.toLocaleString()} ${toolCount === 1 ? "tool" : "tools"}`
     : "n/a";
 
   return (
-    <section className="shrink-0 border-b border-[#273035] bg-[#0b1418] px-3 py-2.5" aria-label="Trace cockpit">
+    <section className="shrink-0 border-b border-[#273035] bg-[#0b1418] px-3 py-2.5" aria-label="Selected run summary">
       <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(330px,0.5fr)]">
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -477,7 +482,7 @@ function TraceCockpit({
               {statusLabel}
             </span>
             <span className="truncate font-display text-lg font-semibold text-[#f6fefd]">
-              {getWorkflowKindLabel(run.workflowKind)}
+              {primaryLabel}
             </span>
             <span className="truncate font-data text-xs text-[#949e9c]">
               {formatRunTimestamp(run.startedAt)}
