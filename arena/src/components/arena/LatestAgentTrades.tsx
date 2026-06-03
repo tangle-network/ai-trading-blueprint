@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from 'react-router';
-import { useRef, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { useRef, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { isAddress, type Address } from 'viem';
 import { Identicon, Skeleton } from '@tangle-network/blueprint-ui/components';
 import { TradeInstrumentDisplay } from '~/components/bot-detail/shared/AssetDisplay';
@@ -130,10 +130,6 @@ export function LatestAgentTrades({
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
     selectFill(fillId);
-  }
-
-  function stopAgentLinkRowSelection(event: MouseEvent<HTMLAnchorElement>) {
-    event.stopPropagation();
   }
 
   function selectExplorerPage(page: number) {
@@ -307,10 +303,11 @@ export function LatestAgentTrades({
                     return (
                       <tr
                         key={`${botId}:${trade.id}`}
-                        className={`group cursor-default transition-colors hover:bg-[var(--arena-terminal-panel-strong)] ${
+                        className={`group cursor-pointer transition-colors hover:bg-[var(--arena-terminal-panel-strong)] ${
                           selected ? 'bg-[var(--arena-terminal-accent-soft)]' : ''
                         }`}
                         aria-current={selected ? 'true' : undefined}
+                        aria-label={`Inspect ${agentName} ${formatTradeActionLabel(trade.action)} ${getTradeMarketLabel(trade)} fill ${formatTradeUsd(trade.notionalUsd)}`}
                         tabIndex={0}
                         onClick={() => selectFill(trade.id)}
                         onKeyDown={(event) => handleExplorerRowKeyDown(event, trade.id)}
@@ -322,12 +319,7 @@ export function LatestAgentTrades({
                           {formatTradeAge(trade.timestamp)}
                         </td>
                         <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle">
-                          <Link
-                            to={`/arena/bot/${encodeURIComponent(botId)}/performance`}
-                            onClick={stopAgentLinkRowSelection}
-                            className="flex min-w-0 items-center gap-2.5 rounded-[5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-                            aria-label={`Open ${agentName} performance`}
-                          >
+                          <span className="flex min-w-0 items-center gap-2.5 rounded-[5px]">
                             {hasOperatorAddress ? (
                               <Identicon address={operatorAddress as Address} size={20} />
                             ) : (
@@ -336,7 +328,7 @@ export function LatestAgentTrades({
                             <span className="truncate font-display text-[13px] font-semibold text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
                               {agentName}
                             </span>
-                          </Link>
+                          </span>
                         </td>
                         <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle">
                           <span

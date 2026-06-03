@@ -95,8 +95,8 @@ const baseDefaultConfig = getDefaultConfig({
     ]),
   ),
   walletConnectProjectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '3fcc6bba6f1de962d911bb5b5c3dba68',
-  appName: 'AI Trading Arena',
-  appDescription: 'AI-powered trading competition platform on Tangle Network',
+  appName: 'Tangle Trading',
+  appDescription: 'AI agent execution, fills, and portfolio intelligence on Tangle Network',
   appUrl: typeof window !== 'undefined' ? window.location.origin : 'https://arena.tangle.tools',
   appIcon: '/favicon.svg',
 });

@@ -93,7 +93,7 @@ describe('ArenaAppShell', () => {
   it('keeps the desktop sidebar focused on product navigation instead of live agent rosters', () => {
     renderShell();
 
-    const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
+    const sidebar = screen.getByRole('navigation', { name: 'Tangle navigation' }).closest('aside');
 
     expect(sidebar).not.toBeNull();
     expect(within(sidebar!).getByRole('link', { name: /home/i })).toHaveAttribute('href', '/');
@@ -110,7 +110,7 @@ describe('ArenaAppShell', () => {
 
     renderShell();
 
-    const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
+    const sidebar = screen.getByRole('navigation', { name: 'Tangle navigation' }).closest('aside');
 
     expect(sidebar).not.toBeNull();
     expect(within(sidebar!).queryByText(/callable agents/i)).not.toBeInTheDocument();
@@ -123,7 +123,7 @@ describe('ArenaAppShell', () => {
     await userEvent.click(screen.getByRole('button', { name: /collapse sidebar/i }));
 
     expect(window.localStorage.getItem('arena:sidebar-collapsed')).toBe('true');
-    const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
+    const sidebar = screen.getByRole('navigation', { name: 'Tangle navigation' }).closest('aside');
     expect(sidebar).not.toBeNull();
     expect(within(sidebar!).getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
     expect(within(sidebar!).getByRole('button', { name: 'Network' })).toBeInTheDocument();
@@ -137,7 +137,7 @@ describe('ArenaAppShell', () => {
   it('keeps the expanded wallet action visually neutral with the network selector', () => {
     renderShell('/');
 
-    const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
+    const sidebar = screen.getByRole('navigation', { name: 'Tangle navigation' }).closest('aside');
     const walletButton = within(sidebar!).getByRole('button', { name: 'Wallet' });
     const chainButton = within(sidebar!).getByRole('button', { name: 'Network' });
 
@@ -155,7 +155,7 @@ describe('ArenaAppShell', () => {
   ])('keeps agent workspace routes free of global navigation chrome: %s', (path) => {
     renderShell(path);
 
-    expect(screen.queryByRole('navigation', { name: 'Arena navigation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Tangle navigation' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /base sepolia testnet/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /transactions/i })).not.toBeInTheDocument();
     expect(screen.getByText('Agent body')).toBeInTheDocument();

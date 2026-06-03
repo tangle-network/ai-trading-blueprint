@@ -44,7 +44,7 @@ import { tokenMetadataFromStrategyConfig } from '~/lib/assetUniverse';
 import { networks } from '~/lib/contracts/chains';
 import { isBotCommandableByWallet } from '~/lib/utils/botAccess';
 
-export const meta: MetaFunction = () => [{ title: 'Agent | AI Trading Arena' }];
+export const meta: MetaFunction = () => [{ title: 'Agent | Tangle Trading' }];
 
 const PerformanceTab = lazy(() =>
   import('~/components/bot-detail/PerformanceTab').then((module) => ({
@@ -397,7 +397,7 @@ export default function BotDetailPage() {
             The agent with ID &quot;{id}&quot; does not exist.
           </p>
           <Button asChild variant="outline">
-            <Link to="/">Back to Arena</Link>
+            <Link to="/">Back to Tangle</Link>
           </Button>
         </div>
       </div>

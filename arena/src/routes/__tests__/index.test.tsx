@@ -181,7 +181,7 @@ describe('leaderboard auth-aware rendering', () => {
 
     expect(screen.getByRole('region', { name: /market pulse/i })).toBeInTheDocument();
     expect(screen.queryByLabelText('Execution trust')).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: /arena fleet terminal/i })).toHaveClass(
+    expect(screen.getByRole('region', { name: /tangle fleet terminal/i })).toHaveClass(
       'flex-1',
       'min-h-0',
     );

@@ -38,9 +38,8 @@ const SECTION_EXPECTATIONS = {
     ['Reasoning', 'fast_backtest', 'Breakout retest'],
   ],
   chat: [
-    ['Runs', 'Trading Trace'],
-    ['Reasoning', 'Final outcome', 'Run details', 'Workflow'],
-    ['tool', 'tools', 'fast_backtest', 'hyperliquid_nav', 'Transcript'],
+    ['Review the ETH breakout retest', 'ETH breakout review', 'No chat sessions yet'],
+    ['fast_backtest', 'hyperliquid_nav', 'No chat sessions yet'],
   ],
   operations: ['Operations', 'Validation', 'Evidence'],
 };
@@ -59,16 +58,15 @@ const LIVE_SECTION_EXPECTATIONS = {
     ['Run details', 'Run failed', 'Result', 'Error', 'Workflow', 'Decision', 'Transcript'],
   ],
   chat: [
-    ['Runs', 'Chat'],
-    ['Trading Trace', 'No runs yet'],
-    ['Run details', 'Run failed', 'Result', 'Error', 'Workflow', 'Decision', 'Transcript'],
+    'Chat',
+    ['No chat sessions yet', 'Ask', 'Owner Sign In'],
   ],
   operations: [
     'Operations',
     ['Validation', 'Validator', 'Controls', 'Terminal', 'Envelope'],
   ],
 };
-const FIXTURE_HOME_EXPECTATIONS = ['Arena', 'Volume', 'Fills', 'ETH Macro Scalper'];
+const FIXTURE_HOME_EXPECTATIONS = ['Tangle', 'Volume', 'Fills', 'ETH Macro Scalper'];
 const FIXTURE_LEADERBOARD_EXPECTATIONS = ['Agents', '24H Vol', 'Active', 'ETH Macro Scalper', 'HL Perp'];
 const FIXTURE_ACTIVITY_EXPECTATIONS = ['Activity', '24H Vol', 'Fills', 'ETH Macro Scalper', 'ETH-PERP'];
 const FIXTURE_CREATE_EXPECTATIONS = ['Create', 'Mandate', 'Prediction Markets', 'Deploy Agent'];
@@ -1674,7 +1672,7 @@ async function assertCollapsibleRails(page, baseUrl, botId) {
   try {
     await waitFor(async () => {
       const metrics = await evaluate(page, `(() => {
-        const nav = document.querySelector('nav[aria-label="Arena navigation"]');
+        const nav = document.querySelector('nav[aria-label="Tangle navigation"]');
         const labels = Array.from(nav?.querySelectorAll('a, button') ?? [])
           .map((element) => [
             element.textContent,
@@ -1698,13 +1696,13 @@ async function assertCollapsibleRails(page, baseUrl, botId) {
   } catch (error) {
     const debugMetrics = await evaluate(page, `(() => ({
       pathname: location.pathname,
-      navText: document.querySelector('nav[aria-label="Arena navigation"]')?.textContent ?? '',
+      navText: document.querySelector('nav[aria-label="Tangle navigation"]')?.textContent ?? '',
       bodyText: document.body.innerText.slice(0, 900),
     }))()`).catch(() => null);
     throw new Error(`Dashboard sidebar did not render expected navigation: ${JSON.stringify(debugMetrics)}; ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  const globalWidthExpression = `(() => document.querySelector('nav[aria-label="Arena navigation"]')?.closest('aside')?.getBoundingClientRect().width ?? 0)()`;
+  const globalWidthExpression = `(() => document.querySelector('nav[aria-label="Tangle navigation"]')?.closest('aside')?.getBoundingClientRect().width ?? 0)()`;
   const initialGlobalWidth = await evaluate(page, globalWidthExpression);
   if (initialGlobalWidth <= 96) {
     const global = await assertRailWidthChange(
@@ -1749,7 +1747,7 @@ async function assertCollapsibleRails(page, baseUrl, botId) {
     throw new Error(`Agent performance route did not settle after sidebar collapse check: ${JSON.stringify(debugMetrics)}; ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  const hasGlobalAgentChrome = await evaluate(page, `Boolean(document.querySelector('nav[aria-label="Arena navigation"]'))`);
+  const hasGlobalAgentChrome = await evaluate(page, `Boolean(document.querySelector('nav[aria-label="Tangle navigation"]'))`);
   if (hasGlobalAgentChrome) {
     throw new Error('Agent workspace route still rendered global arena navigation');
   }

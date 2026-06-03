@@ -9,6 +9,12 @@ const authState = {
   authenticate: vi.fn(),
 };
 
+const sessionsState = {
+  data: [] as any[],
+  isLoading: false,
+  isFetching: false,
+};
+
 const useBotSessionStreamMock = vi.hoisted(() =>
   vi.fn(() => ({
     messages: [],
@@ -43,7 +49,7 @@ vi.mock("~/components/bot-detail/chat/ChatTranscript", () => ({
 }));
 
 vi.mock("@tangle-network/sandbox-ui/hooks", () => ({
-  useSessions: () => ({ data: [] }),
+  useSessions: () => sessionsState,
   useCreateSession: () => ({ mutateAsync: vi.fn() }),
   useDeleteSession: () => ({ mutate: vi.fn() }),
   useRenameSession: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
@@ -81,6 +87,9 @@ describe("ChatTab", () => {
     authState.isAuthenticated = false;
     authState.isAuthenticating = false;
     authState.authenticate.mockReset();
+    sessionsState.data = [];
+    sessionsState.isLoading = false;
+    sessionsState.isFetching = false;
     useBotSessionStreamMock.mockClear();
     chatTranscriptMock.mockClear();
     vi.stubGlobal(
@@ -100,7 +109,7 @@ describe("ChatTab", () => {
     }));
   });
 
-  it("routes public chat to the latest autonomous run telemetry", async () => {
+  it("does not duplicate autonomous trading traces in public chat", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({
         runs: [
@@ -139,28 +148,24 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect((await screen.findAllByText("placed paper trade")).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Trading Trace").length).toBeGreaterThan(0);
+    expect(await screen.findByText("No chat sessions yet")).toBeInTheDocument();
+    expect(screen.getByText(/Autonomous execution traces live in Runs/i)).toBeInTheDocument();
+    expect(screen.queryByText("placed paper trade")).not.toBeInTheDocument();
+    expect(screen.queryByText("Trading Trace")).not.toBeInTheDocument();
     expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          token: null,
-          sessionId: "run-replay-run-public-trace",
-          historyPath: "/runs/run-public-trace/messages?limit=200",
-          streamEnabled: false,
-          enabled: true,
-        }),
-      );
-    });
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:9201/api/bots/bot-1/runs?limit=100",
-      expect.objectContaining({ headers: {} }),
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        token: null,
+        sessionId: "",
+        historyPath: undefined,
+        streamEnabled: false,
+        enabled: false,
+      }),
     );
   });
 
-  it("shows an empty run state instead of a blank public chat transcript", async () => {
+  it("shows an empty chat state instead of a blank public transcript", async () => {
     const { ChatTab } = await import("../ChatTab");
 
     render(
@@ -175,7 +180,7 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByText("No runs yet")).toBeInTheDocument();
+    expect(await screen.findByText("No chat sessions yet")).toBeInTheDocument();
     expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     expect(screen.queryByText(/chat stays disabled/i)).not.toBeInTheDocument();
 
@@ -191,33 +196,13 @@ describe("ChatTab", () => {
     });
   });
 
-  it("falls back to autonomous run telemetry when public chat has runs without replayable messages", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonResponse({
-          runs: [
-            {
-              run_id: "run-summary-only",
-              workflow_id: 102,
-              workflow_kind: "trading",
-              status: "completed",
-              started_at: 1_775_824_900,
-              completed_at: 1_775_824_901,
-              session_id: null,
-              transcript_available: false,
-              trace_id: null,
-              duration_ms: 1_000,
-              input_tokens: 0,
-              output_tokens: 0,
-              result: null,
-              error: null,
-            },
-          ],
-          next_cursor: null,
-        }),
-      ),
-    );
+  it("reads public chat session history without querying trading runs", async () => {
+    sessionsState.data = [
+      {
+        id: "chat-session-1",
+        title: "Market question",
+      },
+    ];
     const { ChatTab } = await import("../ChatTab");
 
     render(
@@ -232,9 +217,20 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByText("Run details unavailable")).toBeInTheDocument();
-    expect(screen.getAllByText("Trading Trace").length).toBeGreaterThan(0);
-    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("chat-transcript")).toHaveTextContent("read-visible");
+    expect(screen.queryByText("Trading Trace")).not.toBeInTheDocument();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          token: null,
+          sessionId: "chat-session-1",
+          historyPath: "/session/sessions/chat-session-1/messages?limit=200",
+          streamEnabled: false,
+          enabled: true,
+        }),
+      );
+    });
   });
 
   it("does not show auth-only chat history errors to public readers", async () => {
@@ -262,7 +258,7 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByText("No runs yet")).toBeInTheDocument();
+    expect(await screen.findByText("No chat sessions yet")).toBeInTheDocument();
     expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     expect(screen.queryByText("Failed")).not.toBeInTheDocument();
     expect(screen.queryByText("HTTP 401:")).not.toBeInTheDocument();
@@ -285,7 +281,7 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByText("No runs yet")).toBeInTheDocument();
+    expect(await screen.findByText("No chat sessions yet")).toBeInTheDocument();
     expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /new chat/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /owner sign in/i })).not.toBeInTheDocument();
@@ -316,34 +312,6 @@ describe("ChatTab", () => {
   });
 
   it("uses a full-height shell without card chrome in immersive mode", async () => {
-    const fetchMock = vi.fn(async () =>
-      jsonResponse({
-        runs: [
-          {
-            run_id: "run-immersive-public",
-            workflow_id: 101,
-            workflow_kind: "trading",
-            status: "completed",
-            started_at: 1_775_824_500,
-            completed_at: 1_775_824_560,
-            session_id: null,
-            transcript_available: false,
-            trace_id: null,
-            duration_ms: 60_000,
-            input_tokens: 10,
-            output_tokens: 6,
-            result: JSON.stringify({
-              checked_state: { nav_status: "fresh", total_nav_usdc: 11 },
-              decision: { action: "trade", reason: "rsi-oversold" },
-              trade_action: { attempted: true, execution_status: "paper_recorded" },
-            }),
-            error: null,
-          },
-        ],
-        next_cursor: null,
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
     const { ChatTab } = await import("../ChatTab");
 
     const { container } = render(
@@ -359,30 +327,13 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByText(/Chat history/i)).toBeInTheDocument();
+    expect(await screen.findByText("No chat sessions yet")).toBeInTheDocument();
     const shell = container.querySelector('[data-sandbox-ui="true"]');
     expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     expect(shell).not.toBeNull();
     expect(shell).toHaveClass("h-full");
     expect(shell).not.toHaveClass("glass-card");
     expect(shell).not.toHaveClass("rounded-xl");
-    expect(screen.queryByTestId("decision-activity-strip")).not.toBeInTheDocument();
-    const runSummary = await screen.findByRole("region", {
-      name: /selected run summary/i,
-    });
-    expect(runSummary).not.toHaveTextContent("Trading Trace");
-    expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(
-      0,
-    );
-    expect(screen.getByRole("complementary", { name: /decision inspector/i })).toBeInTheDocument();
-    await waitFor(() => {
-      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          sessionId: "run-replay-run-immersive-public",
-          historyPath: "/runs/run-immersive-public/messages?limit=200",
-          streamEnabled: false,
-        }),
-      );
-    });
+    expect(screen.queryByText("Trading Trace")).not.toBeInTheDocument();
   });
 });

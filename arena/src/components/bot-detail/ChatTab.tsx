@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useMemo, useRef, type CSSProperties } from "react";
-import { useQuery } from "@tanstack/react-query";
 import {
   useSessions,
   useCreateSession,
@@ -21,21 +20,7 @@ import {
   OperatorAccessCard,
   UnsupportedFeatureCard,
 } from "~/components/operator/OperatorAccessCard";
-import {
-  buildRunReplayHistoryPath,
-  buildRunReplaySessionId,
-  chooseDefaultRun,
-  formatDuration,
-  formatRunTimestamp,
-  getWorkflowKindLabel,
-  hasReplayableRunTrace,
-  parseRunsResponse,
-} from "~/lib/botRuns";
-import { buildDecisionItemsFromRuns } from "~/lib/decisionFeed";
 import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
-import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
-import { DecisionInspector } from "./shared/DecisionInspector";
-import { RunsTab } from "./RunsTab";
 import {
   WorkspaceResizeHandle,
   beginWorkspaceResize,
@@ -58,13 +43,11 @@ interface ChatTabProps {
 
 interface ChatWorkspaceLayout {
   sidebarWidth: number;
-  inspectorWidth: number;
 }
 
 const CHAT_WORKSPACE_LAYOUT_KEY = "arena:chat-workspace-layout";
 const DEFAULT_CHAT_WORKSPACE_LAYOUT: ChatWorkspaceLayout = {
   sidebarWidth: 272,
-  inspectorWidth: 360,
 };
 
 function normalizeChatWorkspaceLayout(value: Partial<ChatWorkspaceLayout>): ChatWorkspaceLayout {
@@ -73,11 +56,6 @@ function normalizeChatWorkspaceLayout(value: Partial<ChatWorkspaceLayout>): Chat
       Number(value.sidebarWidth) || DEFAULT_CHAT_WORKSPACE_LAYOUT.sidebarWidth,
       220,
       380,
-    ),
-    inspectorWidth: clampNumber(
-      Number(value.inspectorWidth) || DEFAULT_CHAT_WORKSPACE_LAYOUT.inspectorWidth,
-      300,
-      540,
     ),
   };
 }
@@ -194,6 +172,22 @@ function ChatRunBanner({
           <span className="i-ph:stop-circle text-sm mr-1" />
           {isAborting ? "Stopping…" : "Stop"}
         </Button>
+      </div>
+    </div>
+  );
+}
+
+function ChatEmptyState() {
+  return (
+    <div className="flex h-full min-h-[320px] items-center justify-center px-6 text-center">
+      <div className="max-w-md">
+        <div className="i-ph:chat-circle-dots mx-auto mb-4 text-3xl text-[var(--arena-terminal-text-subtle)]" />
+        <h3 className="font-display text-xl font-semibold text-[var(--arena-terminal-text)]">
+          No chat sessions yet
+        </h3>
+        <p className="mt-2 text-sm leading-6 text-[var(--arena-terminal-text-muted)]">
+          Autonomous execution traces live in Runs. Chat will show conversation history when this agent has one.
+        </p>
       </div>
     </div>
   );
@@ -500,7 +494,6 @@ export function ChatTab({
     authenticate,
   } = useOperatorAuth(baseApiUrl);
   const canWrite = canCommand && isAuthenticated && Boolean(token);
-  const showPublicRunTelemetry = !canCommand;
 
   const primarySessionId = `trading-${botId}`;
   const [activeSessionId, setActiveSessionId] = useState(
@@ -515,7 +508,6 @@ export function ChatTab({
   );
   const [sessionSidebarCollapsed, setSessionSidebarCollapsed] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
-  const traceSurfaceRef = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = usePersistentWorkspaceLayout(
     CHAT_WORKSPACE_LAYOUT_KEY,
     DEFAULT_CHAT_WORKSPACE_LAYOUT,
@@ -524,59 +516,29 @@ export function ChatTab({
   const chatCacheKey = `${baseApiUrl}::${botId}`;
 
   const sessionToken = canWrite ? token : null;
-  const { data: rawSessions } = useSessions(apiUrl, sessionToken);
-  const sessions = useMemo(() => normalizeSessionList(rawSessions), [rawSessions]);
+  const sessionsQuery = useSessions(apiUrl, sessionToken);
+  const sessions = useMemo(() => normalizeSessionList(sessionsQuery.data), [sessionsQuery.data]);
+  const sessionsLoading = Boolean(
+    (sessionsQuery as { isLoading?: boolean; isFetching?: boolean }).isLoading ||
+      (sessionsQuery as { isLoading?: boolean; isFetching?: boolean }).isFetching,
+  );
   const deleteMutation = useDeleteSession(apiUrl, sessionToken);
   const renameMutation = useRenameSession(apiUrl, sessionToken);
   const createMutation = useCreateSession(apiUrl, sessionToken);
-  const publicRunsQuery = useQuery({
-    queryKey: ["bot-chat-public-runs", apiUrl, botId],
-    enabled: !!apiUrl && !canWrite && !showPublicRunTelemetry,
-    queryFn: async () => {
-      const response = await fetch(`${apiUrl}/runs?limit=25`);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      return parseRunsResponse(await response.json());
-    },
-    staleTime: 5_000,
-  });
-  const [selectedPublicRunId, setSelectedPublicRunId] = useState("");
-  const publicReplayRuns = useMemo(() => {
-    if (canWrite || showPublicRunTelemetry) return null;
-    return publicRunsQuery.data?.runs.filter((run) => hasReplayableRunTrace(run)) ?? [];
-  }, [canWrite, publicRunsQuery.data, showPublicRunTelemetry]);
-  const publicRuns = !canWrite && !showPublicRunTelemetry ? (publicRunsQuery.data?.runs ?? []) : [];
-  const publicReplayRun = useMemo(() => {
-    if (!publicReplayRuns) return null;
-    return (
-      publicReplayRuns.find((run) => run.runId === selectedPublicRunId) ??
-      chooseDefaultRun(publicReplayRuns)
-    );
-  }, [publicReplayRuns, selectedPublicRunId]);
-  const decisionItems = useMemo(
-    () => (publicReplayRuns ? buildDecisionItemsFromRuns(publicReplayRuns) : []),
-    [publicReplayRuns],
-  );
-  const selectedDecisionItem =
-    decisionItems.find((item) => item.sourceId === publicReplayRun?.runId) ??
-    decisionItems[0];
   const hasKnownActiveSession = sessions.some(
     (session) => session.id === activeSessionId,
   );
-  const publicReplaySessionId = buildRunReplaySessionId(publicReplayRun);
-  const streamSessionId = showPublicRunTelemetry
-    ? null
-    : !canWrite
-    ? (publicReplaySessionId || primarySessionId)
+  const streamSessionId = !canWrite
+    ? (hasKnownActiveSession
+      ? activeSessionId
+      : sessions[0]?.id ?? null)
     : hasKnownActiveSession
       ? activeSessionId
       : activeSessionId === primarySessionId
         ? (sessions[0]?.id ?? null)
         : activeSessionId || sessions[0]?.id || null;
-  const readOnlyHistoryPath = !canWrite && !showPublicRunTelemetry && streamSessionId
-    ? (buildRunReplayHistoryPath(publicReplayRun) ??
-      `/session/sessions/${encodeURIComponent(streamSessionId)}/messages?limit=200`)
+  const readOnlyHistoryPath = !canWrite && streamSessionId
+    ? `/session/sessions/${encodeURIComponent(streamSessionId)}/messages?limit=200`
     : undefined;
 
   useEffect(() => {
@@ -742,17 +704,8 @@ export function ChatTab({
   }, [stream]);
 
   const sessionItems: SessionItem[] = useMemo(
-    () => {
-      if (!canWrite && publicReplayRuns && publicReplayRuns.length > 0) {
-        return publicReplayRuns.map((run) => ({
-          id: run.runId,
-          title: getWorkflowKindLabel(run.workflowKind),
-          rawTitle: getWorkflowKindLabel(run.workflowKind),
-          subtitle: `${formatRunTimestamp(run.startedAt)} · ${formatDuration(run.durationMs)}`,
-        }));
-      }
-
-      return sessions.length > 0
+    () =>
+      sessions.length > 0
         ? sessions.map((session: Session) => ({
             id: session.id,
             title: normalizeSessionTitle(session.title),
@@ -766,34 +719,18 @@ export function ChatTab({
               rawTitle: "Main Chat",
               subtitle: "Start a new conversation",
             },
-          ];
-    },
-    [canWrite, primarySessionId, publicReplayRuns, sessions],
+          ],
+    [primarySessionId, sessions],
   );
-  const hasPublicRunSessions =
-    !canWrite && Boolean(publicReplayRuns && publicReplayRuns.length > 0);
   const showSessionSidebar =
-    hasPublicRunSessions || sessionItems.length > 1 || (immersive && canWrite);
-  const showDecisionActivityStrip = decisionItems.length > 0 && !showSessionSidebar;
-  const showDecisionInspector = decisionItems.length > 0;
-  const sidebarActiveSessionId =
-    hasPublicRunSessions && publicReplayRun
-      ? publicReplayRun.runId
-      : activeSessionId;
-  const sidebarPrimarySessionId = hasPublicRunSessions ? "" : primarySessionId;
+    sessionItems.length > 1 || (immersive && canWrite);
+  const sidebarActiveSessionId = activeSessionId;
+  const sidebarPrimarySessionId = primarySessionId;
   const handleSidebarSelect = useCallback(
     (id: string) => {
-      if (
-        !canWrite &&
-        publicReplayRuns?.some((run) => run.runId === id)
-      ) {
-        setSelectedPublicRunId(id);
-        return;
-      }
-
       setActiveSessionId(id);
     },
-    [canWrite, publicReplayRuns],
+    [],
   );
   const chatHeaderTitle = activeSession
     ? getSessionDisplayTitle(
@@ -823,19 +760,11 @@ export function ChatTab({
       },
     });
   };
-  const startInspectorResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
-    const surface = traceSurfaceRef.current;
-    if (!surface) return;
-    const rect = surface.getBoundingClientRect();
-    beginWorkspaceResize(event, {
-      cursor: "col-resize",
-      onMove: (moveEvent) => {
-        const maxWidth = Math.min(540, Math.max(360, rect.width * 0.45));
-        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 300, maxWidth);
-        setLayout((current) => ({ ...current, inspectorWidth: nextWidth }));
-      },
-    });
-  };
+  const showEmptyChatState =
+    !canWrite &&
+    !sessionsLoading &&
+    sessions.length === 0 &&
+    stream.messages.length === 0;
 
   void operatorAddress;
 
@@ -879,39 +808,6 @@ export function ChatTab({
           </Button>
         )}
       </div>
-    );
-  }
-
-  if (showPublicRunTelemetry) {
-    return (
-      <RunsTab
-        botId={botId}
-        botName={botName}
-        operatorApiUrl={operatorApiUrl}
-        operatorKind={operatorKind}
-        verificationState={verificationState}
-        immersive={immersive}
-        surface="chat"
-      />
-    );
-  }
-
-  if (
-    !canWrite &&
-    !publicRunsQuery.isLoading &&
-    publicRuns.length > 0 &&
-    (!publicReplayRuns || publicReplayRuns.length === 0)
-  ) {
-    return (
-      <RunsTab
-        botId={botId}
-        botName={botName}
-        operatorApiUrl={operatorApiUrl}
-        operatorKind={operatorKind}
-        verificationState={verificationState}
-        immersive={immersive}
-        surface="chat"
-      />
     );
   }
 
@@ -1010,38 +906,11 @@ export function ChatTab({
             isAborting={isAborting}
           />
 
-          {showDecisionActivityStrip && (
-            <DecisionActivityStrip
-              items={decisionItems}
-              selectedId={selectedDecisionItem?.id}
-              onSelect={(item) => setSelectedPublicRunId(item.sourceId)}
-              variant="terminal"
-            />
-          )}
-
-          <div
-            ref={traceSurfaceRef}
-            className={`arena-trace-surface min-h-0 flex-1 bg-[#081013] ${
-              !showDecisionInspector
-                ? ""
-                : isStackedLayout
-                  ? "flex flex-col"
-                  : "grid"
-            }`}
-            style={!isStackedLayout && showDecisionInspector
-              ? {
-                  gridTemplateColumns: `minmax(0,1fr) 8px minmax(300px, ${layout.inspectorWidth}px)`,
-                }
-              : undefined}
-          >
-            {showDecisionInspector && isStackedLayout && (
-              <DecisionInspector
-                item={selectedDecisionItem}
-                variant="terminal"
-                className="max-h-80 border-b border-[#273035]"
-              />
-            )}
-            <div className={showDecisionInspector && isStackedLayout ? "min-h-0 min-w-0 flex-1" : "min-h-0 min-w-0"}>
+          <div className="arena-chat-surface min-h-0 flex-1 bg-[#081013]">
+            {showEmptyChatState ? (
+              <ChatEmptyState />
+            ) : (
+            <div className="h-full min-h-0 min-w-0">
               <ChatTranscript
                 messages={stream.messages}
                 partMap={stream.partMap}
@@ -1056,21 +925,6 @@ export function ChatTab({
                 }
               />
             </div>
-            {showDecisionInspector && !isStackedLayout && (
-              <>
-              <WorkspaceResizeHandle
-                orientation="vertical"
-                className="col-start-2 row-start-1 w-2"
-                ariaLabel="Resize chat evidence inspector"
-                title="Drag to resize chat evidence inspector"
-                onPointerDown={startInspectorResize}
-              />
-              <DecisionInspector
-                item={selectedDecisionItem}
-                variant="terminal"
-                className="col-start-3 row-start-1 border-l border-[#273035]"
-              />
-              </>
             )}
           </div>
 

@@ -18,7 +18,7 @@ import {
 } from '~/components/arena/WorkspaceResizeControls'
 
 export const meta: MetaFunction = () => [
-  { title: 'Create Trading Agent - AI Trading Arena' },
+  { title: 'Create Trading Agent - Tangle Trading' },
 ]
 
 type StrategyType = 'dex' | 'yield' | 'prediction' | 'perp'

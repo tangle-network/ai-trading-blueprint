@@ -63,7 +63,7 @@ export function Header() {
 
         {/* Logo */}
         <Link to="/" className="flex items-center group shrink-0">
-          <TangleLogo label="Trading Arena" />
+          <TangleLogo label="Tangle Trading" />
         </Link>
 
         {/* Nav — absolutely centered so right-side actions don't shift it */}

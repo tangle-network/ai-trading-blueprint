@@ -95,7 +95,7 @@ function useStableProvisions(userAddress: string | undefined): TrackedProvision[
 }
 
 export const meta: MetaFunction = () => [
-  { title: 'My Agents — AI Trading Arena' },
+  { title: 'My Agents — Tangle Trading' },
 ];
 
 export default function HomePage() {

@@ -37,7 +37,7 @@ import {
 } from '~/components/arena/WorkspaceResizeControls';
 
 export const meta: MetaFunction = () => [
-  { title: 'AI Trading Arena' },
+  { title: 'Tangle Trading' },
 ];
 
 interface HomeWorkspaceLayout {
@@ -309,7 +309,7 @@ function HomeWorkspacePanels({
       ref={workspaceRef}
       className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden lg:grid lg:gap-0"
       style={gridStyle}
-      aria-label="Arena fleet terminal"
+      aria-label="Tangle fleet terminal"
     >
       <PlatformVolumeChart
         bots={leaderboardBots}
@@ -461,7 +461,7 @@ export default function IndexPage() {
   return (
     <div className="arena-trace-terminal mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:overflow-hidden">
       <ArenaPageHeader
-        title="Arena"
+        title="Tangle"
         titleWidthClassName="min-[1180px]:w-[11rem]"
         metrics={[
           { value: formatNumber(leaderboardBots.length, { maximumFractionDigits: 0 }), label: 'Agents' },

@@ -25,7 +25,7 @@ import {
 } from '~/components/arena/WorkspaceResizeControls';
 
 export const meta: MetaFunction = () => [
-  { title: 'Vault — AI Trading Arena' },
+  { title: 'Vault — Tangle Trading' },
 ];
 
 const KNOWN_CHAIN_NAMES: Record<number, string> = {

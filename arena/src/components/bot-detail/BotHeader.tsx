@@ -227,7 +227,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                 className="inline-flex items-center gap-1.5 font-display font-medium text-arena-elements-textTertiary transition-colors hover:text-violet-700 dark:hover:text-violet-400"
               >
                 <span className="i-ph:arrow-left text-sm" aria-hidden="true" />
-                Arena
+                Tangle
               </Link>
               <span className="text-arena-elements-textTertiary/50">/</span>
               <Badge variant={botStatusBadgeVariant(bot.status)} className="h-7">

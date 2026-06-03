@@ -1300,7 +1300,7 @@ export function selectLatestInstanceProvision(
 }
 
 export const meta: MetaFunction = () => [
-  { title: 'Deploy Agent - AI Trading Arena' },
+  { title: 'Deploy Agent - Tangle Trading' },
 ];
 
 // ── Main page ────────────────────────────────────────────────────────────

@@ -34,7 +34,7 @@ import {
 } from '~/components/arena/WorkspaceResizeControls';
 
 export const meta: MetaFunction = () => [
-  { title: 'Agents | AI Trading Arena' },
+  { title: 'Agents | Tangle Trading' },
 ];
 
 interface LeaderboardWorkspaceLayout {

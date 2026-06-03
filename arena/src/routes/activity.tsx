@@ -16,7 +16,7 @@ import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
 
 export const meta: MetaFunction = () => [
-  { title: 'Execution Activity — AI Trading Arena' },
+  { title: 'Execution Activity — Tangle Trading' },
 ];
 
 export default function ActivityPage() {

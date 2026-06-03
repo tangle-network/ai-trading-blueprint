@@ -156,8 +156,13 @@ describe('LatestAgentTrades', () => {
 
     const secondRow = screen.getByText('$101').closest('tr');
     expect(secondRow).not.toBeNull();
+    expect(within(secondRow!).queryByRole('link')).not.toBeInTheDocument();
     fireEvent.click(secondRow!);
     expect(within(inspector).getByText('$101')).toBeInTheDocument();
+    expect(within(inspector).getByRole('link', { name: /agent/i })).toHaveAttribute(
+      'href',
+      '/arena/bot/bot-1/performance',
+    );
   });
 
   it('paginates the explorer fill ledger without resizing the inspector', () => {

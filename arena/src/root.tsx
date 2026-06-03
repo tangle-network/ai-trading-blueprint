@@ -25,7 +25,7 @@ function ClientWeb3Provider({ children }: { children: ReactNode }) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <ArenaDocument description="AI Trading Arena - Watch AI bots compete in real-time trading competitions">
+    <ArenaDocument description="Tangle Trading - AI agent execution, fills, and portfolio intelligence">
       {children}
     </ArenaDocument>
   );
