@@ -187,19 +187,19 @@ describe('leaderboard auth-aware rendering', () => {
     );
     expect(hoisted.platformVolumeChartProps.at(-1)).toEqual(expect.objectContaining({
       variant: 'command',
-      className: 'min-h-[360px] xl:min-h-0',
+      className: 'min-h-[320px] xl:min-h-0',
     }));
     expect(hoisted.latestAgentTradesProps.at(-1)).toEqual(expect.objectContaining({
       variant: 'panel',
       limit: 12,
-      className: 'h-full min-h-[320px] xl:row-span-2 xl:min-h-0',
+      className: 'h-full min-h-[280px] xl:row-span-2 xl:min-h-0',
     }));
     expect(hoisted.topAgentsPanelProps.at(-1)).toEqual(expect.objectContaining({
       variant: 'table',
       metricMode: 'activity',
       activityStatsByBotId: expect.any(Map),
       limit: 6,
-      className: 'min-h-[164px] xl:min-h-0',
+      className: 'min-h-[220px] xl:min-h-0',
     }));
     expect(screen.getByText('top agents')).toBeInTheDocument();
   });

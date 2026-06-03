@@ -64,10 +64,10 @@ function isOperationsPanel(value: string | null | undefined): value is Operation
 
 function OperationsPanelLoading({ label }: { label?: string }) {
   return (
-    <div className="flex min-h-[280px] items-center justify-center rounded-[5px] border border-[#273035] bg-[#081013]">
+    <div className="flex min-h-[280px] items-center justify-center rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
       <div className="text-center">
-        <div className="i-ph:spinner-gap mx-auto text-2xl text-[#949e9c] animate-spin" />
-        <div className="mt-3 font-data text-xs uppercase tracking-wider text-[#949e9c]">
+        <div className="i-ph:spinner-gap mx-auto text-2xl text-[var(--arena-terminal-text-muted)] animate-spin" />
+        <div className="mt-3 font-data text-xs uppercase tracking-wider text-[var(--arena-terminal-text-muted)]">
           Loading {label ?? 'panel'}
         </div>
       </div>
@@ -123,12 +123,31 @@ function runtimeModeLabel(bot: Bot): string {
   return 'Unknown';
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function DetailRow({ label, value, copyValue }: { label: string; value: string; copyValue?: string }) {
+  const canCopy = Boolean(copyValue && copyValue !== 'n/a');
+  const copy = async () => {
+    if (!copyValue) return;
+    await navigator.clipboard?.writeText(copyValue);
+  };
+
   return (
-    <div className="grid min-w-0 grid-cols-[92px_minmax(0,1fr)] items-center gap-3 border-b border-[#273035] py-2 last:border-b-0">
-      <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.12em] text-[#697371]">{label}</span>
-      <span className="min-w-0 truncate text-right font-data text-sm font-semibold text-[#f6fefd]" title={value}>
-        {value}
+    <div className="grid min-w-0 grid-cols-[92px_minmax(0,1fr)] items-center gap-3 border-b border-[var(--arena-terminal-border)] py-2 last:border-b-0">
+      <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">{label}</span>
+      <span className="flex min-w-0 items-center justify-end gap-1.5">
+        <span className="min-w-0 truncate text-right font-data text-sm font-semibold text-[var(--arena-terminal-text)]" title={copyValue ?? value}>
+          {value}
+        </span>
+        {canCopy && (
+          <button
+            type="button"
+            onClick={copy}
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-[var(--arena-terminal-text-subtle)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-accent)] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+            title={`Copy ${label.toLowerCase()}`}
+            aria-label={`Copy ${label.toLowerCase()}`}
+          >
+            <span className="i-ph:copy text-xs" aria-hidden="true" />
+          </button>
+        )}
       </span>
     </div>
   );
@@ -148,26 +167,26 @@ function CommandLane({
   onClick: () => void;
 }) {
   const toneClass = {
-    amber: 'border-[#6f5723] bg-[#201808] text-[#f2c066]',
-    violet: 'border-[#1d5b52] bg-[#0d302c] text-[#50d2c1]',
-    emerald: 'border-[#1d5b52] bg-[#0f2421] text-[#9cf5e7]',
-    neutral: 'border-[#273035] bg-[#0b1418] text-[#d2dad7]',
+    amber: 'border-[color-mix(in_srgb,var(--arena-terminal-warning)_42%,var(--arena-terminal-border))] bg-[color-mix(in_srgb,var(--arena-terminal-warning)_10%,var(--arena-terminal-panel))] text-[var(--arena-terminal-warning)]',
+    violet: 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]',
+    emerald: 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]',
+    neutral: 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-muted)]',
   }[tone];
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`group grid min-h-[58px] min-w-0 grid-cols-[30px_minmax(0,1fr)] items-center gap-2.5 rounded-[5px] border px-2.5 py-2 text-left transition-[background-color,border-color,transform] duration-150 hover:bg-[#12302e] active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${toneClass}`}
+      className={`group grid min-h-[58px] min-w-0 grid-cols-[30px_minmax(0,1fr)] items-center gap-2.5 rounded-[5px] border px-2.5 py-2 text-left transition-[background-color,border-color,transform] duration-150 hover:bg-[var(--arena-terminal-panel-strong)] active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${toneClass}`}
     >
-      <span className="flex h-[30px] w-[30px] items-center justify-center rounded-[5px] bg-[#081013]">
+      <span className="flex h-[30px] w-[30px] items-center justify-center rounded-[5px] bg-[var(--arena-terminal-surface)]">
         <span className={`${icon} text-base`} aria-hidden="true" />
       </span>
       <span className="min-w-0">
-        <span className="block truncate font-display text-[15px] font-semibold text-[#f6fefd]">
+        <span className="block truncate font-display text-[15px] font-semibold text-[var(--arena-terminal-text)]">
           {title}
         </span>
-        <span className="mt-0.5 block truncate font-mono text-[11px] text-[#949e9c]">
+        <span className="mt-0.5 block truncate font-mono text-[11px] text-[var(--arena-terminal-text-muted)]">
           {description}
         </span>
       </span>
@@ -213,18 +232,18 @@ function ConsoleRow({
   tone?: 'neutral' | 'good' | 'warn';
 }) {
   const valueClass = {
-    neutral: 'text-[#f6fefd]',
-    good: 'text-[#50d2c1]',
-    warn: 'text-[#f2c066]',
+    neutral: 'text-[var(--arena-terminal-text)]',
+    good: 'text-[var(--arena-terminal-accent)]',
+    warn: 'text-[var(--arena-terminal-warning)]',
   }[tone];
 
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#273035] py-2 last:border-b-0">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--arena-terminal-border)] py-2 last:border-b-0">
       <div className="min-w-0">
-        <div className="truncate font-data text-[10px] font-semibold uppercase tracking-wider text-[#697371]">
+        <div className="truncate font-data text-[10px] font-semibold uppercase tracking-wider text-[var(--arena-terminal-text-subtle)]">
           {label}
         </div>
-        <div className="mt-0.5 truncate text-sm text-[#949e9c]">
+        <div className="mt-0.5 truncate text-sm text-[var(--arena-terminal-text-muted)]">
           {detail}
         </div>
       </div>
@@ -245,14 +264,14 @@ function StatusCell({
   tone?: 'neutral' | 'good' | 'warn';
 }) {
   const valueClass = {
-    neutral: 'text-[#f6fefd]',
-    good: 'text-[#50d2c1]',
-    warn: 'text-[#f2c066]',
+    neutral: 'text-[var(--arena-terminal-text)]',
+    good: 'text-[var(--arena-terminal-accent)]',
+    warn: 'text-[var(--arena-terminal-warning)]',
   }[tone];
 
   return (
-    <div className="min-w-0 border-r border-[#273035] px-3 py-2.5 last:border-r-0">
-      <div className="truncate font-data text-[10px] font-semibold uppercase tracking-[0.12em] text-[#697371]">
+    <div className="min-w-0 border-r border-[var(--arena-terminal-border)] px-3 py-2.5 last:border-r-0">
+      <div className="truncate font-data text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">
         {label}
       </div>
       <div className={`mt-1 truncate font-data text-base font-bold tabular-nums ${valueClass}`} title={value}>
@@ -267,16 +286,16 @@ function RecordSection({
   rows,
 }: {
   title: string;
-  rows: Array<{ label: string; value: string }>;
+  rows: Array<{ label: string; value: string; copyValue?: string }>;
 }) {
   return (
     <section className="min-w-0">
-      <div className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[#50d2c1]">
+      <div className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-accent)]">
         {title}
       </div>
-      <div className="rounded-[5px] border border-[#273035] bg-[#081013] px-3">
+      <div className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3">
         {rows.map((row) => (
-          <DetailRow key={`${title}-${row.label}`} label={row.label} value={row.value} />
+          <DetailRow key={`${title}-${row.label}`} label={row.label} value={row.value} copyValue={row.copyValue} />
         ))}
       </div>
     </section>
@@ -385,10 +404,10 @@ function OperationsOverview({
     {
       title: 'Identity',
       rows: [
-        { label: 'Bot ID', value: bot.id },
-        { label: 'Operator', value: shortAddress(bot.operatorAddress) },
-        { label: 'Submitter', value: shortAddress(bot.submitterAddress) },
-        { label: 'Vault', value: shortAddress(bot.vaultAddress) },
+        { label: 'Bot ID', value: bot.id, copyValue: bot.id },
+        { label: 'Operator', value: shortAddress(bot.operatorAddress), copyValue: bot.operatorAddress },
+        { label: 'Submitter', value: shortAddress(bot.submitterAddress), copyValue: bot.submitterAddress },
+        { label: 'Vault', value: shortAddress(bot.vaultAddress), copyValue: bot.vaultAddress },
       ],
     },
     {
@@ -503,8 +522,8 @@ function OperationsOverview({
 
   return (
     <div className="grid h-full min-h-0 gap-2 xl:grid-cols-[minmax(0,1fr)_332px]">
-      <section className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
-        <div className="grid border-b border-[#273035] bg-[#081013] min-[980px]:grid-cols-5">
+      <section className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+        <div className="grid border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] min-[980px]:grid-cols-5">
           {statusCells.map((cell) => (
             <StatusCell
               key={cell.label}
@@ -515,12 +534,12 @@ function OperationsOverview({
           ))}
         </div>
 
-        <section className="border-b border-[#273035] bg-[#0b1418] p-3">
+        <section className="border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <h3 className="font-display text-base font-semibold text-[#f6fefd]">
+            <h3 className="font-display text-base font-semibold text-[var(--arena-terminal-text)]">
               Command Runway
             </h3>
-            <span className="font-mono text-xs text-[#949e9c]">
+            <span className="font-mono text-xs text-[var(--arena-terminal-text-muted)]">
               {actionCards.length} paths
             </span>
           </div>
@@ -539,12 +558,12 @@ function OperationsOverview({
         </section>
 
         <div className="grid min-h-0 gap-2 overflow-auto p-3 [scrollbar-gutter:stable] lg:grid-cols-2">
-          <section className="flex min-h-0 flex-col rounded-[5px] border border-[#273035] bg-[#081013] p-3">
+          <section className="flex min-h-0 flex-col rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-3">
             <div className="mb-1 flex items-center justify-between gap-3">
-              <h3 className="font-display text-base font-semibold text-[#f6fefd]">
+              <h3 className="font-display text-base font-semibold text-[var(--arena-terminal-text)]">
                 Guardrails
               </h3>
-              <span className="font-mono text-xs text-[#949e9c]">
+              <span className="font-mono text-xs text-[var(--arena-terminal-text-muted)]">
                 {runtimeModeLabel(bot)}
               </span>
             </div>
@@ -560,12 +579,12 @@ function OperationsOverview({
             </div>
           </section>
 
-          <section className="flex min-h-0 flex-col rounded-[5px] border border-[#273035] bg-[#081013] p-3">
+          <section className="flex min-h-0 flex-col rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-3">
             <div className="mb-1 flex items-center justify-between gap-3">
-              <h3 className="font-display text-base font-semibold text-[#f6fefd]">
+              <h3 className="font-display text-base font-semibold text-[var(--arena-terminal-text)]">
                 Runtime Stack
               </h3>
-              <span className="font-mono text-xs text-[#949e9c]">
+              <span className="font-mono text-xs text-[var(--arena-terminal-text-muted)]">
                 {operatorKindLabel(bot.operatorKind)}
               </span>
             </div>
@@ -584,13 +603,13 @@ function OperationsOverview({
         </div>
       </section>
 
-      <aside className="flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-3 py-2.5">
+      <aside className="flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2.5">
           <div className="min-w-0">
-            <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[#50d2c1]">
+            <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-accent)]">
               Record
             </div>
-            <h3 className="mt-1 truncate font-display text-lg font-semibold text-[#f6fefd]">
+            <h3 className="mt-1 truncate font-display text-lg font-semibold text-[var(--arena-terminal-text)]">
               {shortAddress(bot.operatorAddress)}
             </h3>
           </div>
@@ -620,7 +639,7 @@ function OperationsPanelNav({
 }) {
   return (
     <nav
-      className="flex max-w-full gap-1 overflow-x-auto rounded-[5px] border border-[#273035] bg-[#081013] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+      className="flex max-w-full gap-1 overflow-x-auto rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
       aria-label="Operations panels"
     >
       {items.map((item) => {
@@ -633,11 +652,11 @@ function OperationsPanelNav({
             aria-current={selected ? 'page' : undefined}
             className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-[5px] px-3 font-display text-sm font-medium transition-[background-color,color,box-shadow,transform] duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
               selected
-                ? 'bg-[#12302e] text-[#f6fefd] shadow-[inset_3px_0_0_rgba(80,210,193,0.92)]'
-                : 'text-[#949e9c] hover:bg-[#16242a] hover:text-[#f6fefd]'
+                ? 'bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-text)] shadow-[inset_3px_0_0_rgba(80,210,193,0.92)]'
+                : 'text-[var(--arena-terminal-text-muted)] hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)]'
             }`}
           >
-            <span className={`${item.icon} text-base ${selected ? 'text-[#50d2c1]' : 'text-[#697371]'}`} aria-hidden="true" />
+            <span className={`${item.icon} text-base ${selected ? 'text-[var(--arena-terminal-accent)]' : 'text-[var(--arena-terminal-text-subtle)]'}`} aria-hidden="true" />
             <span>{item.label}</span>
             {item.badge && (
               <Badge variant="amber" className="text-[10px]">
@@ -813,21 +832,21 @@ export function OperationsWorkspace({
     '[&_.text-arena-elements-textPrimary]:!text-[var(--arena-terminal-text)]',
     '[&_.text-arena-elements-textSecondary]:!text-[var(--arena-terminal-text-secondary)]',
     '[&_.text-arena-elements-textTertiary]:!text-[var(--arena-terminal-text-muted)]',
-    '[&_.glass-card]:!border-[#273035]',
-    '[&_.glass-card]:!bg-[#0f1a1f]',
+    '[&_.glass-card]:!border-[var(--arena-terminal-border)]',
+    '[&_.glass-card]:!bg-[var(--arena-terminal-panel)]',
   ].join(' ');
 
   return (
     <div
-      className={`arena-trace-terminal flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#081013] text-[#f6fefd] ${terminalOperationsClass}`}
+      className={`arena-trace-terminal flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text)] ${terminalOperationsClass}`}
     >
-      <div className="shrink-0 border-b border-[#273035] bg-[#0b1418] px-3 py-2">
+      <div className="shrink-0 border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-3 py-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
-            <h2 className="truncate font-display text-xl font-semibold tracking-tight text-[#f6fefd]">
+            <h2 className="truncate font-display text-xl font-semibold tracking-tight text-[var(--arena-terminal-text)]">
               {effectiveActivePanel === 'overview' ? 'Control Plane' : activeItem?.label ?? 'Runtime State'}
             </h2>
-            <span className="hidden rounded-[4px] border border-[#273035] bg-[#081013] px-2 py-1 font-data text-xs text-[#949e9c] min-[780px]:inline" translate="no">
+            <span className="hidden rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-2 py-1 font-data text-xs text-[var(--arena-terminal-text-muted)] min-[780px]:inline" translate="no">
               {botName}
             </span>
           </div>

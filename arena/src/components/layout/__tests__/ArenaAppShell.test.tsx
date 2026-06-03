@@ -127,22 +127,22 @@ describe('ArenaAppShell', () => {
     expect(sidebar).not.toBeNull();
     expect(within(sidebar!).getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
     expect(within(sidebar!).getByRole('button', { name: 'Network' })).toBeInTheDocument();
-    expect(within(sidebar!).getByRole('button', { name: 'Transactions' })).toBeInTheDocument();
-    expect(within(sidebar!).getByRole('button', { name: 'Theme' })).toBeInTheDocument();
+    expect(within(sidebar!).queryByRole('button', { name: 'Transactions' })).not.toBeInTheDocument();
+    expect(within(sidebar!).queryByRole('button', { name: 'Theme' })).not.toBeInTheDocument();
     const walletButton = within(sidebar!).getByRole('button', { name: 'Wallet' });
     expect(walletButton).toHaveAttribute('data-compact', 'true');
     expect(walletButton.parentElement).not.toHaveClass('overflow-hidden');
   });
 
-  it('gives the expanded wallet action primary visual weight', () => {
+  it('keeps the expanded wallet action visually neutral with the network selector', () => {
     renderShell('/');
 
     const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
     const walletButton = within(sidebar!).getByRole('button', { name: 'Wallet' });
     const chainButton = within(sidebar!).getByRole('button', { name: 'Network' });
 
-    expect(walletButton.parentElement).toHaveClass('[&>button]:!bg-[var(--arena-terminal-accent)]');
-    expect(walletButton.parentElement).toHaveClass('[&>button]:!text-[#06100e]');
+    expect(walletButton.parentElement).toHaveClass('[&>button]:!bg-[var(--arena-terminal-panel)]');
+    expect(walletButton.parentElement).toHaveClass('[&>button]:!text-[var(--arena-terminal-text-secondary)]');
     expect(walletButton.compareDocumentPosition(chainButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 

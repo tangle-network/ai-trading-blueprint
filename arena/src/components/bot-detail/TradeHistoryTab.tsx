@@ -26,6 +26,7 @@ interface TradeHistoryTabProps {
 }
 
 const TRADE_HISTORY_LIMIT = 50;
+const SQUARE_TABLE_CLASS = 'rounded-none [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_table]:rounded-none [&_thead]:rounded-none [&_tbody]:rounded-none [&_tr]:rounded-none [&_th]:rounded-none [&_td]:rounded-none';
 
 const EXPLORER_URLS: Record<number, { name: string; base: string }> = {
   1: { name: 'Etherscan', base: 'https://etherscan.io/tx/' },
@@ -54,16 +55,16 @@ function TradeTableHead({ compact = false }: { compact?: boolean }) {
     return (
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="w-[8.6rem] py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
+          <TableHead className="w-[7.6rem] py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
             Time
           </TableHead>
-          <TableHead className="w-[8.45rem] py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
+          <TableHead className="w-[7.25rem] py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
             Trade
           </TableHead>
           <TableHead className="py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
             Market
           </TableHead>
-          <TableHead className="w-[8rem] py-1 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
+          <TableHead className="w-[7rem] py-1 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
             Size
           </TableHead>
           <TableHead className="w-[7.35rem] py-1 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
@@ -294,7 +295,7 @@ function renderTradeInstrumentCell(trade: Trade, compact: boolean) {
           size="sm"
           showVenue={false}
           showSecondary={false}
-          labelClassName="max-w-full text-[16px]"
+          labelClassName="max-w-full text-[14px]"
         />
       );
     }
@@ -305,11 +306,11 @@ function renderTradeInstrumentCell(trade: Trade, compact: boolean) {
     <div className={compact ? 'space-y-0.5' : 'space-y-2'}>
       <TradeInstrumentDisplay
         trade={trade}
-        size={compact ? 'md' : 'md'}
+        size={compact ? 'sm' : 'md'}
         showVenue={!compact}
-        labelClassName={compact ? 'max-w-full text-[16px]' : 'max-w-full'}
+        labelClassName={compact ? 'max-w-full text-[14px]' : 'max-w-full'}
       />
-      <div className={`${compact ? 'mt-0.5 text-[13px] leading-4' : 'text-base'} flex flex-wrap items-center gap-x-1.5 gap-y-1 font-data text-arena-elements-textSecondary`}>
+      <div className={`${compact ? 'mt-0.5 text-[12px] leading-4' : 'text-base'} flex flex-wrap items-center gap-x-1.5 gap-y-1 font-data text-arena-elements-textSecondary`}>
         <span>{formatTradeAmount(trade.amountIn)}</span>
         <AssetDisplay asset={trade.assetIn} compact preferSymbol showSecondary={false} />
         <span className="mx-1.5 text-arena-elements-textTertiary">→</span>
@@ -454,8 +455,8 @@ export function TradeHistoryTab({
   if (isLoading) {
     if (compact) {
       return (
-        <div className="flex h-full min-h-0 flex-col overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
-          <div className="grid grid-cols-[8.6rem_8.45rem_minmax(0,1fr)_8rem_7.35rem] gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">
+        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-none border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+          <div className="grid grid-cols-[7.6rem_7.25rem_minmax(0,1fr)_7rem_7.35rem] gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">
             <span>Time</span>
             <span>Trade</span>
             <span>Market</span>
@@ -464,7 +465,7 @@ export function TradeHistoryTab({
           </div>
           <div className="divide-y divide-[var(--arena-terminal-border)]">
             {Array.from({ length: 6 }).map((_, index) => (
-              <div key={index} className="grid grid-cols-[8.6rem_8.45rem_minmax(0,1fr)_8rem_7.35rem] gap-2 px-3 py-1.5">
+              <div key={index} className="grid grid-cols-[7.6rem_7.25rem_minmax(0,1fr)_7rem_7.35rem] gap-2 px-3 py-1.5">
                 {Array.from({ length: 5 }).map((__, cellIndex) => (
                   <div key={cellIndex} className="h-4 animate-pulse rounded bg-[var(--arena-terminal-panel-strong)]" />
                 ))}
@@ -477,8 +478,8 @@ export function TradeHistoryTab({
 
     return (
       <div className={compact ? 'flex h-full min-h-0 flex-col gap-2' : 'space-y-3'}>
-        <div className={`${compact ? 'min-h-0 flex-1' : ''} overflow-x-auto border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36`}>
-          <Table className={compact ? 'w-full table-fixed' : 'min-w-[1120px]'}>
+        <div className={`${compact ? 'min-h-0 flex-1' : ''} overflow-x-auto rounded-none border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36 ${SQUARE_TABLE_CLASS}`}>
+          <Table className={`${compact ? 'w-full table-fixed' : 'min-w-[1120px]'} ${SQUARE_TABLE_CLASS}`}>
             <TradeTableHead compact={compact} />
             <TableBody>
               {Array.from({ length: 5 }).map((_, i) => (
@@ -531,8 +532,8 @@ export function TradeHistoryTab({
         terminal={compact}
       />
 
-      <div className={`${compact ? 'min-h-0 flex-1 overflow-auto border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'overflow-x-auto border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} border`}>
-        <Table className={compact ? 'w-full table-fixed' : 'min-w-[1120px]'}>
+      <div className={`${compact ? 'min-h-0 flex-1 overflow-auto border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'overflow-x-auto border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} rounded-none border ${SQUARE_TABLE_CLASS}`}>
+        <Table className={`${compact ? 'w-full table-fixed' : 'min-w-[1120px]'} ${SQUARE_TABLE_CLASS}`}>
           <TradeTableHead compact={compact} />
           <TableBody>
             {trades.map((trade) => {
@@ -746,12 +747,12 @@ export function TradeHistoryTab({
                       </Badge>
                     )}
                   </TableCell>
-                  <TableCell className={compact ? 'min-w-0 py-0.5 align-middle font-display text-[16px] font-semibold' : 'min-w-[420px] py-3 align-top font-display text-lg font-medium'}>
+                  <TableCell className={compact ? 'min-w-0 py-0.5 align-middle font-display text-[14px] font-semibold' : 'min-w-[420px] py-3 align-top font-display text-lg font-medium'}>
                     {renderTradeInstrumentCell(trade, compact)}
                   </TableCell>
                   {compact && (
                     <>
-                      <TableCell className="min-w-0 truncate py-0.5 text-right align-middle font-data text-[15px] tabular-nums text-[var(--arena-terminal-text-secondary)]" title={getTradeSizeLabel(trade)}>
+                      <TableCell className="min-w-0 truncate py-0.5 text-right align-middle font-data text-[14px] tabular-nums text-[var(--arena-terminal-text-secondary)]" title={getTradeSizeLabel(trade)}>
                         {getTradeSizeLabel(trade)}
                       </TableCell>
                       <TableCell className="py-0.5 text-right align-middle font-data text-[16px] font-semibold tabular-nums text-[var(--arena-terminal-text)]">

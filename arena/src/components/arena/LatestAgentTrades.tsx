@@ -98,15 +98,15 @@ export function LatestAgentTrades({
   return (
     <section
       data-testid="live-fill-tape"
-      className={`${isBounded ? 'flex h-full min-h-0 flex-col overflow-hidden' : 'mb-6'} border ${isBounded ? 'border-[#273035] bg-[#0f1a1f]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/42'} ${className}`}
+      className={`${isBounded ? 'flex h-full min-h-0 flex-col overflow-hidden' : 'mb-6'} border ${isBounded ? 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/42'} ${className}`}
       aria-live="polite"
     >
-      <div className={`flex h-10 shrink-0 items-center justify-between gap-4 border-b px-3 ${isBounded ? 'border-[#273035] bg-[#0b1418]' : 'border-arena-elements-dividerColor/60 sm:px-5'} ${isExplorer ? 'py-2.5' : 'py-2'}`}>
-        <h2 className={`font-display font-semibold tracking-tight ${isBounded ? 'text-[#f6fefd]' : 'text-arena-elements-textPrimary'} ${isExplorer ? 'text-lg' : 'text-base'}`}>
+      <div className={`flex h-10 shrink-0 items-center justify-between gap-4 border-b px-3 ${isBounded ? 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'border-arena-elements-dividerColor/60 sm:px-5'} ${isExplorer ? 'py-2.5' : 'py-2'}`}>
+        <h2 className={`font-display font-semibold tracking-tight ${isBounded ? 'text-[var(--arena-terminal-text)]' : 'text-arena-elements-textPrimary'} ${isExplorer ? 'text-lg' : 'text-base'}`}>
           {isExplorer ? 'Fills' : 'Fills'}
         </h2>
         {trades.length === 0 && candidateCount > 0 && (
-          <span className={`font-data text-xs ${isBounded ? 'text-[#697371]' : 'text-arena-elements-textTertiary'}`}>
+          <span className={`font-data text-xs ${isBounded ? 'text-[var(--arena-terminal-text-subtle)]' : 'text-arena-elements-textTertiary'}`}>
             {candidateCount}
           </span>
         )}
@@ -125,7 +125,7 @@ export function LatestAgentTrades({
           ))}
         </div>
       ) : visibleTrades.length === 0 ? (
-        <div className={`${isBounded ? 'flex min-h-0 flex-1 items-center justify-center' : 'px-5 py-10'} text-center text-sm text-arena-elements-textSecondary`}>
+        <div className={`${isBounded ? 'flex min-h-0 flex-1 items-center justify-center text-[var(--arena-terminal-text-muted)]' : 'px-5 py-10 text-arena-elements-textSecondary'} text-center text-sm`}>
           No recent fills reported by active agents.
         </div>
       ) : isPanel ? (
@@ -133,7 +133,7 @@ export function LatestAgentTrades({
           data-testid="live-fill-tape-scroll"
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
-          <div className="divide-y divide-[#273035]">
+          <div className="divide-y divide-[var(--arena-terminal-border)]">
             {visibleTrades.map(({ trade, bot, botId, botName }) => {
               const operatorAddress = bot?.operatorAddress;
               const hasOperatorAddress = operatorAddress != null && isAddress(operatorAddress);
@@ -143,11 +143,11 @@ export function LatestAgentTrades({
                 <Link
                   key={`${botId}:${trade.id}`}
                   to={href}
-                  className="group grid w-full grid-cols-[3.2rem_minmax(0,1fr)_5.2rem] items-center gap-1.5 px-3 py-2.5 text-left transition-colors hover:bg-[#16242a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                  className="group grid w-full grid-cols-[2.8rem_minmax(0,1fr)_5rem] items-center gap-1.5 px-2.5 py-2 text-left transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
                   aria-label={`Open ${agentName} performance for ${formatTradeActionLabel(trade.action)} ${getTradeMarketLabel(trade)} fill ${formatTradeUsd(trade.notionalUsd)} ${formatTradeAge(trade.timestamp)}`}
                 >
                   <span
-                    className="font-data text-sm text-[#697371]"
+                    className="font-data text-[13px] text-[var(--arena-terminal-text-subtle)]"
                     title={formatTradeTimestamp(trade.timestamp)}
                   >
                     {formatTradeAge(trade.timestamp)}
@@ -159,7 +159,7 @@ export function LatestAgentTrades({
                       ) : (
                         <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
                       )}
-                      <span className="truncate font-display text-sm font-semibold text-[#f6fefd] group-hover:text-[#50d2c1]">
+                      <span className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
                         {agentName}
                       </span>
                     </span>
@@ -168,13 +168,13 @@ export function LatestAgentTrades({
                         trade={trade}
                         size="sm"
                         showVenue={false}
-                        labelClassName="max-w-full"
+                        labelClassName="max-w-full text-[13px]"
                         terminal
                       />
                     </span>
                   </span>
                   <span className="flex min-w-0 flex-col items-end gap-1">
-                    <span className="truncate text-right font-data text-sm font-semibold text-[#f6fefd]">
+                    <span className="truncate text-right font-data text-[13px] font-semibold text-[var(--arena-terminal-text)]">
                       {formatTradeUsd(trade.notionalUsd)}
                     </span>
                     <span className={`inline-flex h-6 max-w-full items-center justify-center truncate rounded-[4px] px-1.5 font-data text-[10px] font-bold ${getTerminalTradeActionPillClass(trade.action)}`}>
@@ -193,15 +193,15 @@ export function LatestAgentTrades({
               data-testid="live-fill-explorer-scroll"
               className="min-h-0 flex-1 overflow-auto overscroll-contain [scrollbar-gutter:stable]"
             >
-              <table className="w-full min-w-[680px] border-separate border-spacing-0">
-                <thead className="sticky top-0 z-10 bg-[#0b1418] backdrop-blur">
+              <table className="w-full min-w-[680px] border-separate border-spacing-0 rounded-none">
+                <thead className="sticky top-0 z-10 rounded-none bg-[var(--arena-terminal-surface)] backdrop-blur">
                   <tr>
-                    <th className="border-b border-[#273035] px-3 py-2 text-left font-data text-xs font-medium text-[#697371]">Time</th>
-                    <th className="border-b border-[#273035] px-3 py-2 text-left font-data text-xs font-medium text-[#697371]">Agent</th>
-                    <th className="border-b border-[#273035] px-3 py-2 text-left font-data text-xs font-medium text-[#697371]">Fill</th>
-                    <th className="border-b border-[#273035] px-3 py-2 text-left font-data text-xs font-medium text-[#697371]">Market</th>
-                    <th className="border-b border-[#273035] px-3 py-2 text-right font-data text-xs font-medium text-[#697371]">USD</th>
-                    <th className="hidden border-b border-[#273035] px-3 py-2 text-right font-data text-xs font-medium text-[#697371] 2xl:table-cell">Ref</th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-left font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)]">Time</th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-left font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)]">Agent</th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-left font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)]">Fill</th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-left font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)]">Market</th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-right font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)]">USD</th>
+                    <th className="hidden rounded-none border-b border-[var(--arena-terminal-border)] px-3 py-2 text-right font-data text-xs font-medium text-[var(--arena-terminal-text-subtle)] 2xl:table-cell">Ref</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -214,18 +214,18 @@ export function LatestAgentTrades({
                     return (
                       <tr
                         key={`${botId}:${trade.id}`}
-                        className={`group transition-colors hover:bg-[#16242a] ${
-                          selected ? 'bg-[#123f3a]' : ''
+                        className={`group transition-colors hover:bg-[var(--arena-terminal-panel-strong)] ${
+                          selected ? 'bg-[var(--arena-terminal-accent-soft)]' : ''
                         }`}
                         aria-current={selected ? 'true' : undefined}
                       >
                         <td
-                          className="border-b border-[#273035] px-3 py-2.5 align-middle font-data text-sm text-[#949e9c]"
+                          className="border-b border-[var(--arena-terminal-border)] px-3 py-2 align-middle font-data text-sm text-[var(--arena-terminal-text-muted)]"
                           title={formatTradeTimestamp(trade.timestamp)}
                         >
                           {formatTradeAge(trade.timestamp)}
                         </td>
-                        <td className="border-b border-[#273035] px-3 py-2.5 align-middle">
+                        <td className="border-b border-[var(--arena-terminal-border)] px-3 py-2 align-middle">
                           <Link
                             to={`/arena/bot/${encodeURIComponent(botId)}/performance`}
                             className="flex min-w-0 items-center gap-2.5 rounded-[5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
@@ -235,12 +235,12 @@ export function LatestAgentTrades({
                             ) : (
                               <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
                             )}
-                            <span className="truncate font-display text-sm font-semibold text-[#f6fefd] group-hover:text-[#50d2c1]">
+                            <span className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
                               {agentName}
                             </span>
                           </Link>
                         </td>
-                        <td className="border-b border-[#273035] px-3 py-2.5 align-middle">
+                        <td className="border-b border-[var(--arena-terminal-border)] px-3 py-2 align-middle">
                           <button
                             type="button"
                             className={`inline-flex h-8 min-w-[4.75rem] items-center justify-start rounded-none bg-transparent px-0 font-data text-xs font-bold transition-[color,opacity] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${getTradeActionToneClass(trade.action)}`}
@@ -251,19 +251,19 @@ export function LatestAgentTrades({
                             {formatTradeActionLabel(trade.action)}
                           </button>
                         </td>
-                        <td className="border-b border-[#273035] px-3 py-2.5 align-middle">
+                        <td className="border-b border-[var(--arena-terminal-border)] px-3 py-2 align-middle">
                           <TradeInstrumentDisplay
                             trade={trade}
                             size="md"
                             showVenue={false}
-                            labelClassName="max-w-[320px]"
+                            labelClassName="max-w-[280px]"
                             terminal
                           />
                         </td>
-                        <td className="border-b border-[#273035] px-3 py-2.5 text-right align-middle font-data text-base font-semibold text-[#f6fefd]">
+                        <td className="border-b border-[var(--arena-terminal-border)] px-3 py-2 text-right align-middle font-data text-base font-semibold text-[var(--arena-terminal-text)]">
                           {formatTradeUsd(trade.notionalUsd)}
                         </td>
-                        <td className="hidden border-b border-[#273035] px-3 py-2.5 text-right align-middle font-data text-sm text-[#949e9c] 2xl:table-cell">
+                        <td className="hidden border-b border-[var(--arena-terminal-border)] px-3 py-2 text-right align-middle font-data text-sm text-[var(--arena-terminal-text-muted)] 2xl:table-cell">
                           {formatReference(trade)}
                         </td>
                       </tr>
@@ -272,26 +272,26 @@ export function LatestAgentTrades({
                 </tbody>
               </table>
             </div>
-            <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-t border-[#273035] bg-[#0b1418] px-3">
-              <span className="font-data text-xs tabular-nums text-[#949e9c]">
+            <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-t border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3">
+              <span className="font-data text-xs tabular-nums text-[var(--arena-terminal-text-muted)]">
                 {visibleTrades.length > 0 ? `${formatNumber(explorerPageStart + 1, { maximumFractionDigits: 0 })}-${formatNumber(explorerPageEnd, { maximumFractionDigits: 0 })}` : '0'} / {formatNumber(visibleTrades.length, { maximumFractionDigits: 0 })}
               </span>
               <div className="flex shrink-0 items-center gap-1.5">
                 <button
                   type="button"
-                  className="inline-flex h-7 w-8 items-center justify-center rounded-[4px] border border-[#273035] bg-[#0f1a1f] text-[#d2dad7] transition-[background-color,border-color,color,opacity] duration-150 hover:border-[#50d2c1]/50 hover:bg-[#143c38] hover:text-[#f6fefd] disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                  className="inline-flex h-7 w-8 items-center justify-center rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)] transition-[background-color,border-color,color,opacity] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)] disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
                   aria-label="Previous fills page"
                   disabled={explorerPage <= 1}
                   onClick={() => selectExplorerPage(explorerPage - 1)}
                 >
                   <span className="i-ph:caret-left-bold text-xs" aria-hidden="true" />
                 </button>
-                <span className="min-w-12 text-center font-data text-xs tabular-nums text-[#d2dad7]">
+                <span className="min-w-12 text-center font-data text-xs tabular-nums text-[var(--arena-terminal-text-secondary)]">
                   {formatNumber(explorerPage, { maximumFractionDigits: 0 })} / {formatNumber(explorerPageCount, { maximumFractionDigits: 0 })}
                 </span>
                 <button
                   type="button"
-                  className="inline-flex h-7 w-8 items-center justify-center rounded-[4px] border border-[#273035] bg-[#0f1a1f] text-[#d2dad7] transition-[background-color,border-color,color,opacity] duration-150 hover:border-[#50d2c1]/50 hover:bg-[#143c38] hover:text-[#f6fefd] disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                  className="inline-flex h-7 w-8 items-center justify-center rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)] transition-[background-color,border-color,color,opacity] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)] disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
                   aria-label="Next fills page"
                   disabled={explorerPage >= explorerPageCount}
                   onClick={() => selectExplorerPage(explorerPage + 1)}
@@ -420,28 +420,28 @@ function FillInspector({
   return (
     <aside
       data-testid="fill-inspector"
-      className="hidden min-h-0 flex-col border-l border-[#273035] bg-[#0b1418] lg:flex"
+      className="hidden min-h-0 flex-col border-l border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] lg:flex"
       aria-label="Selected fill"
     >
-      <div className="border-b border-[#273035] p-3">
+      <div className="border-b border-[var(--arena-terminal-border)] p-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="mb-2 flex items-center gap-2">
               <span className={`inline-flex h-7 items-center justify-center rounded-[4px] px-2 font-data text-[11px] font-bold ${getTerminalTradeActionPillClass(trade.action)}`}>
                 {formatTradeActionLabel(trade.action)}
               </span>
-              <span className="font-mono text-xs text-[#949e9c]">{formatTradeTimestamp(trade.timestamp)}</span>
+              <span className="font-mono text-xs text-[var(--arena-terminal-text-muted)]">{formatTradeTimestamp(trade.timestamp)}</span>
             </div>
-            <h3 className="truncate font-display text-lg font-semibold text-[#f6fefd]">
+            <h3 className="truncate font-display text-lg font-semibold text-[var(--arena-terminal-text)]">
               {formatTradeUsd(trade.notionalUsd)}
             </h3>
-            <p className="mt-1 truncate font-mono text-xs text-[#949e9c]">
+            <p className="mt-1 truncate font-mono text-xs text-[var(--arena-terminal-text-muted)]">
               {getTradeMarketLabel(trade)}
             </p>
           </div>
           <Link
             to={`/arena/bot/${encodeURIComponent(botId)}/performance`}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2.5 font-display text-xs font-semibold text-[#d2dad7] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2.5 font-display text-xs font-semibold text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
           >
             <span className="i-ph:arrow-square-out text-sm" aria-hidden="true" />
             Agent
@@ -450,7 +450,7 @@ function FillInspector({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
-        <section className="mb-3 rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-3">
+        <section className="mb-3 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3">
           <div className="mb-3 flex min-w-0 items-center gap-2.5">
             {hasOperatorAddress ? (
               <Identicon address={operatorAddress as Address} size={26} />
@@ -458,8 +458,8 @@ function FillInspector({
               <span className="i-ph:robot inline-block size-6 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
             )}
             <div className="min-w-0">
-              <div className="truncate font-display text-sm font-semibold text-[#f6fefd]">{agentName}</div>
-              <div className="truncate font-mono text-xs text-[#949e9c]">{bot?.strategyType ?? 'strategy'}</div>
+              <div className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">{agentName}</div>
+              <div className="truncate font-mono text-xs text-[var(--arena-terminal-text-muted)]">{bot?.strategyType ?? 'strategy'}</div>
             </div>
           </div>
           <TradeInstrumentDisplay
@@ -471,7 +471,7 @@ function FillInspector({
           />
         </section>
 
-        <section className="overflow-hidden border border-[#273035] bg-[#0f1a1f]">
+        <section className="overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
           <InspectorRow label="Mode" value={formatTradeModeLabel(trade)} />
           <InspectorRow label="Venue" value={venue} />
           <InspectorRow label="Status" value={executionStatus} />
@@ -488,9 +488,9 @@ function FillInspector({
         </section>
 
         {(reasoning || identifiers.length > 0) && (
-          <section className="mt-3 rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-3">
+          <section className="mt-3 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3">
             {reasoning && (
-              <p className="line-clamp-4 text-sm leading-6 text-[#d2dad7]">
+              <p className="line-clamp-4 text-sm leading-6 text-[var(--arena-terminal-text-secondary)]">
                 {reasoning}
               </p>
             )}
@@ -499,10 +499,10 @@ function FillInspector({
                 {identifiers.map(([label, value]) => (
                   <span
                     key={`${label}:${value}`}
-                    className="inline-flex max-w-full items-center gap-1 rounded-[4px] border border-[#273035] bg-[#081013] px-2 py-1 font-mono text-[11px] text-[#949e9c]"
+                    className="inline-flex max-w-full items-center gap-1 rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-2 py-1 font-mono text-[11px] text-[var(--arena-terminal-text-muted)]"
                   >
-                    <span className="text-[#697371]">{label}</span>
-                    <span className="max-w-[11rem] truncate text-[#d2dad7]">{value}</span>
+                    <span className="text-[var(--arena-terminal-text-subtle)]">{label}</span>
+                    <span className="max-w-[11rem] truncate text-[var(--arena-terminal-text-secondary)]">{value}</span>
                   </span>
                 ))}
               </div>
@@ -516,9 +516,9 @@ function FillInspector({
 
 function InspectorRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 border-b border-[#273035] px-3 py-2 last:border-b-0">
-      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#697371]">{label}</span>
-      <span className="min-w-0 truncate text-right font-mono text-xs text-[#d2dad7]">{value || '—'}</span>
+    <div className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2 last:border-b-0">
+      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">{label}</span>
+      <span className="min-w-0 truncate text-right font-mono text-xs text-[var(--arena-terminal-text-secondary)]">{value || '—'}</span>
     </div>
   );
 }

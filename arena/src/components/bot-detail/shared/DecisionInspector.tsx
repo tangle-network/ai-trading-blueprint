@@ -87,6 +87,39 @@ function sourceLabel(source: DecisionFeedItem['source']): string {
   return source === 'trade' ? 'Execution decision' : 'Agent run decision';
 }
 
+function venuePresentation(label: string | undefined, instrumentLabel: string) {
+  const source = (label ?? instrumentLabel).toLowerCase();
+  if (source.includes('aerodrome')) {
+    return { mark: 'AERO', label: 'Aerodrome', iconClass: 'i-ph:swap', toneClass: 'border-[#5fd7ff]/30 bg-[#0a2a34] text-[#7be6ff]' };
+  }
+  if (source.includes('hyperliquid')) {
+    return { mark: 'HL', label: 'Hyperliquid', iconClass: 'i-ph:chart-line-up', toneClass: 'border-[#50d2c1]/28 bg-[#0d302c] text-[#50d2c1]' };
+  }
+  if (source.includes('paper')) {
+    return { mark: 'SIM', label: 'Paper', iconClass: 'i-ph:notepad', toneClass: 'border-[#6f5723] bg-[#201808] text-[#f2c066]' };
+  }
+  if (source.includes('polymarket') || source.includes('clob')) {
+    return { mark: 'CLOB', label: 'CLOB', iconClass: 'i-ph:book-open', toneClass: 'border-[#7f5cff]/28 bg-[#1b1234] text-[#c9bcff]' };
+  }
+  if (source.includes('uniswap') || source.includes('dex')) {
+    return { mark: 'DEX', label: label ?? 'DEX', iconClass: 'i-ph:swap', toneClass: 'border-[#5fd7ff]/30 bg-[#0a2434] text-[#7be6ff]' };
+  }
+  return { mark: 'RUN', label: label ?? 'Execution venue', iconClass: 'i-ph:activity', toneClass: 'border-[#273035] bg-[#16242a] text-[#d2dad7]' };
+}
+
+function TerminalStatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 border border-[#273035] bg-[#081013] px-2.5 py-2">
+      <div className="truncate font-data text-[10px] font-semibold uppercase tracking-[0.12em] text-[#697371]">
+        {label}
+      </div>
+      <div className="mt-1 truncate font-data text-sm font-bold text-[#f6fefd]" title={value}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 export function DecisionInspector({
   item,
   className,
@@ -120,6 +153,8 @@ export function DecisionInspector({
     entry !== null && !(isTerminal && entry.label === 'Notional')
   ));
   const capturedStages = item.stages.filter((stage) => stage.value !== 'Not captured' || Boolean(stage.detail));
+  const venue = venuePresentation(item.venueLabel, item.instrumentLabel);
+  const terminalSections = item.sections?.filter((section) => section.items.length > 0).slice(0, 3) ?? [];
 
   return (
     <aside
@@ -133,9 +168,25 @@ export function DecisionInspector({
     >
       <div className={cx(
         isTerminal
-          ? 'rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-2.5'
+          ? 'rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-3'
           : 'rounded-xl border-0 border-arena-elements-dividerColor/45 bg-transparent p-0',
       )}>
+        {isTerminal && (
+          <div className="mb-3 flex min-w-0 items-center gap-3 border-b border-[#273035] pb-3">
+            <div className={cx('flex h-12 w-12 shrink-0 items-center justify-center border font-data text-[13px] font-black tracking-tight', venue.toneClass)}>
+              {venue.mark}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5 font-data text-[11px] uppercase tracking-[0.12em] text-[#50d2c1]">
+                <span className={`${venue.iconClass} shrink-0 text-sm`} aria-hidden="true" />
+                <span className="truncate">{venue.label}</span>
+              </div>
+              <div className="mt-1 truncate font-display text-lg font-semibold text-[#f6fefd]">
+                {item.instrumentLabel}
+              </div>
+            </div>
+          </div>
+        )}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -175,7 +226,7 @@ export function DecisionInspector({
           {instrumentSlot ?? (
             <p className={cx(
               'truncate font-data',
-              isTerminal ? 'text-[#d2dad7]' : 'text-arena-elements-textSecondary',
+              isTerminal ? 'text-[#d2dad7] sr-only' : 'text-arena-elements-textSecondary',
               isTerminal ? 'text-base' : 'text-sm',
             )}>
               {item.instrumentLabel}
@@ -183,20 +234,9 @@ export function DecisionInspector({
           )}
         </div>
         {isTerminal && primaryStats.length > 0 && (
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
+          <div className="mt-3 grid grid-cols-2 gap-2">
             {primaryStats.map((stat) => (
-              <span
-                key={stat.label}
-                className={cx(
-                  'max-w-full truncate rounded-full border px-2 py-1 font-data text-[11px]',
-                  isTerminal
-                    ? 'border-[#273035] bg-[#16242a] text-[#d2dad7]'
-                    : 'border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-2/54 text-arena-elements-textSecondary',
-                )}
-                title={`${stat.label}: ${stat.value}`}
-              >
-                <span className={isTerminal ? 'text-[#949e9c]' : 'text-arena-elements-textTertiary'}>{stat.label}</span> {stat.value}
-              </span>
+              <TerminalStatCard key={stat.label} label={stat.label} value={stat.value} />
             ))}
           </div>
         )}
@@ -251,6 +291,33 @@ export function DecisionInspector({
         <div className={cx('mt-3 grid gap-2', isTerminal ? 'grid-cols-1 min-[1440px]:grid-cols-2' : 'grid-cols-1')}>
           {capturedStages.map((stage) => (
             <StageRow key={stage.key} stage={stage} isTerminal={isTerminal} />
+          ))}
+        </div>
+      )}
+
+      {isTerminal && terminalSections.length > 0 && (
+        <div className="mt-4 grid gap-2">
+          <div className="font-data text-[10px] font-semibold uppercase tracking-[0.14em] text-[#949e9c]">
+            Parsed Output
+          </div>
+          {terminalSections.map((section) => (
+            <section key={section.title} className="border border-[#273035] bg-[#0f1a1f] p-2.5">
+              <div className="truncate font-display text-xs font-semibold text-[#f6fefd]">
+                {section.title}
+              </div>
+              <div className="mt-2 grid gap-1.5">
+                {section.items.slice(0, 5).map((entry) => (
+                  <div key={`${section.title}-${entry.label}`} className="grid min-w-0 grid-cols-[6.25rem_minmax(0,1fr)] gap-2 font-data text-[11px]">
+                    <span className="truncate uppercase tracking-[0.08em] text-[#697371]">
+                      {entry.label}
+                    </span>
+                    <span className="min-w-0 truncate text-right text-[#d2dad7]" title={entry.value}>
+                      {entry.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}

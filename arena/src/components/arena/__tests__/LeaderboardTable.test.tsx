@@ -65,6 +65,9 @@ describe('LeaderboardTable', () => {
       </MemoryRouter>,
     );
 
+    const table = screen.getByRole('table');
+    expect(table).toHaveClass('rounded-none');
+    expect(table.parentElement).toHaveClass('rounded-none');
     expect(screen.getByText('24H')).toBeInTheDocument();
     expect(screen.getByText('Total')).toBeInTheDocument();
     expect(screen.getByTitle('Visible fills from the latest fetched trade ledger.')).toHaveTextContent('12');

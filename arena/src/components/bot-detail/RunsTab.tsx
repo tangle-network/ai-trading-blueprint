@@ -228,10 +228,10 @@ function RunsSidebar({
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[260px] basis-[260px]"}`
+          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[236px] basis-[236px]"}`
       }
     >
-      <div className={`border-b border-arena-elements-dividerColor/50 ${collapsed ? "px-2 py-3" : "px-4 py-3"}`}>
+      <div className={`border-b border-arena-elements-dividerColor/50 ${collapsed ? "px-2 py-3" : "px-3 py-2.5"}`}>
         <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : "justify-between"}`}>
           {!collapsed && (
             <div className="min-w-0">
@@ -256,9 +256,11 @@ function RunsSidebar({
           )}
         </div>
         {!collapsed && summary.total > 0 && (
-          <div className="mt-3 grid grid-cols-3 gap-1.5 font-data text-[11px] text-arena-elements-textTertiary">
+          <div className="mt-2 flex min-w-0 items-center gap-2 font-data text-[11px] text-arena-elements-textTertiary">
             <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.running}</b> live</span>
+            <span aria-hidden="true">/</span>
             <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.completed}</b> done</span>
+            <span aria-hidden="true">/</span>
             <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.failed}</b> fail</span>
           </div>
         )}
@@ -313,7 +315,7 @@ function RunsSidebar({
                 <button
                   key={run.id}
                   aria-pressed={isActive}
-                    className={`group grid w-full grid-cols-[10px_minmax(0,1fr)] gap-3 border-l-2 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
+                    className={`group grid w-full grid-cols-[10px_minmax(0,1fr)] gap-2.5 border-l-2 px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
                     isActive
                       ? "border-amber-500 bg-arena-elements-item-backgroundActive"
                       : "border-transparent hover:bg-arena-elements-item-backgroundHover"
@@ -337,10 +339,10 @@ function RunsSidebar({
                         {run.title}
                       </div>
                     </div>
-                    <div className="mt-1 truncate text-sm font-data text-arena-elements-textTertiary">
+                    <div className="mt-0.5 truncate text-xs font-data text-arena-elements-textTertiary">
                       {run.subtitle}
                     </div>
-                    <div className="mt-1.5 flex min-w-0 items-center gap-2 font-data text-[11px] text-arena-elements-textTertiary">
+                    <div className="mt-1 flex min-w-0 items-center gap-1.5 font-data text-[11px] text-arena-elements-textTertiary">
                       <span className={run.status === "running" ? "text-amber-400" : run.status === "completed" ? "text-emerald-400" : run.status === "interrupted" ? "text-slate-400" : "text-crimson-400"}>
                         {getStatusLabel(run.status)}
                       </span>
@@ -1040,7 +1042,7 @@ export function RunsTab({
                   ? ""
                   : isStackedLayout
                     ? "flex flex-col"
-                    : "grid grid-cols-[minmax(0,1fr)_320px]"
+                    : "grid grid-cols-[minmax(0,1fr)_360px]"
               }`}
             >
               {showDecisionInspector && isStackedLayout && (

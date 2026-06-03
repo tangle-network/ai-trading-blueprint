@@ -940,7 +940,7 @@ export function ChatTab({
                 ? ""
                 : isStackedLayout
                   ? "flex flex-col"
-                  : "grid grid-cols-[minmax(0,1fr)_320px]"
+                  : "grid grid-cols-[minmax(0,1fr)_360px]"
             }`}
           >
             {showDecisionInspector && isStackedLayout && (

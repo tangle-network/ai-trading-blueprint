@@ -175,17 +175,17 @@ function marketCandleLimitForRange(range: PerformanceRange): number {
 function tradeMarkerPagesForRange(range: PerformanceRange): number {
   switch (range) {
     case '1d':
-      return 1;
+      return 3;
     case '7d':
-      return 2;
-    case '30d':
-      return 4;
-    case '6m':
-      return 6;
-    case '1y':
       return 8;
+    case '30d':
+      return 20;
+    case '6m':
+      return 40;
+    case '1y':
+      return 60;
     default:
-      return 4;
+      return 20;
   }
 }
 

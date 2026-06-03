@@ -20,6 +20,8 @@ interface PositionsTabProps {
   workspaceLayout?: 'wide' | 'rail' | 'ledger';
 }
 
+const SQUARE_TABLE_CLASS = 'rounded-none [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_table]:rounded-none [&_thead]:rounded-none [&_tbody]:rounded-none [&_tr]:rounded-none [&_th]:rounded-none [&_td]:rounded-none';
+
 export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorKind, verificationState, assetMetadata, workspace = false, workspaceLayout = 'wide' }: PositionsTabProps) {
   const isLive = isLiveBotStatus(status);
   const compactRail = workspace && workspaceLayout === 'rail';
@@ -211,8 +213,8 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   const positionPrimaryCellClass = (dense: boolean) => dense ? 'py-1.5 text-[15px]' : 'py-4';
 
   const renderStandardPositionsTable = (positions: Position[], dense = false) => (
-    <div className={`${ledger ? 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
-      <Table className={dense ? 'min-w-[620px]' : 'min-w-[780px]'}>
+    <div className={`${ledger ? 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto rounded-none border ${SQUARE_TABLE_CLASS}`}>
+      <Table className={`${dense ? 'min-w-[620px]' : 'min-w-[780px]'} ${SQUARE_TABLE_CLASS}`}>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
           <TableHead className={positionHeadClass(dense)}>Asset</TableHead>
@@ -257,8 +259,8 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   );
 
   const renderPerpPositionsTable = (positions: Position[], dense = false) => (
-    <div className={`${ledger ? 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
-      <Table className={dense ? 'min-w-[920px]' : 'min-w-[1120px]'}>
+    <div className={`${ledger ? 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto rounded-none border ${SQUARE_TABLE_CLASS}`}>
+      <Table className={`${dense ? 'min-w-[920px]' : 'min-w-[1120px]'} ${SQUARE_TABLE_CLASS}`}>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
           <TableHead className={positionHeadClass(dense)}>Market</TableHead>
@@ -539,7 +541,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
               <div className="font-data text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">
                 {metric.label}
               </div>
-              <div className={`mt-1 min-w-0 truncate font-data text-xl font-bold leading-none tracking-tight ${metric.valueClassName}`}>
+              <div className={`mt-1 min-w-0 truncate font-data text-2xl font-bold leading-none tracking-tight ${metric.valueClassName}`}>
                 {metric.value}
               </div>
               <div className="mt-1 truncate font-data text-[11px] text-[var(--arena-terminal-text-muted)]" title={metric.detail}>

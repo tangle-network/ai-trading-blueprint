@@ -162,7 +162,7 @@ function AgentRunGroup({
               }
               return (
                 <div key={key} className="px-2.5 py-1.5">
-                  <AppMarkdown className={isTerminal ? 'text-base leading-7 text-[#f6fefd]' : 'text-base leading-7'}>{text}</AppMarkdown>
+                  <AppMarkdown className={isTerminal ? 'text-[14px] leading-6 text-[#f6fefd]' : 'text-base leading-7'}>{text}</AppMarkdown>
                 </div>
               );
             }
@@ -253,7 +253,7 @@ export function ChatTranscript({
         ref={scrollRef}
         className={cn(
           'min-h-0 flex-1 overflow-y-auto',
-          isTerminal ? 'px-4 py-5 min-[900px]:px-6' : 'px-4 py-4',
+          isTerminal ? 'px-3 py-3 min-[900px]:px-4' : 'px-4 py-4',
         )}
         tabIndex={0}
         aria-label="Conversation transcript"
@@ -271,7 +271,7 @@ export function ChatTranscript({
             )}
           />
         ) : (
-          <div className={cn('mx-auto w-full space-y-3', isTerminal && 'max-w-[1120px] space-y-4')}>
+          <div className={cn('mx-auto w-full space-y-3', isTerminal && 'max-w-[1120px] space-y-3')}>
             {groups.map((group, groupIndex) => {
               if (group.type === 'user') {
                 return (

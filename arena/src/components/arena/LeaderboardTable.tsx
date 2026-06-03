@@ -20,7 +20,7 @@ interface LeaderboardTableProps {
 
 function RankCell({ rank }: { rank: number }) {
   return (
-    <span className="inline-flex h-8 w-8 items-center justify-center rounded-[4px] border border-[#273035] bg-[#0b1418] font-data text-sm font-semibold text-[#949e9c]">
+    <span className="inline-flex h-8 w-8 items-center justify-center rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] font-data text-sm font-semibold text-[var(--arena-terminal-text-muted)]">
       {formatNumber(rank, { maximumFractionDigits: 0 })}
     </span>
   );
@@ -46,19 +46,20 @@ export function LeaderboardTable({
   const sorted = rankLeaderboardBots(bots);
 
   return (
-    <Table className="w-full min-w-[760px] table-fixed bg-[#0f1a1f]">
+    <div className="rounded-none [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_.relative.overflow-auto]:!rounded-none [&_table]:!rounded-none [&_tbody]:!rounded-none [&_td]:!rounded-none [&_th]:!rounded-none [&_thead]:!rounded-none [&_tr]:!rounded-none">
+    <Table className="w-full min-w-[760px] table-fixed rounded-none bg-[var(--arena-terminal-panel)] [&_td]:rounded-none [&_th]:rounded-none [&_thead]:rounded-none [&_tr]:rounded-none">
       <TableHeader>
-        <TableRow className="border-b border-[#273035] bg-[#0b1418] hover:bg-[#0b1418]">
-          <TableHead className="w-14 py-3 font-data text-[11px] uppercase text-[#697371]">#</TableHead>
-          <TableHead className="w-[29%] py-3 font-data text-[11px] uppercase text-[#697371]">Agent</TableHead>
-          <TableHead className="hidden w-[13%] py-3 font-data text-[11px] uppercase text-[#697371] min-[1460px]:table-cell">Operator</TableHead>
-          <TableHead className="w-[11%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">24H Vol</TableHead>
-          <TableHead className="w-[7%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">24H</TableHead>
-          <TableHead className="w-[8%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">Total</TableHead>
-          <TableHead className="w-[10%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">Last</TableHead>
-          <TableHead className="hidden w-[8%] py-3 text-right font-data text-[11px] uppercase text-[#697371] min-[1320px]:table-cell">Mode</TableHead>
-          <TableHead className="w-[10%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">Return</TableHead>
-          <TableHead className="w-[6%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">Open</TableHead>
+        <TableRow className="rounded-none border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] hover:bg-[var(--arena-terminal-surface)]">
+          <TableHead className="w-14 rounded-none py-3 font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">#</TableHead>
+          <TableHead className="w-[29%] rounded-none py-3 font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">Agent</TableHead>
+          <TableHead className="hidden w-[13%] rounded-none py-3 font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)] min-[1460px]:table-cell">Operator</TableHead>
+          <TableHead className="w-[11%] rounded-none py-3 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">24H Vol</TableHead>
+          <TableHead className="w-[7%] rounded-none py-3 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">24H</TableHead>
+          <TableHead className="w-[8%] rounded-none py-3 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">Total</TableHead>
+          <TableHead className="w-[10%] rounded-none py-3 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">Last</TableHead>
+          <TableHead className="hidden w-[8%] rounded-none py-3 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)] min-[1320px]:table-cell">Mode</TableHead>
+          <TableHead className="w-[10%] rounded-none py-3 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">Return</TableHead>
+          <TableHead className="w-[6%] rounded-none py-3 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">Open</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -82,8 +83,8 @@ export function LeaderboardTable({
           return (
           <TableRow
             key={bot.id}
-            className={`group cursor-pointer border-b border-[#273035] transition-colors hover:bg-[#16242a] [content-visibility:auto] [contain-intrinsic-size:66px] ${
-              selected ? 'bg-[#132329] shadow-[inset_3px_0_0_rgba(80,210,193,0.9)]' : 'bg-[#0f1a1f]'
+            className={`group cursor-pointer border-b border-[var(--arena-terminal-border)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] [content-visibility:auto] [contain-intrinsic-size:66px] ${
+              selected ? 'bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_rgba(80,210,193,0.9)]' : 'bg-[var(--arena-terminal-panel)]'
             }`}
             role="button"
             tabIndex={0}
@@ -106,17 +107,17 @@ export function LeaderboardTable({
                 <div className="min-w-0 flex-1">
                   <Link
                     to={href}
-                    className="block truncate font-display text-lg font-semibold leading-tight text-[#f6fefd] transition-colors duration-200 hover:text-[#50d2c1]"
+                    className="block truncate font-display text-lg font-semibold leading-tight text-[var(--arena-terminal-text)] transition-colors duration-200 hover:text-[var(--arena-terminal-accent)]"
                     onClick={(event) => event.stopPropagation()}
                   >
                     {bot.name}
                   </Link>
                   <div className="mt-1 flex min-w-0 items-center gap-2 font-data text-sm">
-                    <span className="truncate text-[#949e9c]">
+                    <span className="truncate text-[var(--arena-terminal-text-muted)]">
                       {STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}
                     </span>
-                    <span className="h-1 w-1 shrink-0 rounded-full bg-[#697371]" aria-hidden="true" />
-                    <span className={bot.status === 'active' ? 'truncate text-[#50d2c1]' : 'truncate text-[#949e9c]'}>
+                    <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
+                    <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-accent)]' : 'truncate text-[var(--arena-terminal-text-muted)]'}>
                       {botStatusLabel(bot.status)}
                     </span>
                   </div>
@@ -124,44 +125,44 @@ export function LeaderboardTable({
               </div>
             </TableCell>
             <TableCell className="hidden min-w-0 py-3 align-middle min-[1460px]:table-cell">
-              <div className="flex min-w-0 items-center gap-2 font-data text-base text-[#d2dad7]">
+              <div className="flex min-w-0 items-center gap-2 font-data text-base text-[var(--arena-terminal-text-secondary)]">
                 <Identicon address={bot.operatorAddress as Address} size={24} />
                 <span className="truncate">{truncateAddress(bot.operatorAddress)}</span>
               </div>
             </TableCell>
-            <TableCell className="py-3 text-right align-middle font-data text-base text-[#f6fefd]">
+            <TableCell className="py-3 text-right align-middle font-data text-base text-[var(--arena-terminal-text)]">
               {formatFlowUsd(stats?.recentNotionalUsd ?? 0)}
             </TableCell>
-            <TableCell className="py-3 text-right align-middle font-data text-base font-bold text-[#f6fefd]">
+            <TableCell className="py-3 text-right align-middle font-data text-base font-bold text-[var(--arena-terminal-text)]">
               {formatNumber(stats?.recentFills ?? 0, { maximumFractionDigits: 0 })}
             </TableCell>
             <TableCell
-              className="py-3 text-right align-middle font-data text-base text-[#f6fefd]"
+              className="py-3 text-right align-middle font-data text-base text-[var(--arena-terminal-text)]"
               title={fillCountEvidenceTitle(totalFillEvidence)}
             >
               {totalFillEvidence.value > 0
                 ? formatNumber(totalFillEvidence.value, { maximumFractionDigits: 0 })
                 : '—'}
             </TableCell>
-            <TableCell className="py-3 text-right align-middle font-data text-base text-[#d2dad7]">
+            <TableCell className="py-3 text-right align-middle font-data text-base text-[var(--arena-terminal-text-secondary)]">
               {lastTradeAt != null ? formatTradeAge(lastTradeAt) : 'No fills'}
             </TableCell>
-            <TableCell className="hidden py-3 text-right align-middle font-data text-base text-[#d2dad7] min-[1320px]:table-cell">
+            <TableCell className="hidden py-3 text-right align-middle font-data text-base text-[var(--arena-terminal-text-secondary)] min-[1320px]:table-cell">
               {modeLabel(bot)}
             </TableCell>
             <TableCell className="py-3 text-right align-middle font-data text-base font-bold">
               {bot.pnlPercent === 0 ? (
-                <span className="text-[#697371]">{returnValue}</span>
+                <span className="text-[var(--arena-terminal-text-subtle)]">{returnValue}</span>
               ) : bot.pnlPercent > 0 ? (
-                <span className="text-[#50d2c1]">{returnValue}</span>
+                <span className="text-[var(--arena-terminal-accent)]">{returnValue}</span>
               ) : (
-                <span className="text-[#ff5d6c]">{returnValue}</span>
+                <span className="text-[var(--arena-terminal-danger)]">{returnValue}</span>
               )}
             </TableCell>
             <TableCell className="py-3 text-right align-middle">
               <Link
                 to={href}
-                className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-[5px] border border-[#273035] bg-[#0b1418] text-[#949e9c] transition-[background-color,border-color,color] duration-150 hover:border-[#50d2c1]/60 hover:bg-[#143c38] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-muted)] transition-[background-color,border-color,color] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
                 aria-label={`Open ${bot.name} performance`}
                 title="Open performance"
                 onClick={(event) => event.stopPropagation()}
@@ -174,5 +175,6 @@ export function LeaderboardTable({
         })}
       </TableBody>
     </Table>
+    </div>
   );
 }

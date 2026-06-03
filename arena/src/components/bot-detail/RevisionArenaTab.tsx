@@ -116,12 +116,12 @@ function RevisionRow({
     && revision.status === "candidate";
 
   return (
-    <article className="border-b border-arena-elements-dividerColor/50 px-5 py-5 last:border-b-0">
+    <article className="border-b border-[var(--arena-terminal-border)] px-4 py-4 last:border-b-0">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${statusClass(revision.status)}`} />
-            <h3 className="text-lg font-display font-semibold leading-tight text-arena-elements-textPrimary">
+            <h3 className="text-lg font-display font-semibold leading-tight text-[var(--arena-terminal-text)]">
               {revision.display_name}
             </h3>
             <span
@@ -129,15 +129,15 @@ function RevisionRow({
             >
               {modeLabel(revision.run_mode)}
             </span>
-            <span className="rounded-full border border-arena-elements-dividerColor/60 px-2.5 py-1 text-xs font-data text-arena-elements-textSecondary">
+            <span className="rounded-full border border-[var(--arena-terminal-border)] px-2.5 py-1 text-xs font-data text-[var(--arena-terminal-text-secondary)]">
               {revision.status}
             </span>
           </div>
-          <p className="mt-2 max-w-4xl text-base leading-relaxed text-arena-elements-textSecondary">
+          <p className="mt-2 max-w-4xl text-sm leading-6 text-[var(--arena-terminal-text-secondary)]">
             {revision.user_intent}
           </p>
         </div>
-        <div className="text-right text-xs font-data text-arena-elements-textTertiary">
+        <div className="text-right text-xs font-data text-[var(--arena-terminal-text-muted)]">
           <div>{formatTime(revision.created_at)}</div>
           <div className="mt-1">{shortHash(revision.patch_sha256)}</div>
           {canDecide && (
@@ -164,17 +164,17 @@ function RevisionRow({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-2 text-sm font-data text-arena-elements-textSecondary sm:grid-cols-3">
-        <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3">
-          <span className="text-arena-elements-textTertiary">Parent</span>{" "}
+      <div className="mt-4 grid gap-2 text-sm font-data text-[var(--arena-terminal-text-secondary)] sm:grid-cols-3">
+        <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3">
+          <span className="text-[var(--arena-terminal-text-muted)]">Parent</span>{" "}
           {revision.parent_revision_id ?? "none"}
         </div>
-        <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3">
-          <span className="text-arena-elements-textTertiary">Run</span>{" "}
+        <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3">
+          <span className="text-[var(--arena-terminal-text-muted)]">Run</span>{" "}
           {revision.run_id ?? "none"}
         </div>
-        <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3">
-          <span className="text-arena-elements-textTertiary">Live execution</span>{" "}
+        <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3">
+          <span className="text-[var(--arena-terminal-text-muted)]">Live execution</span>{" "}
           {revision.can_execute_live ? "enabled" : "blocked"}
         </div>
       </div>
@@ -184,13 +184,13 @@ function RevisionRow({
           {changedFiles.map((file) => (
             <span
               key={file}
-              className="rounded-md border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/30 px-2 py-1 text-[11px] font-data text-arena-elements-textSecondary"
+              className="rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-2 py-1 text-[11px] font-data text-[var(--arena-terminal-text-secondary)]"
             >
               {file}
             </span>
           ))}
           {revision.files_changed.length > changedFiles.length && (
-            <span className="px-2 py-1 text-[11px] font-data text-arena-elements-textTertiary">
+            <span className="px-2 py-1 text-[11px] font-data text-[var(--arena-terminal-text-muted)]">
               +{revision.files_changed.length - changedFiles.length}
             </span>
           )}
@@ -312,9 +312,9 @@ export function RevisionArenaTab({
 
   if (query.isLoading) {
     return (
-      <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
-        <div className="i-ph:git-branch mx-auto mb-3 animate-pulse text-3xl text-arena-elements-textTertiary" />
-        <h3 className="font-display text-lg font-semibold text-arena-elements-textPrimary">
+      <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-6 py-14 text-center text-[var(--arena-terminal-text-secondary)]">
+        <div className="i-ph:git-branch mx-auto mb-3 animate-pulse text-3xl text-[var(--arena-terminal-text-muted)]" />
+        <h3 className="font-display text-lg font-semibold text-[var(--arena-terminal-text)]">
           {slowLoad ? "Revision arena is still loading" : "Loading revision arena…"}
         </h3>
         <p className="mx-auto mt-2 max-w-xl text-sm">
@@ -347,7 +347,7 @@ export function RevisionArenaTab({
     }
 
     return (
-      <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
+      <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-6 py-14 text-center text-[var(--arena-terminal-text-secondary)]">
         <div className="i-ph:warning-circle mx-auto mb-3 text-3xl text-crimson-500" />
         <p className="text-sm text-crimson-600 dark:text-crimson-300">
           {query.error instanceof Error
@@ -398,9 +398,9 @@ export function RevisionArenaTab({
   ];
 
   return (
-    <div className="space-y-5">
-      <section className="glass-card-strong overflow-hidden rounded-xl border border-arena-elements-dividerColor">
-        <div className="border-b border-arena-elements-dividerColor/60 px-5 py-5">
+    <div className="space-y-3">
+      <section className="overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+        <div className="border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-4 py-4">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
               <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -409,10 +409,10 @@ export function RevisionArenaTab({
                   {modeLabel(activeMode)}
                 </span>
               </div>
-              <h2 className="font-display text-2xl font-bold tracking-tight text-arena-elements-textPrimary">
+              <h2 className="font-display text-2xl font-bold tracking-tight text-[var(--arena-terminal-text)]">
                 Evolution Arena
               </h2>
-              <p className="mt-2 max-w-4xl text-base leading-relaxed text-arena-elements-textSecondary">
+              <p className="mt-2 max-w-4xl text-sm leading-6 text-[var(--arena-terminal-text-secondary)]">
                 {query.data.invariant}
               </p>
             </div>
@@ -430,19 +430,19 @@ export function RevisionArenaTab({
           </div>
         </div>
 
-        <div className="grid gap-0 border-b border-arena-elements-dividerColor/60 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-0 border-b border-[var(--arena-terminal-border)] sm:grid-cols-2 xl:grid-cols-4">
           {statCards.map((stat) => (
             <div
               key={stat.label}
-              className="border-b border-arena-elements-dividerColor/50 px-5 py-4"
+              className="border-b border-[var(--arena-terminal-border)] px-4 py-3"
             >
-              <div className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+              <div className="text-xs font-data uppercase tracking-wider text-[var(--arena-terminal-text-muted)]">
                 {stat.label}
               </div>
-              <div className="mt-1 truncate font-display text-2xl font-bold text-arena-elements-textPrimary">
+              <div className="mt-1 truncate font-display text-2xl font-bold text-[var(--arena-terminal-text)]">
                 {stat.value}
               </div>
-              <div className="mt-1 truncate text-sm font-data text-arena-elements-textTertiary">
+              <div className="mt-1 truncate text-sm font-data text-[var(--arena-terminal-text-muted)]">
                 {stat.meta}
               </div>
             </div>
@@ -453,7 +453,7 @@ export function RevisionArenaTab({
           {query.data.modes.map((mode) => (
             <div
               key={mode.mode}
-              className="border-b border-arena-elements-dividerColor/50 px-5 py-4"
+              className="border-b border-[var(--arena-terminal-border)] px-4 py-3"
             >
               <div className="flex items-center justify-between gap-2">
                 <span
@@ -461,11 +461,11 @@ export function RevisionArenaTab({
                 >
                   {modeLabel(mode.mode)}
                 </span>
-                <span className="text-xs font-data text-arena-elements-textTertiary">
+                <span className="text-xs font-data text-[var(--arena-terminal-text-muted)]">
                   {mode.can_touch_funds ? "fund access" : "no fund access"}
                 </span>
               </div>
-              <p className="mt-2 text-sm leading-relaxed text-arena-elements-textSecondary">
+              <p className="mt-2 text-sm leading-6 text-[var(--arena-terminal-text-secondary)]">
                 {mode.description}
               </p>
             </div>
@@ -473,17 +473,17 @@ export function RevisionArenaTab({
         </div>
       </section>
 
-      <section className="glass-card overflow-hidden rounded-xl border border-arena-elements-dividerColor">
-        <div className="flex items-center justify-between border-b border-arena-elements-dividerColor/60 px-5 py-4">
+      <section className="overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+        <div className="flex items-center justify-between border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-4 py-3">
           <div>
-            <h3 className="font-display text-lg font-semibold text-arena-elements-textPrimary">
+            <h3 className="font-display text-lg font-semibold text-[var(--arena-terminal-text)]">
               Revision Timeline
             </h3>
-            <p className="mt-1 text-sm text-arena-elements-textSecondary">
+            <p className="mt-1 text-sm text-[var(--arena-terminal-text-secondary)]">
               Candidates, blockers, paper evidence, and live authority.
             </p>
           </div>
-          <span className="rounded-full border border-arena-elements-dividerColor/60 px-3 py-1 text-xs font-data text-arena-elements-textTertiary">
+          <span className="rounded-full border border-[var(--arena-terminal-border)] px-3 py-1 text-xs font-data text-[var(--arena-terminal-text-muted)]">
             {sortedRevisions.length}
           </span>
         </div>
@@ -499,9 +499,9 @@ export function RevisionArenaTab({
             />
           ))
         ) : (
-          <div className="px-6 py-12 text-center text-arena-elements-textSecondary">
-            <div className="i-ph:git-branch mx-auto mb-3 text-3xl text-arena-elements-textTertiary" />
-            <h3 className="font-display text-lg font-semibold text-arena-elements-textPrimary">
+          <div className="px-6 py-12 text-center text-[var(--arena-terminal-text-secondary)]">
+            <div className="i-ph:git-branch mx-auto mb-3 text-3xl text-[var(--arena-terminal-text-muted)]" />
+            <h3 className="font-display text-lg font-semibold text-[var(--arena-terminal-text)]">
               No revisions yet
             </h3>
             <p className="mx-auto mt-2 max-w-xl text-sm">

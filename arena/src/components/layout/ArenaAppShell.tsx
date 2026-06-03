@@ -5,6 +5,7 @@ import { useStore } from '@nanostores/react';
 import { ThemeToggle } from '@tangle-network/blueprint-ui/components';
 import { cn, selectedChainIdStore } from '@tangle-network/blueprint-ui';
 import { useDropdownMenu } from '@tangle-network/sandbox-ui/hooks';
+import { ArenaHeaderUtilitiesContext } from '~/components/arena/ArenaPageHeader';
 import { networks } from '~/lib/contracts/chains';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
@@ -54,6 +55,7 @@ export function ArenaAppShell() {
         />
       )}
 
+      <ArenaHeaderUtilitiesContext.Provider value={!isBotWorkspace ? <HeaderUtilityControls /> : null}>
       <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
         {!isBotWorkspace && (
           <div className="arena-trace-terminal flex h-14 shrink-0 items-center justify-between border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 lg:hidden">
@@ -66,6 +68,9 @@ export function ArenaAppShell() {
             </Link>
             <div className="flex shrink-0 items-center gap-1.5">
               <NetworkButton compact />
+              <div className={collapsedControlClass}>
+                <TxDropdown />
+              </div>
               <div className={collapsedControlClass}>
                 <ThemeToggle />
               </div>
@@ -84,6 +89,7 @@ export function ArenaAppShell() {
           <Outlet />
         </main>
       </div>
+      </ArenaHeaderUtilitiesContext.Provider>
     </div>
   );
 }
@@ -218,24 +224,6 @@ const terminalControlClass = [
   '[&>div>button:hover]:!text-[var(--arena-terminal-text)]',
 ].join(' ');
 
-const primaryWalletControlClass = [
-  terminalControlClass,
-  '[&>button]:!border-[var(--arena-terminal-border-hover)]',
-  '[&>button]:!bg-[var(--arena-terminal-accent)]',
-  '[&>button]:!font-semibold',
-  '[&>button]:!text-[#06100e]',
-  '[&>button:hover]:!border-[var(--arena-terminal-accent)]',
-  '[&>button:hover]:!bg-[var(--arena-terminal-accent)]',
-  '[&>button:hover]:!text-[#06100e]',
-  '[&>div>button]:!border-[var(--arena-terminal-border-hover)]',
-  '[&>div>button]:!bg-[var(--arena-terminal-accent)]',
-  '[&>div>button]:!font-semibold',
-  '[&>div>button]:!text-[#06100e]',
-  '[&>div>button:hover]:!border-[var(--arena-terminal-accent)]',
-  '[&>div>button:hover]:!bg-[var(--arena-terminal-accent)]',
-  '[&>div>button:hover]:!text-[#06100e]',
-].join(' ');
-
 const collapsedControlClass = [
   'flex h-11 w-11 items-center justify-center rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-muted)] transition-[background-color,border-color,color] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)]',
   '[&>button]:!h-10',
@@ -258,22 +246,49 @@ const collapsedControlClass = [
   '[&>div>button]:!text-[var(--arena-terminal-text-secondary)]',
 ].join(' ');
 
+const headerUtilityControlClass = [
+  'flex h-9 w-9 items-center justify-center rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-muted)] transition-[background-color,border-color,color] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)]',
+  '[&>button]:!h-8',
+  '[&>button]:!w-8',
+  '[&>button]:!min-w-0',
+  '[&>button]:!overflow-hidden',
+  '[&>button]:!rounded-[5px]',
+  '[&>button]:!border-0',
+  '[&>button]:!bg-transparent',
+  '[&>button]:!p-0',
+  '[&>button]:!text-[var(--arena-terminal-text-secondary)]',
+  '[&>div>button]:!h-8',
+  '[&>div>button]:!w-8',
+  '[&>div>button]:!min-w-0',
+  '[&>div>button]:!overflow-hidden',
+  '[&>div>button]:!rounded-[5px]',
+  '[&>div>button]:!border-0',
+  '[&>div>button]:!bg-transparent',
+  '[&>div>button]:!p-0',
+  '[&>div>button]:!text-[var(--arena-terminal-text-secondary)]',
+].join(' ');
+
+function HeaderUtilityControls() {
+  return (
+    <div className="hidden items-center gap-1.5 lg:flex">
+      <div className={headerUtilityControlClass}>
+        <TxDropdown />
+      </div>
+      <div className={headerUtilityControlClass}>
+        <ThemeToggle />
+      </div>
+    </div>
+  );
+}
+
 function ExpandedAccountDock() {
   return (
     <div className="rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-      <div className={cn('min-w-0', primaryWalletControlClass)}>
+      <div className={cn('min-w-0', terminalControlClass)}>
         <WalletButton align="start" side="up" />
       </div>
       <div className={cn('mt-1.5 min-w-0', terminalControlClass)}>
         <NetworkButton align="start" side="up" />
-      </div>
-      <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-        <div className="flex min-w-0 justify-center">
-          <TxDropdown align="start" side="up" />
-        </div>
-        <div className={cn('min-w-0', terminalControlClass)}>
-          <ThemeToggle />
-        </div>
       </div>
     </div>
   );
@@ -289,12 +304,6 @@ function CollapsedAccountDock({ onExpand }: { onExpand: () => void }) {
       />
       <div className={collapsedControlClass}>
         <NetworkButton compact align="start" side="up" />
-      </div>
-      <div className={collapsedControlClass}>
-        <TxDropdown align="start" side="up" />
-      </div>
-      <div className={collapsedControlClass}>
-        <ThemeToggle />
       </div>
       <div className={collapsedControlClass}>
         <WalletButton compact align="start" side="up" />

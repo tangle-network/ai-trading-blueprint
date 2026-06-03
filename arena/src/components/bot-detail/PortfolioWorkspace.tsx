@@ -140,16 +140,27 @@ export function PortfolioWorkspace({
     '[&_.glass-card]:!border-[var(--arena-terminal-border)]',
     '[&_.glass-card]:!bg-[var(--arena-terminal-panel)]',
     '[&_.glass-card]:!text-[var(--arena-terminal-text-secondary)]',
+    '[&_[data-slot=table-container]]:!rounded-none',
+    '[&_[data-slot=table-container]]:!border-0',
+    '[&_[data-slot=table-container]]:!bg-transparent',
+    '[&_[data-slot=table-container]]:!shadow-none',
+    '[&_.relative.overflow-auto]:!rounded-none',
     '[&_table]:!bg-[var(--arena-terminal-panel)]',
+    '[&_table]:!rounded-none',
     '[&_thead]:!bg-[var(--arena-terminal-surface)]',
+    '[&_thead]:!rounded-none',
     '[&_tbody]:!bg-[var(--arena-terminal-panel)]',
+    '[&_tbody]:!rounded-none',
     '[&_tr]:!border-[var(--arena-terminal-border)]',
+    '[&_tr]:!rounded-none',
     '[&_th]:!border-[var(--arena-terminal-border)]',
     '[&_th]:!bg-[var(--arena-terminal-surface)]',
     '[&_th]:!font-data',
+    '[&_th]:!rounded-none',
     '[&_th]:!text-[var(--arena-terminal-text-muted)]',
     '[&_td]:!border-[var(--arena-terminal-border)]',
     '[&_td]:!bg-[var(--arena-terminal-panel)]',
+    '[&_td]:!rounded-none',
     '[&_code]:!text-[var(--arena-terminal-text-secondary)]',
     '[&_.text-arena-elements-textPrimary]:!text-[var(--arena-terminal-text)]',
     '[&_.text-arena-elements-textSecondary]:!text-[var(--arena-terminal-text-secondary)]',
@@ -176,7 +187,7 @@ export function PortfolioWorkspace({
         <RouteStateTicker items={routeStateItems} />
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-rows-[252px_minmax(0,1fr)] gap-2 overflow-hidden p-2 min-[1500px]:grid-rows-[244px_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(330px,0.48fr)_minmax(260px,0.52fr)] gap-2 overflow-hidden p-2 min-[1500px]:grid-rows-[minmax(320px,0.46fr)_minmax(260px,0.54fr)]">
         <TerminalPane
           title="Positions"
           bodyClassName="overflow-auto overscroll-contain p-2 [scrollbar-gutter:stable]"

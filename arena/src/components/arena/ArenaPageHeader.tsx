@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import { Link } from 'react-router';
 
 export interface ArenaPageMetric {
@@ -16,6 +16,8 @@ interface ArenaPageHeaderProps {
   titleWidthClassName?: string;
   metricsClassName?: string;
 }
+
+export const ArenaHeaderUtilitiesContext = createContext<ReactNode>(null);
 
 export function ArenaHeaderMetric({ value, label, title }: ArenaPageMetric) {
   return (
@@ -65,6 +67,8 @@ export function ArenaPageHeader({
   titleWidthClassName = 'min-[1180px]:w-40',
   metricsClassName = 'grid-cols-3 min-[1180px]:w-[17rem] min-[1180px]:shrink-0',
 }: ArenaPageHeaderProps) {
+  const utilities = useContext(ArenaHeaderUtilitiesContext);
+
   return (
     <section className="shrink-0 overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
       <div className="flex min-h-12 flex-col gap-2 px-3 py-2 min-[1180px]:flex-row min-[1180px]:items-center">
@@ -92,11 +96,10 @@ export function ArenaPageHeader({
           </div>
         )}
 
-        {controls && (
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-            {controls}
-          </div>
-        )}
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          {controls}
+          {utilities}
+        </div>
       </div>
     </section>
   );

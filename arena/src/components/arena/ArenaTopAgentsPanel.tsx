@@ -20,8 +20,8 @@ interface ArenaTopAgentsPanelProps {
 }
 
 function valueTone(value: number): string {
-  if (value === 0 || !Number.isFinite(value)) return 'text-[#697371]';
-  return value > 0 ? 'text-[#50d2c1]' : 'text-[#ff5d6c]';
+  if (value === 0 || !Number.isFinite(value)) return 'text-[var(--arena-terminal-text-subtle)]';
+  return value > 0 ? 'text-[var(--arena-terminal-accent)]' : 'text-[var(--arena-terminal-danger)]';
 }
 
 function formatFlowUsd(value: number): string {
@@ -63,23 +63,23 @@ export function ArenaTopAgentsPanel({
   return (
     <section
       data-testid="top-agents-panel"
-      className={`flex h-full min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] ${className}`}
+      className={`flex h-full min-h-0 flex-col overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] ${className}`}
       aria-label="Top agents"
     >
-      <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-[#273035] bg-[#0b1418] px-3">
-        <h2 className="font-display text-base font-semibold tracking-tight text-[#f6fefd]">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3">
+        <h2 className="font-display text-base font-semibold tracking-tight text-[var(--arena-terminal-text)]">
           {isRail ? 'Agents' : 'Top agents'}
         </h2>
         <Link
           to="/leaderboard"
-          className="inline-flex h-7 items-center rounded-[4px] border border-[#273035] bg-[#0f1a1f] px-2 font-display text-xs font-semibold text-[#d2dad7] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+          className="inline-flex h-7 items-center rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2 font-display text-xs font-semibold text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
         >
           All
         </Link>
       </div>
 
       {!isRail && (
-        <div className="grid grid-cols-[2.25rem_minmax(15rem,1fr)_5.5rem_4.25rem_5.25rem] border-b border-[#273035] bg-[#0b1418] px-3 py-2 font-data text-[10px] uppercase text-[#697371]">
+        <div className="grid grid-cols-[2.25rem_minmax(15rem,1fr)_5.5rem_4.25rem_5.25rem] border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 py-2 font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)]">
           <span>#</span>
           <span>Agent</span>
           <span className="text-right">{showActivity ? '24H Vol' : '30D'}</span>
@@ -90,11 +90,11 @@ export function ArenaTopAgentsPanel({
 
       <div className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
         {topAgents.length === 0 ? (
-          <div className="flex h-full min-h-[12rem] items-center justify-center px-6 text-center font-display text-sm text-[#949e9c]">
+          <div className="flex h-full min-h-[12rem] items-center justify-center px-6 text-center font-display text-sm text-[var(--arena-terminal-text-muted)]">
             No public agents yet.
           </div>
         ) : (
-          <div className="divide-y divide-[#273035]">
+          <div className="divide-y divide-[var(--arena-terminal-border)]">
             {topAgents.map((bot, index) => {
               const href = `/arena/bot/${encodeURIComponent(bot.id)}/performance`;
               const hasRailReturn = Number.isFinite(bot.pnlPercent) && bot.pnlPercent !== 0;
@@ -108,21 +108,21 @@ export function ArenaTopAgentsPanel({
                 <Link
                   key={bot.id}
                   to={href}
-                  className="group flex min-w-0 items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-[#16242a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                  className="group flex min-w-0 items-center gap-2.5 px-3 py-2 transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
                   aria-label={`Open ${bot.name} performance`}
                 >
-                  <span className="w-5 shrink-0 text-right font-data text-xs font-semibold text-[#697371]">
+                  <span className="w-5 shrink-0 text-right font-data text-xs font-semibold text-[var(--arena-terminal-text-subtle)]">
                     {formatNumber(index + 1, { maximumFractionDigits: 0 })}
                   </span>
                   <Identicon address={bot.operatorAddress as Address} size={26} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-display text-sm font-semibold leading-tight text-[#f6fefd] group-hover:text-[#50d2c1]">
+                    <span className="block truncate font-display text-sm font-semibold leading-tight text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
                       {bot.name}
                     </span>
-                    <span className="mt-1 flex min-w-0 items-center gap-1.5 font-data text-[11px] text-[#949e9c]">
+                    <span className="mt-1 flex min-w-0 items-center gap-1.5 font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
                       <span className="truncate">{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
-                      <span className="h-1 w-1 shrink-0 rounded-full bg-[#697371]" aria-hidden="true" />
-                      <span className={bot.status === 'active' ? 'truncate text-[#50d2c1]' : 'truncate'}>
+                      <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
+                      <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-accent)]' : 'truncate'}>
                         {botStatusLabel(bot.status)}
                       </span>
                     </span>
@@ -135,41 +135,41 @@ export function ArenaTopAgentsPanel({
                         </span>
                       )}
                       {hasRailTrades && (
-                        <span className="mt-1 inline-flex items-center justify-end gap-1 font-data text-[11px] text-[#697371]">
+                        <span className="mt-1 inline-flex items-center justify-end gap-1 font-data text-[11px] text-[var(--arena-terminal-text-subtle)]">
                           <span className="i-ph:swap text-[10px]" aria-hidden="true" />
                           {formatNumber(bot.totalTrades, { maximumFractionDigits: 0 })}
                         </span>
                       )}
                     </span>
                   ) : (
-                    <span className="i-ph:arrow-up-right shrink-0 text-sm text-[#697371] group-hover:text-[#50d2c1]" aria-hidden="true" />
+                    <span className="i-ph:arrow-up-right shrink-0 text-sm text-[var(--arena-terminal-text-subtle)] group-hover:text-[var(--arena-terminal-accent)]" aria-hidden="true" />
                   )}
                 </Link>
               ) : (
                 <Link
                   key={bot.id}
                   to={href}
-                  className="group grid grid-cols-[2.25rem_minmax(15rem,1fr)_5.5rem_4.25rem_5.25rem] items-center px-3 py-2.5 transition-colors hover:bg-[#16242a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                  className="group grid grid-cols-[2.25rem_minmax(15rem,1fr)_5.5rem_4.25rem_5.25rem] items-center px-3 py-2 transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
                   aria-label={`Open ${bot.name} performance`}
                 >
-                  <span className="font-data text-sm font-semibold text-[#697371]">
+                  <span className="font-data text-sm font-semibold text-[var(--arena-terminal-text-subtle)]">
                     {formatNumber(index + 1, { maximumFractionDigits: 0 })}
                   </span>
                   <span className="flex min-w-0 items-center gap-3">
                     <Identicon address={bot.operatorAddress as Address} size={32} />
                     <span className="min-w-0">
-                      <span className="block truncate font-display text-base font-semibold leading-tight text-[#f6fefd] group-hover:text-[#50d2c1]">
+                      <span className="block truncate font-display text-base font-semibold leading-tight text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
                         {bot.name}
                       </span>
-                      <span className="mt-1 flex min-w-0 items-center gap-2 font-data text-xs text-[#949e9c]">
+                      <span className="mt-1 flex min-w-0 items-center gap-2 font-data text-xs text-[var(--arena-terminal-text-muted)]">
                         <span className="truncate">{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
-                        <span className="h-1 w-1 shrink-0 rounded-full bg-[#697371]" aria-hidden="true" />
-                        <span className={bot.status === 'active' ? 'truncate text-[#50d2c1]' : 'truncate'}>
+                        <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
+                        <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-accent)]' : 'truncate'}>
                           {botStatusLabel(bot.status)}
                         </span>
                         {bot.tvl > 0 && (
                           <>
-                            <span className="h-1 w-1 shrink-0 rounded-full bg-[#697371]" aria-hidden="true" />
+                            <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
                             <span className="truncate">{formatCompactUsd(bot.tvl)}</span>
                           </>
                         )}
@@ -178,14 +178,14 @@ export function ArenaTopAgentsPanel({
                   </span>
                   {showActivity ? (
                     <>
-                      <span className="text-right font-data text-base font-bold text-[#f6fefd]">
+                      <span className="text-right font-data text-base font-bold text-[var(--arena-terminal-text)]">
                         {formatFlowUsd(activityStatsByBotId?.get(bot.id)?.recentNotionalUsd ?? 0)}
                       </span>
-                      <span className="text-right font-data text-base text-[#f6fefd]">
+                      <span className="text-right font-data text-base text-[var(--arena-terminal-text)]">
                         {formatNumber(activityStats?.recentFills ?? 0, { maximumFractionDigits: 0 })}
                       </span>
                       <span
-                        className="text-right font-data text-base text-[#d2dad7]"
+                        className="text-right font-data text-base text-[var(--arena-terminal-text-secondary)]"
                         title={fillCountEvidenceTitle(totalFillEvidence)}
                       >
                         {totalFillEvidence.value > 0
@@ -198,10 +198,10 @@ export function ArenaTopAgentsPanel({
                       <span className={`text-right font-data text-base font-bold ${valueTone(bot.pnlPercent)}`}>
                         {formatSignedPercent(bot.pnlPercent)}
                       </span>
-                      <span className="text-right font-data text-base text-[#f6fefd]">
+                      <span className="text-right font-data text-base text-[var(--arena-terminal-text)]">
                         {bot.sharpeRatio !== 0 ? formatNumber(bot.sharpeRatio, { maximumFractionDigits: 1 }) : '—'}
                       </span>
-                      <span className="text-right font-data text-base text-[#f6fefd]">
+                      <span className="text-right font-data text-base text-[var(--arena-terminal-text)]">
                         {bot.totalTrades > 0 ? formatNumber(bot.totalTrades, { maximumFractionDigits: 0 }) : '—'}
                       </span>
                     </>

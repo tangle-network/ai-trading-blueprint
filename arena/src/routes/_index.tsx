@@ -56,16 +56,16 @@ function PulseCell({
 }) {
   const content = (
     <>
-      <div className="font-data text-[10px] font-semibold uppercase tracking-[0.12em] text-[#949e9c]">
+      <div className="font-data text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--arena-terminal-text-muted)]">
         {label}
       </div>
       {children ?? (
         <>
-          <div className="mt-1 truncate font-data text-xl font-bold leading-none tabular-nums text-[#f6fefd]">
+          <div className="mt-1 truncate font-data text-xl font-bold leading-none tabular-nums text-[var(--arena-terminal-text)]">
             {value ?? '—'}
           </div>
           {detail && (
-            <div className="mt-1 truncate font-data text-[11px] text-[#949e9c]">
+            <div className="mt-1 truncate font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
               {detail}
             </div>
           )}
@@ -73,13 +73,13 @@ function PulseCell({
       )}
     </>
   );
-  const className = 'min-w-0 border-b border-[#273035] px-3 py-2.5 last:border-b-0 min-[980px]:border-b-0 min-[980px]:border-r min-[980px]:last:border-r-0';
+  const className = 'min-w-0 border-b border-[var(--arena-terminal-border)] px-3 py-2.5 last:border-b-0 min-[980px]:border-b-0 min-[980px]:border-r min-[980px]:last:border-r-0';
 
   if (to) {
     return (
       <Link
         to={to}
-        className={`${className} block transition-colors hover:bg-[#13232a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60`}
+        className={`${className} block transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60`}
       >
         {content}
       </Link>
@@ -124,7 +124,7 @@ function HomePulseBoard({
   return (
     <section
       aria-label="Market pulse"
-      className="grid shrink-0 overflow-hidden border border-[#273035] bg-[#0f1a1f] min-[980px]:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)]"
+      className="grid shrink-0 overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] min-[980px]:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)]"
     >
       <PulseCell label="Latest" to={latestHref}>
         {latestTrade ? (
@@ -133,10 +133,10 @@ function HomePulseBoard({
               <span className={`shrink-0 font-data text-sm font-bold uppercase ${getTradeActionToneClass(latestTrade.action)}`}>
                 {formatTradeActionLabel(latestTrade.action)}
               </span>
-              <span className="min-w-0 truncate font-display text-lg font-semibold leading-none text-[#f6fefd]">
+              <span className="min-w-0 truncate font-display text-lg font-semibold leading-none text-[var(--arena-terminal-text)]">
                 {latestMarket}
               </span>
-              <span className="shrink-0 font-data text-base font-bold tabular-nums text-[#f6fefd]">
+              <span className="shrink-0 font-data text-base font-bold tabular-nums text-[var(--arena-terminal-text)]">
                 {formatTradeUsd(latestTrade.notionalUsd)}
               </span>
             </div>
@@ -144,20 +144,20 @@ function HomePulseBoard({
               {latestBot && (
                 <Identicon address={latestBot.operatorAddress as Address} size={20} />
               )}
-              <span className="min-w-0 truncate font-display text-sm font-semibold text-[#d2dad7]">
+              <span className="min-w-0 truncate font-display text-sm font-semibold text-[var(--arena-terminal-text-secondary)]">
                 {latestActivity?.botName ?? latestTrade.botName}
               </span>
-              <span className="shrink-0 font-data text-[11px] tabular-nums text-[#949e9c]">
+              <span className="shrink-0 font-data text-[11px] tabular-nums text-[var(--arena-terminal-text-muted)]">
                 {formatTradeAge(latestTrade.timestamp)}
               </span>
             </div>
           </>
         ) : (
           <>
-            <div className="mt-1 truncate font-data text-xl font-bold leading-none text-[#f6fefd]">
+            <div className="mt-1 truncate font-data text-xl font-bold leading-none text-[var(--arena-terminal-text)]">
               No fills yet
             </div>
-            <div className="mt-1 truncate font-data text-[11px] text-[#949e9c]">
+            <div className="mt-1 truncate font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
               Waiting for active agents
             </div>
           </>
@@ -175,21 +175,21 @@ function HomePulseBoard({
           <>
             <div className="mt-1 flex min-w-0 items-center gap-2">
               <Identicon address={topActivityBot.operatorAddress as Address} size={24} />
-              <span className="min-w-0 truncate font-display text-lg font-semibold leading-none text-[#f6fefd]">
+              <span className="min-w-0 truncate font-display text-lg font-semibold leading-none text-[var(--arena-terminal-text)]">
                 {topActivityBot.name}
               </span>
             </div>
-            <div className="mt-2 flex min-w-0 items-center gap-2 font-data text-[11px] text-[#949e9c]">
-              <span className="shrink-0 tabular-nums text-[#d2dad7]">
+            <div className="mt-2 flex min-w-0 items-center gap-2 font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
+              <span className="shrink-0 tabular-nums text-[var(--arena-terminal-text-secondary)]">
                 24h {formatCompactUsd(topActivityStats?.recentNotionalUsd ?? 0)}
               </span>
-              <span className="h-1 w-1 shrink-0 rounded-full bg-[#697371]" aria-hidden="true" />
+              <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
               <span className="truncate">
                 {formatPulseNumber(topActivityStats?.recentFills ?? 0)} fills
               </span>
               {topActivityStats?.lastTradeAt && (
                 <>
-                  <span className="h-1 w-1 shrink-0 rounded-full bg-[#697371]" aria-hidden="true" />
+                  <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
                   <span className="shrink-0 tabular-nums">{formatTradeAge(topActivityStats.lastTradeAt)}</span>
                 </>
               )}
@@ -197,10 +197,10 @@ function HomePulseBoard({
           </>
         ) : (
           <>
-            <div className="mt-1 truncate font-data text-xl font-bold leading-none text-[#f6fefd]">
+            <div className="mt-1 truncate font-data text-xl font-bold leading-none text-[var(--arena-terminal-text)]">
               —
             </div>
-            <div className="mt-1 truncate font-data text-[11px] text-[#949e9c]">
+            <div className="mt-1 truncate font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
               No active public agent
             </div>
           </>
@@ -337,19 +337,19 @@ export default function IndexPage() {
             platformFills={platformTradeCount}
           />
           <section
-            className="grid min-h-0 flex-1 gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.34fr)] xl:grid-rows-[minmax(0,1fr)_minmax(164px,0.24fr)]"
+            className="grid min-h-0 flex-1 gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.34fr)] xl:grid-rows-[minmax(0,0.72fr)_minmax(220px,0.28fr)]"
             aria-label="Arena fleet terminal"
           >
             <PlatformVolumeChart
               bots={leaderboardBots}
               variant="command"
-              className="min-h-[360px] xl:min-h-0"
+              className="min-h-[320px] xl:min-h-0"
             />
             <LatestAgentTrades
               bots={leaderboardBots}
               variant="panel"
               limit={12}
-              className="h-full min-h-[320px] xl:row-span-2 xl:min-h-0"
+              className="h-full min-h-[280px] xl:row-span-2 xl:min-h-0"
             />
             <ArenaTopAgentsPanel
               bots={leaderboardBots}
@@ -357,7 +357,7 @@ export default function IndexPage() {
               metricMode="activity"
               activityStatsByBotId={activityStatsByBotId}
               limit={6}
-              className="min-h-[164px] xl:min-h-0"
+              className="min-h-[220px] xl:min-h-0"
             />
           </section>
         </div>

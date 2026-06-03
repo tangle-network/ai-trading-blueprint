@@ -100,7 +100,7 @@ function renderTextWithBreaks(text: string) {
 
 function renderCodeBlock(code: string, language?: string) {
   return (
-    <pre className="overflow-x-auto rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-3 py-2 font-data text-sm leading-6 text-arena-elements-textPrimary">
+    <pre className="overflow-x-hidden whitespace-pre-wrap break-words rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-3 py-2 font-data text-sm leading-6 text-arena-elements-textPrimary">
       <code className={language ? `language-${language}` : undefined}>{code}</code>
     </pre>
   );
@@ -128,14 +128,14 @@ function renderToolValue(value: unknown): ReactNode {
 
   if (typeof value === 'string') {
     return (
-      <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-arena-elements-background-depth-2 px-2.5 py-2 text-sm leading-6 text-arena-elements-textSecondary">
+      <pre className="overflow-x-hidden whitespace-pre-wrap break-words rounded-lg bg-arena-elements-background-depth-2 px-2.5 py-2 text-sm leading-6 text-arena-elements-textSecondary">
         {value}
       </pre>
     );
   }
 
   return (
-    <pre className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-arena-elements-background-depth-2 px-2.5 py-2 text-sm leading-6 text-arena-elements-textSecondary">
+    <pre className="overflow-x-hidden whitespace-pre-wrap break-words rounded-lg bg-arena-elements-background-depth-2 px-2.5 py-2 text-sm leading-6 text-arena-elements-textSecondary">
       {JSON.stringify(value, null, 2)}
     </pre>
   );

@@ -161,21 +161,21 @@ export function WalletButton({
                       className="flex items-center gap-2 group w-full"
                       title="Copy address"
                     >
-                      <span className="text-sm font-data text-arena-elements-textPrimary truncate">
+                      <span className="truncate text-sm font-data text-[var(--arena-terminal-text)]">
                         {truncated}
                       </span>
-                      <div className="i-ph:copy text-sm text-arena-elements-textTertiary group-hover:text-violet-700 dark:group-hover:text-violet-400 transition-colors shrink-0" />
+                      <div className="i-ph:copy shrink-0 text-sm text-[var(--arena-terminal-text-muted)] transition-colors group-hover:text-[var(--arena-terminal-accent)]" />
                     </button>
-                    <div className="text-xs font-data text-arena-elements-textSecondary">
+                    <div className="text-xs font-data text-[var(--arena-terminal-text-secondary)]">
                       {displayBalance} ETH
                     </div>
                   </div>
                 </div>
 
                 {/* Chain status */}
-                <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-[5px] bg-arena-elements-item-backgroundActive mb-3">
+                <div className="mb-3 flex items-center gap-2.5 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 py-2.5">
                   <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${isWrongChain ? 'bg-amber-500 dark:bg-amber-400 animate-pulse' : 'bg-emerald-600 dark:bg-emerald-400'}`} />
-                  <span className="text-sm font-data text-arena-elements-textSecondary flex-1">
+                  <span className="flex-1 text-sm font-data text-[var(--arena-terminal-text-secondary)]">
                     {isWrongChain ? `Chain ${chainId}` : (targetChain?.name ?? 'Unknown')}
                   </span>
                   {isWrongChain && (
@@ -189,10 +189,10 @@ export function WalletButton({
                     <button
                       type="button"
                       onClick={handleSwitchChain}
-                      className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-[5px] hover:bg-violet-500/10 transition-colors text-left"
+                      className="flex w-full items-center gap-2.5 rounded-[5px] px-3 py-2.5 text-left transition-colors hover:bg-[var(--arena-terminal-panel-strong)]"
                     >
-                      <div className="i-ph:swap text-base text-violet-700 dark:text-violet-400" />
-                      <span className="text-sm font-display text-arena-elements-textSecondary">
+                      <div className="i-ph:swap text-base text-[var(--arena-terminal-accent)]" />
+                      <span className="text-sm font-display text-[var(--arena-terminal-text-secondary)]">
                         Switch to {targetChain?.name ?? 'Unknown'}
                       </span>
                     </button>
@@ -200,20 +200,20 @@ export function WalletButton({
                   <button
                     type="button"
                     onClick={addChain}
-                    className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-[5px] hover:bg-violet-500/10 transition-colors text-left"
+                    className="flex w-full items-center gap-2.5 rounded-[5px] px-3 py-2.5 text-left transition-colors hover:bg-[var(--arena-terminal-panel-strong)]"
                   >
-                    <div className="i-ph:plus-circle text-base text-violet-700 dark:text-violet-400" />
-                    <span className="text-sm font-display text-arena-elements-textSecondary">
+                    <div className="i-ph:plus-circle text-base text-[var(--arena-terminal-accent)]" />
+                    <span className="text-sm font-display text-[var(--arena-terminal-text-secondary)]">
                       Add {targetChain?.name ?? 'Unknown'} to Wallet
                     </span>
                   </button>
                   <button
                     type="button"
                     onClick={copyAddress}
-                    className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-[5px] hover:bg-arena-elements-item-backgroundHover transition-colors text-left"
+                    className="flex w-full items-center gap-2.5 rounded-[5px] px-3 py-2.5 text-left transition-colors hover:bg-[var(--arena-terminal-panel-strong)]"
                   >
-                    <div className="i-ph:copy text-base text-arena-elements-textTertiary" />
-                    <span className="text-sm font-display text-arena-elements-textSecondary">
+                    <div className="i-ph:copy text-base text-[var(--arena-terminal-text-muted)]" />
+                    <span className="text-sm font-display text-[var(--arena-terminal-text-secondary)]">
                       Copy Address
                     </span>
                   </button>
