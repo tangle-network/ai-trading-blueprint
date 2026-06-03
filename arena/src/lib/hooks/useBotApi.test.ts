@@ -1,8 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { deriveTradeAmountOut, getTradeStatus, mapApiTrade, mapApiTradePage } from './useBotApi';
+import {
+  deriveTradeAmountOut,
+  getTradeStatus,
+  mapApiTrade,
+  mapApiTradePage,
+  shouldFallbackLatestTradesToBotLedgers,
+} from './useBotApi';
 import { protocolToVenue } from '~/lib/types/trade';
 
 describe('useBotApi trade mapping helpers', () => {
+  it('falls back to bot ledgers when the platform latest-fills aggregate returns an empty success', () => {
+    expect(shouldFallbackLatestTradesToBotLedgers({
+      operatorCount: 1,
+      aggregateReturnedNoTrades: true,
+      aggregateAllErrored: false,
+    })).toBe(true);
+    expect(shouldFallbackLatestTradesToBotLedgers({
+      operatorCount: 1,
+      aggregateReturnedNoTrades: false,
+      aggregateAllErrored: false,
+    })).toBe(false);
+  });
+
   it('preserves trade pagination totals from the operator payload', () => {
     const page = mapApiTradePage({
       trades: [

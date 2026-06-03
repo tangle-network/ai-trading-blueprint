@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AreaData, HistogramData, IChartApi, ISeriesApi, Time, UTCTimestamp } from 'lightweight-charts';
 import { Skeleton } from '@tangle-network/blueprint-ui/components';
 import { loadLightweightCharts } from '~/components/bot-detail/lightweightChartRuntime';
@@ -19,6 +19,7 @@ interface PlatformVolumeChartProps {
   bots: Bot[];
   className?: string;
   variant?: 'standard' | 'command';
+  headerControls?: ReactNode;
 }
 
 const MODES: Array<{ value: PlatformVolumeMode; label: string; icon: string }> = [
@@ -320,6 +321,7 @@ export function PlatformVolumeChart({
   bots,
   className = '',
   variant = 'standard',
+  headerControls,
 }: PlatformVolumeChartProps) {
   const isCommand = variant === 'command';
   const [range, setRange] = useState<PlatformVolumeRange>('30d');
@@ -381,7 +383,7 @@ export function PlatformVolumeChart({
                   onClick={() => setRange(item.value)}
                   className={`inline-flex h-7 items-center rounded-[4px] px-2.5 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
                     selected
-                      ? isCommand ? 'bg-[#d2dad7] text-[#04060c]' : 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
+                      ? isCommand ? 'bg-[var(--arena-terminal-text)] text-[var(--arena-terminal-bg)]' : 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
                       : isCommand ? 'text-[#949e9c] hover:bg-[#273035] hover:text-[#f6fefd]' : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
                   }`}
                   aria-pressed={selected}
@@ -418,6 +420,11 @@ export function PlatformVolumeChart({
               );
             })}
           </div>
+          {headerControls && (
+            <div className="ml-1 flex shrink-0 items-center gap-1">
+              {headerControls}
+            </div>
+          )}
         </div>
       </div>
 

@@ -60,6 +60,10 @@ const freshnessTimestampFormatter = new Intl.DateTimeFormat('en-US', {
   hour: 'numeric',
   minute: '2-digit',
 });
+const fillTapeTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  hour: 'numeric',
+  minute: '2-digit',
+});
 
 function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number | null {
   const raw = strategyConfig?.initial_capital_usd
@@ -139,6 +143,10 @@ function formatSignedChartPercent(value: number | null): string {
 
 function formatTradeTime(timestamp: number): string {
   return freshnessTimestampFormatter.format(new Date(timestamp));
+}
+
+function formatFillTapeTime(timestamp: number): string {
+  return fillTapeTimeFormatter.format(new Date(timestamp));
 }
 
 function formatChartNumber(value: number | null): string {
@@ -735,7 +743,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     type="button"
                     className={`h-7 rounded-[4px] px-2.5 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 disabled:cursor-not-allowed disabled:opacity-45 ${
                       effectiveChartMode === mode
-                        ? 'bg-[#50d2c1] text-[#04060c]'
+                        ? 'bg-[var(--arena-terminal-accent)] text-[#04060c]'
                         : 'text-[#d2dad7] hover:bg-[#344148] hover:text-[#f6fefd]'
                     }`}
                     aria-pressed={effectiveChartMode === mode}
@@ -757,7 +765,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     type="button"
                     className={`h-7 rounded-[4px] px-2 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
                       range === item.value
-                        ? 'bg-[#d2dad7] text-[#04060c]'
+                        ? 'bg-[var(--arena-terminal-text)] text-[var(--arena-terminal-bg)]'
                         : 'text-[#949e9c] hover:bg-[#344148] hover:text-[#f6fefd]'
                     }`}
                     aria-pressed={range === item.value}
@@ -951,9 +959,8 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   aria-label="Recent fills"
                   tabIndex={0}
                 >
-                  <div className="sticky top-0 z-10 grid grid-cols-[104px_minmax(0,1fr)_112px] border-b border-[#273035] bg-[#0b1418]/95 px-2 py-1 font-data text-[11px] uppercase text-[#697371] backdrop-blur min-[1440px]:grid-cols-[118px_minmax(0,1fr)_126px]">
-                    <span>Side</span>
-                    <span>Market</span>
+                  <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_128px] border-b border-[#273035] bg-[#0b1418]/95 px-2 py-1 font-data text-[11px] uppercase text-[#697371] backdrop-blur min-[1440px]:grid-cols-[minmax(0,1fr)_136px]">
+                    <span>Fill</span>
                     <span className="text-right">Notional</span>
                   </div>
                   <div className="divide-y divide-[#273035]">
@@ -967,7 +974,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                         <button
                           key={trade.id}
                           type="button"
-                          className={`grid h-10 w-full grid-cols-[104px_minmax(0,1fr)_112px] items-center gap-2 px-2 py-1 text-left transition-colors min-[1440px]:grid-cols-[118px_minmax(0,1fr)_126px] ${
+                          className={`grid min-h-[52px] w-full grid-cols-[minmax(0,1fr)_128px] items-center gap-2 px-2 py-1 text-left transition-colors min-[1440px]:grid-cols-[minmax(0,1fr)_136px] ${
                             selected
                               ? 'bg-[#132329] shadow-[inset_3px_0_0_rgba(80,210,193,0.82)]'
                               : 'hover:bg-[#101f25]'
@@ -977,20 +984,23 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                           title={`${formatTradeActionLabel(trade.action)} ${getTradeMarketLabel(trade)} · ${formatTradeMicrostructure(trade)}`}
                         >
                           <div className="min-w-0">
-                            <div className={`truncate font-data text-[14px] font-bold uppercase leading-4 ${getTradeActionToneClass(trade.action)}`}>
-                              {formatTradeActionLabel(trade.action)}
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className={`min-w-0 truncate font-data text-[13px] font-bold uppercase leading-4 ${getTradeActionToneClass(trade.action)}`}>
+                                {formatTradeActionLabel(trade.action)}
+                              </span>
+                              <span className="shrink-0 font-data text-[11px] leading-3 text-[#697371]">
+                                {formatFillTapeTime(trade.timestamp)}
+                              </span>
                             </div>
-                            <div className="mt-0.5 truncate font-data text-[11px] leading-3 text-[#697371]">
-                              {formatTradeTime(trade.timestamp)}
-                            </div>
+                            <TradeInstrumentDisplay
+                              trade={trade}
+                              className="mt-1 w-full overflow-hidden"
+                              size="sm"
+                              showVenue={false}
+                              showSecondary={false}
+                              labelClassName="max-w-full !truncate text-[14px] !leading-4 !text-[var(--arena-terminal-text)]"
+                            />
                           </div>
-                          <TradeInstrumentDisplay
-                            trade={trade}
-                            size="sm"
-                            showVenue={false}
-                            showSecondary={false}
-                            labelClassName="max-w-[240px] text-[16px] !text-[var(--arena-terminal-text)]"
-                          />
                           <div className="min-w-0 text-right">
                             <div className="font-data text-[15px] font-semibold tabular-nums leading-5 text-[#f6fefd]">
                               {formatTradeUsd(trade.notionalUsd)}

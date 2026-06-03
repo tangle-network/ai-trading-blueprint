@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import type { ReactNode } from 'react';
 import type { Address } from 'viem';
 import { Identicon } from '@tangle-network/blueprint-ui/components';
 import type { Bot } from '~/lib/types/bot';
@@ -17,6 +18,7 @@ interface ArenaTopAgentsPanelProps {
   variant?: 'table' | 'rail';
   metricMode?: 'performance' | 'activity';
   activityStatsByBotId?: Map<string, AgentActivityStats>;
+  headerControls?: ReactNode;
 }
 
 function valueTone(value: number): string {
@@ -55,6 +57,7 @@ export function ArenaTopAgentsPanel({
   variant = 'table',
   metricMode = 'performance',
   activityStatsByBotId,
+  headerControls,
 }: ArenaTopAgentsPanelProps) {
   const isRail = variant === 'rail';
   const showActivity = metricMode === 'activity' && !isRail;
@@ -70,12 +73,15 @@ export function ArenaTopAgentsPanel({
         <h2 className="font-display text-base font-semibold tracking-tight text-[var(--arena-terminal-text)]">
           {isRail ? 'Agents' : 'Top agents'}
         </h2>
-        <Link
-          to="/leaderboard"
-          className="inline-flex h-7 items-center rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2 font-display text-xs font-semibold text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-        >
-          All
-        </Link>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {headerControls}
+          <Link
+            to="/leaderboard"
+            className="inline-flex h-7 items-center rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2 font-display text-xs font-semibold text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+          >
+            All
+          </Link>
+        </div>
       </div>
 
       {!isRail && (

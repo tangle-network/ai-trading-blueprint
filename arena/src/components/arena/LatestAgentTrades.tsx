@@ -1,4 +1,5 @@
 import { Link, useSearchParams } from 'react-router';
+import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { isAddress, type Address } from 'viem';
 import { Identicon, Skeleton } from '@tangle-network/blueprint-ui/components';
 import { TradeInstrumentDisplay } from '~/components/bot-detail/shared/AssetDisplay';
@@ -23,6 +24,7 @@ interface LatestAgentTradesProps {
   enabled?: boolean;
   limit?: number;
   variant?: 'standard' | 'panel' | 'explorer';
+  headerControls?: ReactNode;
 }
 
 function formatReference(trade: Trade): string {
@@ -56,6 +58,7 @@ export function LatestAgentTrades({
   enabled = true,
   limit,
   variant = 'standard',
+  headerControls,
 }: LatestAgentTradesProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { trades, isLoading, candidateCount } = useLatestAgentTrades(bots, {
@@ -87,6 +90,16 @@ export function LatestAgentTrades({
     setSearchParams(nextParams, { replace: true });
   }
 
+  function handleExplorerRowKeyDown(event: KeyboardEvent<HTMLTableRowElement>, fillId: string) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    selectFill(fillId);
+  }
+
+  function stopAgentLinkRowSelection(event: MouseEvent<HTMLAnchorElement>) {
+    event.stopPropagation();
+  }
+
   function selectExplorerPage(page: number) {
     const nextPage = Math.min(Math.max(page, 1), explorerPageCount);
     const nextParams = new URLSearchParams(searchParams);
@@ -105,11 +118,14 @@ export function LatestAgentTrades({
         <h2 className={`font-display font-semibold tracking-tight ${isBounded ? 'text-[var(--arena-terminal-text)]' : 'text-arena-elements-textPrimary'} ${isExplorer ? 'text-lg' : 'text-base'}`}>
           {isExplorer ? 'Fills' : 'Fills'}
         </h2>
-        {trades.length === 0 && candidateCount > 0 && (
-          <span className={`font-data text-xs ${isBounded ? 'text-[var(--arena-terminal-text-subtle)]' : 'text-arena-elements-textTertiary'}`}>
-            {candidateCount}
-          </span>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {trades.length === 0 && candidateCount > 0 && (
+            <span className={`font-data text-xs ${isBounded ? 'text-[var(--arena-terminal-text-subtle)]' : 'text-arena-elements-textTertiary'}`}>
+              {candidateCount}
+            </span>
+          )}
+          {headerControls}
+        </div>
       </div>
 
       {isLoading ? (
@@ -143,7 +159,7 @@ export function LatestAgentTrades({
                 <Link
                   key={`${botId}:${trade.id}`}
                   to={href}
-                  className="group grid w-full grid-cols-[2.8rem_minmax(0,1fr)_5rem] items-center gap-1.5 px-2.5 py-2 text-left transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                  className="group grid w-full grid-cols-[3rem_minmax(0,1fr)_5.75rem] items-center gap-2 px-2.5 py-2.5 text-left transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
                   aria-label={`Open ${agentName} performance for ${formatTradeActionLabel(trade.action)} ${getTradeMarketLabel(trade)} fill ${formatTradeUsd(trade.notionalUsd)} ${formatTradeAge(trade.timestamp)}`}
                 >
                   <span
@@ -159,7 +175,7 @@ export function LatestAgentTrades({
                       ) : (
                         <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
                       )}
-                      <span className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
+                      <span className="truncate font-display text-[15px] font-semibold text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
                         {agentName}
                       </span>
                     </span>
@@ -168,13 +184,13 @@ export function LatestAgentTrades({
                         trade={trade}
                         size="sm"
                         showVenue={false}
-                        labelClassName="max-w-full text-[13px]"
+                        labelClassName="max-w-full text-[14px]"
                         terminal
                       />
                     </span>
                   </span>
                   <span className="flex min-w-0 flex-col items-end gap-1">
-                    <span className="truncate text-right font-data text-[13px] font-semibold text-[var(--arena-terminal-text)]">
+                    <span className="truncate text-right font-data text-[14px] font-semibold text-[var(--arena-terminal-text)]">
                       {formatTradeUsd(trade.notionalUsd)}
                     </span>
                     <span className={`inline-flex h-6 max-w-full items-center justify-center truncate rounded-[4px] px-1.5 font-data text-[10px] font-bold ${getTerminalTradeActionPillClass(trade.action)}`}>
@@ -214,10 +230,13 @@ export function LatestAgentTrades({
                     return (
                       <tr
                         key={`${botId}:${trade.id}`}
-                        className={`group transition-colors hover:bg-[var(--arena-terminal-panel-strong)] ${
+                        className={`group cursor-default transition-colors hover:bg-[var(--arena-terminal-panel-strong)] ${
                           selected ? 'bg-[var(--arena-terminal-accent-soft)]' : ''
                         }`}
                         aria-current={selected ? 'true' : undefined}
+                        tabIndex={0}
+                        onClick={() => selectFill(trade.id)}
+                        onKeyDown={(event) => handleExplorerRowKeyDown(event, trade.id)}
                       >
                         <td
                           className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle font-data text-xs text-[var(--arena-terminal-text-muted)]"
@@ -228,7 +247,9 @@ export function LatestAgentTrades({
                         <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle">
                           <Link
                             to={`/arena/bot/${encodeURIComponent(botId)}/performance`}
+                            onClick={stopAgentLinkRowSelection}
                             className="flex min-w-0 items-center gap-2.5 rounded-[5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                            aria-label={`Open ${agentName} performance`}
                           >
                             {hasOperatorAddress ? (
                               <Identicon address={operatorAddress as Address} size={20} />
@@ -241,15 +262,11 @@ export function LatestAgentTrades({
                           </Link>
                         </td>
                         <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle">
-                          <button
-                            type="button"
-                            className={`inline-flex h-6 min-w-[4.75rem] items-center justify-start rounded-none bg-transparent px-0 font-data text-[11px] font-bold transition-[color,opacity] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${getTradeActionToneClass(trade.action)}`}
-                            aria-label={`Inspect ${agentName} fill`}
-                            aria-pressed={selected}
-                            onClick={() => selectFill(trade.id)}
+                          <span
+                            className={`inline-flex h-6 min-w-[4.75rem] items-center justify-start rounded-none bg-transparent px-0 font-data text-[11px] font-bold transition-[color,opacity] duration-150 ${getTradeActionToneClass(trade.action)}`}
                           >
                             {formatTradeActionLabel(trade.action)}
-                          </button>
+                          </span>
                         </td>
                         <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle">
                           <TradeInstrumentDisplay

@@ -187,20 +187,25 @@ describe('leaderboard auth-aware rendering', () => {
     );
     expect(hoisted.platformVolumeChartProps.at(-1)).toEqual(expect.objectContaining({
       variant: 'command',
-      className: 'min-h-[320px] xl:min-h-0',
+      className: 'col-start-1 row-start-1 min-h-[320px] lg:min-h-0',
+      headerControls: expect.anything(),
     }));
     expect(hoisted.latestAgentTradesProps.at(-1)).toEqual(expect.objectContaining({
       variant: 'panel',
-      limit: 12,
-      className: 'h-full min-h-[280px] xl:row-span-2 xl:min-h-0',
+      limit: 14,
+      className: 'col-start-3 row-start-1 row-span-3 min-h-[280px] lg:min-h-0',
+      headerControls: expect.anything(),
     }));
     expect(hoisted.topAgentsPanelProps.at(-1)).toEqual(expect.objectContaining({
       variant: 'table',
       metricMode: 'activity',
       activityStatsByBotId: expect.any(Map),
-      limit: 6,
-      className: 'min-h-[220px] xl:min-h-0',
+      limit: 7,
+      className: 'col-start-1 row-start-3 min-h-[220px] lg:min-h-0',
+      headerControls: expect.anything(),
     }));
+    expect(screen.getByRole('button', { name: 'Resize volume and top agents' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Resize fills rail' })).toBeInTheDocument();
     expect(screen.getByText('top agents')).toBeInTheDocument();
   });
 });

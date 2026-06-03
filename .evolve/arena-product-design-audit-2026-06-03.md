@@ -70,3 +70,32 @@ Screenshots:
 - My Agents/dashboard still trails the agent workspace in density and polish.
 - Operations/revisions can use a deeper evidence-design pass with copyable IDs and stronger validation grouping.
 - Runs and Chat intentionally share trace presentation, but their information architecture should be revisited so Chat does not feel like a duplicate Runs page.
+
+## Follow-Up Pass - Home Workspace And Fills
+
+Complaints addressed:
+- Light theme selected/hover states were neon or pale-on-pale.
+- Home bottom panels did not clearly own the remaining page height.
+- Recent fills could show empty when the aggregate endpoint returned an empty success.
+- Activity fill rows had a row-inspect vs agent-navigation contradiction.
+- Agent performance fills could squeeze market/notional labels at wide breakpoints.
+
+Actions shipped:
+- Added a persisted home workspace layout with a draggable row split, draggable fills rail width, reset, and minimize/restore controls for fills and top agents.
+- Kept home desktop panels full-height while restoring stacked behavior below desktop.
+- Tokenized selected chart controls and corrected legacy pale-cyan text mappings for light theme.
+- Made an empty latest-fills aggregate fall back to bot ledgers instead of proving an empty tape.
+- Made Activity explorer rows select fills directly while the agent link remains the explicit navigation target.
+- Rebuilt agent performance fill rows as compact tickets with fill/market on the left and notional/execution detail on the right.
+
+Verification:
+- `pnpm --dir arena exec vitest run src/routes/__tests__/index.test.tsx src/components/arena/__tests__/LatestAgentTrades.test.tsx src/components/arena/__tests__/ArenaTopAgentsPanel.test.tsx src/components/bot-detail/__tests__/PerformanceTab.test.tsx src/lib/hooks/useBotApi.test.ts --reporter=dot`
+- `pnpm --dir arena typecheck`
+- `pnpm --dir arena test`
+- `pnpm --dir arena build`
+- `pnpm --dir arena smoke:agent-workspace -- --fixture --theme-matrix --screenshot-dir /tmp/arena-home-panels-ship`
+- Extra 1600px light performance screenshot against fixture confirmed the side fill rail no longer clips market/notional/action labels.
+
+Remaining product debt after this pass:
+- Home layout drag is intentionally scoped to the home workspace; agent workspaces still need a broader persisted layout model before arbitrary draggable/resizable panels should ship.
+- My Agents and Operations remain the next highest-value design pass.

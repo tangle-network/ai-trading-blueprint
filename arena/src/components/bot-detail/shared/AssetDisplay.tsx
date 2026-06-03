@@ -164,7 +164,7 @@ export function AssetPairDisplay({ left, right, className, labelClassName, size 
         <AssetIcon asset={left} size={iconSize} />
         <AssetIcon asset={right} size={iconSize} />
       </div>
-      <span className={joinClasses('font-display text-arena-elements-textPrimary', sizeLabelClassName, labelClassName)}>
+      <span className={joinClasses('min-w-0 font-display text-arena-elements-textPrimary', sizeLabelClassName, labelClassName)}>
         {left.symbol}/{right.symbol}
       </span>
     </div>

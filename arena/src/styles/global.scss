@@ -444,11 +444,14 @@
   color: var(--arena-terminal-accent) !important;
 }
 
-.arena-trace-terminal[class~='text-[#c8fffb]'],
-.arena-trace-terminal [class~='text-[#c8fffb]'],
 .arena-trace-terminal[class~='text-[#9cf5e7]'],
 .arena-trace-terminal [class~='text-[#9cf5e7]'] {
-  color: var(--arena-terminal-accent-text) !important;
+  color: var(--arena-terminal-text) !important;
+}
+
+.arena-trace-terminal[class~='text-[#c8fffb]'],
+.arena-trace-terminal [class~='text-[#c8fffb]'] {
+  color: var(--arena-terminal-accent) !important;
 }
 
 .arena-trace-terminal[class~='text-[#ff5d6c]'],

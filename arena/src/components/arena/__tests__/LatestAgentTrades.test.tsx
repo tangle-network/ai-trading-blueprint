@@ -154,7 +154,9 @@ describe('LatestAgentTrades', () => {
     expect(within(inspector).getByText('Tape Bot')).toBeInTheDocument();
     expect(within(inspector).getAllByText(/paper/i).length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Inspect Tape Bot fill' })[1]);
+    const secondRow = screen.getByText('$101').closest('tr');
+    expect(secondRow).not.toBeNull();
+    fireEvent.click(secondRow!);
     expect(within(inspector).getByText('$101')).toBeInTheDocument();
   });
 

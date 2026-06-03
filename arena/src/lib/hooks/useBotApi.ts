@@ -806,6 +806,18 @@ export interface LatestAgentTrade {
   operatorApiUrl?: string | null;
 }
 
+export function shouldFallbackLatestTradesToBotLedgers({
+  operatorCount,
+  aggregateReturnedNoTrades,
+  aggregateAllErrored,
+}: {
+  operatorCount: number;
+  aggregateReturnedNoTrades: boolean;
+  aggregateAllErrored: boolean;
+}): boolean {
+  return operatorCount === 0 || aggregateReturnedNoTrades || (operatorCount > 0 && aggregateAllErrored);
+}
+
 function fallbackBotName(botId: string): string {
   if (!botId) return 'Unknown Agent';
   return `Agent ${botId.slice(0, 8)}`;
@@ -866,8 +878,19 @@ export function useLatestAgentTrades(
     })),
   });
 
-  const fallbackAllOperators = operatorUrls.length === 0
-    || (operatorResults.length > 0 && operatorResults.every((result) => result.isError));
+  const aggregateStateFingerprint = operatorResults.map((result, index) => {
+    const apiUrl = operatorUrls[index] ?? '';
+    if (result.isError) return `${apiUrl}:error`;
+    if (result.isSuccess) return `${apiUrl}:success:${result.data?.length ?? 0}`;
+    return `${apiUrl}:pending`;
+  }).join('|');
+  const aggregateReturnedNoTrades = operatorResults.length > 0
+    && operatorResults.every((result) => result.isSuccess && (result.data?.length ?? 0) === 0);
+  const fallbackAllOperators = shouldFallbackLatestTradesToBotLedgers({
+    operatorCount: operatorUrls.length,
+    aggregateReturnedNoTrades,
+    aggregateAllErrored: operatorResults.length > 0 && operatorResults.every((result) => result.isError),
+  });
   const failedAggregateFingerprint = operatorResults.map((result, index) =>
     result.isError ? operatorUrls[index] : '',
   ).join('|');
@@ -892,6 +915,7 @@ export function useLatestAgentTrades(
   }, [
     botFingerprint,
     bots,
+    aggregateStateFingerprint,
     failedAggregateFingerprint,
     fallbackAllOperators,
     maxBots,

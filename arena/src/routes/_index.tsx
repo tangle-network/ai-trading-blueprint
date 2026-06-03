@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
 import type { Address } from 'viem';
@@ -31,6 +31,74 @@ import { Identicon } from '@tangle-network/blueprint-ui/components';
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
 ];
+
+interface HomeWorkspaceLayout {
+  volumePercent: number;
+  fillsWidth: number;
+  fillsCollapsed: boolean;
+  agentsCollapsed: boolean;
+}
+
+const HOME_WORKSPACE_LAYOUT_KEY = 'arena:home-workspace-layout';
+const DEFAULT_HOME_WORKSPACE_LAYOUT: HomeWorkspaceLayout = {
+  volumePercent: 68,
+  fillsWidth: 380,
+  fillsCollapsed: false,
+  agentsCollapsed: false,
+};
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function readHomeWorkspaceLayout(): HomeWorkspaceLayout {
+  if (typeof window === 'undefined') return DEFAULT_HOME_WORKSPACE_LAYOUT;
+  try {
+    const raw = window.localStorage.getItem(HOME_WORKSPACE_LAYOUT_KEY);
+    if (!raw) return DEFAULT_HOME_WORKSPACE_LAYOUT;
+    const parsed = JSON.parse(raw) as Partial<HomeWorkspaceLayout>;
+    return {
+      volumePercent: clampNumber(Number(parsed.volumePercent) || DEFAULT_HOME_WORKSPACE_LAYOUT.volumePercent, 46, 78),
+      fillsWidth: clampNumber(Number(parsed.fillsWidth) || DEFAULT_HOME_WORKSPACE_LAYOUT.fillsWidth, 320, 560),
+      fillsCollapsed: parsed.fillsCollapsed === true,
+      agentsCollapsed: parsed.agentsCollapsed === true,
+    };
+  } catch (_error) {
+    return DEFAULT_HOME_WORKSPACE_LAYOUT;
+  }
+}
+
+function useHomeWorkspaceLayout() {
+  const [layout, setLayout] = useState<HomeWorkspaceLayout>(readHomeWorkspaceLayout);
+
+  useEffect(() => {
+    window.localStorage.setItem(HOME_WORKSPACE_LAYOUT_KEY, JSON.stringify(layout));
+  }, [layout]);
+
+  return [layout, setLayout] as const;
+}
+
+function WorkspaceControlButton({
+  label,
+  icon,
+  onClick,
+}: {
+  label: string;
+  icon: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-muted)] transition-[background-color,border-color,color] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+    >
+      <span className={`${icon} text-sm`} aria-hidden="true" />
+    </button>
+  );
+}
 
 function formatPulseNumber(value: number): string {
   return formatNumber(value, { maximumFractionDigits: 0 });
@@ -216,6 +284,180 @@ function HomePulseBoard({
   );
 }
 
+function HomeWorkspacePanels({
+  leaderboardBots,
+  activityStatsByBotId,
+}: {
+  leaderboardBots: Bot[];
+  activityStatsByBotId: Map<string, AgentActivityStats>;
+}) {
+  const workspaceRef = useRef<HTMLElement>(null);
+  const [layout, setLayout] = useHomeWorkspaceLayout();
+  const restoreAgents = () => setLayout((current) => ({ ...current, agentsCollapsed: false }));
+  const toggleAgents = () => setLayout((current) => ({ ...current, agentsCollapsed: !current.agentsCollapsed }));
+  const toggleFills = () => setLayout((current) => ({ ...current, fillsCollapsed: !current.fillsCollapsed }));
+  const resetLayout = () => setLayout(DEFAULT_HOME_WORKSPACE_LAYOUT);
+
+  function startColumnResize(event: ReactPointerEvent<HTMLButtonElement>) {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    event.preventDefault();
+    setLayout((current) => ({ ...current, fillsCollapsed: false }));
+
+    function handlePointerMove(moveEvent: PointerEvent) {
+      const maxWidth = Math.min(560, Math.max(340, rect.width * 0.48));
+      const nextWidth = clampNumber(rect.right - moveEvent.clientX, 320, maxWidth);
+      setLayout((current) => ({ ...current, fillsWidth: nextWidth, fillsCollapsed: false }));
+    }
+
+    function handlePointerUp() {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    }
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+  }
+
+  function startRowResize(event: ReactPointerEvent<HTMLButtonElement>) {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    event.preventDefault();
+    setLayout((current) => ({ ...current, agentsCollapsed: false }));
+
+    function handlePointerMove(moveEvent: PointerEvent) {
+      const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 46, 78);
+      setLayout((current) => ({ ...current, volumePercent: nextPercent, agentsCollapsed: false }));
+    }
+
+    function handlePointerUp() {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    }
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+  }
+
+  const gridStyle: CSSProperties = {
+    gridTemplateColumns: layout.fillsCollapsed
+      ? 'minmax(0,1fr) 8px 44px'
+      : `minmax(0,1fr) 8px minmax(320px, ${layout.fillsWidth}px)`,
+    gridTemplateRows: layout.agentsCollapsed
+      ? 'minmax(0,1fr) 8px 44px'
+      : `minmax(260px, ${layout.volumePercent}fr) 8px minmax(190px, ${100 - layout.volumePercent}fr)`,
+  };
+
+  return (
+    <section
+      ref={workspaceRef}
+      className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden lg:grid lg:gap-0"
+      style={gridStyle}
+      aria-label="Arena fleet terminal"
+    >
+      <PlatformVolumeChart
+        bots={leaderboardBots}
+        variant="command"
+        className="col-start-1 row-start-1 min-h-[320px] lg:min-h-0"
+        headerControls={(
+          <>
+            <WorkspaceControlButton
+              label={layout.agentsCollapsed ? 'Restore top agents' : 'Expand volume'}
+              icon={layout.agentsCollapsed ? 'i-ph:arrows-in-line-vertical' : 'i-ph:arrows-out-line-vertical'}
+              onClick={toggleAgents}
+            />
+            <WorkspaceControlButton
+              label="Reset workspace"
+              icon="i-ph:arrow-counter-clockwise"
+              onClick={resetLayout}
+            />
+          </>
+        )}
+      />
+
+      <button
+        type="button"
+        data-testid="home-row-resize-handle"
+        className="col-start-1 row-start-2 hidden cursor-row-resize items-center justify-center bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text-subtle)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60 lg:flex"
+        aria-label="Resize volume and top agents"
+        title="Drag to resize volume and top agents"
+        onPointerDown={startRowResize}
+      >
+        <span className="h-px w-12 bg-current" aria-hidden="true" />
+      </button>
+
+      {layout.agentsCollapsed ? (
+        <button
+          type="button"
+          className="col-start-1 row-start-3 flex min-h-0 items-center justify-between border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 text-left text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60"
+          onClick={restoreAgents}
+        >
+          <span className="font-display text-sm font-semibold">Top agents</span>
+          <span className="i-ph:arrows-out-line-vertical text-base" aria-hidden="true" />
+        </button>
+      ) : (
+        <ArenaTopAgentsPanel
+          bots={leaderboardBots}
+          variant="table"
+          metricMode="activity"
+          activityStatsByBotId={activityStatsByBotId}
+          limit={7}
+          className="col-start-1 row-start-3 min-h-[220px] lg:min-h-0"
+          headerControls={(
+            <WorkspaceControlButton
+              label="Minimize top agents"
+              icon="i-ph:minus-bold"
+              onClick={toggleAgents}
+            />
+          )}
+        />
+      )}
+
+      <button
+        type="button"
+        data-testid="home-column-resize-handle"
+        className="col-start-2 row-start-1 row-span-3 hidden cursor-col-resize items-center justify-center bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text-subtle)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60 lg:flex"
+        aria-label="Resize fills rail"
+        title="Drag to resize fills rail"
+        onPointerDown={startColumnResize}
+      >
+        <span className="h-12 w-px bg-current" aria-hidden="true" />
+      </button>
+
+      {layout.fillsCollapsed ? (
+        <button
+          type="button"
+          className="col-start-3 row-start-1 row-span-3 flex min-h-0 flex-col items-center justify-between border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] py-3 text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60"
+          onClick={toggleFills}
+          aria-label="Restore fills rail"
+        >
+          <span className="i-ph:list-bullets text-base" aria-hidden="true" />
+          <span className="font-display text-xs font-semibold uppercase tracking-[0.12em] [writing-mode:vertical-rl]">
+            Fills
+          </span>
+          <span className="i-ph:arrows-out-simple text-base" aria-hidden="true" />
+        </button>
+      ) : (
+        <LatestAgentTrades
+          bots={leaderboardBots}
+          variant="panel"
+          limit={14}
+          className="col-start-3 row-start-1 row-span-3 min-h-[280px] lg:min-h-0"
+          headerControls={(
+            <WorkspaceControlButton
+              label="Minimize fills"
+              icon="i-ph:sidebar-simple"
+              onClick={toggleFills}
+            />
+          )}
+        />
+      )}
+    </section>
+  );
+}
+
 export default function IndexPage() {
   const { isConnected } = useAccount();
   useTradingRouteAutoAuth({
@@ -336,30 +578,10 @@ export default function IndexPage() {
             platformLiveUsd={homeVolumeSeries.summary.liveUsd}
             platformFills={platformTradeCount}
           />
-          <section
-            className="grid min-h-0 flex-1 gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.34fr)] xl:grid-rows-[minmax(0,0.72fr)_minmax(220px,0.28fr)]"
-            aria-label="Arena fleet terminal"
-          >
-            <PlatformVolumeChart
-              bots={leaderboardBots}
-              variant="command"
-              className="min-h-[320px] xl:min-h-0"
-            />
-            <LatestAgentTrades
-              bots={leaderboardBots}
-              variant="panel"
-              limit={12}
-              className="h-full min-h-[280px] xl:row-span-2 xl:min-h-0"
-            />
-            <ArenaTopAgentsPanel
-              bots={leaderboardBots}
-              variant="table"
-              metricMode="activity"
-              activityStatsByBotId={activityStatsByBotId}
-              limit={6}
-              className="min-h-[220px] xl:min-h-0"
-            />
-          </section>
+          <HomeWorkspacePanels
+            leaderboardBots={leaderboardBots}
+            activityStatsByBotId={activityStatsByBotId}
+          />
         </div>
       )}
     </div>
