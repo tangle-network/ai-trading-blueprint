@@ -154,7 +154,7 @@ interface ApiTradeCountEvidence {
 }
 
 interface ApiCandle {
-  timestamp: number;
+  timestamp: number | string;
   token: string;
   open: string;
   high: string;
@@ -573,6 +573,16 @@ function normalizeTradePage(
   };
 }
 
+function unixTimestampMs(value: number | string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return Number.NaN;
+  const abs = Math.abs(parsed);
+  if (abs >= 1e17) return parsed / 1_000_000;
+  if (abs >= 1e14) return parsed / 1_000;
+  if (abs >= 1e11) return parsed;
+  return parsed * 1000;
+}
+
 function parseOptionalTimestampMs(value: string | null | undefined): number | null {
   if (!value) return null;
   const parsed = new Date(value).getTime();
@@ -646,11 +656,14 @@ function normalizeTrades(data: ApiTrade[] | ApiTradeListResponse): ApiTrade[] {
   return normalizeTradePage(data, Number.MAX_SAFE_INTEGER).trades;
 }
 
-function normalizeCandles(data: ApiCandle[] | ApiCandleListResponse): MarketCandle[] {
+export function normalizeCandles(
+  data: ApiCandle[] | ApiCandleListResponse,
+  window?: { fromMs?: number; toMs?: number },
+): MarketCandle[] {
   const candles = Array.isArray(data) ? data : data.candles;
   return candles
     .map((candle) => ({
-      timestamp: Number(candle.timestamp) * 1000,
+      timestamp: unixTimestampMs(candle.timestamp),
       token: candle.token,
       open: Number(candle.open),
       high: Number(candle.high),
@@ -669,6 +682,10 @@ function normalizeCandles(data: ApiCandle[] | ApiCandleListResponse): MarketCand
       && candle.low > 0
       && candle.close > 0,
     )
+    .filter((candle) =>
+      (window?.fromMs == null || candle.timestamp >= window.fromMs)
+      && (window?.toMs == null || candle.timestamp <= window.toMs),
+    )
     .sort((left, right) => left.timestamp - right.timestamp);
 }
 
@@ -683,18 +700,26 @@ function normalizePlatformVolumeBuckets(data: ApiPlatformVolumeResponse): Platfo
   }));
 }
 
-function normalizeMetrics(data: ApiMetricsSnapshot[] | ApiMetricsHistoryResponse): ApiMetricsSnapshot[] {
+export function normalizeMetrics(data: ApiMetricsSnapshot[] | ApiMetricsHistoryResponse): ApiMetricsSnapshot[] {
   const snapshots = Array.isArray(data) ? data : data.snapshots;
-  return snapshots.map((snapshot) => ({
-    ...snapshot,
-    account_value_usd: Number(snapshot.account_value_usd),
-    unrealized_pnl: Number(snapshot.unrealized_pnl),
-    realized_pnl: Number(snapshot.realized_pnl),
-    high_water_mark: Number(snapshot.high_water_mark),
-    drawdown_pct: Number(snapshot.drawdown_pct),
-    positions_count: Number(snapshot.positions_count),
-    trade_count: Number(snapshot.trade_count),
-  }));
+  return snapshots
+    .map((snapshot) => ({
+      ...snapshot,
+      account_value_usd: Number(snapshot.account_value_usd),
+      unrealized_pnl: Number(snapshot.unrealized_pnl),
+      realized_pnl: Number(snapshot.realized_pnl),
+      high_water_mark: Number(snapshot.high_water_mark),
+      drawdown_pct: Number(snapshot.drawdown_pct),
+      positions_count: Number(snapshot.positions_count),
+      trade_count: Number(snapshot.trade_count),
+    }))
+    .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime());
+}
+
+export function metricHistoryLimitForDays(days: number): number {
+  if (days <= 1) return 500;
+  if (days <= 7) return 2_500;
+  return 10_000;
 }
 
 interface BotApiQueryOptions {
@@ -1337,13 +1362,14 @@ export function useBotMetrics(botId: string, days = 30, options: BotApiQueryOpti
   const enabled = options.enabled ?? true;
   const needsAuth = fleetReadRequiresAuth(deploymentKind);
   const authKey = needsAuth ? auth.authCacheKey : 'public';
+  const limit = metricHistoryLimitForDays(days);
 
   return useQuery<ApiMetricsSnapshot[]>({
-    queryKey: ['bot-metrics', apiUrl, botId, days, deploymentKind, authKey],
+    queryKey: ['bot-metrics', apiUrl, botId, days, limit, deploymentKind, authKey],
     queryFn: async () => {
       const from = new Date(Date.now() - days * 86400000).toISOString();
       const to = new Date().toISOString();
-      const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/metrics/history')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=100`;
+      const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/metrics/history')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=${limit}`;
       const data = await fetchOperatorBotApi<ApiMetricsSnapshot[] | ApiMetricsHistoryResponse>(
         apiUrl,
         auth,
@@ -1405,7 +1431,7 @@ export function useBotMarketCandles(
         path,
         { auth: needsAuth },
       );
-      return normalizeCandles(data);
+      return normalizeCandles(data, { fromMs: from * 1000, toMs: to * 1000 });
     },
     staleTime: 30_000,
     refetchOnMount: false,

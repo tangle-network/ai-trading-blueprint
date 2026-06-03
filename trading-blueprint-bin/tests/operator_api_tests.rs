@@ -3781,7 +3781,7 @@ async fn test_get_bot_metrics_history_fallback_respects_limit_query() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let snapshots = json.as_array().expect("metrics history should be an array");
     assert_eq!(snapshots.len(), 1);
-    assert_eq!(snapshots[0]["trade_count"], 0);
+    assert_eq!(snapshots[0]["trade_count"], 1);
 }
 
 // ---------------------------------------------------------------------------

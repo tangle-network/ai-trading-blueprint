@@ -4602,8 +4602,10 @@ fn fallback_metrics_history(
         });
     }
 
-    if let Some(limit) = query.limit {
-        snapshots.truncate(limit);
+    if let Some(limit) = query.limit
+        && snapshots.len() > limit
+    {
+        snapshots = snapshots.split_off(snapshots.len() - limit);
     }
 
     snapshots

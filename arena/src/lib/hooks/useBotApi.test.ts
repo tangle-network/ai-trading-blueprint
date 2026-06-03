@@ -4,6 +4,9 @@ import {
   getTradeStatus,
   mapApiTrade,
   mapApiTradePage,
+  metricHistoryLimitForDays,
+  normalizeCandles,
+  normalizeMetrics,
   shouldFallbackLatestTradesToBotLedgers,
 } from './useBotApi';
 import { protocolToVenue } from '~/lib/types/trade';
@@ -379,5 +382,110 @@ describe('useBotApi trade mapping helpers', () => {
       orderType: 'market',
       reduceOnly: false,
     });
+  });
+
+  it('normalizes candle timestamp units and drops candles outside the requested chart window', () => {
+    const candles = normalizeCandles({
+      candles: [
+        {
+          timestamp: 1_780_000_000,
+          token: 'ETH',
+          open: '100',
+          high: '101',
+          low: '99',
+          close: '100.5',
+          volume: '10',
+        },
+        {
+          timestamp: 1_780_003_600_000,
+          token: 'ETH',
+          open: '101',
+          high: '102',
+          low: '100',
+          close: '101.5',
+          volume: '11',
+        },
+        {
+          timestamp: 1_780_007_200_000_000,
+          token: 'ETH',
+          open: '102',
+          high: '103',
+          low: '101',
+          close: '102.5',
+          volume: '12',
+        },
+        {
+          timestamp: 1_780_010_800_000_000_000,
+          token: 'ETH',
+          open: '103',
+          high: '104',
+          low: '102',
+          close: '103.5',
+          volume: '13',
+        },
+        {
+          timestamp: 1_700_000_000,
+          token: 'ETH',
+          open: '90',
+          high: '91',
+          low: '89',
+          close: '90.5',
+          volume: '1',
+        },
+      ],
+      total: 5,
+    }, {
+      fromMs: 1_780_000_000_000,
+      toMs: 1_780_010_800_000,
+    });
+
+    expect(candles.map((candle) => candle.timestamp)).toEqual([
+      1_780_000_000_000,
+      1_780_003_600_000,
+      1_780_007_200_000,
+      1_780_010_800_000,
+    ]);
+    expect(candles.map((candle) => candle.close)).toEqual([100.5, 101.5, 102.5, 103.5]);
+  });
+
+  it('sorts metric history chronologically after API normalization', () => {
+    const snapshots = normalizeMetrics({
+      snapshots: [
+        {
+          timestamp: '2026-06-03T20:10:00.000Z',
+          bot_id: 'bot-1',
+          account_value_usd: 10002,
+          unrealized_pnl: 2,
+          realized_pnl: 0,
+          high_water_mark: 10002,
+          drawdown_pct: 0,
+          positions_count: 1,
+          trade_count: 3,
+        },
+        {
+          timestamp: '2026-06-03T20:00:00.000Z',
+          bot_id: 'bot-1',
+          account_value_usd: 10000,
+          unrealized_pnl: 0,
+          realized_pnl: 0,
+          high_water_mark: 10000,
+          drawdown_pct: 0,
+          positions_count: 0,
+          trade_count: 1,
+        },
+      ],
+    });
+
+    expect(snapshots.map((snapshot) => snapshot.timestamp)).toEqual([
+      '2026-06-03T20:00:00.000Z',
+      '2026-06-03T20:10:00.000Z',
+    ]);
+    expect(snapshots.map((snapshot) => snapshot.account_value_usd)).toEqual([10000, 10002]);
+  });
+
+  it('requests enough metric history for active five-minute paper trading charts', () => {
+    expect(metricHistoryLimitForDays(1)).toBe(500);
+    expect(metricHistoryLimitForDays(7)).toBe(2500);
+    expect(metricHistoryLimitForDays(30)).toBe(10000);
   });
 });

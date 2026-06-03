@@ -61,7 +61,7 @@ async fn get_metrics_history(
     State(state): State<Arc<TradingApiState>>,
     Query(query): Query<MetricsHistoryQuery>,
 ) -> Result<Json<MetricsHistoryResponse>, (StatusCode, String)> {
-    let limit = query.limit.unwrap_or(100).min(1000);
+    let limit = query.limit.unwrap_or(100).min(10_000);
 
     let result = metrics_store::snapshots_for_bot(&state.bot_id, query.from, query.to, limit)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -117,7 +117,7 @@ async fn get_metrics_history_multi_bot(
     State(state): State<Arc<MultiBotTradingState>>,
     Query(query): Query<MetricsHistoryQuery>,
 ) -> Result<Json<MetricsHistoryResponse>, (StatusCode, String)> {
-    let limit = query.limit.unwrap_or(100).min(1000);
+    let limit = query.limit.unwrap_or(100).min(10_000);
 
     let mut result = metrics_store::snapshots_for_bot(&bot.bot_id, query.from, query.to, limit)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
