@@ -12,7 +12,8 @@ use sandbox_runtime::CreateSandboxParams;
 use sandbox_runtime::SandboxRecord;
 use trading_http_api::routes::hyperliquid::normalize_hyperliquid_api_wallet_name;
 use trading_runtime::supported_assets::{
-    ValuationAdapterKind, default_protocol_for_strategy, supported_assets_for_config,
+    ValuationAdapterKind, default_protocol_for_strategy, default_protocols_for_strategy,
+    supported_assets_for_config,
 };
 
 /// Keyed lock set for provision dedup — prevents TOCTOU race between
@@ -271,6 +272,8 @@ pub(crate) fn harness_json_for_strategy_config(
     merge_mm_harness(strategy_config, harness_obj)?;
     merge_json_object_harness(strategy_config, harness_obj, "portfolio");
     merge_json_object_harness(strategy_config, harness_obj, "yield");
+    merge_json_object_harness(strategy_config, harness_obj, "volatility");
+    merge_json_object_harness(strategy_config, harness_obj, "perps");
 
     Ok(harness_json)
 }
@@ -385,8 +388,81 @@ fn default_paper_cash_token_value(
         .or_else(|| Some(Value::String("USDC".to_string())))
 }
 
+fn default_protocol_chain_id_for_strategy(strategy_type: &str) -> Option<u64> {
+    match trading_runtime::supported_assets::normalize_strategy_type(strategy_type).as_str() {
+        "perp" => Some(42161),
+        _ => None,
+    }
+}
+
+fn string_array_value(values: &[&str]) -> Value {
+    Value::Array(
+        values
+            .iter()
+            .map(|value| Value::String((*value).to_string()))
+            .collect(),
+    )
+}
+
+fn configured_protocols_for_strategy(
+    strategy_type: &str,
+    strategy_config: &Map<String, Value>,
+) -> Vec<String> {
+    strategy_config
+        .get("available_protocols")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+        .unwrap_or_else(|| {
+            default_protocols_for_strategy(strategy_type)
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect()
+        })
+}
+
 fn has_configured_asset_token(asset_token: alloy::primitives::Address) -> bool {
     asset_token != alloy::primitives::Address::ZERO
+}
+
+fn apply_volatility_defaults(strategy_config: &mut Map<String, Value>) {
+    strategy_config
+        .entry("volatility_params".to_string())
+        .or_insert_with(|| {
+            serde_json::json!({
+                "realized_window_hours": 24,
+                "implied_proxy_sources": [
+                    "hyperliquid_funding",
+                    "gmx_funding",
+                    "vertex_funding",
+                    "polymarket_spreads"
+                ],
+                "delta_hedge_threshold_pct": 5.0,
+                "max_position_pct": 5.0,
+                "max_loss_pct": 3.0,
+                "stop_condition": "paper_safe_no_live_execution"
+            })
+        });
+    strategy_config
+        .entry("decision_evidence".to_string())
+        .or_insert_with(|| {
+            serde_json::json!({
+                "tool_module": "volatility-tick.js",
+                "metrics_path": "/home/agent/metrics/latest.json",
+                "decisions_path": "/home/agent/logs/decisions.jsonl"
+            })
+        });
+    strategy_config
+        .entry("paper_safe".to_string())
+        .or_insert(Value::Bool(true));
 }
 
 fn apply_strategy_defaults(
@@ -395,6 +471,9 @@ fn apply_strategy_defaults(
     paper_trade: bool,
     bot_id: &str,
 ) -> Result<(), String> {
+    let normalized_strategy =
+        trading_runtime::supported_assets::normalize_strategy_type(&request.strategy_type);
+
     strategy_config
         .entry("strategy_type".to_string())
         .or_insert_with(|| Value::String(request.strategy_type.clone()));
@@ -403,6 +482,16 @@ fn apply_strategy_defaults(
         strategy_config
             .entry("asset_token".to_string())
             .or_insert_with(|| Value::String(format!("{:#x}", request.asset_token)));
+    }
+
+    if !strategy_config.contains_key("protocol_chain_id")
+        && let Some(default_chain_id) =
+            default_protocol_chain_id_for_strategy(&request.strategy_type)
+    {
+        strategy_config.insert(
+            "protocol_chain_id".to_string(),
+            Value::Number(default_chain_id.into()),
+        );
     }
 
     if paper_trade {
@@ -427,17 +516,24 @@ fn apply_strategy_defaults(
         );
     }
 
-    if let Some(default_protocol) = default_protocol_for_strategy(&request.strategy_type) {
+    let default_protocols = default_protocols_for_strategy(&request.strategy_type);
+    if !default_protocols.is_empty() {
         strategy_config
             .entry("available_protocols".to_string())
-            .or_insert_with(|| Value::Array(vec![Value::String(default_protocol.to_string())]));
+            .or_insert_with(|| string_array_value(default_protocols));
 
-        let supported_assets = supported_assets_for_config(
-            &request.strategy_type,
-            protocol_chain_id,
-            default_protocol,
-            Some(&Value::Object(strategy_config.clone())),
-        );
+        let supported_assets =
+            configured_protocols_for_strategy(&request.strategy_type, strategy_config)
+                .iter()
+                .flat_map(|protocol| {
+                    supported_assets_for_config(
+                        &request.strategy_type,
+                        protocol_chain_id,
+                        protocol,
+                        Some(&Value::Object(strategy_config.clone())),
+                    )
+                })
+                .collect::<Vec<_>>();
         if !supported_assets.is_empty() {
             strategy_config
                 .entry("supported_assets".to_string())
@@ -446,6 +542,10 @@ fn apply_strategy_defaults(
                 })
                 .or_insert_with(|| serde_json::to_value(supported_assets).unwrap_or(Value::Null));
         }
+    }
+
+    if normalized_strategy == "volatility" {
+        apply_volatility_defaults(strategy_config);
     }
 
     apply_hyperliquid_perp_defaults(strategy_config, request, paper_trade, bot_id)
@@ -1711,6 +1811,60 @@ mod tests {
     }
 
     #[test]
+    fn perp_defaults_expose_gmx_vertex_and_arbitrum_protocol_context() {
+        let mut config = Map::new();
+        let request = provision_request("perp", 84532);
+
+        apply_strategy_defaults(&mut config, &request, true, "trading-test-bot")
+            .expect("strategy defaults");
+
+        assert_eq!(
+            config.get("available_protocols"),
+            Some(&serde_json::json!(["gmx_v2", "vertex"]))
+        );
+        assert_eq!(
+            config.get("protocol_chain_id"),
+            Some(&serde_json::json!(42161))
+        );
+        assert_eq!(config.get("paper_trade"), None);
+    }
+
+    #[test]
+    fn volatility_defaults_expose_params_protocols_and_evidence_paths() {
+        let mut config = Map::new();
+        let request = provision_request("volatility", 84532);
+
+        apply_strategy_defaults(&mut config, &request, true, "trading-test-bot")
+            .expect("strategy defaults");
+
+        assert_eq!(
+            config.get("available_protocols"),
+            Some(&serde_json::json!([
+                "polymarket_clob",
+                "uniswap_v3",
+                "gmx_v2",
+                "hyperliquid",
+                "vertex",
+                "coingecko"
+            ]))
+        );
+        assert_eq!(
+            config
+                .get("volatility_params")
+                .and_then(|value| value.get("realized_window_hours")),
+            Some(&serde_json::json!(24))
+        );
+        assert_eq!(
+            config
+                .get("decision_evidence")
+                .and_then(|value| value.get("tool_module"))
+                .and_then(Value::as_str),
+            Some("volatility-tick.js")
+        );
+        assert_eq!(config.get("paper_safe"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
     fn owner_position_sizing_overrides_default_harness_fraction() {
         let config = serde_json::json!({
             "position_sizing": {
@@ -1777,6 +1931,31 @@ mod tests {
         assert_eq!(harness["portfolio"]["rebalance_band_pct"], 0.02);
         assert_eq!(harness["portfolio"]["assets"][0]["target_weight"], 0.78);
         assert_eq!(harness["portfolio"]["assets"][1]["target_weight"], 0.22);
+    }
+
+    #[test]
+    fn strategy_harness_json_preserves_volatility_and_perp_knobs() {
+        let config = serde_json::json!({
+            "volatility": {
+                "realized_window_hours": 24,
+                "delta_hedge_threshold_pct": 5
+            },
+            "perps": {
+                "venues": ["gmx_v2", "vertex"],
+                "max_leverage": 2
+            }
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let harness = harness_json_for_strategy_config(&config).unwrap();
+
+        assert_eq!(harness["volatility"]["realized_window_hours"], 24);
+        assert_eq!(harness["volatility"]["delta_hedge_threshold_pct"], 5);
+        assert_eq!(harness["perps"]["venues"][0], "gmx_v2");
+        assert_eq!(harness["perps"]["venues"][1], "vertex");
+        assert_eq!(harness["perps"]["max_leverage"], 2);
     }
 
     #[test]

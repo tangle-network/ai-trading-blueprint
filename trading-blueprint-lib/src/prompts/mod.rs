@@ -428,7 +428,7 @@ Never ask for live keys to build a new capability. Start with research, paper tr
 /// Build the FAST trading tick prompt — 3 turns, <15s, trade or skip.
 /// Map a strategy type to its deterministic fast-tick tool filename under
 /// `/home/agent/tools/`, or `None` when the family has no deterministic tick and
-/// falls through to the generic LLM runner (prediction/volatility/perp). Single
+/// falls through to the generic LLM runner (prediction). Single
 /// source of truth shared by the Rust direct runner (workflow_tick.rs) and the
 /// fast-tick prompt below, so the gate and the prompt never diverge. Each tool
 /// emits the same schema-v1 result + decisions.jsonl/metrics side effects.
@@ -439,6 +439,8 @@ pub fn tick_tool_for_strategy(strategy_type: &str) -> Option<&'static str> {
         "mm" => Some("dex-mm-tick.js"),
         "yield" => Some("yield-tick.js"),
         "multi" => Some("multi-tick.js"),
+        "volatility" => Some("volatility-tick.js"),
+        "perp" => Some("perp-tick.js"),
         _ => None,
     }
 }
@@ -1133,7 +1135,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_envelope_mode_skips_validate() {
-        let prompt = build_fast_tick_prompt("volatility", ValidationTrust::Envelope);
+        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::Envelope);
 
         assert!(prompt.contains("envelopeStatus"));
         assert!(prompt.contains("executeWithEnvelope"));
@@ -1145,7 +1147,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_per_trade_keeps_validate() {
-        let prompt = build_fast_tick_prompt("volatility", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::PerTrade);
         assert!(prompt.contains("api.validate(intent)"));
         assert!(prompt.contains("api.execute(intent, validation)"));
         assert!(!prompt.contains("executeWithEnvelope"));
@@ -1161,10 +1163,13 @@ mod tests {
         assert_eq!(tick_tool_for_strategy("mm"), Some("dex-mm-tick.js"));
         assert_eq!(tick_tool_for_strategy("yield"), Some("yield-tick.js"));
         assert_eq!(tick_tool_for_strategy("multi"), Some("multi-tick.js"));
+        assert_eq!(
+            tick_tool_for_strategy("volatility"),
+            Some("volatility-tick.js")
+        );
+        assert_eq!(tick_tool_for_strategy("perp"), Some("perp-tick.js"));
         // Families with no deterministic tick fall through to the LLM runner.
         assert_eq!(tick_tool_for_strategy("prediction"), None);
-        assert_eq!(tick_tool_for_strategy("volatility"), None);
-        assert_eq!(tick_tool_for_strategy("perp"), None);
     }
 
     #[test]
@@ -1176,6 +1181,8 @@ mod tests {
             ("mm", "dex-mm-tick.js"),
             ("yield", "yield-tick.js"),
             ("multi", "multi-tick.js"),
+            ("volatility", "volatility-tick.js"),
+            ("perp", "perp-tick.js"),
         ] {
             let prompt = build_fast_tick_prompt(strategy, ValidationTrust::PerTrade);
             assert!(

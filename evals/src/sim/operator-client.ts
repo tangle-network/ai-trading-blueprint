@@ -249,7 +249,12 @@ export class OperatorClient {
 
   // ── Bot lifecycle ─────────────────────────────────────────────────────
 
-  async provisionBot(opts: { prompt: string; name: string; strategy_type: StrategyType }): Promise<string> {
+  async provisionBot(opts: {
+    prompt: string
+    name: string
+    strategy_type: StrategyType
+    strategy_config?: Record<string, unknown>
+  }): Promise<string> {
     const created = await this.post<{ id?: string; bot_id?: string; bot?: { id?: string } }>('/api/bots', opts)
     const botId = created.id ?? created.bot_id ?? created.bot?.id
     if (!botId) throw new Error(`bot create did not return an id: ${JSON.stringify(created)}`)

@@ -30,6 +30,7 @@ export interface LabBot {
   strategy_type: string | null
   prompt: string | null
   paper_trade: boolean | null
+  chain_id: number | null
   sandbox_id: string | null
   vault_address: string | null
   created_at: number | string | null
@@ -67,6 +68,7 @@ export interface FreshBotSpec {
   strategyType: StrategyType
   name: string
   prompt: string
+  strategyConfig?: Record<string, unknown> | undefined
 }
 
 export interface IssueCoverageCandidate {
@@ -194,6 +196,28 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
       strategyType: 'volatility',
       name: 'QA volatility paper strategy',
       prompt: 'QA issue #44: create a paper volatility strategy agent that inspects realized versus implied volatility proxies, funding rates, market spreads, delta-hedging assumptions, paper-only guardrails, and no-trade reasoning. Do not execute live funds.',
+      strategyConfig: {
+        paper_trade: true,
+        paper_safe: true,
+        available_protocols: ['polymarket_clob', 'uniswap_v3', 'gmx_v2', 'hyperliquid', 'vertex', 'coingecko'],
+        volatility_params: {
+          realized_window_hours: 24,
+          implied_proxy_sources: ['hyperliquid_funding', 'gmx_funding', 'vertex_funding', 'polymarket_spreads'],
+          delta_hedge_threshold_pct: 5,
+          max_position_pct: 5,
+          max_loss_pct: 3,
+          stop_condition: 'paper_safe_no_live_execution',
+        },
+        decision_evidence: {
+          tool_module: 'volatility-tick.js',
+          metrics_path: '/home/agent/metrics/latest.json',
+          decisions_path: '/home/agent/logs/decisions.jsonl',
+        },
+        volatility: {
+          realized_window_hours: 24,
+          delta_hedge_threshold_pct: 5,
+        },
+      },
     },
     staticPrompts: [
       'Inspect whether you are actually configured as a volatility strategy. If not, say exactly which configuration fields are missing.',
@@ -212,6 +236,24 @@ export const ISSUE_SCENARIOS: IssueScenario[] = [
       strategyType: 'perp',
       name: 'QA GMX Vertex perp paper strategy',
       prompt: 'QA issue #43: create a paper GMX and Vertex perpetual futures strategy on Arbitrum. Inspect funding, price, margin, leverage, order type, validator rejection, no-trade decisions, and venue API failures. Do not use Hyperliquid native execution and do not execute live funds.',
+      strategyConfig: {
+        paper_trade: true,
+        protocol_chain_id: 42161,
+        available_protocols: ['gmx_v2', 'vertex'],
+        perps: {
+          venues: ['gmx_v2', 'vertex'],
+          margin_asset: 'USDC',
+          order_type: 'limit',
+          max_leverage: 2,
+          max_position_pct: 5,
+          max_single_order_notional_usd: 500,
+        },
+        decision_evidence: {
+          tool_module: 'perp-tick.js',
+          metrics_path: '/home/agent/metrics/latest.json',
+          decisions_path: '/home/agent/logs/decisions.jsonl',
+        },
+      },
     },
     staticPrompts: [
       'Inspect your perp venue coverage. Are GMX or Vertex actually configured, or are you only covering a generic/Hyperliquid perp path?',
@@ -422,10 +464,11 @@ async function provisionFreshLabBot(
       strategy_type: spec.strategyType,
       prompt: spec.prompt,
       paper_trade: true,
+      chain_id: spec.strategyConfig?.protocol_chain_id === 42161 ? 42161 : null,
       sandbox_id: 'dry-run',
       vault_address: null,
       created_at: Date.now(),
-      strategy_config: null,
+      strategy_config: spec.strategyConfig ?? null,
     }
   }
   if (!client) throw new Error('fresh bot provisioning requires an authenticated operator client')
@@ -433,6 +476,7 @@ async function provisionFreshLabBot(
     prompt: spec.prompt,
     name: spec.name,
     strategy_type: spec.strategyType,
+    ...(spec.strategyConfig ? { strategy_config: spec.strategyConfig } : {}),
   })
   await client.waitForVaultResolved(botId)
   await client.configureSecrets(botId, deterministicAgentEnv())
@@ -442,10 +486,11 @@ async function provisionFreshLabBot(
     strategy_type: spec.strategyType,
     prompt: spec.prompt,
     paper_trade: true,
+    chain_id: spec.strategyConfig?.protocol_chain_id === 42161 ? 42161 : null,
     sandbox_id: null,
     vault_address: null,
     created_at: Date.now(),
-    strategy_config: null,
+    strategy_config: spec.strategyConfig ?? null,
   }
 }
 
@@ -537,9 +582,10 @@ function scoreBotForScenario(bot: LabBot, scenario: IssueScenario): IssueCoverag
   const haystack = botHaystack(bot)
   const exactHits = scenario.exactMatchers.filter((matcher) => haystack.includes(matcher.toLowerCase()))
   const partialHits = scenario.partialMatchers.filter((matcher) => haystack.includes(matcher.toLowerCase()))
-  const exact = scenario.exactMatchMode === 'all'
+  const textExact = scenario.exactMatchMode === 'all'
     ? exactHits.length === scenario.exactMatchers.length && exactHits.length > 0
     : exactHits.length > 0
+  const exact = textExact && scenarioProofSatisfied(bot, scenario)
   return {
     bot,
     score:
@@ -551,12 +597,40 @@ function scoreBotForScenario(bot: LabBot, scenario: IssueScenario): IssueCoverag
   }
 }
 
+function scenarioProofSatisfied(bot: LabBot, scenario: IssueScenario): boolean {
+  const config = objectValue(bot.strategy_config)
+  if (scenario.issueNumber === 43) {
+    const protocols = stringArray(config?.available_protocols)
+    const perps = objectValue(config?.perps)
+    const venues = stringArray(perps?.venues)
+    return bot.strategy_type === 'perp'
+      && numberValueLoose(config?.protocol_chain_id) === 42161
+      && protocols.includes('gmx_v2')
+      && protocols.includes('vertex')
+      && venues.includes('gmx_v2')
+      && venues.includes('vertex')
+  }
+  if (scenario.issueNumber === 44) {
+    const protocols = stringArray(config?.available_protocols)
+    const volatilityParams = objectValue(config?.volatility_params)
+    const evidence = objectValue(config?.decision_evidence)
+    return bot.strategy_type === 'volatility'
+      && protocols.includes('gmx_v2')
+      && protocols.includes('vertex')
+      && protocols.includes('polymarket_clob')
+      && Boolean(volatilityParams?.realized_window_hours)
+      && evidence?.tool_module === 'volatility-tick.js'
+  }
+  return true
+}
+
 function botHaystack(bot: LabBot): string {
   return [
     bot.id,
     bot.name,
     bot.strategy_type ? `strategy:${bot.strategy_type}` : '',
     bot.strategy_type ?? '',
+    bot.chain_id === null ? '' : `chain:${bot.chain_id}`,
     bot.prompt ?? '',
     bot.vault_address ?? '',
     bot.strategy_config ? JSON.stringify(bot.strategy_config) : '',
@@ -700,6 +774,7 @@ function normalizeBot(entry: unknown): LabBot | null {
     strategy_type: stringValue(raw.strategy_type) ?? null,
     prompt: stringValue(raw.prompt) ?? null,
     paper_trade: typeof raw.paper_trade === 'boolean' ? raw.paper_trade : null,
+    chain_id: numberValueOrNull(raw.chain_id),
     sandbox_id: stringValue(raw.sandbox_id) ?? null,
     vault_address: stringValue(raw.vault_address) ?? null,
     created_at: (raw.created_at as string | number | null | undefined) ?? null,
@@ -820,4 +895,29 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function numberValueOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function numberValueLoose(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
 }

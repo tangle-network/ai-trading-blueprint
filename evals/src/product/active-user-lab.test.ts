@@ -25,6 +25,7 @@ function bot(input: Partial<LabBot> & Pick<LabBot, 'id' | 'name' | 'strategy_typ
   return {
     prompt: null,
     paper_trade: true,
+    chain_id: 84532,
     sandbox_id: 'sandbox-test',
     vault_address: 'factory:0xvault',
     created_at: 1,
@@ -58,6 +59,63 @@ test('buildCoverage maps Lin QA issues to exact and partial live bot candidates'
   const polymarket = coverage.find((entry) => entry.issue.number === 41)
   assert.equal(polymarket?.status, 'covered')
   assert.equal(polymarket?.candidates[0]?.bot.id, 'bot-prediction')
+})
+
+test('buildCoverage requires GMX Vertex config proof before marking perp QA covered', () => {
+  const [coverage] = buildCoverage(
+    [issue(43, '[QA] Perp bot - GMX and Vertex')],
+    [
+      bot({
+        id: 'bot-gmx-vertex-complete',
+        name: 'QA GMX Vertex perp paper strategy',
+        strategy_type: 'perp',
+        chain_id: 84532,
+        strategy_config: {
+          paper_trade: true,
+          protocol_chain_id: 42161,
+          available_protocols: ['gmx_v2', 'vertex'],
+          perps: { venues: ['gmx_v2', 'vertex'], max_leverage: 2 },
+        },
+      }),
+    ],
+  )
+
+  assert.equal(coverage?.status, 'covered')
+  assert.equal(coverage?.candidates[0]?.exact, true)
+})
+
+test('buildCoverage requires volatility config and evidence proof before marking volatility QA covered', () => {
+  const [partial] = buildCoverage(
+    [issue(44, '[QA] Volatility bot — paper-only volatility strategy')],
+    [
+      bot({
+        id: 'bot-vol-label-only',
+        name: 'QA volatility paper strategy',
+        strategy_type: 'volatility',
+      }),
+    ],
+  )
+  assert.equal(partial?.status, 'partial')
+
+  const [covered] = buildCoverage(
+    [issue(44, '[QA] Volatility bot — paper-only volatility strategy')],
+    [
+      bot({
+        id: 'bot-vol-complete',
+        name: 'QA volatility paper strategy',
+        strategy_type: 'volatility',
+        strategy_config: {
+          paper_trade: true,
+          available_protocols: ['polymarket_clob', 'gmx_v2', 'vertex'],
+          volatility_params: { realized_window_hours: 24 },
+          decision_evidence: { tool_module: 'volatility-tick.js' },
+        },
+      }),
+    ],
+  )
+
+  assert.equal(covered?.status, 'covered')
+  assert.equal(covered?.candidates[0]?.exact, true)
 })
 
 test('buildCoverage does not treat negative Hyperliquid mentions as exact Hyperliquid coverage', () => {

@@ -852,6 +852,12 @@ struct CreateBotRequest {
     /// Optional name (defaults to first 50 chars of prompt)
     #[serde(default)]
     name: Option<String>,
+    /// Optional structured strategy config merged into the provision request.
+    #[serde(default)]
+    strategy_config: Option<serde_json::Value>,
+    /// Optional JSON-encoded structured config for CLI callers.
+    #[serde(default)]
+    strategy_config_json: Option<String>,
 }
 
 /// Canonical USDC address for the common chains we deploy on.
@@ -919,6 +925,30 @@ fn build_strategy_bootstrap_memory(
     (conversation_file, strategy_content, toc_content)
 }
 
+fn create_bot_strategy_config(
+    body: &CreateBotRequest,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    if let Some(raw) = body
+        .strategy_config_json
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+    {
+        let parsed = serde_json::from_str::<serde_json::Value>(raw)
+            .map_err(|e| format!("strategy_config_json is not valid JSON: {e}"))?;
+        return parsed
+            .as_object()
+            .cloned()
+            .ok_or_else(|| "strategy_config_json must be a JSON object".to_string());
+    }
+
+    match body.strategy_config.as_ref() {
+        None | Some(serde_json::Value::Null) => Ok(serde_json::Map::new()),
+        Some(serde_json::Value::Object(map)) => Ok(map.clone()),
+        Some(_) => Err("strategy_config must be a JSON object".to_string()),
+    }
+}
+
 async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value> {
     let caller = req
         .headers()
@@ -951,7 +981,7 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
 
     // Auto-detect strategy type from prompt
     let prompt_lower = prompt.to_lowercase();
-    let strategy_type = body.strategy_type.unwrap_or_else(|| {
+    let strategy_type = body.strategy_type.clone().unwrap_or_else(|| {
         if prompt_lower.contains("yield")
             || prompt_lower.contains("lending")
             || prompt_lower.contains("aave")
@@ -974,6 +1004,7 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
 
     let name = body
         .name
+        .clone()
         .unwrap_or_else(|| prompt.chars().take(50).collect());
 
     // Build a TradingProvisionRequest
@@ -1002,16 +1033,23 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
     let rpc_url = std::env::var("HTTP_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".into());
     let paper_trade = default_paper_trade_for_chain(chain_id);
 
-    let strategy_config = serde_json::json!({
-        "user_prompt": prompt,
-        "paper_trade": paper_trade,
-        "protocol_chain_id": protocol_chain_id,
-    });
+    let mut strategy_config = create_bot_strategy_config(&body)
+        .map_err(|message| ApiError::message(StatusCode::BAD_REQUEST, message))?;
+    strategy_config
+        .entry("user_prompt".to_string())
+        .or_insert_with(|| serde_json::Value::String(prompt.clone()));
+    strategy_config
+        .entry("paper_trade".to_string())
+        .or_insert(serde_json::Value::Bool(paper_trade));
+    strategy_config
+        .entry("protocol_chain_id".to_string())
+        .or_insert(serde_json::Value::Number(protocol_chain_id.into()));
 
     let request = trading_blueprint_lib::TradingProvisionRequest {
         name: name.clone(),
         strategy_type: strategy_type.clone(),
-        strategy_config_json: serde_json::to_string(&strategy_config).unwrap_or_default(),
+        strategy_config_json: serde_json::to_string(&serde_json::Value::Object(strategy_config))
+            .unwrap_or_default(),
         risk_params_json: r#"{"max_drawdown_pct":10}"#.into(),
         factory_address: vault_factory
             .parse()
@@ -5729,6 +5767,65 @@ mod tests {
             "0x1234567890abcdef1234567890abcdef12345678",
         );
         format!("Bearer {token}")
+    }
+
+    #[test]
+    fn create_bot_strategy_config_accepts_structured_object() {
+        let req = CreateBotRequest {
+            prompt: "volatility".to_string(),
+            strategy_type: Some("volatility".to_string()),
+            name: None,
+            strategy_config: Some(serde_json::json!({
+                "available_protocols": ["gmx_v2", "vertex"],
+                "volatility_params": { "realized_window_hours": 24 }
+            })),
+            strategy_config_json: None,
+        };
+
+        let config = create_bot_strategy_config(&req).expect("strategy config");
+
+        assert_eq!(
+            config["available_protocols"],
+            serde_json::json!(["gmx_v2", "vertex"])
+        );
+        assert_eq!(config["volatility_params"]["realized_window_hours"], 24);
+    }
+
+    #[test]
+    fn create_bot_strategy_config_accepts_json_string_for_cli_callers() {
+        let req = CreateBotRequest {
+            prompt: "perp".to_string(),
+            strategy_type: Some("perp".to_string()),
+            name: None,
+            strategy_config: None,
+            strategy_config_json: Some(
+                r#"{"protocol_chain_id":42161,"available_protocols":["gmx_v2","vertex"]}"#
+                    .to_string(),
+            ),
+        };
+
+        let config = create_bot_strategy_config(&req).expect("strategy config");
+
+        assert_eq!(config["protocol_chain_id"], 42161);
+        assert_eq!(
+            config["available_protocols"],
+            serde_json::json!(["gmx_v2", "vertex"])
+        );
+    }
+
+    #[test]
+    fn create_bot_strategy_config_rejects_non_object_config() {
+        let req = CreateBotRequest {
+            prompt: "perp".to_string(),
+            strategy_type: Some("perp".to_string()),
+            name: None,
+            strategy_config: Some(serde_json::json!(["gmx_v2"])),
+            strategy_config_json: None,
+        };
+
+        let err = create_bot_strategy_config(&req).expect_err("non-object config rejected");
+
+        assert!(err.contains("strategy_config must be a JSON object"));
     }
 
     #[tokio::test]

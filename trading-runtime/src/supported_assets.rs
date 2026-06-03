@@ -597,13 +597,27 @@ fn parse_valuation_adapter_kind(value: &str) -> Option<ValuationAdapterKind> {
 }
 
 pub fn default_protocol_for_strategy(strategy_type: &str) -> Option<&'static str> {
+    default_protocols_for_strategy(strategy_type)
+        .first()
+        .copied()
+}
+
+pub fn default_protocols_for_strategy(strategy_type: &str) -> &'static [&'static str] {
     match normalize_strategy_type(strategy_type).as_str() {
-        "dex" => Some("uniswap_v3"),
-        "yield" => Some("aave_v3"),
-        "prediction" => Some("polymarket_clob"),
-        "hyperliquid_perp" => Some("hyperliquid"),
-        "perp" => Some("gmx_v2"),
-        _ => None,
+        "dex" => &["uniswap_v3"],
+        "yield" => &["aave_v3"],
+        "prediction" => &["polymarket_clob"],
+        "hyperliquid_perp" => &["hyperliquid"],
+        "perp" => &["gmx_v2", "vertex"],
+        "volatility" => &[
+            "polymarket_clob",
+            "uniswap_v3",
+            "gmx_v2",
+            "hyperliquid",
+            "vertex",
+            "coingecko",
+        ],
+        _ => &[],
     }
 }
 
@@ -989,8 +1003,27 @@ mod tests {
     fn generic_perp_no_longer_defaults_to_hyperliquid() {
         assert_eq!(default_protocol_for_strategy("perp"), Some("gmx_v2"));
         assert_eq!(
+            default_protocols_for_strategy("perp"),
+            &["gmx_v2", "vertex"]
+        );
+        assert_eq!(
             default_protocol_for_strategy("hyperliquid_perp"),
             Some("hyperliquid")
+        );
+    }
+
+    #[test]
+    fn volatility_defaults_expose_all_research_and_execution_protocols() {
+        assert_eq!(
+            default_protocols_for_strategy("volatility"),
+            &[
+                "polymarket_clob",
+                "uniswap_v3",
+                "gmx_v2",
+                "hyperliquid",
+                "vertex",
+                "coingecko"
+            ]
         );
     }
 

@@ -1144,6 +1144,20 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/volatility-tick.js",
+        include_str!("../prompts/tools/volatility_tick.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/perp-tick.js",
+        include_str!("../prompts/tools/perp_tick.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/get-portfolio.js",
         include_str!("../prompts/tools/get_portfolio.js"),
     )
