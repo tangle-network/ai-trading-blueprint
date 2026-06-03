@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -86,6 +86,7 @@ function renderShell(path = '/dashboard') {
 describe('ArenaAppShell', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    document.documentElement.setAttribute('data-theme', 'dark');
     hoisted.account.address = '0x1111111111111111111111111111111111111111';
     hoisted.account.isConnected = true;
   });
@@ -102,6 +103,19 @@ describe('ArenaAppShell', () => {
     expect(within(sidebar!).getByRole('link', { name: /deploy/i })).toHaveAttribute('href', '/provision');
     expect(within(sidebar!).getByRole('link', { name: /create/i })).toHaveAttribute('href', '/create');
     expect(within(sidebar!).queryByText(/commandable/i)).not.toBeInTheDocument();
+  });
+
+  it('uses the official theme-specific Tangle wordmark assets', async () => {
+    renderShell();
+
+    const brandLogo = screen.getByRole('link', { name: 'Tangle Trading' }).querySelector('img');
+    expect(brandLogo).toHaveAttribute('src', '/tangle-logo-light.svg');
+
+    document.documentElement.setAttribute('data-theme', 'light');
+
+    await waitFor(() => {
+      expect(brandLogo).toHaveAttribute('src', '/tangle-logo.svg');
+    });
   });
 
   it('does not show public fleet agents as callable before a wallet is connected', () => {

@@ -21,9 +21,42 @@ const primaryNavItems = [
 
 const SIDEBAR_COLLAPSED_KEY = 'arena:sidebar-collapsed';
 
+type BrandTheme = 'light' | 'dark';
+
 function isNavActive(pathname: string, href: string) {
   if (href === '/') return pathname === '/' || pathname === '/arena';
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function getDocumentBrandTheme(): BrandTheme {
+  if (typeof document === 'undefined') return 'dark';
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
+
+function useDocumentBrandTheme(): BrandTheme {
+  const [theme, setTheme] = useState<BrandTheme>(() => getDocumentBrandTheme());
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const updateTheme = () => setTheme(getDocumentBrandTheme());
+
+    updateTheme();
+
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'bp_theme' || event.key === 'arena_theme') updateTheme();
+    };
+    window.addEventListener('storage', onStorage);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  return theme;
 }
 
 export function ArenaAppShell() {
@@ -398,6 +431,9 @@ function NetworkButton({
 }
 
 function TangleBrandMark({ compact = false }: { compact?: boolean }) {
+  const theme = useDocumentBrandTheme();
+  const src = theme === 'dark' ? '/tangle-logo-light.svg' : '/tangle-logo.svg';
+
   return (
     <span
       className={cn(
@@ -407,20 +443,9 @@ function TangleBrandMark({ compact = false }: { compact?: boolean }) {
       aria-hidden="true"
     >
       <img
-        src="/tangle-logo.svg"
+        src={src}
         alt=""
         className={cn(
-          'dark:hidden',
-          compact
-            ? 'absolute left-[-5px] top-1/2 h-[50px] w-[124px] max-w-none -translate-y-1/2'
-            : 'h-full w-full object-contain',
-        )}
-      />
-      <img
-        src="/tangle-logo-light.svg"
-        alt=""
-        className={cn(
-          'hidden dark:block',
           compact
             ? 'absolute left-[-5px] top-1/2 h-[50px] w-[124px] max-w-none -translate-y-1/2'
             : 'h-full w-full object-contain',
