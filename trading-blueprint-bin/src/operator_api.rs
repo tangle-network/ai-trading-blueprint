@@ -1019,13 +1019,15 @@ fn env_bool(key: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn naming_model_config() -> Option<NamingModelConfig> {
+fn naming_model_configs() -> Vec<NamingModelConfig> {
     if env_bool("BOT_NAMING_DISABLE_LLM") {
-        return None;
+        return Vec::new();
     }
 
+    let mut configs = Vec::new();
+
     if let Some(api_key) = env_string(&["BOT_NAMING_MODEL_API_KEY"]) {
-        return Some(NamingModelConfig {
+        configs.push(NamingModelConfig {
             api_key,
             base_url: env_string(&["BOT_NAMING_MODEL_BASE_URL"])
                 .unwrap_or_else(|| "https://api.z.ai/api/coding/paas/v4".to_string()),
@@ -1035,7 +1037,7 @@ fn naming_model_config() -> Option<NamingModelConfig> {
     }
 
     if let Some(api_key) = env_string(&["OPENCODE_MODEL_API_KEY"]) {
-        return Some(NamingModelConfig {
+        configs.push(NamingModelConfig {
             api_key,
             base_url: env_string(&["OPENCODE_MODEL_BASE_URL"])
                 .unwrap_or_else(|| "https://api.z.ai/api/coding/paas/v4".to_string()),
@@ -1045,7 +1047,7 @@ fn naming_model_config() -> Option<NamingModelConfig> {
     }
 
     if let Some(api_key) = env_string(&["ZAI_GLM_API_KEY", "ZAI_API_KEY"]) {
-        return Some(NamingModelConfig {
+        configs.push(NamingModelConfig {
             api_key,
             base_url: "https://api.z.ai/api/coding/paas/v4".to_string(),
             model: env_string(&["BOT_NAMING_ZAI_MODEL"]).unwrap_or_else(|| "glm-4.7".to_string()),
@@ -1054,7 +1056,7 @@ fn naming_model_config() -> Option<NamingModelConfig> {
     }
 
     if let Some(api_key) = env_string(&["TANGLE_ROUTER_API_KEY", "TANGLE_API_KEY"]) {
-        return Some(NamingModelConfig {
+        configs.push(NamingModelConfig {
             api_key,
             base_url: env_string(&["TANGLE_ROUTER_BASE_URL"])
                 .unwrap_or_else(|| "https://router.tangle.tools/v1".to_string()),
@@ -1064,7 +1066,7 @@ fn naming_model_config() -> Option<NamingModelConfig> {
         });
     }
 
-    None
+    configs
 }
 
 fn prompt_from_config(strategy_config: &serde_json::Value) -> Option<&str> {
@@ -1359,9 +1361,31 @@ async fn call_bot_name_model(
     strategy_type: &str,
     strategy_config: &serde_json::Value,
 ) -> Result<BotNameResolution, String> {
-    let config = naming_model_config().ok_or_else(|| "no naming model configured".to_string())?;
+    let configs = naming_model_configs();
+    if configs.is_empty() {
+        return Err("no naming model configured".to_string());
+    }
+
+    let mut failures = Vec::new();
+    for config in configs {
+        match call_bot_name_model_with_config(&config, prompt, strategy_type, strategy_config).await
+        {
+            Ok(resolution) => return Ok(resolution),
+            Err(reason) => failures.push(format!("{}:{}: {reason}", config.label, config.model)),
+        }
+    }
+
+    Err(failures.join("; "))
+}
+
+async fn call_bot_name_model_with_config(
+    config: &NamingModelConfig,
+    prompt: &str,
+    strategy_type: &str,
+    strategy_config: &serde_json::Value,
+) -> Result<BotNameResolution, String> {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(14))
+        .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
     let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
