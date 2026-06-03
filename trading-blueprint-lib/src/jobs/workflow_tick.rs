@@ -547,6 +547,26 @@ fn fast_tick_tool_bundle(tool: &str) -> Option<Vec<(&'static str, &'static str)>
                 include_str!("../prompts/tools/multi_tick.js"),
             ));
         }
+        "volatility-tick.js" => {
+            files.push((
+                "/home/agent/tools/tick-common.js",
+                include_str!("../prompts/tools/tick_common.js"),
+            ));
+            files.push((
+                "/home/agent/tools/volatility-tick.js",
+                include_str!("../prompts/tools/volatility_tick.js"),
+            ));
+        }
+        "perp-tick.js" => {
+            files.push((
+                "/home/agent/tools/tick-common.js",
+                include_str!("../prompts/tools/tick_common.js"),
+            ));
+            files.push((
+                "/home/agent/tools/perp-tick.js",
+                include_str!("../prompts/tools/perp_tick.js"),
+            ));
+        }
         _ => return None,
     }
 
@@ -1111,6 +1131,27 @@ mod tests {
         assert!(paths.contains(&"/home/agent/tools/tick-common.js"));
         assert!(paths.contains(&"/home/agent/tools/tick-recipe-dsl.js"));
         assert!(paths.contains(&"/home/agent/tools/dex-mm-tick.js"));
+    }
+
+    #[test]
+    fn fast_tick_bundle_supports_every_tool_mapped_by_prompts() {
+        for tool in [
+            "hyperliquid-tick.js",
+            "dex-tick.js",
+            "dex-mm-tick.js",
+            "yield-tick.js",
+            "multi-tick.js",
+            "volatility-tick.js",
+            "perp-tick.js",
+        ] {
+            let bundle = fast_tick_tool_bundle(tool).expect("mapped deterministic tool has bundle");
+            let paths: Vec<_> = bundle.iter().map(|(path, _)| *path).collect();
+            let expected_path = format!("/home/agent/tools/{tool}");
+            assert!(
+                paths.iter().any(|path| *path == expected_path),
+                "{tool} bundle must install the selected tool"
+            );
+        }
     }
 
     #[tokio::test]
