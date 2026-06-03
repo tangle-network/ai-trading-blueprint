@@ -124,7 +124,7 @@ function HomePulseBoard({
   return (
     <section
       aria-label="Market pulse"
-      className="grid shrink-0 overflow-hidden rounded-[6px] border border-[#273035] bg-[#0f1a1f] min-[980px]:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)]"
+      className="grid shrink-0 overflow-hidden border border-[#273035] bg-[#0f1a1f] min-[980px]:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)]"
     >
       <PulseCell label="Latest" to={latestHref}>
         {latestTrade ? (

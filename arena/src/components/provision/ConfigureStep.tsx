@@ -279,7 +279,7 @@ export function ConfigureStep({
 
           {isHyperliquidStrategy && (
             <ProvisionPanel title="Hyperliquid Guardrails">
-              <div className="grid overflow-hidden rounded-[5px] border border-[#273035] bg-[#273035] sm:grid-cols-2">
+              <div className="grid overflow-hidden border border-[#273035] bg-[#273035] sm:grid-cols-2">
                 <GuardrailRow
                   label="Account"
                   value="Bot-bound HyperEVM vault"

@@ -227,7 +227,7 @@ function SelectedAgentDossier({
             <span className="font-mono text-xs text-[#697371]">{formatNumber(trades.length, { maximumFractionDigits: 0 })}</span>
           </div>
           {trades.length > 0 ? (
-            <div className="min-h-0 overflow-hidden rounded-[5px] border border-[#273035]">
+            <div className="min-h-0 overflow-hidden border border-[#273035]">
               {trades.slice(0, 8).map(({ trade }) => (
                 <div
                   key={trade.id}
@@ -245,7 +245,7 @@ function SelectedAgentDossier({
               ))}
             </div>
           ) : (
-            <div className="flex h-[120px] items-center justify-center rounded-[5px] border border-[#273035] font-display text-sm text-[#949e9c]">
+            <div className="flex h-[120px] items-center justify-center border border-[#273035] font-display text-sm text-[#949e9c]">
               No recent fills.
             </div>
           )}
@@ -494,7 +494,7 @@ export default function LeaderboardPage() {
         )
       ) : (
         <section
-          className="grid min-h-0 flex-1 overflow-hidden rounded-[6px] border border-[#273035] bg-[#0f1a1f] min-[1360px]:grid-cols-[minmax(0,1fr)_340px] min-[1500px]:grid-cols-[minmax(0,1fr)_372px]"
+          className="grid min-h-0 flex-1 overflow-hidden border border-[#273035] bg-[#0f1a1f] min-[1360px]:grid-cols-[minmax(0,1fr)_340px] min-[1500px]:grid-cols-[minmax(0,1fr)_372px]"
           aria-label="Agent explorer"
         >
           <div className="flex min-h-0 flex-col overflow-hidden">

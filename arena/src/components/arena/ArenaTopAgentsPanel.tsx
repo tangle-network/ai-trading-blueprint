@@ -63,7 +63,7 @@ export function ArenaTopAgentsPanel({
   return (
     <section
       data-testid="top-agents-panel"
-      className={`flex h-full min-h-0 flex-col overflow-hidden rounded-[6px] border border-[#273035] bg-[#0f1a1f] ${className}`}
+      className={`flex h-full min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] ${className}`}
       aria-label="Top agents"
     >
       <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-[#273035] bg-[#0b1418] px-3">

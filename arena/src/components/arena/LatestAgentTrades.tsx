@@ -98,7 +98,7 @@ export function LatestAgentTrades({
   return (
     <section
       data-testid="live-fill-tape"
-      className={`${isBounded ? 'flex h-full min-h-0 flex-col overflow-hidden' : 'mb-6'} rounded-[6px] border ${isBounded ? 'border-[#273035] bg-[#0f1a1f]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/42'} ${className}`}
+      className={`${isBounded ? 'flex h-full min-h-0 flex-col overflow-hidden' : 'mb-6'} border ${isBounded ? 'border-[#273035] bg-[#0f1a1f]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/42'} ${className}`}
       aria-live="polite"
     >
       <div className={`flex h-10 shrink-0 items-center justify-between gap-4 border-b px-3 ${isBounded ? 'border-[#273035] bg-[#0b1418]' : 'border-arena-elements-dividerColor/60 sm:px-5'} ${isExplorer ? 'py-2.5' : 'py-2'}`}>
@@ -471,7 +471,7 @@ function FillInspector({
           />
         </section>
 
-        <section className="overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f]">
+        <section className="overflow-hidden border border-[#273035] bg-[#0f1a1f]">
           <InspectorRow label="Mode" value={formatTradeModeLabel(trade)} />
           <InspectorRow label="Venue" value={venue} />
           <InspectorRow label="Status" value={executionStatus} />

@@ -345,7 +345,7 @@ export function PlatformVolumeChart({
     : 0;
 
   return (
-    <section className={`${isCommand ? 'flex h-full min-h-0 flex-col rounded-[6px] border-[#273035] bg-[#0f1a1f]' : 'mb-4 rounded-xl border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60'} overflow-hidden border ${className}`}>
+    <section className={`${isCommand ? 'flex h-full min-h-0 flex-col border-[#273035] bg-[#0f1a1f]' : 'mb-4 rounded-xl border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60'} overflow-hidden border ${className}`}>
       <div className={`flex flex-col gap-2 border-b px-3 py-2 2xl:flex-row 2xl:items-center 2xl:justify-between ${isCommand ? 'border-[#273035] bg-[#0b1418]' : 'border-arena-elements-dividerColor/60 sm:px-5 sm:py-3'}`}>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">

@@ -58,7 +58,7 @@ export function ConnectWalletPanel({
                 {description}
               </p>
             </div>
-            <div className="grid grid-cols-3 overflow-hidden rounded-[5px] border border-[#273035] bg-[#081013] font-mono text-[11px] uppercase tracking-[0.12em] text-[#949e9c] md:w-[390px]">
+            <div className="grid grid-cols-3 overflow-hidden border border-[#273035] bg-[#081013] font-mono text-[11px] uppercase tracking-[0.12em] text-[#949e9c] md:w-[390px]">
               <span className="border-r border-[#273035] px-3 py-2 text-center">Base</span>
               <span className="border-r border-[#273035] px-3 py-2 text-center">Paper</span>
               <span className="px-3 py-2 text-center text-[#50d2c1]">Risk</span>
@@ -67,7 +67,7 @@ export function ConnectWalletPanel({
 
           <div className="grid min-h-0 gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3">
-              <section className="overflow-hidden rounded-[5px] border border-[#273035] bg-[#081013]">
+              <section className="overflow-hidden border border-[#273035] bg-[#081013]">
                 <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] border-b border-[#273035] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[#697371]">
                   <span>Launch Check</span>
                   <span className="text-right">State</span>
@@ -109,7 +109,7 @@ export function ConnectWalletPanel({
                     </Link>
                   ))}
                 </div>
-                <div className="min-h-0 overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f]">
+                <div className="min-h-0 overflow-hidden border border-[#273035] bg-[#0f1a1f]">
                   <div className="grid grid-cols-[2rem_minmax(0,1fr)_8rem] border-b border-[#273035] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[#697371]">
                     <span>#</span>
                     <span>Launch Path</span>

@@ -36,7 +36,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   if (isLoading) {
     if (ledger) {
       return (
-        <div className="h-full min-h-0 overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+        <div className="h-full min-h-0 overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
           <div className="grid grid-cols-3 divide-x divide-[var(--arena-terminal-border)] border-b border-[var(--arena-terminal-border)]">
             {Array.from({ length: 3 }).map((_, index) => (
               <div key={index} className="px-3 py-2">
@@ -69,7 +69,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   if (!portfolio) {
     if (ledger) {
       return (
-        <div className="flex h-full min-h-[8rem] items-center justify-center rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-4 text-center font-display text-sm text-[var(--arena-terminal-text-muted)]">
+        <div className="flex h-full min-h-[8rem] items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-4 text-center font-display text-sm text-[var(--arena-terminal-text-muted)]">
           No portfolio data available{isLive ? '.' : ` while it is ${botStatusLabel(status).toLowerCase()}.`}
         </div>
       );
@@ -211,7 +211,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   const positionPrimaryCellClass = (dense: boolean) => dense ? 'py-1.5 text-[15px]' : 'py-4';
 
   const renderStandardPositionsTable = (positions: Position[], dense = false) => (
-    <div className={`${ledger ? 'rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
+    <div className={`${ledger ? 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
       <Table className={dense ? 'min-w-[620px]' : 'min-w-[780px]'}>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
@@ -257,7 +257,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
   );
 
   const renderPerpPositionsTable = (positions: Position[], dense = false) => (
-    <div className={`${ledger ? 'rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
+    <div className={`${ledger ? 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} overflow-x-auto border`}>
       <Table className={dense ? 'min-w-[920px]' : 'min-w-[1120px]'}>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
@@ -530,7 +530,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
       )}
 
       {ledger ? (
-        <div className="grid overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] min-[820px]:grid-cols-4">
+        <div className="grid overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] min-[820px]:grid-cols-4">
           {ledgerAccountMetrics.map((metric) => (
             <div
               key={metric.label}

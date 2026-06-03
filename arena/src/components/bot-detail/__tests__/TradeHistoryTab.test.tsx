@@ -376,6 +376,18 @@ describe('TradeHistoryTab', () => {
     expect(screen.getByText('SELL')).toBeInTheDocument();
   });
 
+  it('keeps the compact executions ledger and action column square', () => {
+    setTrades([
+      makeTrade({ id: 'trade-1', action: 'buy', tokenOut: 'WETH' }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" compact />);
+
+    expect(screen.getByRole('table').parentElement).not.toHaveClass('rounded-[5px]');
+    expect(screen.getByText('BUY')).toHaveClass('rounded-none');
+    expect(screen.getByText('BUY')).not.toHaveClass('rounded-[3px]');
+  });
+
   it('shows the input-side amount in the compact row', () => {
     setTrades([
       makeTrade({

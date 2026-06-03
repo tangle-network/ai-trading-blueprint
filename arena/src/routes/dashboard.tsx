@@ -409,7 +409,7 @@ export default function HomePage() {
               </ArenaHeaderLink>
             </div>
           </div>
-          <div className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+          <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
             {[
               ['01', 'Service owner', 'wallet'],
               ['02', 'Risk envelope', 'required'],

@@ -53,6 +53,7 @@ describe('ArenaTopAgentsPanel', () => {
     );
 
     expect(screen.getByTestId('top-agents-panel')).toHaveClass('overflow-hidden', 'h-full', 'min-h-0');
+    expect(screen.getByTestId('top-agents-panel')).not.toHaveClass('rounded-[6px]');
     expect(screen.getByRole('heading', { name: 'Top agents' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open ETH Macro Scalper performance' })).toHaveAttribute(
       'href',
@@ -74,6 +75,7 @@ describe('ArenaTopAgentsPanel', () => {
     );
 
     expect(screen.getByTestId('top-agents-panel')).toHaveClass('h-full', 'min-h-0');
+    expect(screen.getByTestId('top-agents-panel')).not.toHaveClass('rounded-[6px]');
     expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument();
     expect(screen.queryByText('Sharpe')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open ETH Macro Scalper performance' })).toHaveAttribute(

@@ -454,7 +454,7 @@ export function TradeHistoryTab({
   if (isLoading) {
     if (compact) {
       return (
-        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+        <div className="flex h-full min-h-0 flex-col overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
           <div className="grid grid-cols-[8.6rem_8.45rem_minmax(0,1fr)_8rem_7.35rem] gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)]">
             <span>Time</span>
             <span>Trade</span>
@@ -477,7 +477,7 @@ export function TradeHistoryTab({
 
     return (
       <div className={compact ? 'flex h-full min-h-0 flex-col gap-2' : 'space-y-3'}>
-        <div className={`${compact ? 'min-h-0 flex-1' : ''} overflow-x-auto rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36`}>
+        <div className={`${compact ? 'min-h-0 flex-1' : ''} overflow-x-auto border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36`}>
           <Table className={compact ? 'w-full table-fixed' : 'min-w-[1120px]'}>
             <TradeTableHead compact={compact} />
             <TableBody>
@@ -498,7 +498,7 @@ export function TradeHistoryTab({
   if (!trades || trades.length === 0) {
     if (compact) {
       return (
-        <div className="flex h-full min-h-[10rem] items-center justify-center rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-4 text-center font-display text-sm text-[var(--arena-terminal-text-muted)]">
+        <div className="flex h-full min-h-[10rem] items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-4 text-center font-display text-sm text-[var(--arena-terminal-text-muted)]">
           No executions recorded for this agent.
         </div>
       );
@@ -531,7 +531,7 @@ export function TradeHistoryTab({
         terminal={compact}
       />
 
-      <div className={`${compact ? 'min-h-0 flex-1 overflow-auto rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'overflow-x-auto rounded-lg border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} border`}>
+      <div className={`${compact ? 'min-h-0 flex-1 overflow-auto border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'overflow-x-auto border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} border`}>
         <Table className={compact ? 'w-full table-fixed' : 'min-w-[1120px]'}>
           <TradeTableHead compact={compact} />
           <TableBody>
@@ -737,7 +737,7 @@ export function TradeHistoryTab({
                 <>
                   <TableCell className={compact ? 'py-0.5 align-middle' : 'py-4 align-top'}>
                     {compact ? (
-                      <span className={`inline-flex h-[22px] min-w-[6.7rem] items-center justify-center rounded-[3px] px-2 font-data text-[13px] font-bold leading-none ${getTerminalTradeActionPillClass(trade.action)}`}>
+                      <span className={`inline-flex h-[22px] min-w-[6.7rem] items-center justify-center rounded-none px-2 font-data text-[13px] font-bold leading-none ${getTerminalTradeActionPillClass(trade.action)}`}>
                         {getActionLabel(trade.action)}
                       </span>
                     ) : (

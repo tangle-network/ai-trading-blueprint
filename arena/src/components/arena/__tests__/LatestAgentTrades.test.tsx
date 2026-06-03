@@ -108,6 +108,7 @@ describe('LatestAgentTrades', () => {
     );
 
     expect(screen.getByTestId('live-fill-tape')).toHaveClass('overflow-hidden', 'h-full', 'min-h-0');
+    expect(screen.getByTestId('live-fill-tape')).not.toHaveClass('rounded-[6px]');
     expect(screen.getByTestId('live-fill-tape-scroll')).toHaveClass('overflow-y-auto', 'min-h-0', 'flex-1');
     expect(screen.getByRole('heading', { name: 'Fills' })).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /Open Tape Bot performance for/i })[0]).toHaveAttribute(
@@ -139,6 +140,7 @@ describe('LatestAgentTrades', () => {
     );
 
     expect(screen.getByTestId('live-fill-tape')).toHaveClass('overflow-hidden', 'h-full', 'min-h-0');
+    expect(screen.getByTestId('live-fill-tape')).not.toHaveClass('rounded-[6px]');
     expect(screen.getByTestId('live-fill-explorer-scroll')).toHaveClass('overflow-auto', 'min-h-0', 'flex-1');
     expect(screen.getByRole('heading', { name: 'Fills' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Agent' })).toBeInTheDocument();

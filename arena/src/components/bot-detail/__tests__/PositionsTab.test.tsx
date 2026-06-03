@@ -74,6 +74,7 @@ describe('PositionsTab', () => {
     expect(screen.queryByRole('columnheader', { name: 'Entry' })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'PnL' })).not.toBeInTheDocument();
     expect(screen.queryByText('Balance')).not.toBeInTheDocument();
+    expect(screen.getByRole('table').parentElement).not.toHaveClass('rounded-lg');
   });
 
   it('keeps read-only positions visible when operator verification is pending', () => {
