@@ -97,9 +97,10 @@ pub struct BotSummary {
 impl BotSummary {
     fn from_record(b: TradingBotRecord) -> Self {
         let runtime = state::bot_runtime_status(&b);
+        let name = effective_bot_name(&b);
         Self {
             id: b.id,
-            name: b.name,
+            name,
             operator_address: b.operator_address,
             submitter_address: b.submitter_address,
             vault_address: b.vault_address,
@@ -162,6 +163,7 @@ pub struct BotDetailResponse {
 impl BotDetailResponse {
     fn from_record(b: TradingBotRecord) -> Self {
         let runtime = state::bot_runtime_status(&b);
+        let name = effective_bot_name(&b);
         let workflow_running = b
             .workflow_id
             .map(ai_agent_sandbox_blueprint_lib::workflows::is_workflow_running)
@@ -176,7 +178,7 @@ impl BotDetailResponse {
         });
         Self {
             id: b.id,
-            name: b.name,
+            name,
             operator_address: b.operator_address,
             submitter_address: b.submitter_address,
             vault_address: b.vault_address,
@@ -623,6 +625,7 @@ pub fn build_operator_router() -> Router {
         .route("/api/dex/assets/preflight", post(preflight_dex_asset_route))
         // Bot management
         .route("/api/bots", get(list_bots).post(create_bot))
+        .route("/api/bots/repair-names", post(repair_bot_names))
         .route("/api/bots/{bot_id}", get(get_bot))
         .route(
             "/api/bots/{bot_id}/secrets",
@@ -860,6 +863,59 @@ struct CreateBotRequest {
     strategy_config_json: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct BotNameResolution {
+    name: String,
+    source: String,
+    model: Option<String>,
+    fallback_reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct NamingModelConfig {
+    api_key: String,
+    base_url: String,
+    model: String,
+    label: String,
+}
+
+#[derive(Deserialize, Default)]
+struct RepairBotNamesRequest {
+    #[serde(default)]
+    force: bool,
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    bot_ids: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct BotNameRepairResult {
+    bot_id: String,
+    old_name: String,
+    new_name: String,
+    changed: bool,
+    source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fallback_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_prompt: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BotNameRepairResponse {
+    dry_run: bool,
+    force: bool,
+    scanned: usize,
+    renamed: usize,
+    skipped: usize,
+    results: Vec<BotNameRepairResult>,
+}
+
 /// Canonical USDC address for the common chains we deploy on.
 /// Unknown chains fall through; callers must supply `ASSET_TOKEN_ADDRESS`.
 fn default_asset_token_address(chain_id: u64) -> Option<&'static str> {
@@ -949,6 +1005,611 @@ fn create_bot_strategy_config(
     }
 }
 
+fn env_string(keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| std::env::var(key).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn env_bool(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .and_then(|value| parse_bool_env(&value))
+        .unwrap_or(false)
+}
+
+fn naming_model_config() -> Option<NamingModelConfig> {
+    if env_bool("BOT_NAMING_DISABLE_LLM") {
+        return None;
+    }
+
+    if let Some(api_key) = env_string(&["BOT_NAMING_MODEL_API_KEY"]) {
+        return Some(NamingModelConfig {
+            api_key,
+            base_url: env_string(&["BOT_NAMING_MODEL_BASE_URL"])
+                .unwrap_or_else(|| "https://api.z.ai/api/coding/paas/v4".to_string()),
+            model: env_string(&["BOT_NAMING_MODEL_NAME"]).unwrap_or_else(|| "glm-4.7".to_string()),
+            label: "bot-naming-model".to_string(),
+        });
+    }
+
+    if let Some(api_key) = env_string(&["OPENCODE_MODEL_API_KEY"]) {
+        return Some(NamingModelConfig {
+            api_key,
+            base_url: env_string(&["OPENCODE_MODEL_BASE_URL"])
+                .unwrap_or_else(|| "https://api.z.ai/api/coding/paas/v4".to_string()),
+            model: env_string(&["OPENCODE_MODEL_NAME"]).unwrap_or_else(|| "glm-4.7".to_string()),
+            label: "opencode-model".to_string(),
+        });
+    }
+
+    if let Some(api_key) = env_string(&["ZAI_GLM_API_KEY", "ZAI_API_KEY"]) {
+        return Some(NamingModelConfig {
+            api_key,
+            base_url: "https://api.z.ai/api/coding/paas/v4".to_string(),
+            model: env_string(&["BOT_NAMING_ZAI_MODEL"]).unwrap_or_else(|| "glm-4.7".to_string()),
+            label: "zai".to_string(),
+        });
+    }
+
+    if let Some(api_key) = env_string(&["TANGLE_ROUTER_API_KEY", "TANGLE_API_KEY"]) {
+        return Some(NamingModelConfig {
+            api_key,
+            base_url: env_string(&["TANGLE_ROUTER_BASE_URL"])
+                .unwrap_or_else(|| "https://router.tangle.tools/v1".to_string()),
+            model: env_string(&["BOT_NAMING_TANGLE_MODEL"])
+                .unwrap_or_else(|| "anthropic/claude-sonnet-4-6".to_string()),
+            label: "tangle-router".to_string(),
+        });
+    }
+
+    None
+}
+
+fn prompt_from_config(strategy_config: &serde_json::Value) -> Option<&str> {
+    strategy_config
+        .get("user_prompt")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn config_string(strategy_config: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| strategy_config.get(*key))
+        .and_then(|value| match value {
+            serde_json::Value::String(raw) => Some(raw.trim().to_string()),
+            serde_json::Value::Number(raw) => Some(raw.to_string()),
+            _ => None,
+        })
+        .filter(|value| !value.is_empty())
+}
+
+fn words_lower(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.to_ascii_lowercase())
+        .collect()
+}
+
+fn mentions_any(text: &str, needles: &[&str]) -> bool {
+    let words = words_lower(text);
+    needles
+        .iter()
+        .any(|needle| words.iter().any(|word| word == needle))
+}
+
+fn extract_pair(strategy_config: &serde_json::Value, prompt: &str) -> Option<String> {
+    let configured = config_string(
+        strategy_config,
+        &[
+            "pair",
+            "market",
+            "symbol",
+            "asset_pair",
+            "trading_pair",
+            "hyperliquid_symbol",
+        ],
+    );
+    if let Some(value) = configured {
+        let normalized = value
+            .replace('-', "/")
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/')
+            .to_ascii_uppercase();
+        if normalized.len() >= 3 {
+            return Some(normalized);
+        }
+    }
+
+    let prompt_upper = prompt.to_ascii_uppercase();
+    for pair in [
+        "ETH/USDC",
+        "ETH/USD",
+        "BTC/USDC",
+        "BTC/USD",
+        "SOL/USDC",
+        "HYPE/USDC",
+    ] {
+        if prompt_upper.contains(pair) {
+            return Some(pair.to_string());
+        }
+    }
+
+    if mentions_any(prompt, &["eth", "ethereum", "weth"]) {
+        return Some("ETH".to_string());
+    }
+    if mentions_any(prompt, &["btc", "bitcoin", "wbtc"]) {
+        return Some("BTC".to_string());
+    }
+    if mentions_any(prompt, &["sol", "solana"]) {
+        return Some("SOL".to_string());
+    }
+    if mentions_any(prompt, &["hype", "hyperliquid"]) {
+        return Some("HYPE".to_string());
+    }
+    if mentions_any(prompt, &["aero", "aerodrome"]) {
+        return Some("AERO".to_string());
+    }
+
+    None
+}
+
+fn extract_venue(strategy_config: &serde_json::Value, prompt: &str) -> Option<&'static str> {
+    let configured = config_string(
+        strategy_config,
+        &[
+            "protocol",
+            "target_protocol",
+            "venue",
+            "exchange",
+            "adapter",
+        ],
+    )
+    .unwrap_or_default()
+    .to_ascii_lowercase();
+    let haystack = format!("{} {}", configured, prompt.to_ascii_lowercase());
+
+    if haystack.contains("hyperliquid") {
+        Some("Hyperliquid")
+    } else if haystack.contains("aerodrome") {
+        Some("Aerodrome")
+    } else if haystack.contains("polymarket") {
+        Some("Polymarket")
+    } else if haystack.contains("uniswap") {
+        Some("Uniswap")
+    } else if haystack.contains("aave") {
+        Some("Aave")
+    } else if haystack.contains("morpho") {
+        Some("Morpho")
+    } else if haystack.contains("gmx") {
+        Some("GMX")
+    } else if haystack.contains("vertex") {
+        Some("Vertex")
+    } else {
+        None
+    }
+}
+
+fn strategy_family(strategy_type: &str) -> &'static str {
+    let lower = strategy_type.to_ascii_lowercase();
+    if lower.contains("hyperliquid") || lower.contains("perp") || lower.contains("future") {
+        "perp"
+    } else if lower.contains("yield") || lower.contains("lending") {
+        "yield"
+    } else if lower.contains("prediction") || lower.contains("polymarket") || lower.contains("clob")
+    {
+        "prediction"
+    } else if lower.contains("volatility") {
+        "volatility"
+    } else {
+        "dex"
+    }
+}
+
+fn compact_name(name: &str, max_chars: usize) -> String {
+    let mut compact = name
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(|c: char| c == '"' || c == '\'' || c == '`' || c == '.' || c == ':')
+        .to_string();
+    while compact.chars().count() > max_chars {
+        let Some(idx) = compact.rfind(' ') else {
+            break;
+        };
+        compact.truncate(idx);
+    }
+    compact
+}
+
+fn deterministic_bot_name(
+    prompt: &str,
+    strategy_type: &str,
+    strategy_config: &serde_json::Value,
+) -> String {
+    let pair = extract_pair(strategy_config, prompt);
+    let venue = extract_venue(strategy_config, prompt);
+    let family = strategy_family(strategy_type);
+    let base = match family {
+        "perp" => pair
+            .as_ref()
+            .map(|asset| format!("{asset} Perp Sentinel"))
+            .or_else(|| venue.map(|v| format!("{v} Perp Sentinel")))
+            .unwrap_or_else(|| "Perp Sentinel".to_string()),
+        "yield" => pair
+            .as_ref()
+            .map(|asset| format!("{asset} Yield Allocator"))
+            .or_else(|| venue.map(|v| format!("{v} Yield Allocator")))
+            .unwrap_or_else(|| "Yield Allocator".to_string()),
+        "prediction" => venue
+            .map(|v| format!("{v} Market Scout"))
+            .or_else(|| pair.as_ref().map(|asset| format!("{asset} Market Scout")))
+            .unwrap_or_else(|| "Prediction Market Scout".to_string()),
+        "volatility" => pair
+            .as_ref()
+            .map(|asset| format!("{asset} Volatility Scout"))
+            .unwrap_or_else(|| "Volatility Scout".to_string()),
+        _ => pair
+            .as_ref()
+            .map(|asset| {
+                if asset.contains('/') {
+                    format!("{asset} Maker")
+                } else {
+                    format!("{asset} DEX Trader")
+                }
+            })
+            .or_else(|| venue.map(|v| format!("{v} Market Maker")))
+            .unwrap_or_else(|| "DEX Market Maker".to_string()),
+    };
+    sanitize_bot_name(&base).unwrap_or_else(|| "Trading Strategy".to_string())
+}
+
+fn sanitize_bot_name(raw: &str) -> Option<String> {
+    let first_line = raw.lines().find(|line| !line.trim().is_empty())?.trim();
+    let normalized = compact_name(first_line, 36);
+    let lower = normalized.to_ascii_lowercase();
+    if normalized.chars().count() < 3 {
+        return None;
+    }
+    if lower.starts_with("i want")
+        || lower.starts_with("create ")
+        || lower.contains(" agent that ")
+        || lower.contains(" bot that ")
+        || lower.contains("please ")
+        || lower.contains(" should ")
+    {
+        return None;
+    }
+    if lower.contains("agent") || lower.contains("bot") {
+        return None;
+    }
+    let has_alnum = normalized.chars().any(|c| c.is_ascii_alphanumeric());
+    has_alnum.then_some(normalized)
+}
+
+fn bot_name_needs_generation(current_name: &str, prompt: &str) -> bool {
+    let current = current_name.trim();
+    if sanitize_bot_name(current).is_none() {
+        return true;
+    }
+    let current_lower = current.to_ascii_lowercase();
+    let prompt_lower = prompt.trim().to_ascii_lowercase();
+    if prompt_lower.is_empty() {
+        return false;
+    }
+    current_lower.starts_with("i want")
+        || current_lower.starts_with("create ")
+        || current_lower.contains("agent that")
+        || current_lower.contains("bot that")
+        || (current.chars().count() >= 32 && prompt_lower.starts_with(&current_lower))
+}
+
+fn extract_model_name(content: &str) -> Option<String> {
+    let trimmed = content.trim();
+    let parsed = serde_json::from_str::<serde_json::Value>(trimmed)
+        .ok()
+        .or_else(|| {
+            let start = trimmed.find('{')?;
+            let end = trimmed.rfind('}')?;
+            serde_json::from_str::<serde_json::Value>(&trimmed[start..=end]).ok()
+        });
+    parsed
+        .as_ref()
+        .and_then(|value| value.get("name"))
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            if trimmed.starts_with('{') {
+                None
+            } else {
+                Some(trimmed)
+            }
+        })
+        .and_then(sanitize_bot_name)
+}
+
+fn bot_name_prompt(
+    prompt: &str,
+    strategy_type: &str,
+    strategy_config: &serde_json::Value,
+) -> String {
+    let context = json!({
+        "strategy_type": strategy_type,
+        "user_prompt": prompt,
+        "strategy_config": strategy_config,
+    });
+    format!(
+        "Name this AI trading strategy for a professional crypto trading terminal.\n\
+         Return only compact JSON: {{\"name\":\"...\"}}.\n\
+         Criteria:\n\
+         - 2 to 4 words, 36 characters max.\n\
+         - No sentence fragments, no prompts, no quotes.\n\
+         - Do not use the words agent or bot.\n\
+         - Prefer asset, venue, and strategy role when available.\n\
+         - Examples: ETH Perp Sentinel, Aerodrome Market Maker, Aave Yield Allocator, Polymarket Event Scout.\n\n\
+         Context:\n{context}"
+    )
+}
+
+async fn call_bot_name_model(
+    prompt: &str,
+    strategy_type: &str,
+    strategy_config: &serde_json::Value,
+) -> Result<BotNameResolution, String> {
+    let config = naming_model_config().ok_or_else(|| "no naming model configured".to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(14))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
+    let response = client
+        .post(url)
+        .bearer_auth(&config.api_key)
+        .json(&json!({
+            "model": config.model,
+            "temperature": 0.2,
+            "max_tokens": 80,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You name crypto trading strategies. Output only valid JSON."
+                },
+                {
+                    "role": "user",
+                    "content": bot_name_prompt(prompt, strategy_type, strategy_config)
+                }
+            ]
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = response.status();
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("model response JSON decode failed: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("model returned HTTP {status}"));
+    }
+    let content = body
+        .pointer("/choices/0/message/content")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("model response missing message content: {body}"))?;
+    let name = extract_model_name(content)
+        .ok_or_else(|| format!("model returned unusable name: {content}"))?;
+    Ok(BotNameResolution {
+        name,
+        source: "llm".to_string(),
+        model: Some(format!("{}:{}", config.label, config.model)),
+        fallback_reason: None,
+    })
+}
+
+async fn resolve_bot_display_name(
+    explicit_name: Option<&str>,
+    prompt: &str,
+    strategy_type: &str,
+    strategy_config: &serde_json::Value,
+) -> BotNameResolution {
+    if let Some(name) = explicit_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .and_then(sanitize_bot_name)
+        .filter(|name| !bot_name_needs_generation(name, prompt))
+    {
+        return BotNameResolution {
+            name,
+            source: "explicit".to_string(),
+            model: None,
+            fallback_reason: None,
+        };
+    }
+
+    match call_bot_name_model(prompt, strategy_type, strategy_config).await {
+        Ok(resolution) => resolution,
+        Err(reason) => BotNameResolution {
+            name: deterministic_bot_name(prompt, strategy_type, strategy_config),
+            source: "deterministic".to_string(),
+            model: None,
+            fallback_reason: Some(reason),
+        },
+    }
+}
+
+fn persist_name_metadata(
+    config: &mut serde_json::Map<String, serde_json::Value>,
+    resolution: &BotNameResolution,
+) {
+    config.insert(
+        "display_name".to_string(),
+        serde_json::Value::String(resolution.name.clone()),
+    );
+    config.insert(
+        "display_name_source".to_string(),
+        serde_json::Value::String(resolution.source.clone()),
+    );
+    if let Some(model) = &resolution.model {
+        config.insert(
+            "display_name_model".to_string(),
+            serde_json::Value::String(model.clone()),
+        );
+    }
+    if let Some(reason) = &resolution.fallback_reason {
+        config.insert(
+            "display_name_fallback_reason".to_string(),
+            serde_json::Value::String(reason.clone()),
+        );
+    }
+    config.insert(
+        "display_name_generated_at".to_string(),
+        serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+    );
+}
+
+fn stored_display_name(bot: &TradingBotRecord) -> Option<String> {
+    bot.strategy_config
+        .get("display_name")
+        .and_then(serde_json::Value::as_str)
+        .and_then(sanitize_bot_name)
+}
+
+fn effective_bot_name(bot: &TradingBotRecord) -> String {
+    if let Some(name) = stored_display_name(bot) {
+        return name;
+    }
+
+    let prompt = prompt_from_config(&bot.strategy_config).unwrap_or_default();
+    if let Some(name) =
+        sanitize_bot_name(&bot.name).filter(|name| !bot_name_needs_generation(name, prompt))
+    {
+        return name;
+    }
+
+    if !prompt.is_empty() {
+        return deterministic_bot_name(prompt, &bot.strategy_type, &bot.strategy_config);
+    }
+
+    deterministic_bot_name("", &bot.strategy_type, &bot.strategy_config)
+}
+
+fn bot_should_repair_name(bot: &TradingBotRecord, force: bool) -> bool {
+    if force {
+        return true;
+    }
+    let prompt = prompt_from_config(&bot.strategy_config).unwrap_or_default();
+    if !prompt.is_empty() && bot_name_needs_generation(&bot.name, prompt) {
+        return true;
+    }
+    stored_display_name(bot).is_none() && sanitize_bot_name(&bot.name).is_none()
+}
+
+fn apply_bot_name_resolution(record: &mut TradingBotRecord, resolution: &BotNameResolution) {
+    record.name = resolution.name.clone();
+    if !record.strategy_config.is_object() {
+        record.strategy_config = json!({});
+    }
+    let Some(config) = record.strategy_config.as_object_mut() else {
+        return;
+    };
+    persist_name_metadata(config, resolution);
+}
+
+async fn repair_bot_names(
+    SessionAuth(caller): SessionAuth,
+    Json(body): Json<RepairBotNamesRequest>,
+) -> ApiResult<BotNameRepairResponse> {
+    if !is_operator_admin(&caller) {
+        return Err(ApiError::message(
+            StatusCode::FORBIDDEN,
+            "operator admin session required",
+        ));
+    }
+
+    let requested_ids: HashSet<String> = body.bot_ids.iter().cloned().collect();
+    let result = state::list_bots(None, 10_000, 0)
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let mut candidates: Vec<TradingBotRecord> = result
+        .bots
+        .into_iter()
+        .filter(|bot| requested_ids.is_empty() || requested_ids.contains(&bot.id))
+        .collect();
+    candidates.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    if requested_ids.is_empty() {
+        candidates.truncate(body.limit.unwrap_or(250).min(1_000));
+    }
+
+    let mut results = Vec::with_capacity(candidates.len());
+    let mut renamed = 0usize;
+    let mut skipped = 0usize;
+    let scanned = candidates.len();
+
+    for bot in candidates {
+        let prompt = prompt_from_config(&bot.strategy_config)
+            .unwrap_or_default()
+            .to_string();
+        let current_display = effective_bot_name(&bot);
+        if !bot_should_repair_name(&bot, body.force) {
+            skipped += 1;
+            results.push(BotNameRepairResult {
+                bot_id: bot.id,
+                old_name: bot.name,
+                new_name: current_display,
+                changed: false,
+                source: "existing".to_string(),
+                model: None,
+                fallback_reason: None,
+                user_prompt: (!prompt.is_empty()).then_some(prompt),
+            });
+            continue;
+        }
+
+        let resolution =
+            resolve_bot_display_name(None, &prompt, &bot.strategy_type, &bot.strategy_config).await;
+        let changed = bot.name != resolution.name
+            || stored_display_name(&bot) != Some(resolution.name.clone());
+        if changed {
+            renamed += 1;
+        } else {
+            skipped += 1;
+        }
+
+        if changed && !body.dry_run {
+            let bot_id = bot.id.clone();
+            let resolution_for_store = resolution.clone();
+            state::bots()
+                .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?
+                .update(&state::bot_key(&bot_id), |record| {
+                    apply_bot_name_resolution(record, &resolution_for_store);
+                })
+                .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+
+        results.push(BotNameRepairResult {
+            bot_id: bot.id,
+            old_name: bot.name,
+            new_name: resolution.name,
+            changed,
+            source: resolution.source,
+            model: resolution.model,
+            fallback_reason: resolution.fallback_reason,
+            user_prompt: (!prompt.is_empty()).then_some(prompt),
+        });
+    }
+
+    Ok(Json(BotNameRepairResponse {
+        dry_run: body.dry_run,
+        force: body.force,
+        scanned,
+        renamed,
+        skipped,
+        results,
+    }))
+}
+
 async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value> {
     let caller = req
         .headers()
@@ -1002,11 +1663,6 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         }
     });
 
-    let name = body
-        .name
-        .clone()
-        .unwrap_or_else(|| prompt.chars().take(50).collect());
-
     // Build a TradingProvisionRequest
     let chain_id: u64 = std::env::var("CHAIN_ID")
         .ok()
@@ -1044,6 +1700,16 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
     strategy_config
         .entry("protocol_chain_id".to_string())
         .or_insert(serde_json::Value::Number(protocol_chain_id.into()));
+    let strategy_config_for_naming = serde_json::Value::Object(strategy_config.clone());
+    let name_resolution = resolve_bot_display_name(
+        body.name.as_deref(),
+        &prompt,
+        &strategy_type,
+        &strategy_config_for_naming,
+    )
+    .await;
+    persist_name_metadata(&mut strategy_config, &name_resolution);
+    let name = name_resolution.name.clone();
 
     let request = trading_blueprint_lib::TradingProvisionRequest {
         name: name.clone(),
@@ -5926,6 +6592,102 @@ mod tests {
         let err = create_bot_strategy_config(&req).expect_err("non-object config rejected");
 
         assert!(err.contains("strategy_config must be a JSON object"));
+    }
+
+    fn naming_test_bot(
+        name: &str,
+        strategy_type: &str,
+        strategy_config: serde_json::Value,
+    ) -> TradingBotRecord {
+        TradingBotRecord {
+            id: "bot-name-test".to_string(),
+            name: name.to_string(),
+            sandbox_id: "sandbox-name-test".to_string(),
+            vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+            share_token: String::new(),
+            strategy_type: strategy_type.to_string(),
+            strategy_config,
+            risk_params: serde_json::json!({}),
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            trading_api_url: "http://localhost:9100".to_string(),
+            trading_api_token: "tok".to_string(),
+            workflow_id: None,
+            trading_active: false,
+            created_at: 1000,
+            operator_address: String::new(),
+            validator_service_ids: vec![],
+            max_lifetime_days: 30,
+            paper_trade: true,
+            wind_down_started_at: None,
+            submitter_address: String::new(),
+            trading_loop_cron: String::new(),
+            call_id: 0,
+            service_id: 0,
+            harness_json: serde_json::json!(null),
+            validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
+            active_trial_run_id: None,
+            active_trial_candidate_hash: None,
+            pre_trial_harness_json: None,
+        }
+    }
+
+    #[test]
+    fn bot_name_generation_rejects_prompt_fragments() {
+        let prompt = "I want an agent that trades ETH perps on Hyperliquid";
+
+        assert!(sanitize_bot_name(prompt).is_none());
+        assert!(bot_name_needs_generation(
+            &prompt.chars().take(50).collect::<String>(),
+            prompt
+        ));
+    }
+
+    #[test]
+    fn deterministic_bot_name_uses_asset_and_strategy_role() {
+        let config = serde_json::json!({
+            "user_prompt": "I want an agent that trades ETH perps on Hyperliquid",
+            "protocol": "hyperliquid"
+        });
+
+        assert_eq!(
+            deterministic_bot_name(
+                "I want an agent that trades ETH perps on Hyperliquid",
+                "hyperliquid_perp",
+                &config,
+            ),
+            "ETH Perp Sentinel"
+        );
+    }
+
+    #[test]
+    fn effective_bot_name_prefers_persisted_display_name() {
+        let bot = naming_test_bot(
+            "I want an agent that trades ETH perps on Hyperliq",
+            "hyperliquid_perp",
+            serde_json::json!({
+                "user_prompt": "I want an agent that trades ETH perps on Hyperliquid",
+                "display_name": "ETH Perp Sentinel",
+            }),
+        );
+
+        assert_eq!(effective_bot_name(&bot), "ETH Perp Sentinel");
+    }
+
+    #[test]
+    fn effective_bot_name_falls_back_without_prompt_sentence() {
+        let bot = naming_test_bot(
+            "I want an agent that trades ETH perps on Hyperliq",
+            "hyperliquid_perp",
+            serde_json::json!({
+                "user_prompt": "I want an agent that trades ETH perps on Hyperliquid",
+                "protocol": "hyperliquid"
+            }),
+        );
+
+        assert_eq!(effective_bot_name(&bot), "ETH Perp Sentinel");
     }
 
     #[tokio::test]

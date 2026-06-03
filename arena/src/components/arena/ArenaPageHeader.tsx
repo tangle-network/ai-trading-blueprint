@@ -96,7 +96,7 @@ export function ArenaPageHeader({
           </div>
         )}
 
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+        <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5 min-[1180px]:ml-auto min-[1180px]:w-auto">
           {controls}
           {utilities}
         </div>

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Bot } from '~/lib/types/bot';
 import type { Portfolio, Position } from '~/lib/types/portfolio';
 import { Card, CardHeader, CardTitle, CardContent } from '@tangle-network/blueprint-ui/components';
@@ -42,14 +42,10 @@ import {
   clampNumber,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
+import { PerformanceCopilotPanel } from './PerformanceCopilotPanel';
 
 const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
 const TRADE_MARKER_PAGE_SIZE = 200;
-const PerformanceCopilotPanel = lazy(() =>
-  import('./PerformanceCopilotPanel').then((module) => ({
-    default: module.PerformanceCopilotPanel,
-  })),
-);
 
 type PerformanceRange = '1d' | '7d' | '30d' | '6m' | '1y';
 type PerformanceChartMode = 'market' | 'nav';
@@ -1173,21 +1169,13 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
 
           {canUseCopilot && (
             <div className="hidden h-[260px] shrink-0 overflow-hidden min-[1600px]:flex">
-              <Suspense
-                fallback={
-                  <div className="glass-card flex min-h-0 flex-1 flex-col justify-center rounded-xl p-4 text-center text-sm text-arena-elements-textTertiary">
-                    Loading copilot…
-                  </div>
-                }
-              >
-                <PerformanceCopilotPanel
-                  botId={bot.id}
-                  botName={bot.name}
-                  operatorApiUrl={bot.operatorApiUrl}
-                  operatorKind={bot.operatorKind}
-                  token={operatorAuth.token as string}
-                />
-              </Suspense>
+              <PerformanceCopilotPanel
+                botId={bot.id}
+                botName={bot.name}
+                operatorApiUrl={bot.operatorApiUrl}
+                operatorKind={bot.operatorKind}
+                token={operatorAuth.token as string}
+              />
             </div>
           )}
 
