@@ -83,6 +83,7 @@ function jsonResponse(payload: unknown): Response {
 
 describe("ChatTab", () => {
   beforeEach(() => {
+    window.history.pushState({}, "", "/");
     authState.token = null;
     authState.isAuthenticated = false;
     authState.isAuthenticating = false;
@@ -309,6 +310,44 @@ describe("ChatTab", () => {
       "write-enabled",
     );
     expect(screen.getByRole("button", { name: /new chat/i })).toBeInTheDocument();
+  });
+
+  it("opens a lab-created session from the session query parameter", async () => {
+    window.history.pushState(
+      {},
+      "",
+      "/arena/bot/bot-1/chat?session=qa-session-46",
+    );
+    authState.isAuthenticated = true;
+    authState.token = "owner-token";
+    const { ChatTab } = await import("../ChatTab");
+
+    render(
+      <ChatTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorAddress="0x0000000000000000000000000000000000000001"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+        canCommand
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByTestId("chat-transcript")).toHaveTextContent(
+      "write-enabled",
+    );
+    await waitFor(() => {
+      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          token: "owner-token",
+          sessionId: "qa-session-46",
+          streamEnabled: true,
+          enabled: true,
+        }),
+      );
+    });
   });
 
   it("uses a full-height shell without card chrome in immersive mode", async () => {

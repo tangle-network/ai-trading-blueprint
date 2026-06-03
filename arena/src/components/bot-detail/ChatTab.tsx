@@ -60,6 +60,17 @@ function normalizeChatWorkspaceLayout(value: Partial<ChatWorkspaceLayout>): Chat
   };
 }
 
+function getRequestedSessionId(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const value = params.get("session") ?? params.get("qaSession");
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
 function extractChatErrorMessage(error: unknown): string | null {
   if (!error) return null;
 
@@ -497,7 +508,7 @@ export function ChatTab({
 
   const primarySessionId = `trading-${botId}`;
   const [activeSessionId, setActiveSessionId] = useState(
-    () => primarySessionId,
+    () => getRequestedSessionId() ?? primarySessionId,
   );
   const [isAborting, setIsAborting] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -540,6 +551,14 @@ export function ChatTab({
   const readOnlyHistoryPath = !canWrite && streamSessionId
     ? `/session/sessions/${encodeURIComponent(streamSessionId)}/messages?limit=200`
     : undefined;
+
+  useEffect(() => {
+    const requestedSessionId = getRequestedSessionId();
+    if (!requestedSessionId || requestedSessionId === activeSessionId) {
+      return;
+    }
+    setActiveSessionId(requestedSessionId);
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (hasKnownActiveSession || sessions.length === 0) return;

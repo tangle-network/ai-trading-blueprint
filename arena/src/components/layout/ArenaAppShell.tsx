@@ -1,5 +1,5 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router';
-import { type Dispatch, type RefObject, type SetStateAction, useEffect, useId, useMemo, useState } from 'react';
+import { type Dispatch, type RefObject, type SetStateAction, useEffect, useMemo, useState } from 'react';
 import { useAccount, useSwitchChain } from 'wagmi';
 import { useStore } from '@nanostores/react';
 import { ThemeToggle } from '@tangle-network/blueprint-ui/components';
@@ -63,8 +63,7 @@ export function ArenaAppShell() {
               to="/"
               className="inline-flex min-w-0 items-center gap-2 rounded-[5px] px-1 text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
             >
-              <TangleMark />
-              <span className="font-display text-base font-semibold">Tangle</span>
+              <TangleBrandMark />
             </Link>
             <div className="flex shrink-0 items-center gap-1.5">
               <NetworkButton compact />
@@ -124,15 +123,10 @@ function DesktopArenaSidebar({
             'inline-flex min-w-0 items-center rounded-[5px] text-[var(--arena-terminal-text)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60',
             sidebarCollapsed ? 'h-10 w-10 justify-center' : 'h-10 gap-2 px-2',
           )}
-          aria-label={sidebarCollapsed ? 'Tangle Trading' : undefined}
+          aria-label="Tangle Trading"
           title={sidebarCollapsed ? 'Tangle Trading' : undefined}
         >
-          <TangleMark />
-          {!sidebarCollapsed && (
-            <span className="truncate font-display text-lg font-semibold tracking-tight">
-              Tangle
-            </span>
-          )}
+          <TangleBrandMark compact={sidebarCollapsed} />
         </Link>
         {!sidebarCollapsed && (
           <SidebarIconButton
@@ -403,36 +397,36 @@ function NetworkButton({
   );
 }
 
-function TangleMark() {
-  const gradientA = useId();
-  const gradientB = useId();
-
+function TangleBrandMark({ compact = false }: { compact?: boolean }) {
   return (
-    <svg
-      viewBox="0 0 32 28"
-      className="h-7 w-8 shrink-0"
+    <span
+      className={cn(
+        'relative inline-block shrink-0 overflow-hidden',
+        compact ? 'h-8 w-8' : 'h-10 w-[124px]',
+      )}
       aria-hidden="true"
     >
-      <path
-        d="M32 21.9598C32.0014 20.3605 31.2756 18.8261 29.9818 17.6934C28.6881 16.5606 26.9321 15.9221 25.0994 15.918H17.4484C17.4003 15.2958 17.3699 14.6596 17.3699 14C17.3699 13.3404 17.3396 12.7073 17.2969 12.082H25.0994C26.9162 12.0566 28.6488 11.4089 29.9233 10.2788C31.1978 9.14863 31.9121 7.62659 31.9121 6.041C31.9121 4.45541 31.1978 2.93337 29.9233 1.80323C28.6488 .67309 26.9162 .02544 25.0994 0H6.81321C4.9964 .02544 3.26386 .67309 1.98936 1.80323C.714863 2.93337 .000568 4.45541 .000568 6.041C.000568 7.62659 .714862 9.14863 1.98936 10.2788C3.26386 11.4089 4.9964 12.0566 6.81321 12.082L14 12.25C14.5 12.25 14.5427 13.3404 14.5427 14C14.5427 14.6596 14.573 15.2927 14.6158 15.918H6.81321C4.9964 15.9434 3.26386 16.5911 1.98936 17.7212C.714862 18.8514 .000567 20.3734 .000567 21.959C.000567 23.5446 .714862 25.0666 1.98936 26.1968C3.26386 27.3269 4.9964 27.9746 6.81321 28H25.0994C26.9318 27.9959 28.6875 27.3576 29.9812 26.2252C31.2749 25.0928 32.0009 23.5588 32 21.9598ZM29.1727 6.04022C29.1732 6.98405 28.7446 7.8895 27.981 8.5579C27.2173 9.22631 26.181 9.60308 25.0994 9.60556H16.9974C16.7039 7.83811 16.1447 6.11213 15.3342 4.47222C14.9768 3.7617 14.5193 3.09283 13.9723 2.48111H25.0994C26.1798 2.48358 27.215 2.8595 27.9785 3.52656C28.7419 4.19362 29.1713 5.09747 29.1727 6.04022ZM6.81321 9.60555C5.72959 9.60555 4.69036 9.22992 3.92412 8.56129C3.15789 7.89266 2.72742 6.98581 2.72742 6.04022C2.72742 5.09464 3.15789 4.18778 3.92412 3.51915C4.69036 2.85052 5.7296 2.47489 6.81321 2.47489H8.64754C10.2679 2.47489 11.8028 3.59489 12.7583 5.47244C13.4124 6.7954 13.8776 8.18352 14.1434 9.60555H6.81321ZM2.7399 21.9598C2.73943 21.0159 3.16802 20.1105 3.93166 19.4421C4.6953 18.7737 5.73161 18.3969 6.81321 18.3944H14.9153C15.2088 20.1619 15.768 21.8879 16.5785 23.5278C16.9358 24.2383 17.3933 24.9072 17.9404 25.5189H6.81321C5.73285 25.5164 4.69762 25.1405 3.93418 24.4734C3.17074 23.8064 2.74131 22.9025 2.7399 21.9598ZM19.1651 22.5276C18.511 21.2046 18.0458 19.8165 17.78 18.3944H25.0994C26.1831 18.3944 27.2223 18.7701 27.9885 19.4387C28.7548 20.1073 29.1852 21.0142 29.1852 21.9598C29.1852 22.9054 28.7548 23.8122 27.9885 24.4809C27.2223 25.1495 26.1831 25.5251 25.0994 25.5251H23.2651C21.6518 25.5251 20.117 24.4051 19.1651 22.5276Z"
-        fill={`url(#${gradientA})`}
+      <img
+        src="/tangle-logo.svg"
+        alt=""
+        className={cn(
+          'dark:hidden',
+          compact
+            ? 'absolute left-[-5px] top-1/2 h-[50px] w-[124px] max-w-none -translate-y-1/2'
+            : 'h-full w-full object-contain',
+        )}
       />
-      <path
-        opacity="0.78"
-        d="M32 6.04022C32.0014 7.63948 31.2756 9.17389 29.9818 10.3066C28.688 11.4394 26.9321 12.0779 25.0993 12.082H17.4481C17.4 12.7042 17.3697 13.3404 17.3697 14C17.3697 14.6596 17.3394 15.2927 17.2966 15.918H25.0993C26.9162 15.9434 28.6487 16.5911 29.9232 17.7212C31.1978 18.8514 31.9121 20.3734 31.9121 21.959C31.9121 23.5446 31.1978 25.0666 29.9232 26.1968C28.6487 27.3269 26.9162 27.9746 25.0993 28H6.81277C4.99592 27.9746 3.26335 27.3269 1.98883 26.1968C.714308 25.0666 0 23.5446 0 21.959C0 20.3734 .714308 18.8514 1.98883 17.7212C3.26335 16.5911 4.99592 15.9434 6.81277 15.918L13.9997 15.75C14.4997 15.75 14.5424 14.6596 14.5424 14C14.5424 13.3404 14.5727 12.7073 14.6155 12.082H6.81277C4.99592 12.0566 3.26335 11.4089 1.98883 10.2788C.714308 9.14863 0 7.62659 0 6.041C0 4.45541 .714308 2.93337 1.98883 1.80323C3.26335 .673093 4.99592 .02544 6.81277 0H25.0993C26.9317 .00412 28.6875 .642418 29.9812 1.77482C31.2749 2.90723 32.0009 4.44123 32 6.04022Z"
-        fill={`url(#${gradientB})`}
+      <img
+        src="/tangle-logo-light.svg"
+        alt=""
+        className={cn(
+          'hidden dark:block',
+          compact
+            ? 'absolute left-[-5px] top-1/2 h-[50px] w-[124px] max-w-none -translate-y-1/2'
+            : 'h-full w-full object-contain',
+        )}
       />
-      <defs>
-        <linearGradient id={gradientA} x1="2.38" y1="1.77" x2="26.53" y2="29.37" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#8E59FF" />
-          <stop offset="1" stopColor="#6888F9" />
-        </linearGradient>
-        <linearGradient id={gradientB} x1="2.38" y1="26.23" x2="26.53" y2="-1.37" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#8E59FF" />
-          <stop offset="1" stopColor="#6888F9" />
-        </linearGradient>
-      </defs>
-    </svg>
+    </span>
   );
 }
 
