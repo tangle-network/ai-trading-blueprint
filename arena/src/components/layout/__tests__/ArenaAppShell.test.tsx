@@ -139,6 +139,10 @@ describe('ArenaAppShell', () => {
     expect(window.localStorage.getItem('arena:sidebar-collapsed')).toBe('true');
     const sidebar = screen.getByRole('navigation', { name: 'Tangle navigation' }).closest('aside');
     expect(sidebar).not.toBeNull();
+    expect(within(sidebar!).getByRole('link', { name: 'Tangle Trading' }).querySelector('img')).toHaveAttribute(
+      'src',
+      '/tangle-mark.svg',
+    );
     expect(within(sidebar!).getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
     expect(within(sidebar!).getByRole('button', { name: 'Network' })).toBeInTheDocument();
     expect(within(sidebar!).queryByRole('button', { name: 'Transactions' })).not.toBeInTheDocument();

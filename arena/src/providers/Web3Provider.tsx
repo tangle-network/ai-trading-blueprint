@@ -98,7 +98,7 @@ const baseDefaultConfig = getDefaultConfig({
   appName: 'Tangle Trading',
   appDescription: 'AI agent execution, fills, and portfolio intelligence on Tangle Network',
   appUrl: typeof window !== 'undefined' ? window.location.origin : 'https://arena.tangle.tools',
-  appIcon: '/favicon.svg',
+  appIcon: '/favicon.svg?v=tangle-20260603',
 });
 
 // When embedded by Tangle Cloud, replace the injected/WalletConnect/Coinbase

@@ -432,12 +432,12 @@ function NetworkButton({
 
 function TangleBrandMark({ compact = false }: { compact?: boolean }) {
   const theme = useDocumentBrandTheme();
-  const src = theme === 'dark' ? '/tangle-logo-light.svg' : '/tangle-logo.svg';
+  const src = compact ? '/tangle-mark.svg' : theme === 'dark' ? '/tangle-logo-light.svg' : '/tangle-logo.svg';
 
   return (
     <span
       className={cn(
-        'relative inline-block shrink-0 overflow-hidden',
+        'relative inline-flex shrink-0 items-center justify-center overflow-hidden',
         compact ? 'h-8 w-8' : 'h-10 w-[124px]',
       )}
       aria-hidden="true"
@@ -445,11 +445,7 @@ function TangleBrandMark({ compact = false }: { compact?: boolean }) {
       <img
         src={src}
         alt=""
-        className={cn(
-          compact
-            ? 'absolute left-[-5px] top-1/2 h-[50px] w-[124px] max-w-none -translate-y-1/2'
-            : 'h-full w-full object-contain',
-        )}
+        className="h-full w-full object-contain"
       />
     </span>
   );

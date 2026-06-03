@@ -7,6 +7,8 @@ interface ArenaDocumentProps {
   description: string;
 }
 
+const BRAND_ICON_VERSION = 'tangle-20260603';
+
 // Replaces blueprint-ui's AppDocument so the inline theme-boot script can read
 // `?theme=light|dark` from the URL before the React bundle hydrates. The parent
 // shell (Tangle Cloud dapp) reloads the iframe with its current theme on every
@@ -20,7 +22,11 @@ export function ArenaDocument({ children, description }: ArenaDocumentProps) {
         <meta name="description" content={description} />
         <Meta />
         <Links />
-        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+        <link rel="icon" href={`/favicon.svg?v=${BRAND_ICON_VERSION}`} type="image/svg+xml" />
+        <link rel="icon" href={`/favicon-32.png?v=${BRAND_ICON_VERSION}`} sizes="32x32" type="image/png" />
+        <link rel="icon" href={`/favicon-16.png?v=${BRAND_ICON_VERSION}`} sizes="16x16" type="image/png" />
+        <link rel="shortcut icon" href={`/favicon.ico?v=${BRAND_ICON_VERSION}`} />
+        <link rel="apple-touch-icon" href={`/apple-touch-icon.png?v=${BRAND_ICON_VERSION}`} sizes="180x180" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
