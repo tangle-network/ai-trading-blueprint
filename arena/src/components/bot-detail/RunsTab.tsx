@@ -228,20 +228,20 @@ function RunsSidebar({
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[288px] basis-[288px]"}`
+          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[260px] basis-[260px]"}`
       }
     >
       <div className={`border-b border-arena-elements-dividerColor/50 ${collapsed ? "px-2 py-3" : "px-4 py-3"}`}>
         <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : "justify-between"}`}>
           {!collapsed && (
-            <>
-              <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
-                {surfaceLabel}
+            <div className="min-w-0">
+              <span className="block truncate text-sm font-display font-semibold text-arena-elements-textPrimary">
+                {surfaceLabel} history
               </span>
-              <span className="font-data text-sm text-arena-elements-textPrimary">
-                {summary.total}
+              <span className="block truncate font-data text-xs text-arena-elements-textTertiary">
+                {summary.total.toLocaleString()} {summary.total === 1 ? "entry" : "entries"}
               </span>
-            </>
+            </div>
           )}
           {!stacked && (
             <button
@@ -255,13 +255,11 @@ function RunsSidebar({
             </button>
           )}
         </div>
-        {!collapsed && (
-          <div className="mt-3 flex min-w-0 items-center gap-2 overflow-hidden font-data text-[11px] text-arena-elements-textTertiary">
-            <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.running}</b> Live</span>
-            <span className="text-arena-elements-dividerColor" aria-hidden="true">/</span>
-            <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.completed}</b> Done</span>
-            <span className="text-arena-elements-dividerColor" aria-hidden="true">/</span>
-            <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.failed}</b> Fail</span>
+        {!collapsed && summary.total > 0 && (
+          <div className="mt-3 grid grid-cols-3 gap-1.5 font-data text-[11px] text-arena-elements-textTertiary">
+            <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.running}</b> live</span>
+            <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.completed}</b> done</span>
+            <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.failed}</b> fail</span>
           </div>
         )}
       </div>
@@ -315,7 +313,7 @@ function RunsSidebar({
                 <button
                   key={run.id}
                   aria-pressed={isActive}
-                  className={`group flex w-full items-start gap-3 border-l-2 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
+                    className={`group grid w-full grid-cols-[10px_minmax(0,1fr)] gap-3 border-l-2 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
                     isActive
                       ? "border-amber-500 bg-arena-elements-item-backgroundActive"
                       : "border-transparent hover:bg-arena-elements-item-backgroundHover"
@@ -323,7 +321,7 @@ function RunsSidebar({
                   onClick={() => onSelect(run.id)}
                 >
                   <span
-                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                    className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
                       run.status === "running"
                         ? "bg-amber-400"
                         : run.status === "completed"
@@ -334,27 +332,28 @@ function RunsSidebar({
                     }`}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-center justify-between gap-2">
-                      <div className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
+                    <div className="grid min-w-0 gap-1">
+                      <div className="truncate text-[15px] font-display font-semibold text-arena-elements-textPrimary">
                         {run.title}
                       </div>
-                      <span
-                        className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-data ${getStatusBadgeClass(run.status)}`}
-                      >
-                        {getStatusLabel(run.status)}
-                      </span>
                     </div>
                     <div className="mt-1 truncate text-sm font-data text-arena-elements-textTertiary">
                       {run.subtitle}
                     </div>
-                    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
-                      <span className="rounded-md border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-2/40 px-1.5 py-0.5 text-[11px] font-data text-arena-elements-textSecondary">
+                    <div className="mt-1.5 flex min-w-0 items-center gap-2 font-data text-[11px] text-arena-elements-textTertiary">
+                      <span className={run.status === "running" ? "text-amber-400" : run.status === "completed" ? "text-emerald-400" : run.status === "interrupted" ? "text-slate-400" : "text-crimson-400"}>
+                        {getStatusLabel(run.status)}
+                      </span>
+                      <span aria-hidden="true">/</span>
+                      <span className="truncate">
                         {run.signalLabel}
                       </span>
-                      <span className="text-[11px] font-data text-arena-elements-textTertiary">
+                      <span aria-hidden="true">/</span>
+                      <span className="shrink-0">
                         {run.durationLabel}
                       </span>
-                      <span className="text-[11px] font-data text-arena-elements-textTertiary">
+                      <span aria-hidden="true">/</span>
+                      <span className="shrink-0">
                         {run.tokenLabel}
                       </span>
                     </div>
@@ -429,7 +428,7 @@ function TraceCockpitMetric({ label, value }: { label: string; value: string }) 
       <div className="truncate font-data text-[10px] font-semibold uppercase tracking-[0.12em] text-[#697371]">
         {label}
       </div>
-      <div className="mt-0.5 truncate font-data text-sm font-bold text-[#f6fefd]" title={value}>
+      <div className="mt-0.5 truncate font-data text-base font-bold text-[#f6fefd]" title={value}>
         {value}
       </div>
     </div>
@@ -460,10 +459,9 @@ function TraceCockpit({
       : null,
     decisionItem?.notionalLabel ?? null,
   ].filter(Boolean);
-  const contextParts = tradeContextParts.length > 0
-    ? [...tradeContextParts, traceLabel]
-    : ["TRACE RECORDED", traceLabel];
-  const contextLabel = contextParts.length > 0 ? contextParts.join(" / ") : "TRACE RECORDED";
+  const contextLabel = tradeContextParts.length > 0
+    ? tradeContextParts.join(" / ")
+    : "Evidence replay";
   const toolLabel = toolCount > 0
     ? `${toolCount.toLocaleString()} ${toolCount === 1 ? "tool" : "tools"}`
     : "n/a";
@@ -478,19 +476,20 @@ function TraceCockpit({
             >
               {statusLabel}
             </span>
-            <span className="truncate font-display text-base font-semibold text-[#f6fefd]">
+            <span className="truncate font-display text-lg font-semibold text-[#f6fefd]">
               {getWorkflowKindLabel(run.workflowKind)}
             </span>
             <span className="truncate font-data text-xs text-[#949e9c]">
               {formatRunTimestamp(run.startedAt)}
             </span>
           </div>
-          <div className="mt-1 flex min-w-0 items-center gap-2 font-data text-[12px] font-semibold uppercase tracking-[0.1em] text-[#50d2c1]">
+          <div className="mt-1 flex min-w-0 items-center gap-2 font-data text-sm font-semibold text-[#50d2c1]" title={traceLabel}>
             <span className="truncate">{contextLabel}</span>
           </div>
-          <p className="mt-1 truncate text-sm text-[#d2dad7]" title={thesis}>
+          <p className="mt-1 truncate text-[15px] leading-6 text-[#d2dad7]" title={thesis}>
             {thesis}
           </p>
+          <span className="sr-only">{traceLabel}</span>
         </div>
         <div className="grid min-w-0 grid-cols-3 gap-2">
           <TraceCockpitMetric label="Time" value={formatDuration(run.durationMs)} />

@@ -154,7 +154,7 @@ export function AdvancedSettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col overflow-hidden border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2 dark:bg-arena-elements-background-depth-4 shadow-2xl">
+      <DialogContent className="arena-trace-terminal flex max-h-[85vh] flex-col overflow-hidden rounded-[7px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text)] shadow-[var(--arena-terminal-shadow-lg)] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="font-display text-lg">
             Advanced Configuration: {selectedPack.name}
@@ -165,11 +165,11 @@ export function AdvancedSettingsDialog({
         </DialogHeader>
 
         <Tabs defaultValue="settings" className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          <TabsList>
-            <TabsTrigger value="full">Full Instructions</TabsTrigger>
-            <TabsTrigger value="expert">Expert Knowledge</TabsTrigger>
-            <TabsTrigger value="extra">Custom Instructions</TabsTrigger>
-            <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsList className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-1">
+            <TabsTrigger value="full" className="rounded-[4px]">Full Instructions</TabsTrigger>
+            <TabsTrigger value="expert" className="rounded-[4px]">Expert Knowledge</TabsTrigger>
+            <TabsTrigger value="extra" className="rounded-[4px]">Custom Instructions</TabsTrigger>
+            <TabsTrigger value="settings" className="rounded-[4px]">Settings</TabsTrigger>
           </TabsList>
 
           <TabsContent value="full" className="flex-1 min-h-0 mt-3 overflow-y-auto pr-1">
@@ -178,7 +178,7 @@ export function AdvancedSettingsDialog({
                 Read-only. Edit the "Expert Knowledge" tab to modify the strategy section. Values
                 in {'{{'}braces{'}}'} are filled by the operator at runtime.
               </p>
-              <pre className="w-full min-h-64 max-h-[50vh] overflow-auto rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-4 py-3 text-sm font-data text-arena-elements-textSecondary leading-relaxed whitespace-pre-wrap">
+              <pre className="w-full min-h-64 max-h-[50vh] overflow-auto rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-4 py-3 text-sm font-data text-arena-elements-textSecondary leading-relaxed whitespace-pre-wrap">
                 {fullInstructions}
               </pre>
             </div>
@@ -193,7 +193,7 @@ export function AdvancedSettingsDialog({
               <textarea
                 value={customExpertKnowledge || selectedPack.expertKnowledge}
                 onChange={(e) => setCustomExpertKnowledge(e.target.value)}
-                className="w-full min-h-56 max-h-[50vh] rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-4 py-3 text-sm font-data text-arena-elements-textSecondary leading-relaxed focus:outline-none focus:border-violet-500/40 focus:ring-2 focus:ring-violet-500/10 transition-all resize-y"
+                className="w-full min-h-56 max-h-[50vh] rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-4 py-3 text-sm font-data text-arena-elements-textSecondary leading-relaxed transition-[border-color,box-shadow] duration-150 focus:outline-none focus:border-[#50d2c1]/60 focus:ring-2 focus:ring-[#50d2c1]/20 resize-y"
               />
               {customExpertKnowledge && (
                 <Button
@@ -217,7 +217,7 @@ export function AdvancedSettingsDialog({
               <textarea
                 value={customInstructions}
                 onChange={(e) => setCustomInstructions(e.target.value)}
-                className="w-full min-h-40 max-h-[50vh] rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-4 py-3 text-sm font-data text-arena-elements-textSecondary leading-relaxed focus:outline-none focus:border-violet-500/40 focus:ring-2 focus:ring-violet-500/10 transition-all resize-y"
+                className="w-full min-h-40 max-h-[50vh] rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-4 py-3 text-sm font-data text-arena-elements-textSecondary leading-relaxed transition-[border-color,box-shadow] duration-150 focus:outline-none focus:border-[#50d2c1]/60 focus:ring-2 focus:ring-[#50d2c1]/20 resize-y"
                 placeholder={`Examples:\n- Only trade ETH/USDC pairs\n- Max position: 5% of portfolio\n- Focus on Asian session hours\n- Avoid news events`}
               />
             </div>
@@ -234,7 +234,7 @@ export function AdvancedSettingsDialog({
                   value={effectiveRuntimeBackend}
                   disabled={isTeeBlueprint}
                   onChange={(e) => setRuntimeBackend(e.target.value as 'docker' | 'firecracker' | 'tee')}
-                  className="w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 py-2 text-sm font-data text-arena-elements-textPrimary disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="w-full rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-2 text-sm font-data text-arena-elements-textPrimary disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <option value="docker">Docker (default)</option>
                   <option value="firecracker" disabled={!firecrackerSupported}>
@@ -262,7 +262,7 @@ export function AdvancedSettingsDialog({
                   value={executionTargetId}
                   disabled={executionTargets.length === 0}
                   onChange={(e) => setExecutionTargetId(e.target.value)}
-                  className="w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 py-2 text-sm font-data text-arena-elements-textPrimary"
+                  className="w-full rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-2 text-sm font-data text-arena-elements-textPrimary"
                 >
                   {executionTargets.map((target) => (
                     <option key={target.id} value={target.id} disabled={!target.enabled}>
@@ -274,7 +274,7 @@ export function AdvancedSettingsDialog({
                   {executionChainMessage ?? 'Choose where strategies run. The selected chain sets the default trading mode, but you can override it below.'}
                 </p>
                 {selectedExecutionTarget && (
-                  <div className="mt-3 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-2 px-3 py-3 text-xs font-data text-arena-elements-textSecondary space-y-1.5">
+                  <div className="mt-3 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 py-3 text-xs font-data text-arena-elements-textSecondary space-y-1.5">
                     <div className="flex justify-between gap-3">
                       <span>Mode</span>
                       <span className="text-arena-elements-textPrimary">
@@ -327,7 +327,7 @@ export function AdvancedSettingsDialog({
                 </span>
                 <div
                   aria-label="Trading mode"
-                  className="inline-flex rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 p-1"
+                  className="inline-flex rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-1"
                   role="group"
                 >
                   <button
@@ -337,9 +337,9 @@ export function AdvancedSettingsDialog({
                     onClick={() => {
                       if (!liveModeDisabled) setProvisionPaperTrade(false);
                     }}
-                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    className={`rounded-[4px] px-3 py-1.5 text-xs font-medium transition-colors ${
                       !provisionPaperTrade
-                        ? 'bg-violet-500 text-white shadow-sm'
+                        ? 'bg-[#50d2c1] text-[#06100e]'
                         : liveModeDisabled
                           ? 'text-arena-elements-textTertiary cursor-not-allowed opacity-60'
                           : 'text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
@@ -351,9 +351,9 @@ export function AdvancedSettingsDialog({
                     type="button"
                     aria-pressed={provisionPaperTrade}
                     onClick={() => setProvisionPaperTrade(true)}
-                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    className={`rounded-[4px] px-3 py-1.5 text-xs font-medium transition-colors ${
                       provisionPaperTrade
-                        ? 'bg-violet-500 text-white shadow-sm'
+                        ? 'bg-[#50d2c1] text-[#06100e]'
                         : 'text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
                     }`}
                   >

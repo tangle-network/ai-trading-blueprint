@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWrapper } from '~/test/mocks';
 
@@ -180,12 +180,7 @@ describe('leaderboard auth-aware rendering', () => {
     render(<IndexPage />, { wrapper: createWrapper() });
 
     expect(screen.getByRole('region', { name: /market pulse/i })).toBeInTheDocument();
-    const trustStrip = screen.getByLabelText('Execution trust');
-    expect(within(trustStrip).getByText('Network')).toBeInTheDocument();
-    expect(within(trustStrip).getByText('Mode')).toBeInTheDocument();
-    expect(within(trustStrip).getByText('Trust')).toBeInTheDocument();
-    expect(within(trustStrip).getByText('Operator')).toBeInTheDocument();
-    expect(within(trustStrip).getByText('Trade Store')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Execution trust')).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: /arena fleet terminal/i })).toHaveClass(
       'flex-1',
       'min-h-0',

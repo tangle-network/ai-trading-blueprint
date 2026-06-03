@@ -135,7 +135,6 @@ export function AgentWorkspaceShell({
     rosterTradeCount: bot.totalTrades,
   });
   const tradeCount = fillCountEvidence.value;
-  const focusNavItems = navItems.filter((item) => item.value === 'runs' || item.value === 'chat');
   const copyOperatorAddress = () => {
     if (!navigator.clipboard) return;
     void navigator.clipboard.writeText(bot.operatorAddress).then(() => {
@@ -341,7 +340,7 @@ export function AgentWorkspaceShell({
       {focusMode ? (
         <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="arena-trace-terminal shrink-0 border-b border-[#273035] bg-[#081013] text-[#f6fefd]">
-            <div className="flex h-12 min-w-0 items-center gap-2 px-2">
+            <div className="flex h-11 min-w-0 items-center gap-2 px-2">
               <Link
                 to={backHref ?? `/arena/bot/${encodeURIComponent(bot.id)}/performance`}
                 replace
@@ -351,19 +350,11 @@ export function AgentWorkspaceShell({
               >
                 <span className="i-ph:arrow-left text-base" aria-hidden="true" />
               </Link>
-              {focusNavItems.length > 0 && (
-                <WorkspaceNavStrip
-                  items={focusNavItems}
-                  activeValue={activeSection}
-                  getHref={buildSectionHref}
-                  getState={buildSectionState}
-                  ariaLabel="Agent focus navigation"
-                  className="min-w-0 border-0 bg-transparent p-0"
-                  buttonClassName="h-9 rounded-[5px] px-2"
-                  itemClassName="focus-visible:ring-[#50d2c1]/60"
-                  iconOnly
-                />
-              )}
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-display text-sm font-semibold text-[#f6fefd]">
+                  {activeSection === 'chat' ? 'Chat' : activeSection === 'runs' ? 'Runs' : title}
+                </div>
+              </div>
               <div className="ml-auto hidden min-w-0 items-center gap-2 pr-2 sm:flex">
                 <Identicon address={bot.operatorAddress as Address} size={22} />
                 <span className="max-w-[280px] truncate font-display text-sm font-medium text-[#d2dad7]">

@@ -12,8 +12,8 @@ import {
   formatTradeModeLabel,
   formatTradeUsd,
   getTerminalTradeActionPillClass,
+  getTradeActionToneClass,
   getTradeMarketLabel,
-  getTradeActionPillClass,
 } from '~/lib/tradeDisplay';
 import { formatNumber } from '~/lib/format';
 
@@ -243,7 +243,7 @@ export function LatestAgentTrades({
                         <td className="border-b border-[#273035] px-3 py-2.5 align-middle">
                           <button
                             type="button"
-                            className={`inline-flex h-8 min-w-[4.75rem] items-center justify-center rounded-md px-2.5 font-data text-xs font-bold transition-[box-shadow,opacity] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${getTerminalTradeActionPillClass(trade.action)}`}
+                            className={`inline-flex h-8 min-w-[4.75rem] items-center justify-start rounded-none bg-transparent px-0 font-data text-xs font-bold transition-[color,opacity] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${getTradeActionToneClass(trade.action)}`}
                             aria-label={`Inspect ${agentName} fill`}
                             aria-pressed={selected}
                             onClick={() => selectFill(trade.id)}
@@ -356,7 +356,7 @@ export function LatestAgentTrades({
                       </Link>
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
-                      <span className={`inline-flex h-8 min-w-[4.25rem] items-center justify-center rounded-md px-2.5 font-data font-bold ${getTradeActionPillClass(trade.action)}`}>
+                      <span className={`inline-flex h-8 min-w-[4.25rem] items-center justify-start rounded-none bg-transparent px-0 font-data font-bold ${getTradeActionToneClass(trade.action)}`}>
                         {formatTradeActionLabel(trade.action)}
                       </span>
                     </td>

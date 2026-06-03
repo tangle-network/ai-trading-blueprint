@@ -343,7 +343,7 @@ describe('bot workspace routing', () => {
 
     expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/chat');
-    expect(screen.getByRole('link', { name: /chat/i })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByText('Chat')).toBeInTheDocument();
   });
 
   it('persists operations panel changes in the route query string', async () => {

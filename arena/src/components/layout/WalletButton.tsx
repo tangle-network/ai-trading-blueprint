@@ -15,7 +15,13 @@ function truncateAddress(address?: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
-export function WalletButton() {
+export function WalletButton({
+  align = 'end',
+  side = 'down',
+}: {
+  align?: 'start' | 'end';
+  side?: 'up' | 'down';
+} = {}) {
   const { open, ref, toggle, close } = useDropdownMenu();
   const menuRef = ref as RefObject<HTMLDivElement>;
   const { address, chainId, isConnected, status } = useAccount();
@@ -116,7 +122,7 @@ export function WalletButton() {
             </button>
 
             {open && (
-              <div className="absolute right-0 top-full mt-2 w-72 glass-card-strong rounded-xl border border-arena-elements-dividerColor/50 p-4 z-50 shadow-lg">
+              <div className={`absolute ${align === 'start' ? 'left-0' : 'right-0'} ${side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} z-50 w-72 max-w-[calc(100vw-1rem)] rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 text-[var(--arena-terminal-text)] shadow-[var(--arena-terminal-shadow-lg)]`}>
                 {/* Address + Copy */}
                 <div className="flex items-center gap-3 mb-4">
                   {address && <Identicon address={address as Address} size={32} />}
@@ -139,7 +145,7 @@ export function WalletButton() {
                 </div>
 
                 {/* Chain status */}
-                <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-arena-elements-item-backgroundActive mb-3">
+                <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-[5px] bg-arena-elements-item-backgroundActive mb-3">
                   <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${isWrongChain ? 'bg-amber-500 dark:bg-amber-400 animate-pulse' : 'bg-emerald-600 dark:bg-emerald-400'}`} />
                   <span className="text-sm font-data text-arena-elements-textSecondary flex-1">
                     {isWrongChain ? `Chain ${chainId}` : (targetChain?.name ?? 'Unknown')}
@@ -155,7 +161,7 @@ export function WalletButton() {
                     <button
                       type="button"
                       onClick={handleSwitchChain}
-                      className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg hover:bg-violet-500/10 transition-colors text-left"
+                      className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-[5px] hover:bg-violet-500/10 transition-colors text-left"
                     >
                       <div className="i-ph:swap text-base text-violet-700 dark:text-violet-400" />
                       <span className="text-sm font-display text-arena-elements-textSecondary">
@@ -166,7 +172,7 @@ export function WalletButton() {
                   <button
                     type="button"
                     onClick={addChain}
-                    className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg hover:bg-violet-500/10 transition-colors text-left"
+                    className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-[5px] hover:bg-violet-500/10 transition-colors text-left"
                   >
                     <div className="i-ph:plus-circle text-base text-violet-700 dark:text-violet-400" />
                     <span className="text-sm font-display text-arena-elements-textSecondary">
@@ -176,7 +182,7 @@ export function WalletButton() {
                   <button
                     type="button"
                     onClick={copyAddress}
-                    className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg hover:bg-arena-elements-item-backgroundHover transition-colors text-left"
+                    className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-[5px] hover:bg-arena-elements-item-backgroundHover transition-colors text-left"
                   >
                     <div className="i-ph:copy text-base text-arena-elements-textTertiary" />
                     <span className="text-sm font-display text-arena-elements-textSecondary">
@@ -186,7 +192,7 @@ export function WalletButton() {
                   <button
                     type="button"
                     onClick={() => { disconnect(); close(); }}
-                    className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg hover:bg-crimson-500/10 transition-colors text-left"
+                    className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-[5px] hover:bg-crimson-500/10 transition-colors text-left"
                   >
                     <div className="i-ph:sign-out text-base text-crimson-600 dark:text-crimson-400" />
                     <span className="text-sm font-display text-crimson-600 dark:text-crimson-400">

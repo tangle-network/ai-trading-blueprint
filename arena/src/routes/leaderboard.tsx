@@ -443,11 +443,6 @@ export default function LeaderboardPage() {
           { value: oneDayTrades > 0 ? formatNumber(oneDayTrades, { maximumFractionDigits: 0 }) : '—', label: '24H Fills' },
           { value: formatNumber(activeAgents, { maximumFractionDigits: 0 }), label: 'Active' },
         ]}
-        badge={(
-          <span className="rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-2 py-1 font-data text-xs text-[var(--arena-terminal-text-muted)]">
-            {formatNumber(visibleBots.length, { maximumFractionDigits: 0 })}
-          </span>
-        )}
       >
         <div className="grid min-w-0 gap-2 min-[920px]:grid-cols-[minmax(12rem,1fr)_auto]">
           <div className="relative min-w-[12rem]">

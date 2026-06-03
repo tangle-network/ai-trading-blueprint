@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import type { MetaFunction } from 'react-router'
 import { useNavigate } from 'react-router'
 import { Button } from '@tangle-network/blueprint-ui/components'
+import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader'
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth'
 import {
   ALL_TRADING_OPERATOR_API_URLS,
@@ -292,22 +293,22 @@ export default function CreateAgent() {
 
   return (
     <div className="arena-trace-terminal flex min-h-full overflow-y-auto bg-[#081013] text-[#f6fefd] lg:h-full lg:min-h-0 lg:overflow-hidden">
-      <section className="mx-auto flex w-full max-w-[1220px] flex-1 flex-col gap-3 px-3 py-3 sm:px-4 lg:h-full lg:min-h-0 lg:px-6">
-        <header className="grid shrink-0 gap-3 border-b border-[#273035] pb-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-          <div className="min-w-0">
-            <h1 className="text-pretty font-display text-3xl font-semibold tracking-tight text-[#f6fefd]">
-              Launch Agent
-            </h1>
-            <p className="mt-1 max-w-2xl font-mono text-xs text-[#949e9c]">
-              Mandate / replay / envelope / workspace
-            </p>
-          </div>
-          <div className="grid grid-cols-3 overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] font-mono text-[11px] uppercase tracking-[0.12em] text-[#949e9c] md:w-[430px]">
-            <span className="min-w-0 truncate border-r border-[#273035] px-3 py-2 text-center">Runtime API</span>
-            <span className="border-r border-[#273035] px-3 py-2 text-center">Service Base-S</span>
-            <span className="px-3 py-2 text-center text-[#50d2c1]">Risk Gated</span>
-          </div>
-        </header>
+      <section className="mx-auto flex w-full max-w-[1560px] flex-1 flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:min-h-0">
+        <ArenaPageHeader
+          title="Create"
+          titleWidthClassName="min-[1180px]:w-[11rem]"
+          metrics={[
+            { label: 'Profile', value: detectedProfile.label },
+            { label: 'Venue', value: detectedProfile.venue },
+            { label: 'Risk', value: 'Gated' },
+          ]}
+          controls={(
+            <>
+              <ArenaHeaderLink to="/leaderboard" icon="i-ph:table">Agents</ArenaHeaderLink>
+              <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch" variant="primary">Deploy</ArenaHeaderLink>
+            </>
+          )}
+        />
 
         <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_378px]">
           <form

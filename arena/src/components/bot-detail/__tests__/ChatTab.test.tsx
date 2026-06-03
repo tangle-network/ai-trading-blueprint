@@ -359,7 +359,7 @@ describe("ChatTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByText("Chat")).toBeInTheDocument();
+    expect(await screen.findByText(/Chat history/i)).toBeInTheDocument();
     const shell = container.querySelector('[data-sandbox-ui="true"]');
     expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
     expect(shell).not.toBeNull();

@@ -230,7 +230,7 @@ export function ConfigureStep({
                   <span className="i-ph:newspaper-clipping text-sm" aria-hidden="true" />
                   Prediction Markets
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="grid gap-2 sm:grid-cols-2">
                   {predictionPacks.map((pack) => (
                     <PredictionPackButton
                       key={pack.id}
@@ -250,7 +250,7 @@ export function ConfigureStep({
           </ProvisionPanel>
         </div>
 
-        <aside className="space-y-3">
+        <aside className="grid content-start gap-3">
           <ProvisionPanel title="Launch Summary">
             <div className="space-y-3">
               <ReadRow label="Pack" value={selectedPack.name} />
@@ -268,24 +268,37 @@ export function ConfigureStep({
             </div>
           </ProvisionPanel>
 
+          <Button
+            onClick={goNext}
+            disabled={!canNext}
+            size="lg"
+            className="h-12 w-full rounded-[5px] bg-[#50d2c1] font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity,transform] duration-150 hover:bg-[#7ce6d9] active:scale-[0.98] disabled:opacity-45"
+          >
+            Review Provision
+          </Button>
+
           {isHyperliquidStrategy && (
             <ProvisionPanel title="Hyperliquid Guardrails">
-              <div className="grid gap-2">
+              <div className="grid overflow-hidden rounded-[5px] border border-[#273035] bg-[#273035] sm:grid-cols-2">
                 <GuardrailRow
                   label="Account"
                   value="Bot-bound HyperEVM vault"
+                  compact
                 />
                 <GuardrailRow
                   label="Collateral"
                   value="USDC margin, validator checked"
+                  compact
                 />
                 <GuardrailRow
                   label="Orders"
                   value="Native Hyperliquid perps only"
+                  compact
                 />
                 <GuardrailRow
                   label="Exits"
                   value="Reduce-only when closing risk"
+                  compact
                 />
               </div>
             </ProvisionPanel>
@@ -460,8 +473,8 @@ export function ConfigureStep({
             </div>
           </ProvisionPanel>
 
-          {supportsClobCollateral && (
-            <ProvisionPanel title="Collateral">
+          <ProvisionPanel title="Collateral">
+            {supportsClobCollateral ? (
               <label htmlFor="collateral-cap" className="block">
                 <span className="mb-2 block font-display text-sm font-semibold text-[#f6fefd]">
                   CLOB Collateral Cap (%)
@@ -483,17 +496,20 @@ export function ConfigureStep({
                   <span className="font-mono text-sm text-[#949e9c]">%</span>
                 </div>
               </label>
-            </ProvisionPanel>
-          )}
+            ) : (
+              <div className="grid gap-2">
+                <GuardrailRow
+                  label="Policy"
+                  value="Strategy-defined"
+                />
+                <GuardrailRow
+                  label="Margin"
+                  value={isHyperliquidStrategy ? 'HyperEVM vault' : 'No CLOB cap required'}
+                />
+              </div>
+            )}
+          </ProvisionPanel>
 
-          <Button
-            onClick={goNext}
-            disabled={!canNext}
-            size="lg"
-            className="h-12 w-full rounded-[5px] bg-[#50d2c1] font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity,transform] duration-150 hover:bg-[#7ce6d9] active:scale-[0.98] disabled:opacity-45"
-          >
-            Review Provision
-          </Button>
         </aside>
       </div>
     </div>
@@ -609,7 +625,7 @@ function StrategyPackButton({
     <button
       type="button"
       onClick={onClick}
-      className={`grid min-h-[58px] grid-cols-[26px_minmax(0,1fr)] gap-2 rounded-[5px] border px-2.5 py-2 text-left transition-[background-color,border-color,box-shadow,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+      className={`grid h-[64px] grid-cols-[26px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2.5 py-2 text-left transition-[background-color,border-color,box-shadow,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
         active
           ? 'border-[#50d2c1]/70 bg-[#143c38] shadow-[inset_3px_0_0_rgba(80,210,193,0.9)]'
           : 'border-[#273035] bg-[#0f1a1f] hover:border-[#50d2c1]/40 hover:bg-[#132329]'
@@ -626,15 +642,12 @@ function StrategyPackButton({
         <span className={`${strategyPackIcon(pack)} text-sm`} />
       </span>
       <span className="min-w-0">
-        <span className="block truncate font-display text-sm font-semibold leading-4 text-[#f6fefd]">
+        <span className="block truncate font-display text-[15px] font-semibold leading-5 text-[#f6fefd]">
           {pack.name}
         </span>
-        <span className="mt-0.5 block line-clamp-1 font-mono text-[11px] text-[#949e9c]">
+        <span className="mt-0.5 block line-clamp-1 font-mono text-xs text-[#949e9c]">
           {pack.providers.slice(0, 3).join(', ')}
           {pack.providers.length > 3 ? ` +${pack.providers.length - 3}` : ''}
-        </span>
-        <span className="mt-1 inline-flex rounded-[4px] border border-[#273035] bg-[#081013] px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.1em] text-[#697371]">
-          {formatExecutionMode(pack.executionMode)}
         </span>
       </span>
     </button>
@@ -654,7 +667,7 @@ function PredictionPackButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-8 max-w-full items-center gap-2 rounded-[5px] border px-2.5 font-display text-xs font-semibold transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+      className={`grid h-9 max-w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2.5 font-display text-sm font-semibold transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
         active
           ? 'border-[#50d2c1]/70 bg-[#143c38] text-[#f6fefd]'
           : 'border-[#273035] bg-[#0f1a1f] text-[#d2dad7] hover:border-[#50d2c1]/40 hover:bg-[#132329]'
@@ -662,9 +675,6 @@ function PredictionPackButton({
     >
       <span className={`${strategyPackIcon(pack)} shrink-0 text-sm`} aria-hidden="true" />
       <span className="truncate">{pack.name}</span>
-      <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#697371]">
-        {pack.executionMode === 'paper-only' ? 'Paper' : 'Live'}
-      </span>
     </button>
   );
 }
@@ -714,9 +724,23 @@ function ReadRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function GuardrailRow({ label, value }: { label: string; value: string }) {
+function GuardrailRow({
+  label,
+  value,
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  compact?: boolean;
+}) {
   return (
-    <div className="grid min-w-0 gap-1.5 rounded-[5px] border border-[#273035] bg-[#081013] px-3 py-2">
+    <div
+      className={
+        compact
+          ? 'grid min-w-0 gap-1 bg-[#081013] px-3 py-2'
+          : 'grid min-w-0 gap-1.5 rounded-[5px] border border-[#273035] bg-[#081013] px-3 py-2'
+      }
+    >
       <span className="font-mono text-[10px] uppercase text-[#697371]">{label}</span>
       <span className="min-w-0 font-mono text-xs leading-4 text-[#d2dad7]">{value}</span>
     </div>

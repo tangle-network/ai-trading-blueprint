@@ -7,6 +7,7 @@ const hoisted = vi.hoisted(() => ({
 }))
 
 vi.mock('react-router', () => ({
+  Link: ({ children }: { children: unknown }) => children,
   useNavigate: () => hoisted.navigateMock,
 }))
 

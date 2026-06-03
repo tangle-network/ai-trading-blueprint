@@ -70,7 +70,7 @@ export function SecretsStep({
   return (
     <>
       {/* Deployment success summary */}
-      <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5">
+      <div className="rounded-[6px] border border-[#1d5b52] bg-[#0b1418] p-4">
         <div className="flex items-center gap-2 mb-3">
           <div className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
           <span className="text-sm font-display font-semibold text-emerald-400">
@@ -100,7 +100,7 @@ export function SecretsStep({
       </div>
 
       {/* Secrets form */}
-      <Card>
+      <Card className="rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
         <CardContent className="pt-5 pb-5 space-y-4">
           <div>
             <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
@@ -112,7 +112,7 @@ export function SecretsStep({
           </div>
 
           {secretsLookupError && (
-            <div className="text-sm text-amber-500 p-2 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <div className="rounded-[5px] border border-amber-500/20 bg-amber-500/5 p-2 text-sm text-amber-500">
               {secretsLookupError}
             </div>
           )}
@@ -121,14 +121,14 @@ export function SecretsStep({
           <button
             type="button"
             onClick={() => setUseOperatorKey(!useOperatorKey)}
-            className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-all text-left ${
+            className={`w-full flex items-center gap-3 rounded-[5px] border p-3 text-left transition-[background-color,border-color,box-shadow] duration-150 ${
               useOperatorKey
-                ? 'border-violet-500/50 bg-violet-500/10 ring-1 ring-violet-500/20'
-                : 'border-arena-elements-borderColor bg-arena-elements-background-depth-3 hover:border-arena-elements-borderColorActive'
+                ? 'border-[#50d2c1]/70 bg-[#143c38] ring-1 ring-[#50d2c1]/20'
+                : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] hover:border-[#50d2c1]/50'
             }`}
           >
             <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
-              useOperatorKey ? 'border-violet-500 bg-violet-500' : 'border-arena-elements-textTertiary'
+              useOperatorKey ? 'border-[#50d2c1] bg-[#50d2c1]' : 'border-arena-elements-textTertiary'
             }`}>
               {useOperatorKey && (
                 <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={4}>
@@ -162,7 +162,7 @@ export function SecretsStep({
 
           {/* Activation progress */}
           {isSubmittingSecrets && activationPhase && (
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <div className="flex items-center gap-2 rounded-[5px] border border-amber-500/20 bg-amber-500/5 p-3">
               <div className="w-3 h-3 rounded-full border-2 border-amber-400 border-t-transparent animate-spin shrink-0" />
               <span className="text-sm font-data text-amber-400">
                 {ACTIVATION_LABELS[activationPhase] ?? activationPhase}
@@ -182,7 +182,7 @@ export function SecretsStep({
       </Card>
 
       {latestDeployment.phase === 'active' && (
-        <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 space-y-3">
+        <div className="space-y-3 rounded-[6px] border border-[#1d5b52] bg-[#0b1418] p-4">
           <div className="flex items-center gap-2">
             <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -200,7 +200,7 @@ export function SecretsStep({
           {botDetailHref ? (
             <Link
               to={botDetailHref}
-              className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-violet-700 dark:text-violet-400 hover:underline"
+              className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-[#50d2c1] hover:underline"
             >
               {viewBotLabel}
             </Link>

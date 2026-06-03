@@ -15,7 +15,7 @@ import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
-import { formatCompactUsd, formatNumber, truncateAddress } from '~/lib/format';
+import { formatCompactUsd, formatNumber } from '~/lib/format';
 import { isPublicLeaderboardBot } from '~/lib/botVisibility';
 import { buildAgentActivityStats, type AgentActivityStats } from '~/lib/agentActivity';
 import type { Bot } from '~/lib/types/bot';
@@ -31,64 +31,6 @@ import { Identicon } from '@tangle-network/blueprint-ui/components';
 export const meta: MetaFunction = () => [
   { title: 'AI Trading Arena' },
 ];
-
-function formatMode(bot: Bot | null): string {
-  if (!bot) return 'No agent';
-  if (bot.paperTrade === true) return 'Paper';
-  if (bot.paperTrade === false) return 'Live';
-  return 'Unknown';
-}
-
-function formatTrust(bot: Bot | null): string {
-  switch (bot?.validationTrust) {
-    case 'envelope':
-      return 'Envelope';
-    case 'self_operated':
-      return 'Self';
-    case 'per_trade':
-      return 'Per trade';
-    default:
-      return 'Per trade';
-  }
-}
-
-function TrustMetric({ label, value, title }: { label: string; value: string; title?: string }) {
-  return (
-    <div className="min-w-0" title={title}>
-      <div className="font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">
-        {label}
-      </div>
-      <div className="mt-0.5 truncate font-data text-xs font-semibold tabular-nums text-[var(--arena-terminal-text-secondary)]">
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function HeaderTrustBar({
-  bot,
-  hasTradeStoreEvidence,
-}: {
-  bot: Bot | null;
-  hasTradeStoreEvidence: boolean;
-}) {
-  return (
-    <div
-      aria-label="Execution trust"
-      className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-1 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 py-2 min-[760px]:grid-cols-5"
-    >
-      <TrustMetric label="Network" value={bot?.chainId ? `Chain ${bot.chainId}` : 'Mixed'} />
-      <TrustMetric label="Mode" value={formatMode(bot)} />
-      <TrustMetric label="Trust" value={formatTrust(bot)} />
-      <TrustMetric
-        label="Operator"
-        value={bot ? truncateAddress(bot.operatorAddress) : 'No operator'}
-        title={bot?.operatorAddress}
-      />
-      <TrustMetric label="Evidence" value={hasTradeStoreEvidence ? 'Trade Store' : 'Operator Roster'} />
-    </div>
-  );
-}
 
 function formatPulseNumber(value: number): string {
   return formatNumber(value, { maximumFractionDigits: 0 });
@@ -330,7 +272,6 @@ export default function IndexPage() {
   const platformTradeCount = hasPlatformTradeCount
     ? homeVolumeSeries.summary.totalTradeCount
     : totalTrades;
-  const trustAnchorBot = topActivity?.bot ?? leaderboardBots[0] ?? null;
 
   return (
     <div className="arena-trace-terminal mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:overflow-hidden">
@@ -351,14 +292,7 @@ export default function IndexPage() {
             <ArenaHeaderLink to="/provision" icon="i-ph:plus-bold" variant="primary">Deploy</ArenaHeaderLink>
           </>
         )}
-      >
-        {leaderboardBots.length > 0 && (
-          <HeaderTrustBar
-            bot={trustAnchorBot}
-            hasTradeStoreEvidence={hasPlatformTradeCount}
-          />
-        )}
-      </ArenaPageHeader>
+      />
 
       <OperatorSessionBanner />
 

@@ -225,8 +225,8 @@ export default function HomePage() {
   // ── Loading ────────────────────────────────────────────────────────────
   if (isLoading && services.length === 0 && visibleMyBots.length === 0) {
     return (
-      <div className="arena-trace-terminal min-h-full bg-[#081013] px-3 py-3 text-[#f6fefd] sm:px-4 lg:px-6">
-        <div className="mx-auto flex w-full max-w-[1360px] flex-col gap-3">
+      <div className="arena-trace-terminal min-h-full bg-[#081013] px-2 py-2 text-[#f6fefd] sm:px-3">
+        <div className="mx-auto flex w-full max-w-[1560px] flex-col gap-2">
           <ArenaPageHeader
             title="My Agents"
             metrics={[
@@ -281,21 +281,17 @@ export default function HomePage() {
 
   // ── Main content ───────────────────────────────────────────────────────
   return (
-    <div className="arena-trace-terminal min-h-full bg-[#081013] px-3 py-3 text-[#f6fefd] sm:px-4 lg:px-6">
-      <div className="mx-auto flex w-full max-w-[1360px] flex-col gap-3">
-        <OperatorSessionBanner />
-
+    <div className="arena-trace-terminal min-h-full bg-[#081013] px-2 py-2 text-[#f6fefd] sm:px-3">
+      <div className="mx-auto flex w-full max-w-[1560px] flex-col gap-2">
         <ArenaPageHeader
           title="My Agents"
           metrics={dashboardMetrics}
           metricsClassName="grid-cols-3 min-[980px]:grid-cols-5 min-[1180px]:w-[31rem] min-[1180px]:shrink-0"
           titleWidthClassName="min-[1180px]:w-44"
           controls={<DashboardHeaderControls />}
-        >
-          <div className="hidden min-w-0 font-data text-xs leading-5 text-[var(--arena-terminal-text-muted)] min-[900px]:block">
-            Owned services, live/paper agents, vaults, secrets, and operator auth in one control plane.
-          </div>
-        </ArenaPageHeader>
+        />
+
+        <OperatorSessionBanner />
 
       {/* ── Provisions banner ───────────────────────────────────────────── */}
       {(inProgressProvisions.length > 0 || failedProvisions.length > 0) && (

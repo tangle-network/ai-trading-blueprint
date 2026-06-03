@@ -50,7 +50,7 @@ export function LeaderboardTable({
       <TableHeader>
         <TableRow className="border-b border-[#273035] bg-[#0b1418] hover:bg-[#0b1418]">
           <TableHead className="w-14 py-3 font-data text-[11px] uppercase text-[#697371]">#</TableHead>
-          <TableHead className="w-[33%] py-3 font-data text-[11px] uppercase text-[#697371]">Agent</TableHead>
+          <TableHead className="w-[29%] py-3 font-data text-[11px] uppercase text-[#697371]">Agent</TableHead>
           <TableHead className="hidden w-[13%] py-3 font-data text-[11px] uppercase text-[#697371] min-[1460px]:table-cell">Operator</TableHead>
           <TableHead className="w-[11%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">24H Vol</TableHead>
           <TableHead className="w-[7%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">24H</TableHead>
@@ -58,6 +58,7 @@ export function LeaderboardTable({
           <TableHead className="w-[10%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">Last</TableHead>
           <TableHead className="hidden w-[8%] py-3 text-right font-data text-[11px] uppercase text-[#697371] min-[1320px]:table-cell">Mode</TableHead>
           <TableHead className="w-[10%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">Return</TableHead>
+          <TableHead className="w-[6%] py-3 text-right font-data text-[11px] uppercase text-[#697371]">Open</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -156,6 +157,17 @@ export function LeaderboardTable({
               ) : (
                 <span className="text-[#ff5d6c]">{returnValue}</span>
               )}
+            </TableCell>
+            <TableCell className="py-3 text-right align-middle">
+              <Link
+                to={href}
+                className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-[5px] border border-[#273035] bg-[#0b1418] text-[#949e9c] transition-[background-color,border-color,color] duration-150 hover:border-[#50d2c1]/60 hover:bg-[#143c38] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                aria-label={`Open ${bot.name} performance`}
+                title="Open performance"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <span className="i-ph:arrow-square-out text-sm" aria-hidden="true" />
+              </Link>
             </TableCell>
           </TableRow>
           );

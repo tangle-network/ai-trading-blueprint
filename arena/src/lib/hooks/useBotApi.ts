@@ -705,6 +705,8 @@ interface BotApiQueryOptions {
   chainId?: number;
   assetMetadata?: TokenMetadata[];
   offset?: number;
+  pages?: number;
+  stopAtTimestampMs?: number;
 }
 
 export function useBotTradePage(
@@ -718,20 +720,63 @@ export function useBotTradePage(
   const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
   const enabled = options.enabled ?? true;
   const offset = Math.max(0, Math.floor(options.offset ?? 0));
+  const pageSize = Math.min(Math.max(1, Math.floor(limit)), 200);
+  const pages = Math.max(1, Math.floor(options.pages ?? 1));
+  const stopAtTimestampMs = options.stopAtTimestampMs;
   const needsAuth = fleetReadRequiresAuth(deploymentKind);
   const authKey = needsAuth ? auth.authCacheKey : 'public';
 
   return useQuery<TradePage>({
-    queryKey: ['bot-trade-page', apiUrl, botId, limit, offset, deploymentKind, options.chainId, options.assetMetadata, authKey],
+    queryKey: ['bot-trade-page', apiUrl, botId, pageSize, offset, pages, stopAtTimestampMs, deploymentKind, options.chainId, options.assetMetadata, authKey],
     queryFn: async () => {
-      const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=${limit}&offset=${offset}`;
-      const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(
-        apiUrl,
-        auth,
-        path,
-        { auth: needsAuth },
-      );
-      return mapApiTradePage(data, botName, options.chainId, options.assetMetadata ?? [], limit, offset);
+      const trades: ApiTrade[] = [];
+      let total: number | null = null;
+      let evidence: ApiTradeCountEvidence | null = null;
+
+      for (let page = 0; page < pages; page += 1) {
+        const pageOffset = offset + page * pageSize;
+        const path = `${buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/trades')}?limit=${pageSize}&offset=${pageOffset}`;
+        const data = await fetchOperatorBotApi<ApiTrade[] | ApiTradeListResponse>(
+          apiUrl,
+          auth,
+          path,
+          { auth: needsAuth },
+        );
+        const normalized = normalizeTradePage(data, pageSize, pageOffset);
+        trades.push(...normalized.trades);
+        total = total == null
+          ? normalized.total
+          : normalized.total == null
+            ? total
+            : Math.max(total, normalized.total);
+        evidence = evidence ?? normalized.evidence;
+
+        const effectiveLimit = Math.max(1, normalized.limit || pageSize);
+        if (normalized.trades.length < effectiveLimit) break;
+        if (total != null && pageOffset + normalized.trades.length >= total) break;
+
+        if (stopAtTimestampMs != null) {
+          const oldestTimestamp = normalized.trades.reduce((oldest, trade) => {
+            const timestamp = new Date(trade.timestamp).getTime();
+            return Number.isFinite(timestamp) ? Math.min(oldest, timestamp) : oldest;
+          }, Number.POSITIVE_INFINITY);
+          if (oldestTimestamp <= stopAtTimestampMs) break;
+        }
+      }
+
+      return mapApiTradePage({
+        trades,
+        total,
+        limit: pageSize * pages,
+        offset,
+        evidence: evidence
+          ? {
+              ...evidence,
+              loaded_fills: trades.length,
+              outside_page_fills: total == null ? evidence.outside_page_fills : Math.max(0, total - trades.length),
+            }
+          : null,
+      }, botName, options.chainId, options.assetMetadata ?? [], pageSize * pages, offset);
     },
     staleTime: 15_000,
     refetchOnMount: 'always',

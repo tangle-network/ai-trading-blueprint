@@ -36,7 +36,7 @@ import {
 } from '~/lib/tradeEvidence';
 
 const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
-const TRADE_MARKER_LOOKBACK_LIMIT = 250;
+const TRADE_MARKER_PAGE_SIZE = 200;
 const PerformanceCopilotPanel = lazy(() =>
   import('./PerformanceCopilotPanel').then((module) => ({
     default: module.PerformanceCopilotPanel,
@@ -170,6 +170,23 @@ function marketCandleLimitForRange(range: PerformanceRange): number {
   if (range === '1d') return 1_440;
   if (range === '7d') return 5_000;
   return 10_000;
+}
+
+function tradeMarkerPagesForRange(range: PerformanceRange): number {
+  switch (range) {
+    case '1d':
+      return 1;
+    case '7d':
+      return 2;
+    case '30d':
+      return 4;
+    case '6m':
+      return 6;
+    case '1y':
+      return 8;
+    default:
+      return 4;
+  }
 }
 
 function terminalStatValueClass(tone: string): string {
@@ -367,6 +384,11 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const [chartMode, setChartMode] = useState<PerformanceChartMode>('market');
   const [selectedDecisionId, setSelectedDecisionId] = useState<string | null>(null);
   const selectedRange = PERFORMANCE_RANGES.find((item) => item.value === range) ?? PERFORMANCE_RANGES[1];
+  const selectedRangeStartMs = useMemo(
+    () => Date.now() - selectedRange.days * 24 * 60 * 60 * 1000,
+    [selectedRange.days],
+  );
+  const tradeMarkerFetchPages = tradeMarkerPagesForRange(selectedRange.value);
 
   const {
     data: apiMetrics,
@@ -377,10 +399,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 30_000 : false,
   });
-  const { data: tradePage } = useBotTradePage(bot.id, bot.name, TRADE_MARKER_LOOKBACK_LIMIT, {
+  const { data: tradePage } = useBotTradePage(bot.id, bot.name, TRADE_MARKER_PAGE_SIZE, {
     chainId: bot.chainId,
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
+    pages: tradeMarkerFetchPages,
+    stopAtTimestampMs: selectedRangeStartMs,
     refetchInterval: isLive ? 30_000 : false,
   });
   const tradePageIsPending = tradePage == null;

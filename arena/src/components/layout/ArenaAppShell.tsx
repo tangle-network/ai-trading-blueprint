@@ -1,7 +1,11 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router';
-import { type Dispatch, type SetStateAction, useEffect, useState } from 'react';
-import { ChainSwitcher, ThemeToggle } from '@tangle-network/blueprint-ui/components';
-import { cn } from '@tangle-network/blueprint-ui';
+import { type Dispatch, type RefObject, type SetStateAction, useEffect, useMemo, useState } from 'react';
+import { useAccount, useSwitchChain } from 'wagmi';
+import { useStore } from '@nanostores/react';
+import { ThemeToggle } from '@tangle-network/blueprint-ui/components';
+import { cn, selectedChainIdStore } from '@tangle-network/blueprint-ui';
+import { useDropdownMenu } from '@tangle-network/sandbox-ui/hooks';
+import { networks } from '~/lib/contracts/chains';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
 
@@ -61,7 +65,7 @@ export function ArenaAppShell() {
               <span className="font-display text-base font-semibold">Arena</span>
             </Link>
             <div className="flex shrink-0 items-center gap-1.5">
-              <ChainSwitcher />
+              <NetworkButton compact />
               <div className={collapsedControlClass}>
                 <ThemeToggle />
               </div>
@@ -259,13 +263,13 @@ function ExpandedAccountDock() {
   return (
     <div className="rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
       <div className={cn('min-w-0', primaryWalletControlClass)}>
-        <WalletButton />
+        <WalletButton align="start" side="up" />
       </div>
       <div className={cn('mt-1.5 min-w-0', terminalControlClass)}>
-        <ChainSwitcher />
+        <NetworkButton align="start" side="up" />
       </div>
       <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-        <div className={cn('min-w-0', terminalControlClass)}>
+        <div className="flex min-w-0 justify-center">
           <TxDropdown align="start" side="up" />
         </div>
         <div className={cn('min-w-0', terminalControlClass)}>
@@ -285,7 +289,7 @@ function CollapsedAccountDock({ onExpand }: { onExpand: () => void }) {
         icon="i-ph:caret-right-bold"
       />
       <div className={collapsedControlClass}>
-        <ChainSwitcher />
+        <NetworkButton compact align="start" side="up" />
       </div>
       <div className={collapsedControlClass}>
         <TxDropdown align="start" side="up" />
@@ -294,9 +298,100 @@ function CollapsedAccountDock({ onExpand }: { onExpand: () => void }) {
         <ThemeToggle />
       </div>
       <div className={collapsedControlClass}>
-        <WalletButton />
+        <WalletButton align="start" side="up" />
       </div>
     </>
+  );
+}
+
+function NetworkButton({
+  compact = false,
+  align = 'end',
+  side = 'down',
+}: {
+  compact?: boolean;
+  align?: 'start' | 'end';
+  side?: 'up' | 'down';
+}) {
+  const selectedChainId = useStore(selectedChainIdStore);
+  const { isConnected } = useAccount();
+  const { switchChain } = useSwitchChain();
+  const { open, ref, toggle, close } = useDropdownMenu();
+  const menuRef = ref as RefObject<HTMLDivElement>;
+  const networkEntries = useMemo(
+    () => Object.values(networks).sort((left, right) => left.chain.name.localeCompare(right.chain.name)),
+    [],
+  );
+  const selectedNetwork = networks[selectedChainId] ?? networkEntries[0];
+  const selectedLabel = selectedNetwork?.chain.name ?? 'Network';
+
+  return (
+    <div ref={menuRef} className="relative min-w-0">
+      <button
+        type="button"
+        onClick={toggle}
+        className={cn(
+          'inline-flex h-10 max-w-full items-center justify-center gap-2 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2 font-display text-sm font-medium text-[var(--arena-terminal-text-secondary)] transition-[background-color,border-color,color,opacity,transform] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60',
+          compact ? 'w-10 min-w-0 px-0' : 'w-full',
+        )}
+        aria-label="Network"
+        aria-expanded={open}
+        title={compact ? selectedLabel : undefined}
+      >
+        <span className="i-ph:globe-hemisphere-west shrink-0 text-base" aria-hidden="true" />
+        {!compact && <span className="min-w-0 truncate">{selectedLabel}</span>}
+      </button>
+
+      {open && (
+        <div
+          className={cn(
+            'absolute z-50 w-[min(18rem,calc(100vw-1rem))] overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-1.5 shadow-[var(--arena-terminal-shadow-lg)]',
+            align === 'start' ? 'left-0' : 'right-0',
+            side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
+          )}
+        >
+          <div className="px-2 py-1.5 font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">
+            Network
+          </div>
+          <div className="max-h-[17rem] overflow-y-auto [scrollbar-gutter:stable]">
+            {networkEntries.map((network) => {
+              const selected = network.chain.id === selectedChainId;
+              return (
+                <button
+                  key={network.chain.id}
+                  type="button"
+                  onClick={() => {
+                    selectedChainIdStore.set(network.chain.id);
+                    if (isConnected) {
+                      switchChain({ chainId: network.chain.id });
+                    }
+                    close();
+                  }}
+                  className={cn(
+                    'grid w-full grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-2 rounded-[5px] px-2 py-2 text-left transition-[background-color,color] duration-150 hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60',
+                    selected ? 'bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-text)]' : 'text-[var(--arena-terminal-text-secondary)]',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'h-2 w-2 rounded-full',
+                      selected ? 'bg-[var(--arena-terminal-accent)]' : 'bg-[var(--arena-terminal-text-subtle)]',
+                    )}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 truncate font-display text-sm font-semibold">
+                    {network.chain.name}
+                  </span>
+                  <span className="font-data text-[10px] tabular-nums text-[var(--arena-terminal-text-muted)]">
+                    {network.chain.id}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

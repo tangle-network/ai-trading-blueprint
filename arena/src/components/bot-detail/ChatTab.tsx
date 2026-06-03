@@ -255,14 +255,19 @@ function SessionWorkspaceSidebar({
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[288px] basis-[288px]"}`
+          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[260px] basis-[260px]"}`
       }
     >
       <div className={`flex items-center border-b border-arena-elements-dividerColor/50 ${collapsed ? "justify-center px-2 py-3" : "justify-between px-4 py-3"}`}>
         {!collapsed && (
-          <span className="text-sm font-display font-semibold uppercase tracking-wider text-arena-elements-textSecondary">
-            Sessions
-          </span>
+          <div className="min-w-0">
+            <span className="block truncate text-sm font-display font-semibold text-arena-elements-textPrimary">
+              History
+            </span>
+            <span className="block truncate font-data text-xs text-arena-elements-textTertiary">
+              {sessions.length.toLocaleString()} {sessions.length === 1 ? "session" : "sessions"}
+            </span>
+          </div>
         )}
         <div className="flex items-center gap-1">
           {canWrite && !collapsed && (
@@ -337,13 +342,12 @@ function SessionWorkspaceSidebar({
           return (
             <div
               key={session.id}
-              className={`group flex items-center gap-2 px-4 py-3 transition-colors ${
+              className={`group grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 transition-colors ${
                 isActive
                   ? "bg-arena-elements-item-backgroundActive"
                   : "hover:bg-arena-elements-item-backgroundHover"
               }`}
             >
-              <div className="flex min-w-0 flex-1 items-center gap-2">
                 <span
                   className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                     isActive
@@ -353,7 +357,7 @@ function SessionWorkspaceSidebar({
                       : "bg-arena-elements-textTertiary/35"
                   }`}
                 />
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0">
                   {editingId === session.id ? (
                     <input
                       className="w-full border-b border-arena-elements-borderColor bg-transparent text-sm font-display text-arena-elements-textPrimary focus-visible:border-violet-500/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/35"
@@ -379,15 +383,15 @@ function SessionWorkspaceSidebar({
                       className="min-w-0 w-full rounded-md text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
                       onClick={() => onSelect(session.id)}
                     >
-                      <div className="truncate text-sm font-display font-medium text-arena-elements-textPrimary">
+                      <div className="truncate text-[15px] font-display font-semibold text-arena-elements-textPrimary">
                         {displayTitle}
                       </div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="mt-1 flex items-center gap-1.5">
                         <div className="truncate text-sm font-data text-arena-elements-textTertiary">
                           {session.subtitle}
                         </div>
                         {showStreamingDot && (
-                          <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-data text-emerald-700 dark:text-emerald-300">
+                          <span className="font-data text-[11px] text-emerald-700 dark:text-emerald-300">
                             Live
                           </span>
                         )}
@@ -395,7 +399,6 @@ function SessionWorkspaceSidebar({
                     </button>
                   )}
                 </div>
-              </div>
 
               {canWrite && !isPrimary && editingId !== session.id && (
                 <div className="flex shrink-0 items-center gap-1 opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100">

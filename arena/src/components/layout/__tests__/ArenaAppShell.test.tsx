@@ -13,17 +13,42 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock('wagmi', () => ({
   useAccount: () => hoisted.account,
+  useSwitchChain: () => ({ switchChain: vi.fn() }),
+}));
+
+vi.mock('@nanostores/react', () => ({
+  useStore: (store: { get?: () => unknown }) => store.get?.() ?? 84532,
+}));
+
+vi.mock('@tangle-network/sandbox-ui/hooks', () => ({
+  useDropdownMenu: () => ({
+    open: false,
+    ref: { current: null },
+    toggle: vi.fn(),
+    close: vi.fn(),
+  }),
 }));
 
 vi.mock('@tangle-network/blueprint-ui', () => ({
   cn: (...values: unknown[]) => values.filter(Boolean).join(' '),
+  selectedChainIdStore: {
+    get: () => 84532,
+    set: vi.fn(),
+    subscribe: vi.fn(() => () => undefined),
+  },
 }));
 
 vi.mock('@tangle-network/blueprint-ui/components', () => ({
-  ChainSwitcher: () => <button type="button">Chain</button>,
   Identicon: ({ address }: { address: string }) => <span>{address.slice(0, 6)}</span>,
   TangleLogo: ({ label }: { label?: string }) => <span>{label ?? 'Tangle'}</span>,
   ThemeToggle: () => <button type="button">Theme</button>,
+}));
+
+vi.mock('~/lib/contracts/chains', () => ({
+  networks: {
+    84532: { label: 'Base Sepolia', chain: { id: 84532, name: 'Base Sepolia' } },
+    1: { label: 'Ethereum', chain: { id: 1, name: 'Ethereum' } },
+  },
 }));
 
 vi.mock('~/lib/hooks/useBots', () => ({
@@ -99,7 +124,7 @@ describe('ArenaAppShell', () => {
     const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
     expect(sidebar).not.toBeNull();
     expect(within(sidebar!).getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
-    expect(within(sidebar!).getByRole('button', { name: 'Chain' })).toBeInTheDocument();
+    expect(within(sidebar!).getByRole('button', { name: 'Network' })).toBeInTheDocument();
     expect(within(sidebar!).getByRole('button', { name: 'Transactions' })).toBeInTheDocument();
     expect(within(sidebar!).getByRole('button', { name: 'Theme' })).toBeInTheDocument();
     expect(within(sidebar!).getByRole('button', { name: 'Wallet' })).toBeInTheDocument();
@@ -110,7 +135,7 @@ describe('ArenaAppShell', () => {
 
     const sidebar = screen.getByRole('navigation', { name: 'Arena navigation' }).closest('aside');
     const walletButton = within(sidebar!).getByRole('button', { name: 'Wallet' });
-    const chainButton = within(sidebar!).getByRole('button', { name: 'Chain' });
+    const chainButton = within(sidebar!).getByRole('button', { name: 'Network' });
 
     expect(walletButton.parentElement).toHaveClass('[&>button]:!bg-[var(--arena-terminal-accent)]');
     expect(walletButton.parentElement).toHaveClass('[&>button]:!text-[#06100e]');

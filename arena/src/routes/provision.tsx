@@ -6,7 +6,7 @@ import {
   useRef,
   Fragment,
 } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { useSearchParams } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useAccount, useWriteContract, useSwitchChain } from 'wagmi';
 import { useStore } from '@nanostores/react';
@@ -69,6 +69,7 @@ import { SecretsStep } from '~/components/provision/SecretsStep';
 import { InfrastructureDialog } from '~/components/provision/InfrastructureDialog';
 import { AdvancedSettingsDialog } from '~/components/provision/AdvancedSettingsDialog';
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
+import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import { resolveBotId as resolveBot } from '~/lib/utils/resolveBotId';
 import {
   buildBotScopedPath,
@@ -3571,35 +3572,22 @@ export default function ProvisionPage() {
 
   return (
     <div className="arena-trace-terminal min-h-full bg-[#081013] text-[#f6fefd]">
-      <div className="mx-auto flex min-h-full max-w-[1280px] flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
-        <header className="flex shrink-0 flex-col gap-3 border-b border-[#273035] pb-4 md:flex-row md:items-end md:justify-between">
-          <div className="min-w-0">
-            <Link
-              to="/"
-              className="mb-2 inline-flex items-center gap-1.5 rounded-[5px] font-display text-sm font-medium text-[#949e9c] transition-[background-color,color] duration-150 hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-            >
-              <span className="i-ph:arrow-left text-base" aria-hidden="true" />
-              Arena
-            </Link>
-            <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#50d2c1]">Deployment</p>
-            <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight text-[#f6fefd] md:text-4xl">
-              Deploy Agent
-            </h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-[#949e9c]">
-            <span className="rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2.5 py-1.5">
-              Service {targetChain.name}
-            </span>
-            {selectedBlueprint && (
-              <span className="rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-2.5 py-1.5">
-                Runtime {selectedBlueprint.name}
-              </span>
-            )}
-            <span className="rounded-[5px] border border-[#1d5b52] bg-[#143c38] px-2.5 py-1.5 text-[#9cf5e7]">
-              {STEP_LABELS[step]}
-            </span>
-          </div>
-        </header>
+      <div className="mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3">
+        <ArenaPageHeader
+          title="Deploy"
+          titleWidthClassName="min-[1180px]:w-[11rem]"
+          metrics={[
+            { label: 'Service', value: targetChain.name },
+            { label: 'Runtime', value: selectedBlueprint?.name ?? 'Blueprint' },
+            { label: 'Step', value: STEP_LABELS[step] },
+          ]}
+          controls={(
+            <>
+              <ArenaHeaderLink to="/" icon="i-ph:chart-line-up">Terminal</ArenaHeaderLink>
+              <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">Create</ArenaHeaderLink>
+            </>
+          )}
+        />
 
         <nav className="grid shrink-0 gap-2 md:grid-cols-4" aria-label="Provision steps">
         {STEP_ORDER.map((s, i) => {

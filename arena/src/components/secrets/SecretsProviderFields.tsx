@@ -29,14 +29,14 @@ interface SecretsProviderFieldsProps {
 
 const VARIANT_STYLES = {
   modal: {
-    providerButtonSelected: 'border-violet-500 bg-violet-500/10 text-arena-elements-textPrimary',
-    providerButtonUnselected: 'border-arena-elements-borderColor bg-arena-elements-background-depth-3 text-arena-elements-textSecondary hover:border-arena-elements-borderColorActive',
-    providerButton: 'flex-1 px-3 py-2 rounded-md text-sm font-data border transition-colors',
+    providerButtonSelected: 'border-[#50d2c1]/70 bg-[#143c38] text-arena-elements-textPrimary',
+    providerButtonUnselected: 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] text-arena-elements-textSecondary hover:border-[#50d2c1]/50',
+    providerButton: 'flex-1 rounded-[5px] border px-3 py-2 text-sm font-data transition-colors',
   },
   card: {
-    providerButtonSelected: 'border-violet-500/50 bg-violet-500/10 text-arena-elements-textPrimary ring-1 ring-violet-500/20',
-    providerButtonUnselected: 'border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1 text-arena-elements-textSecondary hover:border-arena-elements-borderColorActive',
-    providerButton: 'flex-1 px-3 py-2.5 rounded-lg text-sm font-data border transition-all',
+    providerButtonSelected: 'border-[#50d2c1]/70 bg-[#143c38] text-arena-elements-textPrimary ring-1 ring-[#50d2c1]/20',
+    providerButtonUnselected: 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] text-arena-elements-textSecondary hover:border-[#50d2c1]/50',
+    providerButton: 'flex-1 rounded-[5px] border px-3 py-2.5 text-sm font-data transition-[background-color,border-color,box-shadow]',
   },
 } as const;
 
@@ -102,14 +102,14 @@ export function SecretsProviderFields({
             placeholder={providerConfig.placeholder}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            className={showRevealToggle ? 'pr-10' : undefined}
+            className={`${showRevealToggle ? 'pr-10 ' : ''}rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)]`}
           />
           {showRevealToggle && (
             <button
               type="button"
               onClick={onToggleReveal}
               disabled={revealDisabled || revealBusy}
-              className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 rounded-md flex items-center justify-center text-arena-elements-textTertiary hover:text-arena-elements-textPrimary hover:bg-arena-elements-background-depth-3 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="absolute right-2 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-[5px] text-arena-elements-textTertiary transition-colors hover:bg-arena-elements-background-depth-3 hover:text-arena-elements-textPrimary disabled:cursor-not-allowed disabled:opacity-50"
               title={revealValues ? 'Hide secrets' : 'Show secrets'}
               aria-label={revealValues ? 'Hide secrets' : 'Show secrets'}
             >
@@ -140,7 +140,7 @@ export function SecretsProviderFields({
               updated[i] = { ...env, key: e.target.value };
               setExtraEnvs(updated);
             }}
-            className="flex-1"
+            className="flex-1 rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)]"
             aria-label={`Environment variable ${i + 1} key`}
           />
           <Input
@@ -152,7 +152,7 @@ export function SecretsProviderFields({
               updated[i] = { ...env, value: e.target.value };
               setExtraEnvs(updated);
             }}
-            className="flex-1"
+            className="flex-1 rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)]"
             aria-label={`Environment variable ${i + 1} value`}
           />
           <button
@@ -173,7 +173,7 @@ export function SecretsProviderFields({
           envIdRef.current += 1;
           setExtraEnvs([...extraEnvs, { id: envIdRef.current, key: '', value: '' }]);
         }}
-        className="text-xs font-data text-violet-700 dark:text-violet-400 hover:underline"
+        className="text-xs font-data text-[#50d2c1] hover:underline"
       >
         + Add environment variable
       </button>

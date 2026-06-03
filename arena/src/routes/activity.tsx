@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
 import { useAccount } from 'wagmi';
+import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator/OperatorAccessCard';
@@ -17,19 +18,6 @@ import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/o
 export const meta: MetaFunction = () => [
   { title: 'Execution Activity — AI Trading Arena' },
 ];
-
-function ActivityMetric({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="font-data text-sm font-bold leading-none text-[#f6fefd]">
-        {value}
-      </div>
-      <div className="mt-0.5 truncate font-data text-[10px] uppercase text-[#697371]">
-        {label}
-      </div>
-    </div>
-  );
-}
 
 export default function ActivityPage() {
   const { isConnected } = useAccount();
@@ -56,44 +44,22 @@ export default function ActivityPage() {
 
   return (
     <div className="mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:overflow-hidden">
-      <section className="shrink-0 overflow-hidden rounded-[6px] border border-[#273035] bg-[#0f1a1f]">
-        <div className="flex min-h-12 flex-col gap-2 px-3 py-2 min-[1120px]:flex-row min-[1120px]:items-center">
-          <div className="flex min-w-0 items-center gap-3 min-[1120px]:w-[18rem] min-[1120px]:shrink-0">
-            <span className="h-2 w-2 shrink-0 rounded-full bg-[#50d2c1] shadow-[0_0_16px_rgba(80,210,193,0.5)]" aria-hidden="true" />
-            <h1 className="truncate font-display text-lg font-semibold tracking-tight text-[#f6fefd]">
-              Activity
-            </h1>
-          </div>
-          <div className="grid min-w-0 flex-1 grid-cols-3 gap-4 min-[1120px]:max-w-md">
-            <ActivityMetric value={formatCompactUsd(oneDayVolume.series.summary.totalUsd)} label="24H Vol" />
-            <ActivityMetric value={displayTradeCount > 0 ? formatNumber(displayTradeCount, { maximumFractionDigits: 0 }) : '—'} label={oneDayTradeCount > 0 ? '24H Fills' : 'Fills'} />
-            <ActivityMetric value={formatNumber(activityBots.length, { maximumFractionDigits: 0 })} label="Agents" />
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <Link
-              to="/"
-              className="inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border border-[#273035] bg-[#0b1418] px-3 text-sm font-display font-medium text-[#d2dad7] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-            >
-              <span className="i-ph:chart-line-up text-sm" aria-hidden="true" />
-              Terminal
-            </Link>
-            <Link
-              to="/leaderboard"
-              className="inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border border-[#273035] bg-[#0b1418] px-3 text-sm font-display font-medium text-[#d2dad7] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-            >
-              <span className="i-ph:table text-sm" aria-hidden="true" />
-              Agents
-            </Link>
-            <Link
-              to="/provision"
-              className="inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border border-[#50d2c1]/30 bg-[#123f3a] px-3 text-sm font-display font-medium text-[#c8fffb] transition-colors hover:bg-[#18544e] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-            >
-              <span className="i-ph:plus-bold text-xs" aria-hidden="true" />
-              Deploy
-            </Link>
-          </div>
-        </div>
-      </section>
+      <ArenaPageHeader
+        title="Activity"
+        titleWidthClassName="min-[1180px]:w-[11rem]"
+        metrics={[
+          { value: formatCompactUsd(oneDayVolume.series.summary.totalUsd), label: '24H Vol' },
+          { value: displayTradeCount > 0 ? formatNumber(displayTradeCount, { maximumFractionDigits: 0 }) : '—', label: oneDayTradeCount > 0 ? '24H Fills' : 'Fills' },
+          { value: formatNumber(activityBots.length, { maximumFractionDigits: 0 }), label: 'Agents' },
+        ]}
+        controls={(
+          <>
+            <ArenaHeaderLink to="/" icon="i-ph:chart-line-up">Terminal</ArenaHeaderLink>
+            <ArenaHeaderLink to="/leaderboard" icon="i-ph:table">Agents</ArenaHeaderLink>
+            <ArenaHeaderLink to="/provision" icon="i-ph:plus-bold" variant="primary">Deploy</ArenaHeaderLink>
+          </>
+        )}
+      />
 
       <OperatorSessionBanner />
 
