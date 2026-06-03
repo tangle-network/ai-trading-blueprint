@@ -113,6 +113,12 @@ function formatCandleAxisTick(timestamp: number): string {
   return compactCandleTimeFormatter.format(date);
 }
 
+function formatNavAxisTick(point: PerformanceChartPoint): string {
+  if (point.kind === 'live_nav') return 'Live';
+  if (point.timestampMs != null) return formatCandleAxisTick(point.timestampMs);
+  return point.label.length <= 8 ? point.label : '';
+}
+
 function prepareBaseChartPoints(points: PerformanceChartPoint[]): PreparedPoint[] {
   let lastTimestamp = 0;
 
@@ -852,7 +858,7 @@ export function TradingPerformanceChart({
             const candle = candleByTimeRef.current.get(key);
             if (activeModeRef.current === 'market' && candle) return formatCandleAxisTick(candle.timestamp);
             const navPoint = pointByTimeRef.current.get(key);
-            if (navPoint) return navPoint.label;
+            if (navPoint) return formatNavAxisTick(navPoint);
             return candle ? formatCandleAxisTick(candle.timestamp) : '';
           },
         },
