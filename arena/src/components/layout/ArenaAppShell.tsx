@@ -150,17 +150,35 @@ function DesktopArenaSidebar({
         'flex shrink-0 items-center border-b border-[var(--arena-terminal-border)]',
         sidebarCollapsed ? 'h-16 justify-center px-2' : 'h-14 justify-between gap-2 px-3',
       )}>
-        <Link
-          to="/"
-          className={cn(
-            'inline-flex min-w-0 items-center rounded-[5px] text-[var(--arena-terminal-text)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60',
-            sidebarCollapsed ? 'h-10 w-10 justify-center' : 'h-10 gap-2 px-2',
-          )}
-          aria-label="Tangle Trading"
-          title={sidebarCollapsed ? 'Tangle Trading' : undefined}
-        >
-          <TangleBrandMark compact={sidebarCollapsed} />
-        </Link>
+        {sidebarCollapsed ? (
+          <div className="group/brand relative h-10 w-10">
+            <Link
+              to="/"
+              className="inline-flex h-10 w-10 min-w-0 items-center justify-center rounded-[5px] text-[var(--arena-terminal-text)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+              aria-label="Tangle Trading"
+              title="Tangle Trading"
+            >
+              <TangleBrandMark compact />
+            </Link>
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              className="pointer-events-none absolute inset-0 inline-flex h-10 w-10 items-center justify-center rounded-[5px] border border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-panel-strong)] text-[var(--arena-terminal-text)] opacity-0 shadow-[0_10px_24px_rgba(0,0,0,0.22)] transition-[opacity,background-color,border-color,color,transform] duration-150 hover:bg-[var(--arena-terminal-accent-soft)] active:scale-95 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 group-hover/brand:pointer-events-auto group-hover/brand:opacity-100"
+              aria-label="Expand sidebar"
+              title="Expand sidebar"
+            >
+              <span className="i-ph:caret-right-bold text-lg" aria-hidden="true" />
+            </button>
+          </div>
+        ) : (
+          <Link
+            to="/"
+            className="inline-flex h-10 min-w-0 items-center gap-2 rounded-[5px] px-2 text-[var(--arena-terminal-text)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+            aria-label="Tangle Trading"
+          >
+            <TangleBrandMark />
+          </Link>
+        )}
         {!sidebarCollapsed && (
           <SidebarIconButton
             label="Collapse sidebar"
@@ -209,7 +227,7 @@ function DesktopArenaSidebar({
         )}
       >
         {sidebarCollapsed ? (
-          <CollapsedAccountDock onExpand={toggleSidebar} />
+          <CollapsedAccountDock />
         ) : (
           <ExpandedAccountDock />
         )}
@@ -321,14 +339,9 @@ function ExpandedAccountDock() {
   );
 }
 
-function CollapsedAccountDock({ onExpand }: { onExpand: () => void }) {
+function CollapsedAccountDock() {
   return (
     <>
-      <SidebarIconButton
-        label="Expand sidebar"
-        onClick={onExpand}
-        icon="i-ph:caret-right-bold"
-      />
       <div className={collapsedControlClass}>
         <NetworkButton compact align="start" side="up" />
       </div>
