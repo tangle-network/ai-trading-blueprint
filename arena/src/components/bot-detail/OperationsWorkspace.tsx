@@ -1,9 +1,17 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Badge } from '@tangle-network/blueprint-ui/components';
 import type { Bot } from '~/lib/types/bot';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import { ErrorBoundary } from '~/components/ErrorBoundary';
 import { botStatusBadgeVariant, botStatusLabel, formatNumber } from '~/lib/format';
+import {
+  WorkspaceCollapsedPane,
+  WorkspaceControlButton,
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from '~/components/arena/WorkspaceResizeControls';
 
 export type OperationsPanel =
   | 'overview'
@@ -34,6 +42,28 @@ interface PanelItem {
   description: string;
   icon: string;
   badge?: string;
+}
+
+interface OperationsOverviewLayout {
+  recordWidth: number;
+  recordCollapsed: boolean;
+}
+
+const OPERATIONS_OVERVIEW_LAYOUT_KEY = 'arena:operations-overview-layout';
+const DEFAULT_OPERATIONS_OVERVIEW_LAYOUT: OperationsOverviewLayout = {
+  recordWidth: 332,
+  recordCollapsed: false,
+};
+
+function normalizeOperationsOverviewLayout(value: Partial<OperationsOverviewLayout>): OperationsOverviewLayout {
+  return {
+    recordWidth: clampNumber(
+      Number(value.recordWidth) || DEFAULT_OPERATIONS_OVERVIEW_LAYOUT.recordWidth,
+      300,
+      520,
+    ),
+    recordCollapsed: value.recordCollapsed === true,
+  };
 }
 
 const ReasoningTab = lazy(() =>
@@ -317,6 +347,12 @@ function OperationsOverview({
   canCommand: boolean;
   onSelectPanel: (panel: OperationsPanel) => void;
 }) {
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = usePersistentWorkspaceLayout(
+    OPERATIONS_OVERVIEW_LAYOUT_KEY,
+    DEFAULT_OPERATIONS_OVERVIEW_LAYOUT,
+    normalizeOperationsOverviewLayout,
+  );
   const needsSecrets = bot.secretsConfigured === false || bot.status === 'needs_config';
   const envelopeMode = bot.validationTrust === 'envelope';
   const activePanelValues = new Set(panels.map((panel) => panel.value));
@@ -519,10 +555,38 @@ function OperationsOverview({
       tone: canCommand && bot.controlAvailable ? 'good' as const : 'neutral' as const,
     },
   ];
+  const overviewStyle = {
+    '--operations-record-width': `${layout.recordWidth}px`,
+  } as CSSProperties;
+  const overviewGridClass = layout.recordCollapsed
+    ? 'xl:grid-cols-[minmax(0,1fr)_8px_44px]'
+    : 'xl:grid-cols-[minmax(0,1fr)_8px_minmax(300px,var(--operations-record-width))]';
+  const startRecordResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    setLayout((current) => ({ ...current, recordCollapsed: false }));
+    beginWorkspaceResize(event, {
+      cursor: 'col-resize',
+      onMove: (moveEvent) => {
+        const maxWidth = Math.min(520, Math.max(340, rect.width * 0.44));
+        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 300, maxWidth);
+        setLayout((current) => ({
+          ...current,
+          recordWidth: nextWidth,
+          recordCollapsed: false,
+        }));
+      },
+    });
+  };
 
   return (
-    <div className="grid h-full min-h-0 gap-2 xl:grid-cols-[minmax(0,1fr)_332px]">
-      <section className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+    <div
+      ref={workspaceRef}
+      className={`flex h-full min-h-0 flex-col gap-2 xl:grid xl:gap-0 ${overviewGridClass}`}
+      style={overviewStyle}
+    >
+      <section className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] xl:col-start-1">
         <div className="grid border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] min-[980px]:grid-cols-5">
           {statusCells.map((cell) => (
             <StatusCell
@@ -603,7 +667,24 @@ function OperationsOverview({
         </div>
       </section>
 
-      <aside className="flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+      <WorkspaceResizeHandle
+        orientation="vertical"
+        className="hidden xl:col-start-2 xl:row-start-1 xl:flex"
+        ariaLabel="Resize operations record"
+        title="Drag to resize operations record"
+        onPointerDown={startRecordResize}
+      />
+
+      {layout.recordCollapsed ? (
+        <WorkspaceCollapsedPane
+          label="Record"
+          icon="i-ph:identification-card"
+          orientation="vertical"
+          className="hidden xl:col-start-3 xl:row-start-1 xl:flex"
+          onClick={() => setLayout((current) => ({ ...current, recordCollapsed: false }))}
+        />
+      ) : (
+      <aside className="flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] xl:col-start-3">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2.5">
           <div className="min-w-0">
             <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-accent)]">
@@ -616,6 +697,11 @@ function OperationsOverview({
           <Badge variant={botStatusBadgeVariant(bot.status)} className="font-data text-xs">
             {runtimeModeLabel(bot)}
           </Badge>
+          <WorkspaceControlButton
+            label="Minimize record"
+            icon="i-ph:minus-bold"
+            onClick={() => setLayout((current) => ({ ...current, recordCollapsed: true }))}
+          />
         </div>
 
         <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto p-3 [scrollbar-gutter:stable]">
@@ -624,6 +710,7 @@ function OperationsOverview({
           ))}
         </div>
       </aside>
+      )}
     </div>
   );
 }

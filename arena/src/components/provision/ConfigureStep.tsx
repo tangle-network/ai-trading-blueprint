@@ -1,5 +1,5 @@
 import { Button } from '@tangle-network/blueprint-ui/components';
-import type { ReactNode } from 'react';
+import { useRef, type CSSProperties, type ReactNode } from 'react';
 import {
   CheckCircle2,
   CircleAlert,
@@ -17,8 +17,38 @@ import {
 import { strategyPacks, type StrategyPackDef } from '~/lib/blueprints';
 import { truncateAddress } from '~/lib/format';
 import type { ServiceInfo } from '~/routes/provision/types';
+import {
+  WorkspaceCollapsedPane,
+  WorkspaceControlButton,
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from '~/components/arena/WorkspaceResizeControls';
 
 const CLOB_COLLATERAL_STRATEGY_IDS = new Set(['volatility', 'mm', 'multi']);
+
+interface ConfigureStepLayout {
+  railWidth: number;
+  railCollapsed: boolean;
+}
+
+const CONFIGURE_STEP_LAYOUT_KEY = 'arena:configure-step-layout';
+const DEFAULT_CONFIGURE_STEP_LAYOUT: ConfigureStepLayout = {
+  railWidth: 324,
+  railCollapsed: false,
+};
+
+function normalizeConfigureStepLayout(value: Partial<ConfigureStepLayout>): ConfigureStepLayout {
+  return {
+    railWidth: clampNumber(
+      Number(value.railWidth) || DEFAULT_CONFIGURE_STEP_LAYOUT.railWidth,
+      300,
+      480,
+    ),
+    railCollapsed: value.railCollapsed === true,
+  };
+}
 
 export function strategySupportsClobCollateral(
   strategyType: string,
@@ -96,6 +126,12 @@ export function ConfigureStep({
   goNext,
 }: ConfigureStepProps) {
   const supportsClobCollateral = strategySupportsClobCollateral(strategyType, selectedPack);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = usePersistentWorkspaceLayout(
+    CONFIGURE_STEP_LAYOUT_KEY,
+    DEFAULT_CONFIGURE_STEP_LAYOUT,
+    normalizeConfigureStepLayout,
+  );
   const isHyperliquidStrategy = strategyType === 'hyperliquid_perp';
   const isDexStrategy = strategyUsesDexAssetUniverse(strategyType);
   const effectiveBaseAssetAddress =
@@ -155,6 +191,30 @@ export function ConfigureStep({
   const routeDetail = isInstance
     ? `${selectedOperators.size} operator${selectedOperators.size === 1 ? '' : 's'} selected`
     : `Service #${serviceId}`;
+  const workspaceStyle = {
+    '--configure-rail-width': `${layout.railWidth}px`,
+  } as CSSProperties;
+  const workspaceGridClass = layout.railCollapsed
+    ? 'lg:grid-cols-[minmax(0,1fr)_8px_44px]'
+    : 'lg:grid-cols-[minmax(0,1fr)_8px_minmax(300px,var(--configure-rail-width))]';
+  const startRailResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    setLayout((current) => ({ ...current, railCollapsed: false }));
+    beginWorkspaceResize(event, {
+      cursor: 'col-resize',
+      onMove: (moveEvent) => {
+        const maxWidth = Math.min(480, Math.max(340, rect.width * 0.4));
+        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 300, maxWidth);
+        setLayout((current) => ({
+          ...current,
+          railWidth: nextWidth,
+          railCollapsed: false,
+        }));
+      },
+    });
+  };
 
   return (
     <div className="arena-trace-terminal overflow-hidden rounded-[5px] border border-[#273035] bg-[#081013] text-[#f6fefd]">
@@ -180,8 +240,12 @@ export function ConfigureStep({
         />
       </div>
 
-      <div className="grid gap-2.5 p-2.5 lg:grid-cols-[minmax(0,1fr)_324px]">
-        <div className="space-y-2.5">
+      <div
+        ref={workspaceRef}
+        className={`grid gap-0 p-2.5 lg:min-h-0 ${workspaceGridClass}`}
+        style={workspaceStyle}
+      >
+        <div className="space-y-2.5 lg:col-start-1 lg:min-h-0 lg:overflow-auto lg:pr-2 lg:[scrollbar-gutter:stable]">
           <ProvisionPanel title="Command">
             <label htmlFor="agent-name" className="block">
               <span className="mb-1.5 block font-display text-sm font-semibold text-[#f6fefd]">
@@ -250,8 +314,34 @@ export function ConfigureStep({
           </ProvisionPanel>
         </div>
 
-        <aside className="grid content-start gap-2.5">
-          <ProvisionPanel title="Launch Summary">
+        <WorkspaceResizeHandle
+          orientation="vertical"
+          className="hidden lg:col-start-2 lg:row-start-1 lg:flex"
+          ariaLabel="Resize deploy summary"
+          title="Drag to resize deploy summary"
+          onPointerDown={startRailResize}
+        />
+
+        {layout.railCollapsed ? (
+          <WorkspaceCollapsedPane
+            label="Summary"
+            icon="i-ph:sidebar-simple"
+            orientation="vertical"
+            className="hidden lg:col-start-3 lg:row-start-1 lg:flex"
+            onClick={() => setLayout((current) => ({ ...current, railCollapsed: false }))}
+          />
+        ) : (
+        <aside className="grid content-start gap-2.5 lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:overflow-auto lg:pl-2 lg:[scrollbar-gutter:stable]">
+          <ProvisionPanel
+            title="Launch Summary"
+            action={(
+              <WorkspaceControlButton
+                label="Minimize deploy summary"
+                icon="i-ph:minus-bold"
+                onClick={() => setLayout((current) => ({ ...current, railCollapsed: true }))}
+              />
+            )}
+          >
             <div className="space-y-2.5">
               <ReadRow label="Pack" value={selectedPack.name} />
               <ReadRow label="Mode" value={executionModeLabel} />
@@ -511,6 +601,7 @@ export function ConfigureStep({
           </ProvisionPanel>
 
         </aside>
+        )}
       </div>
     </div>
   );

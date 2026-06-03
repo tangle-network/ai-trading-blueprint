@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState, type CSSProperties } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import type { Address } from 'viem';
@@ -15,6 +15,14 @@ import { ArenaHeaderLink, ArenaPageHeader, type ArenaPageMetric } from '~/compon
 import { useVaultRead } from '~/lib/hooks/useVaultRead';
 import { networks } from '~/lib/contracts/chains';
 import { selectedChainIdStore } from '@tangle-network/blueprint-ui';
+import {
+  WorkspaceCollapsedPane,
+  WorkspaceControlButton,
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from '~/components/arena/WorkspaceResizeControls';
 
 export const meta: MetaFunction = () => [
   { title: 'Vault — AI Trading Arena' },
@@ -28,6 +36,28 @@ const KNOWN_CHAIN_NAMES: Record<number, string> = {
   31338: 'Ethereum Local Fork',
   31339: 'Ethereum Fork',
 };
+
+interface VaultWorkspaceLayout {
+  formsPercent: number;
+  activityCollapsed: boolean;
+}
+
+const VAULT_WORKSPACE_LAYOUT_KEY = 'arena:vault-workspace-layout';
+const DEFAULT_VAULT_WORKSPACE_LAYOUT: VaultWorkspaceLayout = {
+  formsPercent: 46,
+  activityCollapsed: false,
+};
+
+function normalizeVaultWorkspaceLayout(value: Partial<VaultWorkspaceLayout>): VaultWorkspaceLayout {
+  return {
+    formsPercent: clampNumber(
+      Number(value.formsPercent) || DEFAULT_VAULT_WORKSPACE_LAYOUT.formsPercent,
+      34,
+      68,
+    ),
+    activityCollapsed: value.activityCollapsed === true,
+  };
+}
 
 function parseChainIdParam(value: string | null): number | null {
   if (!value) return null;
@@ -74,6 +104,12 @@ export default function VaultPage() {
 
   const vault = useVaultRead(vaultAddress, targetChainId);
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
+  const vaultWorkspaceRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = usePersistentWorkspaceLayout(
+    VAULT_WORKSPACE_LAYOUT_KEY,
+    DEFAULT_VAULT_WORKSPACE_LAYOUT,
+    normalizeVaultWorkspaceLayout,
+  );
   const handleVaultMutationSuccess = useCallback(() => {
     void vault.refetch();
     setActivityRefreshKey((key) => key + 1);
@@ -118,10 +154,34 @@ export default function VaultPage() {
     { label: 'Shares', value: formatVaultMetric(vault.totalShares, { maximumFractionDigits: 0 }) },
     { label: 'Your Shares', value: isConnected ? formatVaultMetric(vault.userSharesFormatted, { maximumFractionDigits: 4 }) : '-' },
   ];
+  const vaultWorkspaceStyle = layout.activityCollapsed
+    ? {
+        gridTemplateRows: 'minmax(0,1fr) 8px 44px',
+      }
+    : {
+        gridTemplateRows: `minmax(220px, ${layout.formsPercent}fr) 8px minmax(220px, ${100 - layout.formsPercent}fr)`,
+      };
+  const startActivityResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const workspace = vaultWorkspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    setLayout((current) => ({ ...current, activityCollapsed: false }));
+    beginWorkspaceResize(event, {
+      cursor: 'row-resize',
+      onMove: (moveEvent) => {
+        const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 34, 68);
+        setLayout((current) => ({
+          ...current,
+          formsPercent: nextPercent,
+          activityCollapsed: false,
+        }));
+      },
+    });
+  };
 
   return (
-    <div className="arena-trace-terminal min-h-full bg-[#081013] px-3 py-3 text-[#f6fefd] sm:px-4 lg:px-6">
-      <div className="mx-auto flex w-full max-w-[1360px] flex-col gap-3">
+    <div className="arena-trace-terminal min-h-full bg-[#081013] px-3 py-3 text-[#f6fefd] sm:px-4 lg:h-full lg:overflow-hidden lg:px-6">
+      <div className="mx-auto flex w-full max-w-[1360px] flex-col gap-3 lg:h-full lg:min-h-0">
         <ArenaPageHeader
           title="Vault"
           badge={vault.paused ? (
@@ -132,9 +192,24 @@ export default function VaultPage() {
           metrics={vaultMetrics}
           metricsClassName="grid-cols-2 min-[900px]:grid-cols-4 min-[1180px]:w-[34rem] min-[1180px]:shrink-0"
           controls={(
-            <ArenaHeaderLink to="/" icon="i-ph:arrow-left">
-              Arena
-            </ArenaHeaderLink>
+            <>
+              <WorkspaceControlButton
+                label={layout.activityCollapsed ? 'Restore vault activity' : 'Minimize vault activity'}
+                icon={layout.activityCollapsed ? 'i-ph:arrows-out-line-vertical' : 'i-ph:minus-bold'}
+                onClick={() => setLayout((current) => ({
+                  ...current,
+                  activityCollapsed: !current.activityCollapsed,
+                }))}
+              />
+              <WorkspaceControlButton
+                label="Reset workspace"
+                icon="i-ph:arrow-counter-clockwise"
+                onClick={() => setLayout(DEFAULT_VAULT_WORKSPACE_LAYOUT)}
+              />
+              <ArenaHeaderLink to="/" icon="i-ph:arrow-left">
+                Arena
+              </ArenaHeaderLink>
+            </>
           )}
         >
           <div className="grid min-w-0 gap-1.5 font-data text-xs min-[980px]:grid-cols-[minmax(0,1fr)_auto] min-[980px]:items-center">
@@ -264,45 +339,69 @@ export default function VaultPage() {
           </div>
         ) : null}
 
-        <div className="grid gap-3 md:grid-cols-2">
-          <DepositForm
-            vaultAddress={vaultAddress}
-            assetToken={vault.assetToken}
-            assetSymbol={vault.assetSymbol}
-            assetDecimals={vault.assetDecimals}
-            sharePrice={vault.sharePrice}
-            userAssetBalance={vault.userAssetBalance}
-            userAssetBalanceFormatted={vault.userAssetBalanceFormatted}
-            userAllowance={vault.userAllowance}
-            maxDeposit={vault.maxDeposit}
-            paused={vault.paused}
-            targetChainId={targetChainId}
-            targetChainName={targetChainName}
-            onSuccess={handleVaultMutationSuccess}
+        <div
+          ref={vaultWorkspaceRef}
+          className="grid min-h-0 flex-1 gap-0 overflow-hidden"
+          style={vaultWorkspaceStyle as CSSProperties}
+          aria-label="Vault workspace"
+        >
+          <div className="row-start-1 grid min-h-0 gap-3 overflow-auto [scrollbar-gutter:stable] md:grid-cols-2">
+            <DepositForm
+              vaultAddress={vaultAddress}
+              assetToken={vault.assetToken}
+              assetSymbol={vault.assetSymbol}
+              assetDecimals={vault.assetDecimals}
+              sharePrice={vault.sharePrice}
+              userAssetBalance={vault.userAssetBalance}
+              userAssetBalanceFormatted={vault.userAssetBalanceFormatted}
+              userAllowance={vault.userAllowance}
+              maxDeposit={vault.maxDeposit}
+              paused={vault.paused}
+              targetChainId={targetChainId}
+              targetChainName={targetChainName}
+              onSuccess={handleVaultMutationSuccess}
+            />
+            <WithdrawForm
+              vaultAddress={vaultAddress}
+              assetSymbol={vault.assetSymbol}
+              assetDecimals={vault.assetDecimals}
+              shareDecimals={vault.shareDecimals}
+              userShares={vault.userShares}
+              userSharesFormatted={vault.userSharesFormatted}
+              paused={vault.paused}
+              targetChainId={targetChainId}
+              targetChainName={targetChainName}
+              onSuccess={handleVaultMutationSuccess}
+            />
+          </div>
+          <WorkspaceResizeHandle
+            orientation="horizontal"
+            className="row-start-2"
+            ariaLabel="Resize vault forms and activity"
+            title="Drag to resize vault forms and activity"
+            onPointerDown={startActivityResize}
           />
-          <WithdrawForm
-            vaultAddress={vaultAddress}
-            assetSymbol={vault.assetSymbol}
-            assetDecimals={vault.assetDecimals}
-            shareDecimals={vault.shareDecimals}
-            userShares={vault.userShares}
-            userSharesFormatted={vault.userSharesFormatted}
-            paused={vault.paused}
-            targetChainId={targetChainId}
-            targetChainName={targetChainName}
-            onSuccess={handleVaultMutationSuccess}
-          />
+          {layout.activityCollapsed ? (
+            <WorkspaceCollapsedPane
+              label="Activity"
+              icon="i-ph:list-bullets"
+              className="row-start-3"
+              onClick={() => setLayout((current) => ({ ...current, activityCollapsed: false }))}
+            />
+          ) : (
+            <div className="row-start-3 min-h-0 overflow-hidden">
+              <VaultActivity
+                vaultAddress={vaultAddress}
+                assetToken={vault.assetToken}
+                targetChainId={targetChainId}
+                assetSymbol={vault.assetSymbol}
+                assetDecimals={vault.assetDecimals}
+                shareDecimals={vault.shareDecimals}
+                refreshKey={activityRefreshKey}
+              />
+            </div>
+          )}
         </div>
-
-        <VaultActivity
-          vaultAddress={vaultAddress}
-          assetToken={vault.assetToken}
-          targetChainId={targetChainId}
-          assetSymbol={vault.assetSymbol}
-          assetDecimals={vault.assetDecimals}
-          shareDecimals={vault.shareDecimals}
-          refreshKey={activityRefreshKey}
-        />
       </div>
     </div>
   );

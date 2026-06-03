@@ -3,7 +3,15 @@ import { TradeHistoryTab } from './TradeHistoryTab';
 import { botStatusLabel } from '~/lib/format';
 import type { BotOperatorKind, BotStatus, BotVerificationState } from '~/lib/types/bot';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
-import type { ReactNode } from 'react';
+import { useRef, type CSSProperties, type ReactNode } from 'react';
+import {
+  WorkspaceCollapsedPane,
+  WorkspaceControlButton,
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from '~/components/arena/WorkspaceResizeControls';
 
 interface PortfolioWorkspaceProps {
   botId: string;
@@ -21,6 +29,28 @@ interface PortfolioWorkspaceProps {
 interface RouteStateItem {
   value: string;
   tone?: 'neutral' | 'good' | 'warn' | 'muted';
+}
+
+interface PortfolioLayout {
+  positionsPercent: number;
+  executionsCollapsed: boolean;
+}
+
+const PORTFOLIO_LAYOUT_KEY = 'arena:portfolio-workspace-layout';
+const DEFAULT_PORTFOLIO_LAYOUT: PortfolioLayout = {
+  positionsPercent: 62,
+  executionsCollapsed: false,
+};
+
+function normalizePortfolioLayout(value: Partial<PortfolioLayout>): PortfolioLayout {
+  return {
+    positionsPercent: clampNumber(
+      Number(value.positionsPercent) || DEFAULT_PORTFOLIO_LAYOUT.positionsPercent,
+      44,
+      78,
+    ),
+    executionsCollapsed: value.executionsCollapsed === true,
+  };
 }
 
 function formatChainLabel(chainId?: number): string {
@@ -112,6 +142,12 @@ export function PortfolioWorkspace({
   verificationState,
   assetMetadata,
 }: PortfolioWorkspaceProps) {
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = usePersistentWorkspaceLayout(
+    PORTFOLIO_LAYOUT_KEY,
+    DEFAULT_PORTFOLIO_LAYOUT,
+    normalizePortfolioLayout,
+  );
   const modeLabel = paperTrade == null ? (isLive ? 'Live' : 'Offline') : paperTrade ? 'Paper' : 'Live';
   const routeStateItems: RouteStateItem[] = [
     {
@@ -166,6 +202,30 @@ export function PortfolioWorkspace({
     '[&_.text-arena-elements-textSecondary]:!text-[var(--arena-terminal-text-secondary)]',
     '[&_.text-arena-elements-textTertiary]:!text-[var(--arena-terminal-text-muted)]',
   ].join(' ');
+  const workspaceStyle = layout.executionsCollapsed
+    ? {
+        gridTemplateRows: 'minmax(0,1fr) 8px 44px',
+      }
+    : {
+        gridTemplateRows: `minmax(240px, ${layout.positionsPercent}fr) 8px minmax(180px, ${100 - layout.positionsPercent}fr)`,
+      };
+  const startExecutionResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    setLayout((current) => ({ ...current, executionsCollapsed: false }));
+    beginWorkspaceResize(event, {
+      cursor: 'row-resize',
+      onMove: (moveEvent) => {
+        const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 44, 78);
+        setLayout((current) => ({
+          ...current,
+          positionsPercent: nextPercent,
+          executionsCollapsed: false,
+        }));
+      },
+    });
+  };
 
   return (
     <section className={`flex h-full min-h-0 flex-col overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] shadow-[var(--arena-terminal-shadow-lg)] ${terminalTableClass}`}>
@@ -184,12 +244,32 @@ export function PortfolioWorkspace({
             </span>
           </div>
         </div>
-        <RouteStateTicker items={routeStateItems} />
+        <div className="flex min-w-0 items-center gap-2">
+          <RouteStateTicker items={routeStateItems} />
+          <WorkspaceControlButton
+            label={layout.executionsCollapsed ? 'Restore executions' : 'Minimize executions'}
+            icon={layout.executionsCollapsed ? 'i-ph:arrows-out-line-vertical' : 'i-ph:minus-bold'}
+            onClick={() => setLayout((current) => ({
+              ...current,
+              executionsCollapsed: !current.executionsCollapsed,
+            }))}
+          />
+          <WorkspaceControlButton
+            label="Reset workspace"
+            icon="i-ph:arrow-counter-clockwise"
+            onClick={() => setLayout(DEFAULT_PORTFOLIO_LAYOUT)}
+          />
+        </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(380px,0.6fr)_minmax(210px,0.4fr)] gap-2 overflow-hidden p-2 min-[1500px]:grid-rows-[minmax(380px,0.58fr)_minmax(220px,0.42fr)]">
+      <div
+        ref={workspaceRef}
+        className="grid min-h-0 flex-1 gap-0 overflow-hidden p-2"
+        style={workspaceStyle as CSSProperties}
+      >
         <TerminalPane
           title="Positions"
+          className="row-start-1"
           bodyClassName="overflow-auto overscroll-contain p-2 [scrollbar-gutter:stable]"
         >
           <PositionsTab
@@ -205,22 +285,40 @@ export function PortfolioWorkspace({
           />
         </TerminalPane>
 
-        <TerminalPane
-          title="Executions"
-          bodyClassName="overflow-hidden p-2"
-        >
-          <TradeHistoryTab
-            botId={botId}
-            botName={botName}
-            isLive={isLive}
-            chainId={chainId}
-            operatorApiUrl={operatorApiUrl}
-            operatorKind={operatorKind}
-            verificationState={verificationState}
-            assetMetadata={assetMetadata}
-            compact
+        <WorkspaceResizeHandle
+          orientation="horizontal"
+          className="row-start-2"
+          ariaLabel="Resize positions and executions"
+          title="Drag to resize positions and executions"
+          onPointerDown={startExecutionResize}
+        />
+
+        {layout.executionsCollapsed ? (
+          <WorkspaceCollapsedPane
+            label="Executions"
+            icon="i-ph:list-bullets"
+            className="row-start-3"
+            onClick={() => setLayout((current) => ({ ...current, executionsCollapsed: false }))}
           />
-        </TerminalPane>
+        ) : (
+          <TerminalPane
+            title="Executions"
+            className="row-start-3"
+            bodyClassName="overflow-hidden p-2"
+          >
+            <TradeHistoryTab
+              botId={botId}
+              botName={botName}
+              isLive={isLive}
+              chainId={chainId}
+              operatorApiUrl={operatorApiUrl}
+              operatorKind={operatorKind}
+              verificationState={verificationState}
+              assetMetadata={assetMetadata}
+              compact
+            />
+          </TerminalPane>
+        )}
       </div>
     </section>
   );

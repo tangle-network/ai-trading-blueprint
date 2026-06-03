@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
 import { useAccount } from 'wagmi';
@@ -24,10 +24,50 @@ import {
   fillCountEvidenceTitle,
   resolveFillCountEvidence,
 } from '~/lib/tradeEvidence';
+import {
+  WorkspaceCollapsedPane,
+  WorkspaceControlButton,
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from '~/components/arena/WorkspaceResizeControls';
 
 export const meta: MetaFunction = () => [
   { title: 'Agents | AI Trading Arena' },
 ];
+
+interface LeaderboardWorkspaceLayout {
+  tablePercent: number;
+  cockpitWidth: number;
+  dossierCollapsed: boolean;
+  cockpitCollapsed: boolean;
+}
+
+const LEADERBOARD_WORKSPACE_LAYOUT_KEY = 'arena:leaderboard-workspace-layout';
+const DEFAULT_LEADERBOARD_WORKSPACE_LAYOUT: LeaderboardWorkspaceLayout = {
+  tablePercent: 58,
+  cockpitWidth: 372,
+  dossierCollapsed: false,
+  cockpitCollapsed: false,
+};
+
+function normalizeLeaderboardWorkspaceLayout(value: Partial<LeaderboardWorkspaceLayout>): LeaderboardWorkspaceLayout {
+  return {
+    tablePercent: clampNumber(
+      Number(value.tablePercent) || DEFAULT_LEADERBOARD_WORKSPACE_LAYOUT.tablePercent,
+      42,
+      76,
+    ),
+    cockpitWidth: clampNumber(
+      Number(value.cockpitWidth) || DEFAULT_LEADERBOARD_WORKSPACE_LAYOUT.cockpitWidth,
+      320,
+      500,
+    ),
+    dossierCollapsed: value.dossierCollapsed === true,
+    cockpitCollapsed: value.cockpitCollapsed === true,
+  };
+}
 
 function botMatchesSearch(bot: Bot, search: string): boolean {
   const query = search.trim().toLowerCase();
@@ -258,9 +298,11 @@ function SelectedAgentDossier({
 function SelectedAgentCockpit({
   bot,
   activityStats,
+  className = '',
 }: {
   bot: Bot;
   activityStats?: AgentActivityStats;
+  className?: string;
 }) {
   const hrefBase = `/arena/bot/${encodeURIComponent(bot.id)}`;
   const accountValue = bot.tvl > 0 ? formatCompactUsd(bot.tvl) : 'No NAV';
@@ -281,7 +323,7 @@ function SelectedAgentCockpit({
   return (
     <aside
       aria-label="Selected agent cockpit"
-      className="hidden min-h-0 flex-col overflow-hidden border-l border-[#273035] bg-[#0b1418] min-[1360px]:flex"
+      className={`min-h-0 flex-col overflow-hidden border-l border-[#273035] bg-[#0b1418] ${className}`}
     >
       <div className="border-b border-[#273035] p-3">
         <div className="flex min-w-0 items-start gap-3">
@@ -356,6 +398,12 @@ export default function LeaderboardPage() {
   const { isConnected } = useAccount();
   const [search, setSearch] = useState('');
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+  const workspaceRef = useRef<HTMLElement>(null);
+  const [layout, setLayout] = usePersistentWorkspaceLayout(
+    LEADERBOARD_WORKSPACE_LAYOUT_KEY,
+    DEFAULT_LEADERBOARD_WORKSPACE_LAYOUT,
+    normalizeLeaderboardWorkspaceLayout,
+  );
   useTradingRouteAutoAuth({
     enabled: isConnected && HAS_TRADING_OPERATOR_API,
     routeKey: 'leaderboard',
@@ -432,6 +480,55 @@ export default function LeaderboardPage() {
       setSelectedBotId(visibleBots[0].id);
     }
   }, [selectedBotId, visibleBots]);
+  const resetLayout = () => setLayout(DEFAULT_LEADERBOARD_WORKSPACE_LAYOUT);
+  const explorerStyle = {
+    '--leaderboard-cockpit-width': `${layout.cockpitWidth}px`,
+  } as CSSProperties;
+  const explorerGridClass = layout.cockpitCollapsed
+    ? 'min-[1360px]:grid-cols-[minmax(0,1fr)_8px_44px]'
+    : 'min-[1360px]:grid-cols-[minmax(0,1fr)_8px_minmax(320px,var(--leaderboard-cockpit-width))]';
+  const leftPaneStyle = layout.dossierCollapsed
+    ? {
+        gridTemplateRows: 'minmax(0,1fr) 8px 44px',
+      }
+    : {
+        gridTemplateRows: `minmax(230px, ${layout.tablePercent}fr) 8px minmax(180px, ${100 - layout.tablePercent}fr)`,
+      };
+  const startCockpitResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    setLayout((current) => ({ ...current, cockpitCollapsed: false }));
+    beginWorkspaceResize(event, {
+      cursor: 'col-resize',
+      onMove: (moveEvent) => {
+        const maxWidth = Math.min(500, Math.max(360, rect.width * 0.42));
+        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 320, maxWidth);
+        setLayout((current) => ({
+          ...current,
+          cockpitWidth: nextWidth,
+          cockpitCollapsed: false,
+        }));
+      },
+    });
+  };
+  const startDossierResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    setLayout((current) => ({ ...current, dossierCollapsed: false }));
+    beginWorkspaceResize(event, {
+      cursor: 'row-resize',
+      onMove: (moveEvent) => {
+        const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 42, 76);
+        setLayout((current) => ({
+          ...current,
+          tablePercent: nextPercent,
+          dossierCollapsed: false,
+        }));
+      },
+    });
+  };
 
   return (
     <div className="arena-trace-terminal mx-auto flex min-h-full max-w-[1560px] flex-col gap-2 px-2 py-2 sm:px-3 lg:h-full lg:overflow-hidden">
@@ -458,6 +555,19 @@ export default function LeaderboardPage() {
             />
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            <WorkspaceControlButton
+              label={layout.cockpitCollapsed ? 'Restore agent cockpit' : 'Minimize agent cockpit'}
+              icon={layout.cockpitCollapsed ? 'i-ph:sidebar-simple' : 'i-ph:minus-bold'}
+              onClick={() => setLayout((current) => ({
+                ...current,
+                cockpitCollapsed: !current.cockpitCollapsed,
+              }))}
+            />
+            <WorkspaceControlButton
+              label="Reset workspace"
+              icon="i-ph:arrow-counter-clockwise"
+              onClick={resetLayout}
+            />
             <ArenaHeaderLink to="/" icon="i-ph:chart-line-up">Terminal</ArenaHeaderLink>
             <ArenaHeaderLink to="/provision" icon="i-ph:plus-bold" variant="primary">Deploy</ArenaHeaderLink>
           </div>
@@ -494,40 +604,69 @@ export default function LeaderboardPage() {
         )
       ) : (
         <section
-          className="grid min-h-0 flex-1 overflow-hidden border border-[#273035] bg-[#0f1a1f] min-[1360px]:grid-cols-[minmax(0,1fr)_340px] min-[1500px]:grid-cols-[minmax(0,1fr)_372px]"
+          ref={workspaceRef}
+          className={`grid min-h-0 flex-1 overflow-hidden border border-[#273035] bg-[#0f1a1f] ${explorerGridClass}`}
+          style={explorerStyle}
           aria-label="Agent explorer"
         >
-          <div className="flex min-h-0 flex-col overflow-hidden">
-            <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0b1418] px-3">
-              <h2 className="font-data text-[11px] font-semibold uppercase tracking-[0.12em] text-[#949e9c]">
-                Leaderboard
-              </h2>
-              <span className="font-data text-xs tabular-nums text-[#d2dad7]">
-                {formatNumber(visibleBots.length, { maximumFractionDigits: 0 })} / {formatNumber(sortedBots.length, { maximumFractionDigits: 0 })}
-              </span>
-            </div>
-              <div
-                className={`min-h-0 overflow-auto [scrollbar-gutter:stable] ${
-                  selectedBot && visibleBots.length <= 4
-                  ? 'max-h-[260px] shrink-0'
-                  : 'flex-1'
-                }`}
-              aria-label="Agent leaderboard"
-            >
-              {visibleBots.length > 0 ? (
-                <LeaderboardTable
-                  bots={visibleBots}
-                  selectedBotId={selectedBot?.id}
-                  onSelectBot={(bot) => setSelectedBotId(bot.id)}
-                  activityStatsByBotId={activityStatsByBotId}
-                />
-              ) : (
-                <div className="flex h-full min-h-[16rem] items-center justify-center px-6 text-center font-display text-sm text-[#949e9c]">
-                  No agents match that search.
+          <div
+            className="grid min-h-0 flex-1 overflow-hidden"
+            style={leftPaneStyle as CSSProperties}
+          >
+            <div className="row-start-1 flex min-h-0 flex-col overflow-hidden">
+              <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#273035] bg-[#0b1418] px-3">
+                <h2 className="font-data text-[11px] font-semibold uppercase tracking-[0.12em] text-[#949e9c]">
+                  Leaderboard
+                </h2>
+                <div className="flex items-center gap-2">
+                  <span className="font-data text-xs tabular-nums text-[#d2dad7]">
+                    {formatNumber(visibleBots.length, { maximumFractionDigits: 0 })} / {formatNumber(sortedBots.length, { maximumFractionDigits: 0 })}
+                  </span>
+                  <WorkspaceControlButton
+                    label={layout.dossierCollapsed ? 'Restore selected agent dossier' : 'Minimize selected agent dossier'}
+                    icon={layout.dossierCollapsed ? 'i-ph:arrows-out-line-vertical' : 'i-ph:minus-bold'}
+                    onClick={() => setLayout((current) => ({
+                      ...current,
+                      dossierCollapsed: !current.dossierCollapsed,
+                    }))}
+                  />
                 </div>
-              )}
+              </div>
+              <div
+                className={`min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable] ${
+                  selectedBot && visibleBots.length <= 4 ? 'max-h-[260px]' : ''
+                }`}
+                aria-label="Agent leaderboard"
+              >
+                {visibleBots.length > 0 ? (
+                  <LeaderboardTable
+                    bots={visibleBots}
+                    selectedBotId={selectedBot?.id}
+                    onSelectBot={(bot) => setSelectedBotId(bot.id)}
+                    activityStatsByBotId={activityStatsByBotId}
+                  />
+                ) : (
+                  <div className="flex h-full min-h-[16rem] items-center justify-center px-6 text-center font-display text-sm text-[#949e9c]">
+                    No agents match that search.
+                  </div>
+                )}
+              </div>
             </div>
-            {selectedBot ? (
+            <WorkspaceResizeHandle
+              orientation="horizontal"
+              className="row-start-2"
+              ariaLabel="Resize leaderboard and selected agent dossier"
+              title="Drag to resize leaderboard and selected agent dossier"
+              onPointerDown={startDossierResize}
+            />
+            {layout.dossierCollapsed ? (
+              <WorkspaceCollapsedPane
+                label="Dossier"
+                icon="i-ph:identification-card"
+                className="row-start-3"
+                onClick={() => setLayout((current) => ({ ...current, dossierCollapsed: false }))}
+              />
+            ) : selectedBot ? (
               <SelectedAgentDossier
                 bot={selectedBot}
                 activityStats={activityStatsByBotId.get(selectedBot.id)}
@@ -535,10 +674,26 @@ export default function LeaderboardPage() {
               />
             ) : null}
           </div>
-          {selectedBot ? (
+          <WorkspaceResizeHandle
+            orientation="vertical"
+            className="col-start-2 row-start-1 hidden min-[1360px]:flex"
+            ariaLabel="Resize selected agent cockpit"
+            title="Drag to resize selected agent cockpit"
+            onPointerDown={startCockpitResize}
+          />
+          {layout.cockpitCollapsed ? (
+            <WorkspaceCollapsedPane
+              label="Cockpit"
+              icon="i-ph:sidebar-simple"
+              orientation="vertical"
+              className="col-start-3 row-start-1 hidden min-[1360px]:flex"
+              onClick={() => setLayout((current) => ({ ...current, cockpitCollapsed: false }))}
+            />
+          ) : selectedBot ? (
             <SelectedAgentCockpit
               bot={selectedBot}
               activityStats={activityStatsByBotId.get(selectedBot.id)}
+              className="hidden min-[1360px]:col-start-3 min-[1360px]:row-start-1 min-[1360px]:flex"
             />
           ) : (
             <div className="flex min-h-0 items-center justify-center border-t border-[#273035] bg-[#0b1418] px-6 text-center font-display text-sm text-[#949e9c]">

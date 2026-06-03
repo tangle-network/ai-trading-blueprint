@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   useSessions,
@@ -36,6 +36,12 @@ import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
 import { DecisionInspector } from "./shared/DecisionInspector";
 import { RunsTab } from "./RunsTab";
+import {
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from "~/components/arena/WorkspaceResizeControls";
 
 interface ChatTabProps {
   botId: string;
@@ -48,6 +54,32 @@ interface ChatTabProps {
   onConfigureSecrets?: () => void;
   immersive?: boolean;
   canCommand?: boolean;
+}
+
+interface ChatWorkspaceLayout {
+  sidebarWidth: number;
+  inspectorWidth: number;
+}
+
+const CHAT_WORKSPACE_LAYOUT_KEY = "arena:chat-workspace-layout";
+const DEFAULT_CHAT_WORKSPACE_LAYOUT: ChatWorkspaceLayout = {
+  sidebarWidth: 272,
+  inspectorWidth: 360,
+};
+
+function normalizeChatWorkspaceLayout(value: Partial<ChatWorkspaceLayout>): ChatWorkspaceLayout {
+  return {
+    sidebarWidth: clampNumber(
+      Number(value.sidebarWidth) || DEFAULT_CHAT_WORKSPACE_LAYOUT.sidebarWidth,
+      220,
+      380,
+    ),
+    inspectorWidth: clampNumber(
+      Number(value.inspectorWidth) || DEFAULT_CHAT_WORKSPACE_LAYOUT.inspectorWidth,
+      300,
+      540,
+    ),
+  };
 }
 
 function extractChatErrorMessage(error: unknown): string | null {
@@ -226,6 +258,7 @@ function SessionWorkspaceSidebar({
   stacked,
   compactStacked,
   collapsed,
+  width,
   canWrite,
   onSelect,
   onDelete,
@@ -240,6 +273,7 @@ function SessionWorkspaceSidebar({
   stacked: boolean;
   compactStacked: boolean;
   collapsed: boolean;
+  width: number;
   canWrite: boolean;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
@@ -249,13 +283,20 @@ function SessionWorkspaceSidebar({
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const sidebarStyle = !stacked
+    ? {
+        width: collapsed ? 56 : width,
+        flexBasis: collapsed ? 56 : width,
+      } as CSSProperties
+    : undefined;
 
   return (
     <aside
+      style={sidebarStyle}
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[260px] basis-[260px]"}`
+          : "flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200"
       }
     >
       <div className={`flex items-center border-b border-arena-elements-dividerColor/50 ${collapsed ? "justify-center px-2 py-3" : "justify-between px-4 py-3"}`}>
@@ -473,6 +514,13 @@ export function ChatTab({
       : window.innerWidth < (immersive ? 860 : 1100),
   );
   const [sessionSidebarCollapsed, setSessionSidebarCollapsed] = useState(false);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const traceSurfaceRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = usePersistentWorkspaceLayout(
+    CHAT_WORKSPACE_LAYOUT_KEY,
+    DEFAULT_CHAT_WORKSPACE_LAYOUT,
+    normalizeChatWorkspaceLayout,
+  );
   const chatCacheKey = `${baseApiUrl}::${botId}`;
 
   const sessionToken = canWrite ? token : null;
@@ -762,6 +810,32 @@ export function ChatTab({
   const displayChatHeaderTitle = chatHeaderTitle === "Main Chat"
     ? botName || chatHeaderTitle
     : chatHeaderTitle;
+  const startSidebarResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    beginWorkspaceResize(event, {
+      cursor: "col-resize",
+      onMove: (moveEvent) => {
+        const maxWidth = Math.min(380, Math.max(280, rect.width * 0.34));
+        const nextWidth = clampNumber(moveEvent.clientX - rect.left, 220, maxWidth);
+        setLayout((current) => ({ ...current, sidebarWidth: nextWidth }));
+      },
+    });
+  };
+  const startInspectorResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const surface = traceSurfaceRef.current;
+    if (!surface) return;
+    const rect = surface.getBoundingClientRect();
+    beginWorkspaceResize(event, {
+      cursor: "col-resize",
+      onMove: (moveEvent) => {
+        const maxWidth = Math.min(540, Math.max(360, rect.width * 0.45));
+        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 300, maxWidth);
+        setLayout((current) => ({ ...current, inspectorWidth: nextWidth }));
+      },
+    });
+  };
 
   void operatorAddress;
 
@@ -856,6 +930,7 @@ export function ChatTab({
           }}
     >
       <div
+        ref={workspaceRef}
         className={`flex h-full min-h-0 min-w-0 ${isStackedLayout ? "flex-col" : "flex-row"}`}
       >
         {showSessionSidebar && (
@@ -867,6 +942,7 @@ export function ChatTab({
             stacked={isStackedLayout}
             compactStacked={immersive}
             collapsed={!isStackedLayout && sessionSidebarCollapsed}
+            width={layout.sidebarWidth}
             onSelect={handleSidebarSelect}
             onDelete={(id) => {
               if (!canWrite) return;
@@ -884,6 +960,15 @@ export function ChatTab({
             }}
             onToggleCollapsed={() => setSessionSidebarCollapsed((collapsed) => !collapsed)}
             canWrite={canWrite}
+          />
+        )}
+        {showSessionSidebar && !isStackedLayout && !sessionSidebarCollapsed && (
+          <WorkspaceResizeHandle
+            orientation="vertical"
+            className="w-2"
+            ariaLabel="Resize chat history"
+            title="Drag to resize chat history"
+            onPointerDown={startSidebarResize}
           />
         )}
 
@@ -935,13 +1020,19 @@ export function ChatTab({
           )}
 
           <div
+            ref={traceSurfaceRef}
             className={`arena-trace-surface min-h-0 flex-1 bg-[#081013] ${
               !showDecisionInspector
                 ? ""
                 : isStackedLayout
                   ? "flex flex-col"
-                  : "grid grid-cols-[minmax(0,1fr)_360px]"
+                  : "grid"
             }`}
+            style={!isStackedLayout && showDecisionInspector
+              ? {
+                  gridTemplateColumns: `minmax(0,1fr) 8px minmax(300px, ${layout.inspectorWidth}px)`,
+                }
+              : undefined}
           >
             {showDecisionInspector && isStackedLayout && (
               <DecisionInspector
@@ -966,11 +1057,20 @@ export function ChatTab({
               />
             </div>
             {showDecisionInspector && !isStackedLayout && (
+              <>
+              <WorkspaceResizeHandle
+                orientation="vertical"
+                className="col-start-2 row-start-1 w-2"
+                ariaLabel="Resize chat evidence inspector"
+                title="Drag to resize chat evidence inspector"
+                onPointerDown={startInspectorResize}
+              />
               <DecisionInspector
                 item={selectedDecisionItem}
                 variant="terminal"
-                className="border-l border-[#273035]"
+                className="col-start-3 row-start-1 border-l border-[#273035]"
               />
+              </>
             )}
           </div>
 

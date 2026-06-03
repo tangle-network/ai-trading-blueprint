@@ -43,9 +43,9 @@ export function ConnectWalletPanel({
   ];
 
   return (
-    <div className="arena-trace-terminal flex h-full min-h-full bg-[#081013] px-3 py-3 text-[#f6fefd] sm:px-4 lg:px-6">
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-[1260px] flex-1 flex-col gap-3">
-        <section className="grid h-full min-h-[560px] grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[6px] border border-[#273035] bg-[#0b1418]">
+    <div className="arena-trace-terminal flex min-h-full bg-[#081013] px-3 py-3 text-[#f6fefd] sm:px-4 lg:h-full lg:px-6">
+      <div className="mx-auto flex w-full max-w-[1260px] flex-1 flex-col gap-3 lg:h-full lg:min-h-0">
+        <section className="grid border border-[#273035] bg-[#0b1418] lg:h-full lg:min-h-[560px] lg:grid-rows-[auto_minmax(0,1fr)] lg:overflow-hidden">
           <div className="grid gap-4 border-b border-[#273035] px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
             <div className="min-w-0">
               <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#50d2c1]">
@@ -65,8 +65,8 @@ export function ConnectWalletPanel({
             </div>
           </div>
 
-          <div className="grid min-h-0 gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3">
+          <div className="grid gap-3 p-3 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="grid gap-3 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)]">
               <section className="overflow-hidden border border-[#273035] bg-[#081013]">
                 <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] border-b border-[#273035] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[#697371]">
                   <span>Launch Check</span>
@@ -84,7 +84,7 @@ export function ConnectWalletPanel({
                 ))}
               </section>
 
-              <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-2 rounded-[5px] border border-[#273035] bg-[#081013] p-2">
+              <section className="grid gap-2 border border-[#273035] bg-[#081013] p-2 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)]">
                 <div className="grid gap-2 md:grid-cols-3">
                   {launchRoutes.map((route) => (
                     <Link
@@ -134,7 +134,7 @@ export function ConnectWalletPanel({
               </section>
             </div>
 
-            <aside className="flex min-h-0 flex-col justify-between gap-3 rounded-[5px] border border-[#273035] bg-[#081013] p-3">
+            <aside className="flex flex-col justify-between gap-3 border border-[#273035] bg-[#081013] p-3 lg:min-h-0">
               <div>
                 <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-[5px] bg-[#143c38] text-[#50d2c1]">
                   <span className="i-ph:wallet text-xl" aria-hidden="true" />

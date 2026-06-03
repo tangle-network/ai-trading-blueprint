@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Bot } from '~/lib/types/bot';
 import type { Portfolio, Position } from '~/lib/types/portfolio';
 import { Card, CardHeader, CardTitle, CardContent } from '@tangle-network/blueprint-ui/components';
@@ -34,6 +34,14 @@ import {
   fillCountEvidenceSubvalue,
   resolveFillCountEvidence,
 } from '~/lib/tradeEvidence';
+import {
+  WorkspaceCollapsedPane,
+  WorkspaceControlButton,
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from '~/components/arena/WorkspaceResizeControls';
 
 const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
 const TRADE_MARKER_PAGE_SIZE = 200;
@@ -384,6 +392,35 @@ interface PerformanceTabProps {
   canCommand?: boolean;
 }
 
+interface PerformanceWorkspaceLayout {
+  chartPercent: number;
+  fillsWidth: number;
+  fillsCollapsed: boolean;
+}
+
+const PERFORMANCE_WORKSPACE_LAYOUT_KEY = 'arena:performance-workspace-layout';
+const DEFAULT_PERFORMANCE_WORKSPACE_LAYOUT: PerformanceWorkspaceLayout = {
+  chartPercent: 64,
+  fillsWidth: 340,
+  fillsCollapsed: false,
+};
+
+function normalizePerformanceWorkspaceLayout(value: Partial<PerformanceWorkspaceLayout>): PerformanceWorkspaceLayout {
+  return {
+    chartPercent: clampNumber(
+      Number(value.chartPercent) || DEFAULT_PERFORMANCE_WORKSPACE_LAYOUT.chartPercent,
+      48,
+      78,
+    ),
+    fillsWidth: clampNumber(
+      Number(value.fillsWidth) || DEFAULT_PERFORMANCE_WORKSPACE_LAYOUT.fillsWidth,
+      300,
+      520,
+    ),
+    fillsCollapsed: value.fillsCollapsed === true,
+  };
+}
+
 export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceTabProps) {
   const chartTheme = useChartTheme();
   const operatorAuth = useOperatorAuth(bot.operatorApiUrl ?? '');
@@ -391,12 +428,32 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const [range, setRange] = useState<PerformanceRange>('30d');
   const [chartMode, setChartMode] = useState<PerformanceChartMode>('market');
   const [selectedDecisionId, setSelectedDecisionId] = useState<string | null>(null);
+  const workspaceRef = useRef<HTMLElement>(null);
+  const [usesFillsRail, setUsesFillsRail] = useState(() =>
+    typeof window === 'undefined' || typeof window.matchMedia !== 'function'
+      ? false
+      : window.matchMedia('(min-width: 1600px)').matches,
+  );
+  const [layout, setLayout] = usePersistentWorkspaceLayout(
+    PERFORMANCE_WORKSPACE_LAYOUT_KEY,
+    DEFAULT_PERFORMANCE_WORKSPACE_LAYOUT,
+    normalizePerformanceWorkspaceLayout,
+  );
   const selectedRange = PERFORMANCE_RANGES.find((item) => item.value === range) ?? PERFORMANCE_RANGES[1];
   const selectedRangeStartMs = useMemo(
     () => Date.now() - selectedRange.days * 24 * 60 * 60 * 1000,
     [selectedRange.days],
   );
   const tradeMarkerFetchPages = tradeMarkerPagesForRange(selectedRange.value);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mediaQuery = window.matchMedia('(min-width: 1600px)');
+    const syncLayout = () => setUsesFillsRail(mediaQuery.matches);
+    syncLayout();
+    mediaQuery.addEventListener('change', syncLayout);
+    return () => mediaQuery.removeEventListener('change', syncLayout);
+  }, []);
 
   const {
     data: apiMetrics,
@@ -657,6 +714,47 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const hyperliquidRiskSnapshot = isHyperliquidPerpBot
     ? buildHyperliquidRiskSnapshot(livePortfolio ?? null)
     : null;
+  const resetLayout = () => setLayout(DEFAULT_PERFORMANCE_WORKSPACE_LAYOUT);
+  const toggleFills = () => setLayout((current) => ({
+    ...current,
+    fillsCollapsed: !current.fillsCollapsed,
+  }));
+  const startFillsResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    setLayout((current) => ({ ...current, fillsCollapsed: false }));
+    beginWorkspaceResize(event, {
+      cursor: usesFillsRail ? 'col-resize' : 'row-resize',
+      onMove: (moveEvent) => {
+        if (usesFillsRail) {
+          const maxWidth = Math.min(520, Math.max(340, rect.width * 0.42));
+          const nextWidth = clampNumber(rect.right - moveEvent.clientX, 300, maxWidth);
+          setLayout((current) => ({
+            ...current,
+            fillsWidth: nextWidth,
+            fillsCollapsed: false,
+          }));
+          return;
+        }
+
+        const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 48, 78);
+        setLayout((current) => ({
+          ...current,
+          chartPercent: nextPercent,
+          fillsCollapsed: false,
+        }));
+      },
+    });
+  };
+  const workspaceStyle = {
+    '--performance-chart-fr': `${layout.chartPercent}fr`,
+    '--performance-fills-fr': `${100 - layout.chartPercent}fr`,
+    '--performance-fills-width': `${layout.fillsWidth}px`,
+  } as CSSProperties;
+  const workspaceGridClass = layout.fillsCollapsed
+    ? 'grid-rows-[minmax(0,1fr)_8px_44px] min-[1600px]:grid-cols-[minmax(0,1fr)_8px_44px] min-[1600px]:grid-rows-none'
+    : 'grid-rows-[minmax(0,var(--performance-chart-fr))_8px_minmax(220px,var(--performance-fills-fr))] min-[1600px]:grid-cols-[minmax(0,1fr)_8px_minmax(300px,var(--performance-fills-width))] min-[1600px]:grid-rows-none';
 
   if (isLoading) {
     return (
@@ -693,8 +791,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         <UnverifiedDataNotice subject="performance snapshots" />
       )}
 
-      <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(270px,32dvh)] gap-2 overflow-hidden min-[1600px]:grid-cols-[minmax(0,1fr)_332px] min-[1600px]:grid-rows-none min-[1760px]:grid-cols-[minmax(0,1fr)_346px]">
-        <div className="flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
+      <section
+        ref={workspaceRef}
+        className={`grid min-h-0 flex-1 gap-0 overflow-hidden ${workspaceGridClass}`}
+        style={workspaceStyle}
+      >
+        <div className="col-start-1 row-start-1 flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
           <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[72px] min-[1120px]:flex-row min-[1120px]:items-stretch">
             <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1120px]:w-[178px] min-[1120px]:border-b-0 min-[1120px]:border-r">
               <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#123f3a] text-[#50d2c1]">
@@ -732,6 +834,16 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             </div>
 
             <div className="flex shrink-0 items-center gap-1 border-t border-[#273035] px-2 py-2 min-[1120px]:border-l min-[1120px]:border-t-0">
+              <WorkspaceControlButton
+                label={layout.fillsCollapsed ? 'Restore fills' : 'Minimize fills'}
+                icon={layout.fillsCollapsed ? 'i-ph:sidebar-simple' : 'i-ph:minus-bold'}
+                onClick={toggleFills}
+              />
+              <WorkspaceControlButton
+                label="Reset workspace"
+                icon="i-ph:arrow-counter-clockwise"
+                onClick={resetLayout}
+              />
               <div
                 className="inline-flex rounded-[5px] bg-[#273035] p-0.5"
                 role="group"
@@ -910,7 +1022,24 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           </div>
         </div>
 
-        <aside className="flex min-h-0 flex-col overflow-hidden min-[1280px]:gap-2">
+        <WorkspaceResizeHandle
+          orientation={usesFillsRail ? 'vertical' : 'horizontal'}
+          className="col-start-1 row-start-2 min-[1600px]:col-start-2 min-[1600px]:row-start-1"
+          ariaLabel="Resize performance fills"
+          title="Drag to resize chart and fills"
+          onPointerDown={startFillsResize}
+        />
+
+        {layout.fillsCollapsed ? (
+          <WorkspaceCollapsedPane
+            label="Fills"
+            icon="i-ph:list-bullets"
+            orientation={usesFillsRail ? 'vertical' : 'horizontal'}
+            className="col-start-1 row-start-3 min-[1600px]:col-start-3 min-[1600px]:row-start-1"
+            onClick={() => setLayout((current) => ({ ...current, fillsCollapsed: false }))}
+          />
+        ) : (
+        <aside className="col-start-1 row-start-3 flex min-h-0 flex-col overflow-hidden min-[1280px]:gap-2 min-[1600px]:col-start-3 min-[1600px]:row-start-1">
           {tradePageIsPending ? (
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-2">
               <div className="mb-2 flex shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-1 pb-2">
@@ -1063,6 +1192,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           )}
 
         </aside>
+        )}
       </section>
     </div>
   );

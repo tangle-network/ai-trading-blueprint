@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from 'react-router';
-import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
+import { useRef, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { isAddress, type Address } from 'viem';
 import { Identicon, Skeleton } from '@tangle-network/blueprint-ui/components';
 import { TradeInstrumentDisplay } from '~/components/bot-detail/shared/AssetDisplay';
@@ -17,6 +17,14 @@ import {
   getTradeMarketLabel,
 } from '~/lib/tradeDisplay';
 import { formatNumber } from '~/lib/format';
+import {
+  WorkspaceCollapsedPane,
+  WorkspaceControlButton,
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from '~/components/arena/WorkspaceResizeControls';
 
 interface LatestAgentTradesProps {
   bots: Bot[];
@@ -41,6 +49,28 @@ const tradeTimestampFormatter = new Intl.DateTimeFormat('en-US', {
 });
 
 const EXPLORER_PAGE_SIZE = 25;
+const LATEST_TRADES_EXPLORER_LAYOUT_KEY = 'arena:latest-trades-explorer-layout';
+
+interface LatestTradesExplorerLayout {
+  inspectorWidth: number;
+  inspectorCollapsed: boolean;
+}
+
+const DEFAULT_LATEST_TRADES_EXPLORER_LAYOUT: LatestTradesExplorerLayout = {
+  inspectorWidth: 332,
+  inspectorCollapsed: false,
+};
+
+function normalizeLatestTradesExplorerLayout(value: Partial<LatestTradesExplorerLayout>): LatestTradesExplorerLayout {
+  return {
+    inspectorWidth: clampNumber(
+      Number(value.inspectorWidth) || DEFAULT_LATEST_TRADES_EXPLORER_LAYOUT.inspectorWidth,
+      280,
+      500,
+    ),
+    inspectorCollapsed: value.inspectorCollapsed === true,
+  };
+}
 
 function formatTradeTimestamp(timestamp: number): string {
   return tradeTimestampFormatter.format(new Date(timestamp));
@@ -67,6 +97,12 @@ export function LatestAgentTrades({
   });
   const isPanel = variant === 'panel';
   const isExplorer = variant === 'explorer';
+  const explorerRef = useRef<HTMLDivElement>(null);
+  const [explorerLayout, setExplorerLayout] = usePersistentWorkspaceLayout(
+    LATEST_TRADES_EXPLORER_LAYOUT_KEY,
+    DEFAULT_LATEST_TRADES_EXPLORER_LAYOUT,
+    normalizeLatestTradesExplorerLayout,
+  );
   const isBounded = isPanel || isExplorer;
   const visibleTrades = limit ? trades.slice(0, limit) : trades;
   const explorerPageCount = isExplorer
@@ -108,6 +144,29 @@ export function LatestAgentTrades({
     setSearchParams(nextParams, { replace: true });
   }
 
+  function startExplorerInspectorResize(event: Parameters<typeof beginWorkspaceResize>[0]) {
+    const explorer = explorerRef.current;
+    if (!explorer) return;
+    const rect = explorer.getBoundingClientRect();
+    setExplorerLayout((current) => ({ ...current, inspectorCollapsed: false }));
+    beginWorkspaceResize(event, {
+      cursor: 'col-resize',
+      onMove: (moveEvent) => {
+        const maxWidth = Math.min(500, Math.max(320, rect.width * 0.46));
+        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 280, maxWidth);
+        setExplorerLayout((current) => ({
+          ...current,
+          inspectorWidth: nextWidth,
+          inspectorCollapsed: false,
+        }));
+      },
+    });
+  }
+
+  const explorerGridStyle = {
+    '--latest-trades-inspector-width': `${explorerLayout.inspectorWidth}px`,
+  } as CSSProperties;
+
   return (
     <section
       data-testid="live-fill-tape"
@@ -125,6 +184,16 @@ export function LatestAgentTrades({
             </span>
           )}
           {headerControls}
+          {isExplorer && (
+            <WorkspaceControlButton
+              label={explorerLayout.inspectorCollapsed ? 'Restore fill inspector' : 'Minimize fill inspector'}
+              icon={explorerLayout.inspectorCollapsed ? 'i-ph:sidebar-simple' : 'i-ph:minus-bold'}
+              onClick={() => setExplorerLayout((current) => ({
+                ...current,
+                inspectorCollapsed: !current.inspectorCollapsed,
+              }))}
+            />
+          )}
         </div>
       </div>
 
@@ -203,7 +272,15 @@ export function LatestAgentTrades({
           </div>
         </div>
       ) : isExplorer ? (
-        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_308px]">
+        <div
+          ref={explorerRef}
+          className={`grid min-h-0 flex-1 gap-0 ${
+            explorerLayout.inspectorCollapsed
+              ? 'lg:grid-cols-[minmax(0,1fr)_8px_44px]'
+              : 'lg:grid-cols-[minmax(0,1fr)_8px_minmax(280px,var(--latest-trades-inspector-width))]'
+          }`}
+          style={explorerGridStyle}
+        >
           <div className="flex min-h-0 flex-col overflow-hidden">
             <div
               data-testid="live-fill-explorer-scroll"
@@ -318,14 +395,30 @@ export function LatestAgentTrades({
               </div>
             </div>
           </div>
-          {selectedFill && (
+          <WorkspaceResizeHandle
+            orientation="vertical"
+            className="col-start-2 row-start-1 hidden lg:flex"
+            ariaLabel="Resize fill inspector"
+            title="Drag to resize fill inspector"
+            onPointerDown={startExplorerInspectorResize}
+          />
+          {explorerLayout.inspectorCollapsed ? (
+            <WorkspaceCollapsedPane
+              label="Inspector"
+              icon="i-ph:sidebar-simple"
+              orientation="vertical"
+              className="col-start-3 row-start-1 hidden lg:flex"
+              onClick={() => setExplorerLayout((current) => ({ ...current, inspectorCollapsed: false }))}
+            />
+          ) : selectedFill ? (
             <FillInspector
               trade={selectedFill.trade}
               bot={selectedFill.bot}
               botId={selectedFill.botId}
               botName={selectedFill.botName}
+              className="col-start-3 row-start-1"
             />
-          )}
+          ) : null}
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -414,11 +507,13 @@ function FillInspector({
   bot,
   botId,
   botName,
+  className = '',
 }: {
   trade: Trade;
   bot?: Bot;
   botId: string;
   botName: string;
+  className?: string;
 }) {
   const operatorAddress = bot?.operatorAddress;
   const hasOperatorAddress = operatorAddress != null && isAddress(operatorAddress);
@@ -437,7 +532,7 @@ function FillInspector({
   return (
     <aside
       data-testid="fill-inspector"
-      className="hidden min-h-0 flex-col border-l border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] lg:flex"
+      className={`hidden min-h-0 flex-col border-l border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] lg:flex ${className}`}
       aria-label="Selected fill"
     >
       <div className="border-b border-[var(--arena-terminal-border)] p-3">

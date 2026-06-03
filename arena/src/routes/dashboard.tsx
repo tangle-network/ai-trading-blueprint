@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef, useSyncExternalStore, type CSSProperties } from 'react';
 import type { MetaFunction } from 'react-router';
 import { useAccount } from 'wagmi';
 import { parseAbiItem } from 'viem';
@@ -34,6 +34,36 @@ import {
   HAS_TRADING_OPERATOR_API,
 } from '~/lib/operator/meta';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
+import {
+  WorkspaceCollapsedPane,
+  WorkspaceControlButton,
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from '~/components/arena/WorkspaceResizeControls';
+
+interface DashboardWorkspaceLayout {
+  servicesPercent: number;
+  servicesCollapsed: boolean;
+}
+
+const DASHBOARD_WORKSPACE_LAYOUT_KEY = 'arena:dashboard-workspace-layout';
+const DEFAULT_DASHBOARD_WORKSPACE_LAYOUT: DashboardWorkspaceLayout = {
+  servicesPercent: 34,
+  servicesCollapsed: false,
+};
+
+function normalizeDashboardWorkspaceLayout(value: Partial<DashboardWorkspaceLayout>): DashboardWorkspaceLayout {
+  return {
+    servicesPercent: clampNumber(
+      Number(value.servicesPercent) || DEFAULT_DASHBOARD_WORKSPACE_LAYOUT.servicesPercent,
+      22,
+      58,
+    ),
+    servicesCollapsed: value.servicesCollapsed === true,
+  };
+}
 
 /**
  * Subscribe to provisions but only re-render when structural fields change
@@ -116,6 +146,12 @@ export default function HomePage() {
   // State
   const [secretsTarget, setSecretsTarget] = useState<SecretsTarget | null>(null);
   const [checkingId, setCheckingId] = useState<string | null>(null);
+  const dashboardWorkspaceRef = useRef<HTMLDivElement>(null);
+  const [dashboardLayout, setDashboardLayout] = usePersistentWorkspaceLayout(
+    DASHBOARD_WORKSPACE_LAYOUT_KEY,
+    DEFAULT_DASHBOARD_WORKSPACE_LAYOUT,
+    normalizeDashboardWorkspaceLayout,
+  );
 
   // Derived data
   // Main dashboard bots are strict-authoritative only.
@@ -275,14 +311,161 @@ export default function HomePage() {
         ? '-'
         : scoredBots.length > 0
           ? String(avgRiskScore)
-          : '-',
+      : '-',
     },
   ];
+  const servicesSection = services.length > 0 ? (
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+      <div className="flex items-center gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-2">
+        <h2 className="text-sm font-data uppercase tracking-wider text-[var(--arena-terminal-text-secondary)]">
+          Services
+        </h2>
+        <Badge variant="secondary" className="text-[10px]">{services.length}</Badge>
+        <WorkspaceControlButton
+          label={dashboardLayout.servicesCollapsed ? 'Restore services' : 'Minimize services'}
+          icon={dashboardLayout.servicesCollapsed ? 'i-ph:arrows-out-line-vertical' : 'i-ph:minus-bold'}
+          className="ml-auto"
+          onClick={() => setDashboardLayout((current) => ({
+            ...current,
+            servicesCollapsed: !current.servicesCollapsed,
+          }))}
+        />
+      </div>
+      <div className="min-h-0 overflow-auto p-3 [scrollbar-gutter:stable]">
+        <StaggerContainer>
+          <div className="space-y-2">
+            {services.map((svc) => (
+              <StaggerItem key={svc.serviceId}>
+                <ServiceCard
+                  service={svc}
+                  bots={myBotsByService.get(svc.serviceId) ?? []}
+                  lockedBotCount={lockedBotsByService.get(svc.serviceId) ?? 0}
+                />
+              </StaggerItem>
+            ))}
+          </div>
+        </StaggerContainer>
+      </div>
+    </section>
+  ) : null;
+  const myAgentsSection = hasBotSection ? (
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-2">
+        <h2 className="text-sm font-data uppercase tracking-wider text-[var(--arena-terminal-text-secondary)]">
+          My Agents
+        </h2>
+        <Badge variant="secondary" className="text-[10px]">{knownBotCount}</Badge>
+        {hasLockedBots && (
+          <span className="text-xs font-data text-[var(--arena-terminal-text-muted)]">
+            {lockedOperatorProvisions.length} require operator auth
+          </span>
+        )}
+      </div>
+      {visibleMyBots.length > 0 ? (
+        <div className="min-h-0 overflow-auto p-3 [scrollbar-gutter:stable]">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {visibleMyBots.map((bot) => {
+              const configureHandler = (bot.status === 'needs_config' || bot.lifecycleStatus === 'awaiting_secrets')
+                ? () => setSecretsTarget({
+                    apiUrl: bot.operatorApiUrl ?? undefined,
+                    botId: bot.id,
+                    sandboxId: bot.sandboxId,
+                    callId: bot.callId,
+                    serviceId: bot.serviceId,
+                  })
+                : undefined;
+              return (
+                <HomeBotCard
+                  key={bot.id}
+                  bot={bot}
+                  onConfigure={configureHandler}
+                />
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="p-3">
+          <OperatorAccessCard
+            apiUrls={ALL_TRADING_OPERATOR_API_URLS}
+            title="Operator authentication required"
+            description={`Authenticate to load ${lockedOperatorProvisions.length} operator-managed agent${lockedOperatorProvisions.length === 1 ? '' : 's'} on this dashboard.`}
+          />
+        </div>
+      )}
+    </section>
+  ) : null;
+  const emptySection = !hasContent ? (
+    <section className="grid gap-3 overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <div className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-4">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-[5px] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
+            <span className="i-ph:robot text-xl" aria-hidden="true" />
+          </span>
+          <div>
+            <h2 className="font-display text-lg font-semibold text-[var(--arena-terminal-text)]">
+              No services or agents yet
+            </h2>
+            <p className="mt-1 text-sm text-[var(--arena-terminal-text-muted)]">
+              Start with a risk-gated operator deployment, then open the agent workspace once the service is live.
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch" variant="primary">
+            Deploy Agent
+          </ArenaHeaderLink>
+          <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">
+            Draft Strategy
+          </ArenaHeaderLink>
+        </div>
+      </div>
+      <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+        {[
+          ['01', 'Service owner', 'wallet'],
+          ['02', 'Risk envelope', 'required'],
+          ['03', 'Secrets', 'operator'],
+          ['04', 'Workspace', 'agent'],
+        ].map(([index, label, value]) => (
+          <div key={index} className="grid grid-cols-[2rem_minmax(0,1fr)_5.5rem] border-b border-[var(--arena-terminal-border)] px-3 py-2.5 last:border-b-0">
+            <span className="font-data text-xs text-[var(--arena-terminal-accent)]">{index}</span>
+            <span className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">{label}</span>
+            <span className="truncate text-right font-data text-xs uppercase text-[var(--arena-terminal-text-muted)]">{value}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  ) : null;
+  const hasDashboardSplit = Boolean(servicesSection && myAgentsSection);
+  const dashboardWorkspaceStyle = dashboardLayout.servicesCollapsed
+    ? {
+        gridTemplateRows: '44px 8px minmax(0,1fr)',
+      }
+    : {
+        gridTemplateRows: `minmax(140px, ${dashboardLayout.servicesPercent}fr) 8px minmax(260px, ${100 - dashboardLayout.servicesPercent}fr)`,
+      };
+  const startDashboardWorkspaceResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const workspace = dashboardWorkspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    setDashboardLayout((current) => ({ ...current, servicesCollapsed: false }));
+    beginWorkspaceResize(event, {
+      cursor: 'row-resize',
+      onMove: (moveEvent) => {
+        const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 22, 58);
+        setDashboardLayout((current) => ({
+          ...current,
+          servicesPercent: nextPercent,
+          servicesCollapsed: false,
+        }));
+      },
+    });
+  };
 
   // ── Main content ───────────────────────────────────────────────────────
   return (
-    <div className="arena-trace-terminal min-h-full bg-[#081013] px-2 py-2 text-[#f6fefd] sm:px-3">
-      <div className="mx-auto flex w-full max-w-[1560px] flex-col gap-2">
+    <div className="arena-trace-terminal min-h-full bg-[#081013] px-2 py-2 text-[#f6fefd] sm:px-3 lg:h-full lg:overflow-hidden">
+      <div className="mx-auto flex w-full max-w-[1560px] flex-col gap-2 lg:h-full lg:min-h-0">
         <ArenaPageHeader
           title="My Agents"
           metrics={dashboardMetrics}
@@ -312,119 +495,42 @@ export default function HomePage() {
         />
       )}
 
-      {/* ── Services ────────────────────────────────────────────────────── */}
-      {services.length > 0 && (
-        <section className="overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
-          <div className="flex items-center gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-2">
-            <h2 className="text-sm font-data uppercase tracking-wider text-[var(--arena-terminal-text-secondary)]">
-              Services
-            </h2>
-            <Badge variant="secondary" className="text-[10px]">{services.length}</Badge>
-          </div>
-          <div className="p-3">
-            <StaggerContainer>
-              <div className="space-y-2">
-                {services.map((svc) => (
-                  <StaggerItem key={svc.serviceId}>
-                    <ServiceCard
-                      service={svc}
-                      bots={myBotsByService.get(svc.serviceId) ?? []}
-                      lockedBotCount={lockedBotsByService.get(svc.serviceId) ?? 0}
-                    />
-                  </StaggerItem>
-                ))}
-              </div>
-            </StaggerContainer>
-          </div>
-        </section>
-      )}
-
-      {/* ── My agents ───────────────────────────────────────────────────── */}
-      {hasBotSection ? (
-        <section className="overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
-          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-2">
-            <h2 className="text-sm font-data uppercase tracking-wider text-[var(--arena-terminal-text-secondary)]">
-              My Agents
-            </h2>
-            <Badge variant="secondary" className="text-[10px]">{knownBotCount}</Badge>
-            {hasLockedBots && (
-              <span className="text-xs font-data text-[var(--arena-terminal-text-muted)]">
-                {lockedOperatorProvisions.length} require operator auth
-              </span>
-            )}
-          </div>
-          {visibleMyBots.length > 0 ? (
-            <div className="grid grid-cols-1 gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
-              {visibleMyBots.map((bot) => {
-                const configureHandler = (bot.status === 'needs_config' || bot.lifecycleStatus === 'awaiting_secrets')
-                  ? () => setSecretsTarget({
-                      apiUrl: bot.operatorApiUrl ?? undefined,
-                      botId: bot.id,
-                      sandboxId: bot.sandboxId,
-                      callId: bot.callId,
-                      serviceId: bot.serviceId,
-                    })
-                  : undefined;
-                return (
-                  <HomeBotCard
-                    key={bot.id}
-                    bot={bot}
-                    onConfigure={configureHandler}
-                  />
-                );
-              })}
-            </div>
+      {hasDashboardSplit ? (
+        <div
+          ref={dashboardWorkspaceRef}
+          className="grid min-h-0 flex-1 gap-0 overflow-hidden"
+          style={dashboardWorkspaceStyle as CSSProperties}
+          aria-label="Owner workspace"
+        >
+          {dashboardLayout.servicesCollapsed ? (
+            <WorkspaceCollapsedPane
+              label="Services"
+              icon="i-ph:stack"
+              className="row-start-1"
+              onClick={() => setDashboardLayout((current) => ({ ...current, servicesCollapsed: false }))}
+            />
           ) : (
-            <div className="p-3">
-              <OperatorAccessCard
-                apiUrls={ALL_TRADING_OPERATOR_API_URLS}
-                title="Operator authentication required"
-                description={`Authenticate to load ${lockedOperatorProvisions.length} operator-managed agent${lockedOperatorProvisions.length === 1 ? '' : 's'} on this dashboard.`}
-              />
+            <div className="row-start-1 min-h-0 overflow-hidden">
+              {servicesSection}
             </div>
           )}
-        </section>
-      ) : !hasContent ? (
-        <section className="grid gap-3 overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 lg:grid-cols-[minmax(0,1fr)_300px]">
-          <div className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-4">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-[5px] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
-                <span className="i-ph:robot text-xl" aria-hidden="true" />
-              </span>
-              <div>
-                <h2 className="font-display text-lg font-semibold text-[var(--arena-terminal-text)]">
-                  No services or agents yet
-                </h2>
-                <p className="mt-1 text-sm text-[var(--arena-terminal-text-muted)]">
-                  Start with a risk-gated operator deployment, then open the agent workspace once the service is live.
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch" variant="primary">
-                Deploy Agent
-              </ArenaHeaderLink>
-              <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">
-                Draft Strategy
-              </ArenaHeaderLink>
-            </div>
+          <WorkspaceResizeHandle
+            orientation="horizontal"
+            className="row-start-2"
+            ariaLabel="Resize services and agents"
+            title="Drag to resize services and agents"
+            onPointerDown={startDashboardWorkspaceResize}
+          />
+          <div className="row-start-3 min-h-0 overflow-hidden">
+            {myAgentsSection}
           </div>
-          <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
-            {[
-              ['01', 'Service owner', 'wallet'],
-              ['02', 'Risk envelope', 'required'],
-              ['03', 'Secrets', 'operator'],
-              ['04', 'Workspace', 'agent'],
-            ].map(([index, label, value]) => (
-              <div key={index} className="grid grid-cols-[2rem_minmax(0,1fr)_5.5rem] border-b border-[var(--arena-terminal-border)] px-3 py-2.5 last:border-b-0">
-                <span className="font-data text-xs text-[var(--arena-terminal-accent)]">{index}</span>
-                <span className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">{label}</span>
-                <span className="truncate text-right font-data text-xs uppercase text-[var(--arena-terminal-text-muted)]">{value}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
+        </div>
+      ) : (
+        <>
+          {servicesSection}
+          {myAgentsSection ?? emptySection}
+        </>
+      )}
 
       {/* Secrets configuration modal */}
       <SecretsModal

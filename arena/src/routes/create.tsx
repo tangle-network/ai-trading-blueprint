@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from 'react'
 import type { MetaFunction } from 'react-router'
 import { useNavigate } from 'react-router'
 import { Button } from '@tangle-network/blueprint-ui/components'
@@ -8,12 +8,42 @@ import {
   ALL_TRADING_OPERATOR_API_URLS,
   HAS_TRADING_OPERATOR_API,
 } from '~/lib/operator/meta'
+import {
+  WorkspaceCollapsedPane,
+  WorkspaceControlButton,
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from '~/components/arena/WorkspaceResizeControls'
 
 export const meta: MetaFunction = () => [
   { title: 'Create Trading Agent - AI Trading Arena' },
 ]
 
 type StrategyType = 'dex' | 'yield' | 'prediction' | 'perp'
+
+interface CreateWorkspaceLayout {
+  railWidth: number
+  railCollapsed: boolean
+}
+
+const CREATE_WORKSPACE_LAYOUT_KEY = 'arena:create-workspace-layout'
+const DEFAULT_CREATE_WORKSPACE_LAYOUT: CreateWorkspaceLayout = {
+  railWidth: 360,
+  railCollapsed: false,
+}
+
+function normalizeCreateWorkspaceLayout(value: Partial<CreateWorkspaceLayout>): CreateWorkspaceLayout {
+  return {
+    railWidth: clampNumber(
+      Number(value.railWidth) || DEFAULT_CREATE_WORKSPACE_LAYOUT.railWidth,
+      300,
+      480,
+    ),
+    railCollapsed: value.railCollapsed === true,
+  }
+}
 
 const STRATEGY_HINTS = [
   {
@@ -141,8 +171,14 @@ export default function CreateAgent() {
   const [isCreating, setIsCreating] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+  const workspaceRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const errorRef = useRef<HTMLParagraphElement>(null)
+  const [layout, setLayout] = usePersistentWorkspaceLayout(
+    CREATE_WORKSPACE_LAYOUT_KEY,
+    DEFAULT_CREATE_WORKSPACE_LAYOUT,
+    normalizeCreateWorkspaceLayout,
+  )
   const navigate = useNavigate()
   const { getToken } = useOperatorAuth(ALL_TRADING_OPERATOR_API_URLS[0])
   const detectedStrategyType = useMemo(() => inferStrategyType(prompt), [prompt])
@@ -193,6 +229,30 @@ export default function CreateAgent() {
     ['Risk', 'Gated'],
   ], [operatorLabel])
   const routeStatus = error ? error : status || `${detectedProfile.venue} / ${detectedProfile.envelope}`
+  const workspaceStyle = {
+    '--create-rail-width': `${layout.railWidth}px`,
+  } as CSSProperties
+  const workspaceGridClass = layout.railCollapsed
+    ? 'lg:grid-cols-[minmax(0,1fr)_8px_44px]'
+    : 'lg:grid-cols-[minmax(0,1fr)_8px_minmax(300px,var(--create-rail-width))]'
+  const startRailResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const workspace = workspaceRef.current
+    if (!workspace) return
+    const rect = workspace.getBoundingClientRect()
+    setLayout((current) => ({ ...current, railCollapsed: false }))
+    beginWorkspaceResize(event, {
+      cursor: 'col-resize',
+      onMove: (moveEvent) => {
+        const maxWidth = Math.min(480, Math.max(360, rect.width * 0.4))
+        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 300, maxWidth)
+        setLayout((current) => ({
+          ...current,
+          railWidth: nextWidth,
+          railCollapsed: false,
+        }))
+      },
+    })
+  }
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function' || window.matchMedia('(min-width: 768px)').matches) {
@@ -304,16 +364,33 @@ export default function CreateAgent() {
           ]}
           controls={(
             <>
+              <WorkspaceControlButton
+                label={layout.railCollapsed ? 'Restore strategy rail' : 'Minimize strategy rail'}
+                icon={layout.railCollapsed ? 'i-ph:sidebar-simple' : 'i-ph:minus-bold'}
+                onClick={() => setLayout((current) => ({
+                  ...current,
+                  railCollapsed: !current.railCollapsed,
+                }))}
+              />
+              <WorkspaceControlButton
+                label="Reset workspace"
+                icon="i-ph:arrow-counter-clockwise"
+                onClick={() => setLayout(DEFAULT_CREATE_WORKSPACE_LAYOUT)}
+              />
               <ArenaHeaderLink to="/leaderboard" icon="i-ph:table">Agents</ArenaHeaderLink>
               <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch" variant="primary">Deploy</ArenaHeaderLink>
             </>
           )}
         />
 
-        <div className="grid gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div
+          ref={workspaceRef}
+          className={`grid gap-0 lg:min-h-0 lg:flex-1 ${workspaceGridClass}`}
+          style={workspaceStyle}
+        >
           <form
             id="create-agent-form"
-            className="grid rounded-[5px] border border-[#273035] bg-[#0b1418] lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:overflow-hidden"
+            className="grid rounded-[5px] border border-[#273035] bg-[#0b1418] lg:col-start-1 lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:overflow-hidden"
             onSubmit={(event) => {
               event.preventDefault()
               handleCreate()
@@ -394,7 +471,24 @@ export default function CreateAgent() {
             </div>
           </form>
 
-          <aside className="grid gap-2.5 lg:min-h-0 lg:grid-rows-[auto_auto_auto_auto] lg:overflow-hidden">
+          <WorkspaceResizeHandle
+            orientation="vertical"
+            className="hidden lg:col-start-2 lg:row-start-1 lg:flex"
+            ariaLabel="Resize strategy rail"
+            title="Drag to resize strategy rail"
+            onPointerDown={startRailResize}
+          />
+
+          {layout.railCollapsed ? (
+            <WorkspaceCollapsedPane
+              label="Strategy"
+              icon="i-ph:strategy"
+              orientation="vertical"
+              className="hidden lg:col-start-3 lg:row-start-1 lg:flex"
+              onClick={() => setLayout((current) => ({ ...current, railCollapsed: false }))}
+            />
+          ) : (
+          <aside className="grid gap-2.5 lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:grid-rows-[auto_auto_auto_auto] lg:overflow-hidden">
             <section className="grid overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
               <div className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-3 border-b border-[#273035] px-3 py-2">
                 <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[5px] bg-[#143c38] text-[#50d2c1]">
@@ -481,6 +575,7 @@ export default function CreateAgent() {
               </Button>
             </section>
           </aside>
+          )}
         </div>
       </section>
     </div>

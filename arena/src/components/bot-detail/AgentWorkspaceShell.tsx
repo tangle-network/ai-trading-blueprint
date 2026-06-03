@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Identicon } from '@tangle-network/blueprint-ui/components';
@@ -17,6 +17,12 @@ import {
   fillCountEvidenceTitle,
   resolveFillCountEvidence,
 } from '~/lib/tradeEvidence';
+import {
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from '~/components/arena/WorkspaceResizeControls';
 
 export type AgentWorkspaceSection = 'performance' | 'portfolio' | 'runs' | 'chat' | 'operations';
 
@@ -32,6 +38,25 @@ interface AgentWorkspaceShellProps {
   backHref?: string;
   focusMode?: boolean;
   children: ReactNode;
+}
+
+interface AgentWorkspaceShellLayout {
+  railWidth: number;
+}
+
+const AGENT_WORKSPACE_SHELL_LAYOUT_KEY = 'arena:agent-workspace-shell-layout';
+const DEFAULT_AGENT_WORKSPACE_SHELL_LAYOUT: AgentWorkspaceShellLayout = {
+  railWidth: 264,
+};
+
+function normalizeAgentWorkspaceShellLayout(value: Partial<AgentWorkspaceShellLayout>): AgentWorkspaceShellLayout {
+  return {
+    railWidth: clampNumber(
+      Number(value.railWidth) || DEFAULT_AGENT_WORKSPACE_SHELL_LAYOUT.railWidth,
+      224,
+      360,
+    ),
+  };
 }
 
 function formatCompactAddress(value: string): string {
@@ -91,6 +116,12 @@ export function AgentWorkspaceShell({
     enabled: !focusMode,
   });
   const [addressCopied, setAddressCopied] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = usePersistentWorkspaceLayout(
+    AGENT_WORKSPACE_SHELL_LAYOUT_KEY,
+    DEFAULT_AGENT_WORKSPACE_SHELL_LAYOUT,
+    normalizeAgentWorkspaceShellLayout,
+  );
   const explorerAddress = getExplorerAddressUrl(targetChainId ?? bot.chainId, bot.operatorAddress);
 
   const formatSignedPercent = (value: number | null) => {
@@ -159,6 +190,23 @@ export function AgentWorkspaceShell({
       title: fillCountEvidenceTitle(fillCountEvidence),
     },
   ];
+  const agentRailStyle = {
+    width: layout.railWidth,
+    flexBasis: layout.railWidth,
+  } as CSSProperties;
+  const startRailResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    const rect = shell.getBoundingClientRect();
+    beginWorkspaceResize(event, {
+      cursor: 'col-resize',
+      onMove: (moveEvent) => {
+        const maxWidth = Math.min(360, Math.max(264, rect.width * 0.32));
+        const nextWidth = clampNumber(moveEvent.clientX - rect.left, 224, maxWidth);
+        setLayout({ railWidth: nextWidth });
+      },
+    });
+  };
 
   const mobileHeader = (
     <div className="shrink-0 border-b border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1 px-2 py-2 lg:hidden">
@@ -194,7 +242,10 @@ export function AgentWorkspaceShell({
   );
 
   const agentRail = (
-    <aside className="hidden w-[244px] shrink-0 flex-col border-r border-[#273035] bg-[#0b1418] lg:flex xl:w-[264px]">
+    <aside
+      className="hidden shrink-0 flex-col border-r border-[#273035] bg-[#0b1418] lg:flex"
+      style={agentRailStyle}
+    >
       <div className="border-b border-[#273035] p-3">
         <Link
           to="/leaderboard"
@@ -336,7 +387,7 @@ export function AgentWorkspaceShell({
   );
 
   return (
-    <div className="arena-trace-terminal flex h-full min-h-0 overflow-hidden bg-[var(--arena-terminal-bg)]">
+    <div ref={shellRef} className="arena-trace-terminal flex h-full min-h-0 overflow-hidden bg-[var(--arena-terminal-bg)]">
       {focusMode ? (
         <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="arena-trace-terminal shrink-0 border-b border-[#273035] bg-[#081013] text-[#f6fefd]">
@@ -372,6 +423,13 @@ export function AgentWorkspaceShell({
       ) : (
         <>
           {agentRail}
+          <WorkspaceResizeHandle
+            orientation="vertical"
+            className="hidden w-2 lg:flex"
+            ariaLabel="Resize agent rail"
+            title="Drag to resize agent rail"
+            onPointerDown={startRailResize}
+          />
           <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
             {mobileHeader}
             <div className="min-h-0 flex-1 overflow-hidden p-2 sm:p-3">

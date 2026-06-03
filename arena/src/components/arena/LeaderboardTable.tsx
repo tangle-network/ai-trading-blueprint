@@ -46,7 +46,105 @@ export function LeaderboardTable({
   const sorted = rankLeaderboardBots(bots);
 
   return (
-    <div className="rounded-none [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_.relative.overflow-auto]:!rounded-none [&_table]:!rounded-none [&_tbody]:!rounded-none [&_td]:!rounded-none [&_th]:!rounded-none [&_thead]:!rounded-none [&_tr]:!rounded-none">
+    <>
+      <div className="md:hidden">
+        {sorted.map((bot, index) => {
+          const href = `/arena/bot/${encodeURIComponent(bot.id)}/performance`;
+          const stats = activityStatsByBotId?.get(bot.id);
+          const lastTradeAt = stats?.lastTradeAt ?? null;
+          const returnValue = bot.pnlPercent === 0 ? '0.0%' : `${bot.pnlPercent > 0 ? '+' : ''}${formatNumber(bot.pnlPercent, { maximumFractionDigits: 1 })}%`;
+          const selected = bot.id === selectedBotId;
+          const openRow = () => {
+            if (onSelectBot) {
+              onSelectBot(bot);
+            } else {
+              navigate(href);
+            }
+          };
+
+          return (
+            <article
+              key={bot.id}
+              className={`grid min-w-0 grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-3 transition-colors ${
+                selected ? 'bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_rgba(80,210,193,0.9)]' : 'bg-[var(--arena-terminal-panel)]'
+              }`}
+            >
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] font-data text-sm font-semibold text-[var(--arena-terminal-text-muted)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                aria-label={onSelectBot ? `Inspect ${bot.name}` : `Open ${bot.name} performance`}
+                aria-current={selected ? 'true' : undefined}
+                onClick={openRow}
+              >
+                {formatNumber(index + 1, { maximumFractionDigits: 0 })}
+              </button>
+              <button
+                type="button"
+                className="flex min-w-0 items-center gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                aria-label={onSelectBot ? `Inspect ${bot.name}` : `Open ${bot.name} performance`}
+                onClick={openRow}
+              >
+                <Identicon address={bot.operatorAddress as Address} size={36} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-display text-base font-semibold leading-tight text-[var(--arena-terminal-text)]">
+                    {bot.name}
+                  </span>
+                  <span className="mt-1 flex min-w-0 items-center gap-2 font-data text-xs">
+                    <span className="truncate text-[var(--arena-terminal-text-muted)]">
+                      {STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}
+                    </span>
+                    <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
+                    <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-accent)]' : 'truncate text-[var(--arena-terminal-text-muted)]'}>
+                      {botStatusLabel(bot.status)}
+                    </span>
+                  </span>
+                </span>
+              </button>
+              <Link
+                to={href}
+                className="inline-flex h-9 w-9 items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-muted)] transition-colors hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                aria-label={`Open ${bot.name} performance`}
+                title="Open performance"
+              >
+                <span className="i-ph:arrow-square-out text-sm" aria-hidden="true" />
+              </Link>
+              <dl className="col-span-3 grid min-w-0 grid-cols-4 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+                <div className="min-w-0 border-r border-[var(--arena-terminal-border)] px-2 py-2">
+                  <dt className="truncate font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">Vol</dt>
+                  <dd className="mt-1 truncate font-data text-sm font-semibold tabular-nums text-[var(--arena-terminal-text)]">
+                    {formatFlowUsd(stats?.recentNotionalUsd ?? 0)}
+                  </dd>
+                </div>
+                <div className="min-w-0 border-r border-[var(--arena-terminal-border)] px-2 py-2">
+                  <dt className="truncate font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">Fills</dt>
+                  <dd className="mt-1 truncate font-data text-sm font-semibold tabular-nums text-[var(--arena-terminal-text)]">
+                    {formatNumber(stats?.recentFills ?? 0, { maximumFractionDigits: 0 })}
+                  </dd>
+                </div>
+                <div className="min-w-0 border-r border-[var(--arena-terminal-border)] px-2 py-2">
+                  <dt className="truncate font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">Last</dt>
+                  <dd className="mt-1 truncate font-data text-sm tabular-nums text-[var(--arena-terminal-text-secondary)]">
+                    {lastTradeAt != null ? formatTradeAge(lastTradeAt) : 'No fills'}
+                  </dd>
+                </div>
+                <div className="min-w-0 px-2 py-2 text-right">
+                  <dt className="truncate font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">PnL</dt>
+                  <dd className="mt-1 truncate font-data text-sm font-semibold tabular-nums">
+                    {bot.pnlPercent === 0 ? (
+                      <span className="text-[var(--arena-terminal-text-subtle)]">{returnValue}</span>
+                    ) : bot.pnlPercent > 0 ? (
+                      <span className="text-[var(--arena-terminal-accent)]">{returnValue}</span>
+                    ) : (
+                      <span className="text-[var(--arena-terminal-danger)]">{returnValue}</span>
+                    )}
+                  </dd>
+                </div>
+              </dl>
+            </article>
+          );
+        })}
+      </div>
+      <div className="hidden rounded-none md:block [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_.relative.overflow-auto]:!rounded-none [&_table]:!rounded-none [&_tbody]:!rounded-none [&_td]:!rounded-none [&_th]:!rounded-none [&_thead]:!rounded-none [&_tr]:!rounded-none">
     <Table className="w-full min-w-[760px] table-fixed rounded-none bg-[var(--arena-terminal-panel)] [&_td]:rounded-none [&_th]:rounded-none [&_thead]:rounded-none [&_tr]:rounded-none">
       <TableHeader>
         <TableRow className="rounded-none border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] hover:bg-[var(--arena-terminal-surface)]">
@@ -176,5 +274,6 @@ export function LeaderboardTable({
       </TableBody>
     </Table>
     </div>
+    </>
   );
 }

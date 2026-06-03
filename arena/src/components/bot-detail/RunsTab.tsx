@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import type { AgentBranding, SessionPart } from "@tangle-network/sandbox-ui/types";
 import { ChatTranscript } from "~/components/bot-detail/chat/ChatTranscript";
@@ -42,6 +42,12 @@ import { UnverifiedDataNotice } from "./shared/DataAccessNotices";
 import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
 import { DecisionInspector } from "./shared/DecisionInspector";
 import { TerminalEmptyState } from "./shared/WorkspacePrimitives";
+import {
+  WorkspaceResizeHandle,
+  beginWorkspaceResize,
+  clampNumber,
+  usePersistentWorkspaceLayout,
+} from "~/components/arena/WorkspaceResizeControls";
 
 interface RunsTabProps {
   botId: string;
@@ -68,6 +74,32 @@ interface RunsSummary {
   running: number;
   completed: number;
   failed: number;
+}
+
+interface RunsWorkspaceLayout {
+  sidebarWidth: number;
+  inspectorWidth: number;
+}
+
+const RUNS_WORKSPACE_LAYOUT_KEY = "arena:runs-workspace-layout";
+const DEFAULT_RUNS_WORKSPACE_LAYOUT: RunsWorkspaceLayout = {
+  sidebarWidth: 252,
+  inspectorWidth: 360,
+};
+
+function normalizeRunsWorkspaceLayout(value: Partial<RunsWorkspaceLayout>): RunsWorkspaceLayout {
+  return {
+    sidebarWidth: clampNumber(
+      Number(value.sidebarWidth) || DEFAULT_RUNS_WORKSPACE_LAYOUT.sidebarWidth,
+      220,
+      360,
+    ),
+    inspectorWidth: clampNumber(
+      Number(value.inspectorWidth) || DEFAULT_RUNS_WORKSPACE_LAYOUT.inspectorWidth,
+      300,
+      540,
+    ),
+  };
 }
 
 const RUNS_BRANDING: AgentBranding = {
@@ -204,6 +236,7 @@ function RunsSidebar({
   collapsed,
   hasOlderRuns,
   isLoadingOlderRuns,
+  width,
   onSelect,
   onLoadOlder,
   onToggleCollapsed,
@@ -219,16 +252,25 @@ function RunsSidebar({
   collapsed: boolean;
   hasOlderRuns: boolean;
   isLoadingOlderRuns: boolean;
+  width: number;
   onSelect: (id: string) => void;
   onLoadOlder: () => void;
   onToggleCollapsed: () => void;
 }) {
+  const sidebarStyle = !stacked
+    ? {
+        width: collapsed ? 56 : width,
+        flexBasis: collapsed ? 56 : width,
+      } as CSSProperties
+    : undefined;
+
   return (
     <aside
+      style={sidebarStyle}
       className={
         stacked
           ? "flex w-full shrink-0 flex-col overflow-hidden border-b border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40"
-          : `flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200 ${collapsed ? "w-14 basis-14" : "w-[236px] basis-[236px]"}`
+          : "flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/40 transition-[width,flex-basis] duration-200"
       }
     >
       <div className={`border-b border-arena-elements-dividerColor/50 ${collapsed ? "px-2 py-3" : "px-3 py-2.5"}`}>
@@ -692,6 +734,13 @@ export function RunsTab({
       : window.innerWidth < (immersive ? 860 : 1100),
   );
   const [runsSidebarCollapsed, setRunsSidebarCollapsed] = useState(false);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const traceSurfaceRef = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = usePersistentWorkspaceLayout(
+    RUNS_WORKSPACE_LAYOUT_KEY,
+    DEFAULT_RUNS_WORKSPACE_LAYOUT,
+    normalizeRunsWorkspaceLayout,
+  );
   const runsCacheKey = `${baseApiUrl}::${botId}::runs`;
   const authKey = token ?? "anonymous";
 
@@ -873,6 +922,32 @@ export function RunsTab({
   const headerSubtitle = activeRun
     ? `${getWorkflowKindDescription(activeRun.workflowKind)} • ${formatRunTimestamp(activeRun.startedAt)}`
     : "Execution history";
+  const startSidebarResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const rect = workspace.getBoundingClientRect();
+    beginWorkspaceResize(event, {
+      cursor: "col-resize",
+      onMove: (moveEvent) => {
+        const maxWidth = Math.min(360, Math.max(260, rect.width * 0.32));
+        const nextWidth = clampNumber(moveEvent.clientX - rect.left, 220, maxWidth);
+        setLayout((current) => ({ ...current, sidebarWidth: nextWidth }));
+      },
+    });
+  };
+  const startInspectorResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
+    const surface = traceSurfaceRef.current;
+    if (!surface) return;
+    const rect = surface.getBoundingClientRect();
+    beginWorkspaceResize(event, {
+      cursor: "col-resize",
+      onMove: (moveEvent) => {
+        const maxWidth = Math.min(540, Math.max(360, rect.width * 0.45));
+        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 300, maxWidth);
+        setLayout((current) => ({ ...current, inspectorWidth: nextWidth }));
+      },
+    });
+  };
   if (operatorMeta && !operatorMeta.features.chat) {
     return <UnsupportedFeatureCard feature="Runs" />;
   }
@@ -956,6 +1031,7 @@ export function RunsTab({
         }
       >
         <div
+          ref={workspaceRef}
           className={`flex min-w-0 ${immersive ? "h-full min-h-0" : "h-[min(1040px,calc(100vh-8rem))] min-h-[760px]"} ${isStackedLayout ? "flex-col" : "flex-row"}`}
         >
           {showRunsSidebar && (
@@ -971,11 +1047,21 @@ export function RunsTab({
               collapsed={!isStackedLayout && runsSidebarCollapsed}
               hasOlderRuns={runsQuery.hasNextPage}
               isLoadingOlderRuns={runsQuery.isFetchingNextPage}
+              width={layout.sidebarWidth}
               onSelect={setActiveRunId}
               onLoadOlder={() => {
                 void runsQuery.fetchNextPage();
               }}
               onToggleCollapsed={() => setRunsSidebarCollapsed((collapsed) => !collapsed)}
+            />
+          )}
+          {showRunsSidebar && !isStackedLayout && !runsSidebarCollapsed && (
+            <WorkspaceResizeHandle
+              orientation="vertical"
+              className="w-2"
+              ariaLabel={`Resize ${surfaceCopy.label.toLowerCase()} history`}
+              title={`Drag to resize ${surfaceCopy.label.toLowerCase()} history`}
+              onPointerDown={startSidebarResize}
             />
           )}
 
@@ -1036,13 +1122,19 @@ export function RunsTab({
             )}
 
             <div
+              ref={traceSurfaceRef}
               className={`arena-trace-surface min-h-0 flex-1 bg-[#081013] ${
                 !showDecisionInspector
                   ? ""
                   : isStackedLayout
                     ? "flex flex-col"
-                    : "grid grid-cols-[minmax(0,1fr)_360px]"
+                    : "grid"
               }`}
+              style={!isStackedLayout && showDecisionInspector
+                ? {
+                    gridTemplateColumns: `minmax(0,1fr) 8px minmax(300px, ${layout.inspectorWidth}px)`,
+                  }
+                : undefined}
             >
               {showDecisionInspector && isStackedLayout && (
                 <DecisionInspector
@@ -1066,11 +1158,20 @@ export function RunsTab({
                 ) : null}
               </div>
               {showDecisionInspector && !isStackedLayout && (
+                <>
+                <WorkspaceResizeHandle
+                  orientation="vertical"
+                  className="col-start-2 row-start-1 w-2"
+                  ariaLabel="Resize run evidence inspector"
+                  title="Drag to resize run evidence inspector"
+                  onPointerDown={startInspectorResize}
+                />
                 <DecisionInspector
                   item={selectedDecisionItem}
                   variant="terminal"
-                  className="border-l border-[#273035]"
+                  className="col-start-3 row-start-1 border-l border-[#273035]"
                 />
+                </>
               )}
             </div>
 
