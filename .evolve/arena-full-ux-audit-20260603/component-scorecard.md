@@ -87,6 +87,7 @@ Scoring target: 9+ is shippable professional product quality, 8+ is credible and
 
 1. Terminal trade action pills now use semantic CSS classes instead of hard-coded arbitrary dark colors. This fixes invisible sell/short/close action labels in light theme and affects portfolio executions, activity explorer, and fill inspectors.
 2. Chat transcript run headers no longer render non-collapsible assistant responses as inert buttons. Collapsible tool/reasoning runs remain buttons with `aria-expanded`.
+3. DEX pair labels and Operations nested text overrides now inherit terminal theme variables instead of hard-coded light-on-light color overrides.
 
 ## Remaining Watch Items
 

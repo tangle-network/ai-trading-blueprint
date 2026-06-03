@@ -223,7 +223,7 @@ export function TradeInstrumentDisplay({
           left={trade.assetIn}
           right={trade.assetOut}
           size={isCompact ? 'sm' : 'md'}
-          labelClassName={joinClasses(terminal && '!text-[#d2dad7]', labelClassName)}
+          labelClassName={labelClassName}
         />
         {showVenue && (
           <div className={joinClasses(

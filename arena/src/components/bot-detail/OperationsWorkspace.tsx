@@ -810,9 +810,9 @@ export function OperationsWorkspace({
     }
   })();
   const terminalOperationsClass = [
-    '[&_.text-arena-elements-textPrimary]:!text-[#f6fefd]',
-    '[&_.text-arena-elements-textSecondary]:!text-[#d2dad7]',
-    '[&_.text-arena-elements-textTertiary]:!text-[#949e9c]',
+    '[&_.text-arena-elements-textPrimary]:!text-[var(--arena-terminal-text)]',
+    '[&_.text-arena-elements-textSecondary]:!text-[var(--arena-terminal-text-secondary)]',
+    '[&_.text-arena-elements-textTertiary]:!text-[var(--arena-terminal-text-muted)]',
     '[&_.glass-card]:!border-[#273035]',
     '[&_.glass-card]:!bg-[#0f1a1f]',
   ].join(' ');
