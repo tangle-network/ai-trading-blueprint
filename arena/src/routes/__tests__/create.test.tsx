@@ -29,6 +29,19 @@ describe('create agent route', () => {
     hoisted.getTokenMock.mockReset().mockResolvedValue('token')
   })
 
+  it('opens on a Hyperliquid perp mandate so the compiler matches the visible default prompt', async () => {
+    const { default: CreateAgent } = await import('../create')
+    render(<CreateAgent />)
+
+    expect(screen.getByLabelText('Trading agent strategy prompt')).toHaveValue(
+      'I want an agent that trades ETH perps on Hyperliquid, using breakout retests with strict max leverage, liquidation buffer, and drawdown limits.',
+    )
+    expect(screen.getByRole('button', { name: /hyperliquid perp/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByText('Hyperliquid Perps').length).toBeGreaterThanOrEqual(3)
+    expect(screen.getAllByText(/Leverage cap/i).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText(/liquidation buffer/i).length).toBeGreaterThanOrEqual(1)
+  })
+
   it('does not double-submit when create is triggered twice before the request resolves', async () => {
     let resolveFetch: (response: Response) => void = () => {}
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => {

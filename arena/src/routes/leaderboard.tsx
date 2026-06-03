@@ -143,7 +143,7 @@ function SelectedAgentDossier({
       aria-label="Selected agent dossier"
       className="hidden min-h-0 flex-1 grid-rows-[auto_auto_minmax(0,1fr)] border-t border-[#273035] bg-[#0b1418] min-[1024px]:grid"
     >
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#273035] px-3 py-2">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#273035] px-3 py-2 min-[1360px]:hidden">
         <div className="flex min-w-0 items-center gap-3">
           <Identicon address={bot.operatorAddress as Address} size={34} />
           <div className="min-w-0">
@@ -177,7 +177,7 @@ function SelectedAgentDossier({
         </nav>
       </div>
 
-      <div className="grid grid-cols-6 border-b border-[#273035]">
+      <div className="grid grid-cols-6 border-b border-[#273035] min-[1360px]:hidden">
         <AgentDossierCell label="Account" value={accountValue} />
         <AgentDossierCell label="24H Vol" value={formatFlowUsd(recentNotionalUsd)} />
         <AgentDossierCell label="Return" value={returnValue} tone={valueTone(bot.pnlPercent)} />
@@ -186,8 +186,8 @@ function SelectedAgentDossier({
         <AgentDossierCell label="Last" value={activityStats?.lastTradeAt ? formatTradeAge(activityStats.lastTradeAt) : '—'} />
       </div>
 
-      <div className="grid min-h-0 grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-0 min-[1360px]:grid-cols-[minmax(0,0.62fr)_minmax(0,1.38fr)]">
-        <div className="min-w-0 border-r border-[#273035] px-3 py-2">
+      <div className="grid min-h-0 grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-0 min-[1360px]:grid-cols-1">
+        <div className="min-w-0 border-r border-[#273035] px-3 py-2 min-[1360px]:hidden">
           <div className="mb-2 flex items-center justify-between gap-3">
             <span className="font-display text-sm font-semibold text-[#f6fefd]">Execution</span>
             <span className={`rounded-[4px] border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] ${

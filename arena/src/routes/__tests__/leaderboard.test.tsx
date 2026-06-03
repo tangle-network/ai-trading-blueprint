@@ -207,6 +207,7 @@ describe('LeaderboardPage', () => {
     );
     expect(screen.getByLabelText('Selected agent cockpit')).toBeInTheDocument();
     expect(screen.getByLabelText('Selected agent dossier')).toBeInTheDocument();
+    expect(screen.getByLabelText('Agent leaderboard')).toHaveClass('max-h-[260px]');
     expect(screen.getByRole('heading', { name: 'ETH Macro Scalper' })).toBeInTheDocument();
     expect(screen.getByText('Routing')).toBeInTheDocument();
     expect(screen.getAllByText('24H').length).toBeGreaterThanOrEqual(1);

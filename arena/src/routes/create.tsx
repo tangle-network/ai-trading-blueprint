@@ -64,6 +64,9 @@ const STRATEGY_HINTS = [
   prompt: string
 }>
 
+const DEFAULT_STRATEGY_HINT =
+  STRATEGY_HINTS.find((hint) => hint.strategyType === 'perp') ?? STRATEGY_HINTS[0]
+
 const STRATEGY_PROFILES: Record<StrategyType, {
   label: string
   venue: string
@@ -94,7 +97,7 @@ const STRATEGY_PROFILES: Record<StrategyType, {
   },
   perp: {
     label: 'Perp Strategy',
-    venue: 'Hyperliquid / derivatives',
+    venue: 'Hyperliquid Perps',
     route: 'Fast replay -> margin check -> workspace',
     envelope: 'Leverage cap, liquidation buffer, latency check',
     icon: 'i-ph:pulse',
@@ -133,7 +136,7 @@ interface CreateBotResponse {
 }
 
 export default function CreateAgent() {
-  const [prompt, setPrompt] = useState('')
+  const [prompt, setPrompt] = useState(DEFAULT_STRATEGY_HINT.prompt)
   const [isCreating, setIsCreating] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
