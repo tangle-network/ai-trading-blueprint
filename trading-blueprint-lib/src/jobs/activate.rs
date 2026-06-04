@@ -1370,7 +1370,7 @@ pub(crate) async fn write_file_to_sidecar(
     Ok(())
 }
 
-pub(crate) fn remove_bot_workflows(bot_id: &str, workflow_id: u64) -> Result<(), String> {
+pub fn remove_bot_workflows(bot_id: &str, workflow_id: u64) -> Result<(), String> {
     let store = ai_agent_sandbox_blueprint_lib::workflows::workflows()?;
 
     for id in [

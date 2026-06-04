@@ -12,7 +12,7 @@ use sandbox_runtime::api_types::{
 use sandbox_runtime::session_auth::SessionAuth;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::str::FromStr;
 use std::time::Duration;
 use trading_blueprint_lib::workflow_compat::{WorkflowRunRecord, WorkflowRunStatus};
@@ -639,6 +639,10 @@ pub fn build_operator_router() -> Router {
         // Bot management
         .route("/api/bots", get(list_bots).post(create_bot))
         .route("/api/bots/repair-names", post(repair_bot_names))
+        .route(
+            "/api/bots/{bot_id}/strategy/repair",
+            post(repair_bot_strategy),
+        )
         .route("/api/bots/{bot_id}", get(get_bot))
         .route(
             "/api/bots/{bot_id}/secrets",
@@ -938,6 +942,47 @@ struct BotNameRepairResponse {
     results: Vec<BotNameRepairResult>,
 }
 
+#[derive(Deserialize, Default)]
+struct RepairBotStrategyRequest {
+    #[serde(default)]
+    dry_run: bool,
+    /// Recreate and reactivate the paper bot after persisting the repaired pack.
+    #[serde(default = "default_true")]
+    reactivate: bool,
+    /// Reapply the pack even when the inferred target already matches.
+    #[serde(default)]
+    force: bool,
+    /// Optional explicit target. If omitted, the stored/user prompt is authoritative.
+    #[serde(default)]
+    strategy_type: Option<String>,
+    /// Optional replacement mandate used for inference and stored as user_prompt.
+    #[serde(default)]
+    prompt: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Serialize)]
+struct RepairBotStrategyResponse {
+    bot_id: String,
+    dry_run: bool,
+    changed: bool,
+    reactivated: bool,
+    old_strategy_type: String,
+    new_strategy_type: String,
+    changed_fields: Vec<String>,
+    old_sandbox_id: String,
+    new_sandbox_id: Option<String>,
+    old_workflow_id: Option<u64>,
+    new_workflow_id: Option<u64>,
+    name: String,
+    strategy_config: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activation_error: Option<String>,
+}
+
 /// Canonical USDC address for the common chains we deploy on.
 /// Unknown chains fall through; callers must supply `ASSET_TOKEN_ADDRESS`.
 fn default_asset_token_address(chain_id: u64) -> Option<&'static str> {
@@ -978,6 +1023,29 @@ fn create_bot_protocol_chain_id(strategy_type: &str, execution_chain_id: u64) ->
         "hyperliquid_perp" => default_hyperliquid_protocol_chain_id(execution_chain_id),
         _ => configured_protocol_chain_id(execution_chain_id),
     }
+}
+
+fn strategy_protocol_chain_and_asset_token(
+    strategy_type: &str,
+    chain_id: u64,
+) -> Result<(u64, String), ApiError> {
+    let protocol_chain_id = create_bot_protocol_chain_id(strategy_type, chain_id);
+    let asset_token = std::env::var("ASSET_TOKEN_ADDRESS")
+        .or_else(|_| std::env::var("USDC_ADDRESS"))
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| default_asset_token_address(protocol_chain_id).map(str::to_string))
+        .ok_or_else(|| {
+            ApiError::message(
+                StatusCode::FAILED_DEPENDENCY,
+                format!(
+                    "No asset token configured for chain {chain_id} / protocol chain {protocol_chain_id}. \
+                     Set ASSET_TOKEN_ADDRESS or USDC_ADDRESS."
+                ),
+            )
+        })?;
+    Ok((protocol_chain_id, asset_token))
 }
 
 fn parse_bool_env(raw: &str) -> Option<bool> {
@@ -1750,6 +1818,262 @@ async fn repair_bot_names(
     }))
 }
 
+fn changed_strategy_fields(old: &serde_json::Value, new: &serde_json::Value) -> Vec<String> {
+    let (Some(old_object), Some(new_object)) = (old.as_object(), new.as_object()) else {
+        return (old != new)
+            .then(|| "strategy_config".to_string())
+            .into_iter()
+            .collect();
+    };
+
+    let mut keys = BTreeSet::new();
+    keys.extend(old_object.keys().cloned());
+    keys.extend(new_object.keys().cloned());
+    keys.into_iter()
+        .filter(|key| old_object.get(key) != new_object.get(key))
+        .collect()
+}
+
+fn repair_prompt(
+    bot: &TradingBotRecord,
+    body: &RepairBotStrategyRequest,
+) -> Result<String, ApiError> {
+    body.prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| prompt_from_config(&bot.strategy_config))
+        .map(str::to_string)
+        .ok_or_else(|| {
+            ApiError::message(
+                StatusCode::BAD_REQUEST,
+                "strategy repair requires a prompt or stored strategy_config.user_prompt",
+            )
+        })
+}
+
+async fn repair_bot_strategy(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+    Json(body): Json<RepairBotStrategyRequest>,
+) -> ApiResult<RepairBotStrategyResponse> {
+    if !is_operator_admin(&caller) {
+        return Err(ApiError::message(
+            StatusCode::FORBIDDEN,
+            "operator admin session required",
+        ));
+    }
+    if !body.dry_run && !body.reactivate {
+        return Err(ApiError::message(
+            StatusCode::BAD_REQUEST,
+            "strategy repair must reactivate the bot; use dry_run=true to preview only",
+        ));
+    }
+
+    let bot = resolve_bot(&bot_id).map_err(ApiError::from)?;
+    if !bot.paper_trade {
+        return Err(ApiError::message(
+            StatusCode::CONFLICT,
+            "strategy repair is limited to paper-trading bots",
+        ));
+    }
+    if bot.wind_down_started_at.is_some() {
+        return Err(ApiError::message(
+            StatusCode::CONFLICT,
+            "strategy repair refuses winding-down bots",
+        ));
+    }
+    if bot.active_trial_run_id.is_some() || bot.active_trial_candidate_hash.is_some() {
+        return Err(ApiError::message(
+            StatusCode::CONFLICT,
+            "strategy repair refuses bots with an active self-improvement trial",
+        ));
+    }
+
+    let prompt = repair_prompt(&bot, &body)?;
+    let requested_strategy = body
+        .strategy_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let target_strategy = trading_runtime::supported_assets::normalize_strategy_type(
+        &infer_create_bot_strategy_type(&prompt, requested_strategy),
+    );
+    let (_, asset_token) = strategy_protocol_chain_and_asset_token(&target_strategy, bot.chain_id)?;
+    let asset_token = asset_token.parse().map_err(|e| {
+        ApiError::message(
+            StatusCode::FAILED_DEPENDENCY,
+            format!("Invalid asset token for repaired strategy: {e}"),
+        )
+    })?;
+
+    let realigned = trading_blueprint_lib::jobs::realign_existing_bot_strategy_pack(
+        &bot,
+        &target_strategy,
+        &prompt,
+        asset_token,
+    )
+    .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, e))?;
+
+    let mut changed_fields =
+        changed_strategy_fields(&bot.strategy_config, &realigned.strategy_config);
+    if bot.strategy_type != realigned.strategy_type {
+        changed_fields.insert(0, "strategy_type".to_string());
+    }
+    if bot.harness_json != realigned.harness_json {
+        changed_fields.push("harness_json".to_string());
+    }
+
+    let changed = !changed_fields.is_empty();
+    if !changed && !body.force {
+        return Ok(Json(RepairBotStrategyResponse {
+            bot_id: bot.id.clone(),
+            dry_run: body.dry_run,
+            changed: false,
+            reactivated: false,
+            old_strategy_type: bot.strategy_type.clone(),
+            new_strategy_type: realigned.strategy_type,
+            changed_fields,
+            old_sandbox_id: bot.sandbox_id.clone(),
+            new_sandbox_id: None,
+            old_workflow_id: bot.workflow_id,
+            new_workflow_id: bot.workflow_id,
+            name: effective_bot_name(&bot),
+            strategy_config: bot.strategy_config.clone(),
+            activation_error: None,
+        }));
+    }
+
+    let mut repaired_config = realigned
+        .strategy_config
+        .as_object()
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "repaired strategy config is not an object",
+            )
+        })?;
+    repaired_config.insert(
+        "strategy_repair".to_string(),
+        json!({
+            "previous_strategy_type": bot.strategy_type,
+            "target_strategy_type": realigned.strategy_type,
+            "repaired_at": chrono::Utc::now().to_rfc3339(),
+            "source": "operator_api",
+            "reactivate": body.reactivate,
+        }),
+    );
+
+    let proposed_config = serde_json::Value::Object(repaired_config.clone());
+    let name_resolution = if body.dry_run {
+        BotNameResolution {
+            name: deterministic_bot_name(&prompt, &realigned.strategy_type, &proposed_config),
+            source: "dry_run".to_string(),
+            model: None,
+            fallback_reason: None,
+        }
+    } else {
+        resolve_bot_display_name(None, &prompt, &realigned.strategy_type, &proposed_config).await
+    };
+    persist_name_metadata(&mut repaired_config, &name_resolution);
+    let final_config = serde_json::Value::Object(repaired_config);
+    let final_name = name_resolution.name.clone();
+
+    if body.dry_run {
+        return Ok(Json(RepairBotStrategyResponse {
+            bot_id: bot.id,
+            dry_run: true,
+            changed: true,
+            reactivated: false,
+            old_strategy_type: bot.strategy_type,
+            new_strategy_type: realigned.strategy_type,
+            changed_fields,
+            old_sandbox_id: bot.sandbox_id,
+            new_sandbox_id: None,
+            old_workflow_id: bot.workflow_id,
+            new_workflow_id: bot.workflow_id,
+            name: final_name,
+            strategy_config: final_config,
+            activation_error: None,
+        }));
+    }
+
+    state::bots()
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .update(&state::bot_key(&bot.id), |record| {
+            record.name = final_name.clone();
+            record.strategy_type = realigned.strategy_type.clone();
+            record.strategy_config = final_config.clone();
+            record.harness_json = realigned.harness_json.clone();
+        })
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(workflow_id) = bot.workflow_id
+        && let Err(error) = trading_blueprint_lib::jobs::remove_bot_workflows(&bot.id, workflow_id)
+    {
+        tracing::warn!(bot_id = %bot.id, workflow_id, %error, "strategy repair: failed to remove stale workflows");
+    }
+
+    let updated_bot = state::get_bot(&bot.id)
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| {
+            ApiError::message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "bot missing after strategy repair update",
+            )
+        })?;
+    let new_sandbox_id = trading_blueprint_lib::jobs::force_recreate_bot_sandbox(&updated_bot)
+        .await
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let mut user_env =
+        trading_blueprint_lib::operator_credentials::operator_ai_env().map_err(|message| {
+            ApiError::message(
+                StatusCode::BAD_REQUEST,
+                format!("Activation failed: {message}"),
+            )
+        })?;
+    user_env.insert(
+        "USER_STRATEGY_PROMPT".into(),
+        serde_json::Value::String(prompt),
+    );
+
+    let mut activation_error = None;
+    let activation =
+        match trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot.id, user_env, None).await
+        {
+            Ok(result) => Some(result),
+            Err(error) => {
+                tracing::warn!(bot_id = %bot.id, %error, "strategy repair: reactivation failed");
+                activation_error = Some(error);
+                None
+            }
+        };
+
+    Ok(Json(RepairBotStrategyResponse {
+        bot_id: bot.id,
+        dry_run: false,
+        changed: true,
+        reactivated: activation.is_some(),
+        old_strategy_type: bot.strategy_type,
+        new_strategy_type: realigned.strategy_type,
+        changed_fields,
+        old_sandbox_id: bot.sandbox_id,
+        new_sandbox_id: Some(
+            activation
+                .as_ref()
+                .map(|result| result.sandbox_id.clone())
+                .unwrap_or(new_sandbox_id),
+        ),
+        old_workflow_id: bot.workflow_id,
+        new_workflow_id: activation.as_ref().map(|result| result.workflow_id),
+        name: final_name,
+        strategy_config: final_config,
+        activation_error,
+    }))
+}
+
 async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value> {
     let caller = req
         .headers()
@@ -1787,24 +2111,10 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(31337);
-    let protocol_chain_id = create_bot_protocol_chain_id(&strategy_type, chain_id);
     let vault_factory = std::env::var("VAULT_FACTORY_ADDRESS")
         .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into());
-    let asset_token = std::env::var("ASSET_TOKEN_ADDRESS")
-        .or_else(|_| std::env::var("USDC_ADDRESS"))
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .or_else(|| default_asset_token_address(protocol_chain_id).map(str::to_string))
-        .ok_or_else(|| {
-            ApiError::message(
-                StatusCode::FAILED_DEPENDENCY,
-                format!(
-                    "No asset token configured for chain {chain_id} / protocol chain {protocol_chain_id}. \
-                     Set ASSET_TOKEN_ADDRESS or USDC_ADDRESS."
-                ),
-            )
-        })?;
+    let (protocol_chain_id, asset_token) =
+        strategy_protocol_chain_and_asset_token(&strategy_type, chain_id)?;
     let rpc_url = std::env::var("HTTP_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".into());
     let paper_trade = default_paper_trade_for_chain(chain_id);
 
@@ -7743,6 +8053,151 @@ mod tests {
             .expect("bots store")
             .insert(state::bot_key(id), record.clone());
         record
+    }
+
+    static ENV_LOCK: Lazy<std::sync::Mutex<()>> = Lazy::new(|| std::sync::Mutex::new(()));
+
+    fn set_test_admin_env(_guard: &std::sync::MutexGuard<'_, ()>) {
+        // SAFETY: serialized by ENV_LOCK for tests that mutate OPERATOR_ADDRESS.
+        unsafe {
+            std::env::set_var("OPERATOR_ADDRESS", TEST_AUTH_ADDRESS);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_repair_strategy_requires_operator_admin() {
+        ensure_state_dir();
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: serialized by ENV_LOCK for tests that mutate OPERATOR_ADDRESS.
+        unsafe {
+            std::env::remove_var("OPERATOR_ADDRESS");
+        }
+        seed_bot(
+            "repair-admin-required-1",
+            TEST_AUTH_ADDRESS,
+            true,
+            "sandbox-repair-admin-required-1",
+        );
+
+        let app = build_operator_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/repair-admin-required-1/strategy/repair")
+                    .header("content-type", "application/json")
+                    .header("authorization", test_auth_header())
+                    .body(Body::from(r#"{"dry_run":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_repair_strategy_dry_run_retargets_hyperliquid_pack() {
+        ensure_state_dir();
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_test_admin_env(&_guard);
+        let prompt = "I want an agent that trades ETH perps on Hyperliquid with strict liquidation and drawdown limits.";
+        let mut bot = seed_bot(
+            "repair-hyperliquid-dry-run-1",
+            TEST_AUTH_ADDRESS,
+            true,
+            "sandbox-repair-hyperliquid-dry-run-1",
+        );
+        bot.strategy_type = "perp".to_string();
+        bot.chain_id = 84532;
+        bot.strategy_config = serde_json::json!({
+            "user_prompt": prompt,
+            "strategy_type": "perp",
+            "protocol_chain_id": 84532,
+            "available_protocols": ["gmx_v2"],
+            "supported_assets": [{"symbol": "ETH", "protocol": "gmx_v2", "chain_id": 42161}],
+            "position_sizing": {"method": "fixed_fraction", "fraction": 0.1}
+        });
+        state::bots()
+            .expect("bots store")
+            .insert(state::bot_key(&bot.id), bot.clone())
+            .expect("update bot");
+
+        let app = build_operator_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/repair-hyperliquid-dry-run-1/strategy/repair")
+                    .header("content-type", "application/json")
+                    .header("authorization", test_auth_header())
+                    .body(Body::from(r#"{"dry_run":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["changed"], true);
+        assert_eq!(json["reactivated"], false);
+        assert_eq!(json["new_strategy_type"], "hyperliquid_perp");
+        assert_eq!(json["strategy_config"]["protocol_chain_id"], 998);
+        assert_eq!(
+            json["strategy_config"]["available_protocols"],
+            serde_json::json!(["hyperliquid"])
+        );
+        assert_eq!(
+            json["strategy_config"]["supported_assets"][0]["protocol"],
+            "hyperliquid"
+        );
+
+        let stored = state::get_bot("repair-hyperliquid-dry-run-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.strategy_type, "perp");
+        assert_eq!(
+            stored.strategy_config["available_protocols"],
+            serde_json::json!(["gmx_v2"])
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_repair_strategy_refuses_live_money_bot() {
+        ensure_state_dir();
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_test_admin_env(&_guard);
+        let mut bot = seed_bot(
+            "repair-live-refused-1",
+            TEST_AUTH_ADDRESS,
+            true,
+            "sandbox-repair-live-refused-1",
+        );
+        bot.paper_trade = false;
+        bot.strategy_config = serde_json::json!({
+            "user_prompt": "Trade ETH perps on Hyperliquid"
+        });
+        state::bots()
+            .expect("bots store")
+            .insert(state::bot_key(&bot.id), bot)
+            .expect("update bot");
+
+        let app = build_operator_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/repair-live-refused-1/strategy/repair")
+                    .header("content-type", "application/json")
+                    .header("authorization", test_auth_header())
+                    .body(Body::from(r#"{"dry_run":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
     async fn spawn_mock_hyperliquid_nav_api() -> String {

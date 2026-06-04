@@ -563,6 +563,92 @@ fn apply_strategy_defaults(
     apply_hyperliquid_perp_defaults(strategy_config, request, paper_trade, bot_id)
 }
 
+#[derive(Clone, Debug)]
+pub struct StrategyPackRealignment {
+    pub strategy_type: String,
+    pub strategy_config: Value,
+    pub harness_json: Value,
+}
+
+fn remove_strategy_pack_derived_fields(strategy_config: &mut Map<String, Value>) {
+    for key in [
+        "strategy_type",
+        "protocol_chain_id",
+        "available_protocols",
+        "supported_assets",
+        "asset_universe",
+        "asset_token",
+        "cash_token",
+        "protocol",
+        "target_protocol",
+        "venue",
+        "exchange",
+        "adapter",
+        "hyperliquid_execution_model",
+        "hyperliquid_account",
+        "hyperliquid_account_address",
+        "hyperliquid_account_source",
+        "hyperliquid_api_wallet_address",
+        "hyperliquid_api_wallet_approval",
+        "hyperliquid_api_wallet_approval_status",
+        "hyperliquid_api_wallet_name",
+    ] {
+        strategy_config.remove(key);
+    }
+}
+
+/// Rebuild strategy-pack-owned config for an existing paper bot.
+///
+/// This is intentionally narrower than full reprovisioning: it preserves owner
+/// risk knobs and learned metadata, but clears derived protocol/universe fields
+/// that would otherwise keep a stale sandbox pointed at the wrong venue.
+pub fn realign_existing_bot_strategy_pack(
+    bot: &TradingBotRecord,
+    target_strategy_type: &str,
+    prompt: &str,
+    asset_token: Address,
+) -> Result<StrategyPackRealignment, String> {
+    let strategy_type =
+        trading_runtime::supported_assets::normalize_strategy_type(target_strategy_type);
+    let mut strategy_config = bot.strategy_config.as_object().cloned().unwrap_or_default();
+    remove_strategy_pack_derived_fields(&mut strategy_config);
+
+    let prompt = prompt.trim();
+    if !prompt.is_empty() {
+        strategy_config.insert("user_prompt".to_string(), Value::String(prompt.to_string()));
+    }
+    strategy_config.insert("paper_trade".to_string(), Value::Bool(bot.paper_trade));
+
+    let request = TradingProvisionRequest {
+        name: bot.name.clone(),
+        strategy_type: strategy_type.clone(),
+        strategy_config_json: String::new(),
+        risk_params_json: serde_json::to_string(&bot.risk_params).unwrap_or_else(|_| "{}".into()),
+        factory_address: Address::ZERO,
+        asset_token,
+        signers: Vec::new(),
+        required_signatures: U256::ZERO,
+        chain_id: U256::from(bot.chain_id),
+        rpc_url: bot.rpc_url.clone(),
+        trading_loop_cron: bot.trading_loop_cron.clone(),
+        cpu_cores: 1,
+        memory_mb: 512,
+        max_lifetime_days: bot.max_lifetime_days,
+        validator_service_ids: bot.validator_service_ids.clone(),
+        max_collateral_bps: U256::ZERO,
+        validation_trust: bot.validation_trust as u8,
+    };
+
+    apply_strategy_defaults(&mut strategy_config, &request, bot.paper_trade, &bot.id)?;
+    let harness_json = harness_json_for_strategy_config(&strategy_config)?;
+
+    Ok(StrategyPackRealignment {
+        strategy_type,
+        strategy_config: Value::Object(strategy_config),
+        harness_json,
+    })
+}
+
 fn is_hyperliquid_perp_strategy(strategy_type: &str) -> bool {
     matches!(
         strategy_type.trim().to_ascii_lowercase().as_str(),
@@ -970,15 +1056,7 @@ pub async fn ensure_active_bot_sandboxes() -> usize {
     healed
 }
 
-/// Self-heal one bot whose sidecar sandbox is missing from operator-local state.
-///
-/// Caller is responsible for re-injecting secrets afterwards via
-/// `activate_bot_with_secrets`.
-pub async fn recreate_bot_sandbox(bot: &crate::state::TradingBotRecord) -> Result<String, String> {
-    if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_ok() {
-        return Ok(bot.sandbox_id.clone());
-    }
-
+fn bot_recreate_env_json(bot: &crate::state::TradingBotRecord) -> String {
     // Mirror the base (secret-free) env provision_core builds for the sidecar.
     let mut env = Map::new();
     env.insert(
@@ -1013,29 +1091,37 @@ pub async fn recreate_bot_sandbox(bot: &crate::state::TradingBotRecord) -> Resul
         "STRATEGY_CONFIG".into(),
         Value::String(serde_json::to_string(&bot.strategy_config).unwrap_or_default()),
     );
-    let env_json = serde_json::to_string(&env).unwrap_or_default();
+    serde_json::to_string(&env).unwrap_or_default()
+}
 
+fn build_recreated_bot_sandbox_params(bot: &crate::state::TradingBotRecord) -> CreateSandboxParams {
     let lifetime_days = if bot.max_lifetime_days == 0 {
         30
     } else {
         bot.max_lifetime_days
     };
-    let params = CreateSandboxParams {
+    CreateSandboxParams {
         name: bot.name.clone(),
         image: std::env::var("SIDECAR_IMAGE")
             .unwrap_or_else(|_| sandbox_runtime::DEFAULT_SIDECAR_IMAGE.to_string()),
         agent_identifier: format!("trading-{}", bot.strategy_type),
-        env_json,
+        env_json: bot_recreate_env_json(bot),
         capabilities_json: r#"["all_harness"]"#.to_string(),
         max_lifetime_seconds: lifetime_days * 86400,
         idle_timeout_seconds: 0,
         disk_gb: 10,
         ..Default::default()
-    };
+    }
+}
 
+async fn create_recreated_bot_sandbox(
+    bot: &crate::state::TradingBotRecord,
+    reason: &str,
+) -> Result<String, String> {
+    let params = build_recreated_bot_sandbox_params(bot);
     let (record, _attestation) = sandbox_runtime::runtime::create_sidecar(&params, None)
         .await
-        .map_err(|e| format!("self-heal create_sidecar failed: {e}"))?;
+        .map_err(|e| format!("{reason} create_sidecar failed: {e}"))?;
 
     // Repoint the bot at the new sandbox. Must update the record under its
     // canonical key (`bot:{id}`), not the raw id — otherwise get_bot/activate
@@ -1044,15 +1130,78 @@ pub async fn recreate_bot_sandbox(bot: &crate::state::TradingBotRecord) -> Resul
         .update(&crate::state::bot_key(&bot.id), |b| {
             b.sandbox_id = record.id.clone();
         })
-        .map_err(|e| format!("self-heal save bot failed: {e}"))?;
+        .map_err(|e| format!("{reason} save bot failed: {e}"))?;
 
     tracing::info!(
         bot_id = %bot.id,
         old_sandbox = %bot.sandbox_id,
         new_sandbox = %record.id,
-        "self-heal: recreated missing sidecar sandbox"
+        %reason,
+        "recreated bot sidecar sandbox"
     );
     Ok(record.id)
+}
+
+/// Self-heal one bot whose sidecar sandbox is missing from operator-local state.
+///
+/// Caller is responsible for re-injecting secrets afterwards via
+/// `activate_bot_with_secrets`.
+pub async fn recreate_bot_sandbox(bot: &crate::state::TradingBotRecord) -> Result<String, String> {
+    if sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).is_ok() {
+        return Ok(bot.sandbox_id.clone());
+    }
+
+    create_recreated_bot_sandbox(bot, "self-heal").await
+}
+
+/// Recreate a bot sidecar even when the old sandbox still exists.
+///
+/// Strategy-pack repair needs this because sandbox-runtime preserves the base
+/// env across secret injection/wipe. A strategy retarget must launch a fresh
+/// base env containing the updated STRATEGY_TYPE and STRATEGY_CONFIG.
+pub async fn force_recreate_bot_sandbox(
+    bot: &crate::state::TradingBotRecord,
+) -> Result<String, String> {
+    let old_record = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id).ok();
+
+    match create_recreated_bot_sandbox(bot, "strategy-repair").await {
+        Ok(new_sandbox_id) => {
+            if let Some(old_record) = old_record {
+                cleanup_stale_bot_sandbox(bot, &old_record).await;
+            }
+            Ok(new_sandbox_id)
+        }
+        Err(first_error) => {
+            let Some(old_record) = old_record else {
+                return Err(first_error);
+            };
+            tracing::warn!(
+                bot_id = %bot.id,
+                sandbox_id = %bot.sandbox_id,
+                error = %first_error,
+                "strategy repair: initial fresh sidecar create failed; deleting stale sidecar and retrying"
+            );
+            cleanup_stale_bot_sandbox(bot, &old_record).await;
+            create_recreated_bot_sandbox(bot, "strategy-repair").await
+        }
+    }
+}
+
+async fn cleanup_stale_bot_sandbox(
+    bot: &crate::state::TradingBotRecord,
+    old_record: &SandboxRecord,
+) {
+    if let Err(error) = sandbox_runtime::runtime::delete_sidecar(old_record, None).await {
+        tracing::warn!(
+            bot_id = %bot.id,
+            sandbox_id = %old_record.id,
+            %error,
+            "strategy repair: failed to delete stale sidecar after recreate"
+        );
+    }
+    if let Ok(store) = sandbox_runtime::runtime::sandboxes() {
+        let _ = store.remove(&old_record.id);
+    }
 }
 
 fn build_trading_sandbox_params(
@@ -1725,6 +1874,7 @@ mod tests {
     const CHAINLINK_VALUATOR: &str = "0x0000000000000000000000000000000000000222";
     const CUSTOM_TOKEN: &str = "0x0000000000000000000000000000000000000333";
     const KNOWN_TOKEN_WETH: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+    const HYPEREVM_TESTNET_USDC: &str = "0x2B3370eE501B4a559b57D449569354196457D8Ab";
     const HYPERLIQUID_VAULT: &str = "0x0000000000000000000000000000000000000998";
     const HYPERLIQUID_API_WALLET: &str = "0x0000000000000000000000000000000000000a91";
 
@@ -1761,6 +1911,124 @@ mod tests {
             max_collateral_bps: U256::ZERO,
             validation_trust: 0,
         }
+    }
+
+    fn realignment_test_bot(strategy_type: &str, strategy_config: Value) -> TradingBotRecord {
+        TradingBotRecord {
+            id: "trading-realign-test".to_string(),
+            name: "ETH Perp Sentinel".to_string(),
+            sandbox_id: "sandbox-realign-test".to_string(),
+            vault_address: "0x0000000000000000000000000000000000000000".to_string(),
+            share_token: String::new(),
+            strategy_type: strategy_type.to_string(),
+            strategy_config,
+            risk_params: serde_json::json!({"max_drawdown_pct": 10}),
+            chain_id: 84532,
+            rpc_url: "http://localhost:8545".to_string(),
+            trading_api_url: "http://localhost:9100".to_string(),
+            trading_api_token: "token".to_string(),
+            workflow_id: Some(1),
+            trading_active: true,
+            created_at: 1,
+            operator_address: "0x1234567890abcdef1234567890abcdef12345678".to_string(),
+            validator_service_ids: vec![],
+            max_lifetime_days: 30,
+            paper_trade: true,
+            wind_down_started_at: None,
+            submitter_address: "0x1234567890abcdef1234567890abcdef12345678".to_string(),
+            trading_loop_cron: String::new(),
+            call_id: 1,
+            service_id: 1,
+            harness_json: serde_json::json!({}),
+            validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
+            active_trial_run_id: None,
+            active_trial_candidate_hash: None,
+            pre_trial_harness_json: None,
+        }
+    }
+
+    #[test]
+    fn realign_existing_bot_strategy_pack_replaces_stale_perp_protocol_context() {
+        let prompt =
+            "I want an agent that trades ETH perps on Hyperliquid with strict drawdown limits.";
+        let bot = realignment_test_bot(
+            "perp",
+            serde_json::json!({
+                "user_prompt": prompt,
+                "strategy_type": "perp",
+                "protocol_chain_id": 84532,
+                "available_protocols": ["gmx_v2"],
+                "supported_assets": [{"symbol": "ETH", "protocol": "gmx_v2", "chain_id": 42161}],
+                "asset_universe": {"allowed_assets": [{"symbol": "ETH", "protocol": "gmx_v2"}]},
+                "asset_token": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                "cash_token": "USDC",
+                "protocol": "gmx_v2",
+                "position_sizing": {"method": "fixed_fraction", "fraction": 0.1}
+            }),
+        );
+
+        let realigned = realign_existing_bot_strategy_pack(
+            &bot,
+            "hyperliquid_perp",
+            prompt,
+            HYPEREVM_TESTNET_USDC.parse().unwrap(),
+        )
+        .expect("realign strategy pack");
+
+        assert_eq!(realigned.strategy_type, "hyperliquid_perp");
+        let config = realigned
+            .strategy_config
+            .as_object()
+            .expect("config object");
+        assert_eq!(
+            config.get("strategy_type").and_then(Value::as_str),
+            Some("hyperliquid_perp")
+        );
+        assert_eq!(
+            config.get("protocol_chain_id").and_then(Value::as_u64),
+            Some(998)
+        );
+        assert_eq!(
+            config.get("available_protocols"),
+            Some(&serde_json::json!(["hyperliquid"]))
+        );
+        assert_eq!(
+            config
+                .get("asset_token")
+                .and_then(Value::as_str)
+                .map(str::to_ascii_lowercase),
+            Some(HYPEREVM_TESTNET_USDC.to_ascii_lowercase())
+        );
+        assert_eq!(
+            realigned
+                .strategy_config
+                .pointer("/supported_assets/0/protocol")
+                .and_then(Value::as_str),
+            Some("hyperliquid")
+        );
+        assert_eq!(
+            realigned
+                .strategy_config
+                .pointer("/supported_assets/0/chain_id")
+                .and_then(Value::as_u64),
+            Some(998)
+        );
+        assert!(config.get("asset_universe").is_none());
+        assert!(config.get("protocol").is_none());
+        assert_eq!(
+            realigned
+                .strategy_config
+                .pointer("/position_sizing/fraction")
+                .and_then(Value::as_f64),
+            Some(0.1)
+        );
+        assert_eq!(
+            config.get("paper_trade").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(realigned.harness_json.is_object());
     }
 
     #[test]
