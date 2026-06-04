@@ -108,12 +108,52 @@ test('usageSummary marks empty deterministic runs as not applicable', () => {
   assert.deepEqual(usageSummary([]), {
     event_count: 0,
     reporting_status: 'not_applicable',
+    cost_reporting_status: 'not_applicable',
+    events_with_token_coverage: 0,
+    events_with_reported_tokens: 0,
+    events_with_reported_or_estimated_cost: 0,
     input_tokens: 0,
     output_tokens: 0,
     total_tokens: 0,
     cost_usd: 0,
     providers: [],
     models: [],
+  });
+});
+
+test('usageSummary marks mixed legacy telemetry as partial with cost coverage', () => {
+  const { usageSummary } = require('./observatory_loop.js');
+  assert.deepEqual(usageSummary([
+    {
+      event_id: 'legacy_without_usage',
+      provider: 'opencode',
+      model: 'glm-4.7',
+    },
+    {
+      event_id: 'reported_cost_estimate',
+      provider: 'zai-coding-plan',
+      model: 'glm-4.7',
+      input_tokens: 379,
+      output_tokens: 1142,
+      total_tokens: 1521,
+      token_count_status: 'reported',
+      cost_usd: 0.0027398,
+      cost_estimated: true,
+      cost_source: 'pricing_map:zai-official-2026-06-04',
+    },
+  ]), {
+    event_count: 2,
+    reporting_status: 'partial',
+    cost_reporting_status: 'partial',
+    events_with_token_coverage: 1,
+    events_with_reported_tokens: 1,
+    events_with_reported_or_estimated_cost: 1,
+    input_tokens: 379,
+    output_tokens: 1142,
+    total_tokens: 1521,
+    cost_usd: 0.0027398,
+    providers: ['opencode', 'zai-coding-plan'],
+    models: ['glm-4.7'],
   });
 });
 

@@ -249,13 +249,37 @@ function usageSummary(events) {
   const outputTokens = sum('output_tokens');
   const totalTokens = sum('total_tokens') || inputTokens + outputTokens;
   const costUsd = Number(sum('cost_usd').toFixed(8));
+  const hasTokenCoverage = (event) => event.token_count_status === 'reported'
+    || event.token_count_status === 'estimated'
+    || event.token_count_status === 'partial'
+    || event.token_count_status === 'partial_estimated'
+    || event.total_tokens != null
+    || event.input_tokens != null
+    || event.output_tokens != null;
+  const hasCostCoverage = (event) => event.cost_usd != null && Number.isFinite(Number(event.cost_usd));
+  const tokenCovered = events.filter(hasTokenCoverage).length;
+  const costCovered = events.filter(hasCostCoverage).length;
+  const reportingStatus = events.length === 0
+    ? 'not_applicable'
+    : tokenCovered === events.length
+      ? 'reported'
+      : tokenCovered > 0
+        ? 'partial'
+        : 'unreported';
+  const costReportingStatus = events.length === 0
+    ? 'not_applicable'
+    : costCovered === events.length
+      ? (events.every((event) => event.cost_source === 'reported' || event.cost_estimated === false) ? 'reported' : 'estimated')
+      : costCovered > 0
+        ? 'partial'
+        : 'unreported';
   return {
     event_count: events.length,
-    reporting_status: events.length === 0
-      ? 'not_applicable'
-      : events.every((event) => event.token_count_status === 'reported' || event.total_tokens != null || event.input_tokens != null || event.output_tokens != null)
-        ? 'reported'
-        : 'unreported',
+    reporting_status: reportingStatus,
+    cost_reporting_status: costReportingStatus,
+    events_with_token_coverage: tokenCovered,
+    events_with_reported_tokens: events.filter((event) => event.token_count_status === 'reported').length,
+    events_with_reported_or_estimated_cost: costCovered,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     total_tokens: totalTokens,
