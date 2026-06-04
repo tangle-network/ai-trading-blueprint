@@ -121,9 +121,23 @@ function delegationPressure(sessions, usage) {
   const memoryTotalMb = Math.round(os.totalmem() / 1024 / 1024);
   const memoryFreeMb = Math.round(os.freemem() / 1024 / 1024);
   const cpuPressure = Number((load1 / cpuCount).toFixed(3));
-  const pressureLevel = active.length >= 5 || cpuPressure >= 1
+  const maxActiveDelegations = Number.isFinite(Number(process.env.OBSERVATORY_MAX_ACTIVE_DELEGATIONS))
+    ? Number(process.env.OBSERVATORY_MAX_ACTIVE_DELEGATIONS)
+    : 3;
+  const maxCpuPressure = Number.isFinite(Number(process.env.OBSERVATORY_MAX_CPU_PRESSURE))
+    ? Number(process.env.OBSERVATORY_MAX_CPU_PRESSURE)
+    : 0.85;
+  const minFreeMemoryMb = Number.isFinite(Number(process.env.OBSERVATORY_MIN_FREE_MEMORY_MB))
+    ? Number(process.env.OBSERVATORY_MIN_FREE_MEMORY_MB)
+    : 512;
+  const denyReasons = [];
+  if (active.length >= maxActiveDelegations) denyReasons.push('active_delegation_cap');
+  if (cpuPressure >= maxCpuPressure) denyReasons.push('cpu_pressure_cap');
+  if (memoryFreeMb < minFreeMemoryMb) denyReasons.push('memory_floor');
+  const mediumActiveThreshold = Math.max(2, Math.ceil(maxActiveDelegations * 0.67));
+  const pressureLevel = denyReasons.length > 0
     ? 'high'
-    : active.length >= 2 || cpuPressure >= 0.7
+    : active.length >= mediumActiveThreshold || cpuPressure >= Math.max(0.5, maxCpuPressure * 0.7)
       ? 'medium'
       : 'low';
   return {
@@ -144,7 +158,14 @@ function delegationPressure(sessions, usage) {
       memory_free_mb: memoryFreeMb,
       memory_total_mb: memoryTotalMb,
     },
+    limits: {
+      max_active_delegations: maxActiveDelegations,
+      max_cpu_pressure: maxCpuPressure,
+      min_free_memory_mb: minFreeMemoryMb,
+    },
     pressure_level: pressureLevel,
+    allows_new_delegation: denyReasons.length === 0,
+    deny_reasons: denyReasons,
   };
 }
 

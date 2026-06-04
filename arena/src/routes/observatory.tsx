@@ -345,6 +345,11 @@ function DelegatedWorkList({
 }) {
   const uniqueSessions = uniqueDelegatedWorkSessions(sessions);
   const taskById = researchTaskById(researchTasks);
+  const gateBlocked = pressure.allows_new_delegation === false;
+  const gateLabel = gateBlocked ? 'Blocked' : 'Open';
+  const gateDetail = gateBlocked
+    ? (pressure.deny_reasons?.join(', ') || 'pressure cap')
+    : `cap ${pressure.limits?.max_active_delegations ?? 3}`;
 
   if (uniqueSessions.length === 0) {
     return (
@@ -356,7 +361,7 @@ function DelegatedWorkList({
 
   return (
     <div className="border border-[var(--arena-terminal-border)]">
-      <div className="grid gap-2 border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] p-3 font-data text-xs sm:grid-cols-4">
+      <div className="grid gap-2 border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] p-3 font-data text-xs sm:grid-cols-5">
         <div>
           <div className="text-base font-bold text-[var(--arena-terminal-text)]">{pressure.unique_sessions}</div>
           <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Unique</div>
@@ -372,6 +377,10 @@ function DelegatedWorkList({
         <div>
           <div className={`text-base font-bold ${pressureClass(pressure.pressure_level)}`}>{pressure.pressure_level}</div>
           <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Pressure</div>
+        </div>
+        <div>
+          <div className={`truncate text-base font-bold ${gateBlocked ? 'text-[#ff7a5c]' : 'text-[#50d2c1]'}`}>{gateLabel}</div>
+          <div className="truncate uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">{gateDetail}</div>
         </div>
       </div>
       <div className="divide-y divide-[var(--arena-terminal-border)]">

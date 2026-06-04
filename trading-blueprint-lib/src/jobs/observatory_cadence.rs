@@ -609,6 +609,22 @@ function delegationPressure(sessions, usage = {}) {
   const load1 = os.loadavg()[0] || 0;
   const cpuCount = os.cpus().length || 1;
   const cpuPressure = Number((load1 / cpuCount).toFixed(3));
+  const maxActiveDelegations = Number.isFinite(Number(process.env.OBSERVATORY_MAX_ACTIVE_DELEGATIONS))
+    ? Number(process.env.OBSERVATORY_MAX_ACTIVE_DELEGATIONS)
+    : 3;
+  const maxCpuPressure = Number.isFinite(Number(process.env.OBSERVATORY_MAX_CPU_PRESSURE))
+    ? Number(process.env.OBSERVATORY_MAX_CPU_PRESSURE)
+    : 0.85;
+  const minFreeMemoryMb = Number.isFinite(Number(process.env.OBSERVATORY_MIN_FREE_MEMORY_MB))
+    ? Number(process.env.OBSERVATORY_MIN_FREE_MEMORY_MB)
+    : 512;
+  const memoryFreeMb = Math.round(os.freemem() / 1024 / 1024);
+  const memoryTotalMb = Math.round(os.totalmem() / 1024 / 1024);
+  const denyReasons = [];
+  if (active.length >= maxActiveDelegations) denyReasons.push('active_delegation_cap');
+  if (cpuPressure >= maxCpuPressure) denyReasons.push('cpu_pressure_cap');
+  if (memoryFreeMb < minFreeMemoryMb) denyReasons.push('memory_floor');
+  const mediumActiveThreshold = Math.max(2, Math.ceil(maxActiveDelegations * 0.67));
   return {
     unique_sessions: unique.length,
     active_sessions: active.length,
@@ -624,10 +640,17 @@ function delegationPressure(sessions, usage = {}) {
       load_1m: Number(load1.toFixed(3)),
       cpu_count: cpuCount,
       cpu_pressure: cpuPressure,
-      memory_free_mb: Math.round(os.freemem() / 1024 / 1024),
-      memory_total_mb: Math.round(os.totalmem() / 1024 / 1024),
+      memory_free_mb: memoryFreeMb,
+      memory_total_mb: memoryTotalMb,
     },
-    pressure_level: active.length >= 5 || cpuPressure >= 1 ? 'high' : active.length >= 2 || cpuPressure >= 0.7 ? 'medium' : 'low',
+    limits: {
+      max_active_delegations: maxActiveDelegations,
+      max_cpu_pressure: maxCpuPressure,
+      min_free_memory_mb: minFreeMemoryMb,
+    },
+    pressure_level: denyReasons.length > 0 ? 'high' : active.length >= mediumActiveThreshold || cpuPressure >= Math.max(0.5, maxCpuPressure * 0.7) ? 'medium' : 'low',
+    allows_new_delegation: denyReasons.length === 0,
+    deny_reasons: denyReasons,
   };
 }
 const root = '/home/agent/memory/observatory';
@@ -1010,6 +1033,8 @@ mod tests {
         assert!(read_observatory_records_command().contains("research-tasks.jsonl"));
         assert!(read_observatory_records_command().contains("dedupeBySessionId"));
         assert!(read_observatory_records_command().contains("delegation_pressure"));
+        assert!(read_observatory_records_command().contains("allows_new_delegation"));
+        assert!(read_observatory_records_command().contains("active_delegation_cap"));
     }
 
     #[test]

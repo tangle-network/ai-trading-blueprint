@@ -87,7 +87,10 @@ const overviewState = {
                 usage_event_count: 0,
                 total_tokens: 0,
                 cost_usd: 0,
-                pressure_level: 'low',
+                limits: { max_active_delegations: 3, max_cpu_pressure: 0.85, min_free_memory_mb: 512 },
+                pressure_level: 'high',
+                allows_new_delegation: false,
+                deny_reasons: ['active_delegation_cap'],
               },
               usage_summary: {
                 event_count: 0,
@@ -174,7 +177,10 @@ const overviewState = {
             usage_event_count: 0,
             total_tokens: 0,
             cost_usd: 0,
-            pressure_level: 'low',
+            limits: { max_active_delegations: 3, max_cpu_pressure: 0.85, min_free_memory_mb: 512 },
+            pressure_level: 'high',
+            allows_new_delegation: false,
+            deny_reasons: ['active_delegation_cap'],
           },
         },
       },
@@ -258,6 +264,8 @@ describe('ObservatoryPage', () => {
     expect(screen.getAllByText('Research ETH Perp Sentinel signal gap').length).toBeGreaterThan(0);
     expect(screen.getByText('Active/Work')).toBeInTheDocument();
     expect(screen.getByText('Dedupe')).toBeInTheDocument();
+    expect(screen.getByText('Blocked')).toBeInTheDocument();
+    expect(screen.getByText('active_delegation_cap')).toBeInTheDocument();
     expect(screen.getByText(/manual_or_research_tick/)).toBeInTheDocument();
     expect(screen.getByText(/research-1/)).toBeInTheDocument();
 

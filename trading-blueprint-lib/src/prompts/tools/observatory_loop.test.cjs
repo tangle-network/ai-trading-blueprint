@@ -118,5 +118,8 @@ test('delegated work records are deduped and report active pressure', () => {
     assert.equal(first.records.delegation_pressure.unique_sessions, 1);
     assert.equal(first.records.delegation_pressure.active_sessions, 1);
     assert.equal(first.records.delegation_pressure.pressure_level, 'low');
+    assert.equal(first.records.delegation_pressure.allows_new_delegation, true);
+    assert.deepEqual(first.records.delegation_pressure.deny_reasons, []);
+    assert.equal(first.records.delegation_pressure.limits.max_active_delegations, 3);
   });
 });

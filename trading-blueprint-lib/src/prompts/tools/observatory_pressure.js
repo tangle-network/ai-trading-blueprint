@@ -97,9 +97,10 @@ function readObservatoryPressure(options = {}) {
   if (cpuPressure >= maxCpuPressure) denyReasons.push('cpu_pressure_cap');
   if (memoryFreeMb < minFreeMemoryMb) denyReasons.push('memory_floor');
 
+  const mediumActiveThreshold = Math.max(2, Math.ceil(maxActiveDelegations * 0.67));
   const pressureLevel = active.length >= maxActiveDelegations || cpuPressure >= maxCpuPressure
     ? 'high'
-    : active.length >= Math.max(1, Math.floor(maxActiveDelegations / 2)) || cpuPressure >= Math.max(0.5, maxCpuPressure * 0.7)
+    : active.length >= mediumActiveThreshold || cpuPressure >= Math.max(0.5, maxCpuPressure * 0.7)
       ? 'medium'
       : 'low';
 

@@ -293,7 +293,14 @@ export interface ObservatoryDelegationPressure {
     memory_free_mb?: number;
     memory_total_mb?: number;
   };
+  limits?: {
+    max_active_delegations?: number;
+    max_cpu_pressure?: number;
+    min_free_memory_mb?: number;
+  };
   pressure_level: 'low' | 'medium' | 'high' | string;
+  allows_new_delegation?: boolean;
+  deny_reasons?: string[];
 }
 
 export interface ObservatoryWorldSignalDigest {
