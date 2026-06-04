@@ -10,13 +10,24 @@ import { dirname, join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
-const { apiCall, loadConfig } = require('./api-client.js');
+function requireTool(primary, fallback) {
+  try {
+    return require(primary);
+  } catch (error) {
+    if (fallback && error && error.code === 'MODULE_NOT_FOUND' && String(error.message || '').includes(primary)) {
+      return require(fallback);
+    }
+    throw error;
+  }
+}
+
+const { apiCall, loadConfig } = requireTool('./api-client.js', './api_client.js');
 const {
   recordUsageEvent,
   readUsageEvents,
   summarizeUsageEvents,
-} = require('./usage-telemetry.js');
-const { readObservatoryPressure } = require('./observatory-pressure.js');
+} = requireTool('./usage-telemetry.js', './usage_telemetry.js');
+const { readObservatoryPressure } = requireTool('./observatory-pressure.js', './observatory_pressure.js');
 
 const ROOT = process.env.AGENT_WORKSPACE || '/home/agent';
 const EVOLVE_DIR = join(ROOT, '.evolve');
@@ -506,21 +517,38 @@ async function ensureBacktestCandles(token, intent, minimum = 20) {
   return { ok: false, token, minimum, before, after, attempts };
 }
 
+function hasPredictionMarketMandate(lower) {
+  return /\b(prediction|polymarket|kalshi|hyperp)\b/.test(lower)
+    || /\b(outcome|binary|event)\s+(market|contract|prediction|token)\b/.test(lower);
+}
+
+function hasHyperliquidOutcomeMandate(lower) {
+  return lower.includes('hyperliquid')
+    && (
+      /\b(hyperp|prediction)\b/.test(lower)
+      || /\b(outcome|binary|event)\s+(market|contract|prediction|token)\b/.test(lower)
+    );
+}
+
+function hasHyperliquidPerpMandate(lower) {
+  return lower.includes('hyperliquid')
+    && /\b(perp|perps|perpetual|futures|funding|leverage|liquidation)\b/.test(lower)
+    && !hasHyperliquidOutcomeMandate(lower);
+}
+
 function riskBudgetRequest(intent) {
   const lower = String(intent || '').toLowerCase();
-  const hyperliquidPrediction = lower.includes('hyperliquid')
-    && (lower.includes('prediction') || lower.includes('hyperp') || lower.includes('outcome'));
-  const prediction = hyperliquidPrediction
-    || lower.includes('prediction')
-    || lower.includes('polymarket')
-    || lower.includes('kalshi');
+  const hyperliquidPrediction = hasHyperliquidOutcomeMandate(lower);
+  const prediction = hyperliquidPrediction || hasPredictionMarketMandate(lower);
+  const hyperliquidPerp = hasHyperliquidPerpMandate(lower);
+  const hyperliquidVenue = hyperliquidPrediction || hyperliquidPerp || (lower.includes('hyperliquid') && !prediction);
   const urgent = lower.includes('urgent') || lower.includes('breaking') || lower.includes('now') || lower.includes('fast');
   return {
     strategy_class: process.env.SELF_IMPROVEMENT_STRATEGY_CLASS || 'self_improvement_candidate',
-    market_type: process.env.SELF_IMPROVEMENT_MARKET_TYPE || (prediction ? 'prediction_market' : 'directional'),
-    instrument_type: process.env.SELF_IMPROVEMENT_INSTRUMENT_TYPE || (prediction ? 'binary_prediction' : undefined),
-    venue: process.env.SELF_IMPROVEMENT_VENUE || (hyperliquidPrediction ? 'hyperliquid' : prediction ? 'polymarket' : undefined),
-    target_protocol: process.env.SELF_IMPROVEMENT_TARGET_PROTOCOL || (hyperliquidPrediction ? 'hyperliquid' : prediction ? 'polymarket_clob' : undefined),
+    market_type: process.env.SELF_IMPROVEMENT_MARKET_TYPE || (prediction ? 'prediction_market' : hyperliquidPerp ? 'perp' : 'directional'),
+    instrument_type: process.env.SELF_IMPROVEMENT_INSTRUMENT_TYPE || (prediction ? 'binary_prediction' : hyperliquidPerp ? 'perpetual' : undefined),
+    venue: process.env.SELF_IMPROVEMENT_VENUE || (hyperliquidVenue ? 'hyperliquid' : prediction ? 'polymarket' : undefined),
+    target_protocol: process.env.SELF_IMPROVEMENT_TARGET_PROTOCOL || (hyperliquidVenue ? 'hyperliquid' : prediction ? 'polymarket_clob' : undefined),
     opportunity_half_life_secs: envNumber('SELF_IMPROVEMENT_OPPORTUNITY_HALF_LIFE_SECS') || (urgent || prediction ? 900 : undefined),
     user_posture: process.env.SELF_IMPROVEMENT_USER_POSTURE || (urgent ? 'aggressive' : 'balanced'),
     certified_strategy: envBool('SELF_IMPROVEMENT_CERTIFIED_STRATEGY', false),
@@ -957,7 +985,16 @@ async function main() {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error.stack || error.message || error}\n`);
-  process.exit(1);
-});
+export {
+  hasHyperliquidOutcomeMandate,
+  hasHyperliquidPerpMandate,
+  hasPredictionMarketMandate,
+  riskBudgetRequest,
+};
+
+if (import.meta.main) {
+  main().catch((error) => {
+    process.stderr.write(`${error.stack || error.message || error}\n`);
+    process.exit(1);
+  });
+}
