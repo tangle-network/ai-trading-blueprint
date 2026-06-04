@@ -1,0 +1,159 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+import {
+  classifyLoopMode,
+  classifySelfImprovement,
+  classifyStrategyAlignment,
+  summarizeRevisionArena,
+  summarizeRuns,
+  summarizeTickArtifacts,
+  summarizeTrades,
+} from './live-agent-fleet-audit.js'
+
+test('classifies zero-token direct fast ticks separately from agentic LLM runs', () => {
+  const deterministic = summarizeRuns({
+    status: 200,
+    ok: true,
+    json: {
+      runs: [
+        {
+          run_id: 'r1',
+          workflow_kind: 'trading',
+          input_tokens: 0,
+          output_tokens: 0,
+          transcript_available: false,
+          session_id: 'direct-fast-trading-bot-1',
+        },
+      ],
+    },
+  } as never)
+  assert.equal(classifyLoopMode(deterministic), 'deterministic-fast-tick')
+
+  const agentic = summarizeRuns({
+    status: 200,
+    ok: true,
+    json: {
+      runs: [
+        {
+          run_id: 'r2',
+          workflow_kind: 'research',
+          input_tokens: 1200,
+          output_tokens: 500,
+          transcript_available: true,
+        },
+      ],
+    },
+  } as never)
+  assert.equal(classifyLoopMode(agentic), 'agentic-llm-run')
+})
+
+test('self-improvement status distinguishes rev-0-only from inaccessible state', () => {
+  const noRuns = {
+    status: 200,
+    count: 0,
+    latest: [],
+  }
+  const rev0Only = summarizeRevisionArena({
+    status: 200,
+    ok: true,
+    json: { revisions: [{ revision_id: 'rev-0' }] },
+  } as never)
+  assert.equal(classifySelfImprovement(noRuns, rev0Only), 'not-firing')
+
+  assert.equal(
+    classifySelfImprovement(
+      { status: 403, count: null, latest: [] },
+      { status: 403, revision_count: null, keys: [], latest: null },
+    ),
+    'inaccessible',
+  )
+})
+
+test('tick-artifact parser extracts decisions, reasons, metrics, and strategy files', () => {
+  const artifacts = summarizeTickArtifacts({
+    status: 200,
+    ok: true,
+    json: {
+      decisions_jsonl: [
+        JSON.stringify({ timestamp: '2026-06-04T00:00:00Z', action: 'skip', reason: 'no-edge' }),
+        JSON.stringify({ timestamp: '2026-06-04T00:05:00Z', decision: { action: 'trade', reason: 'rebalance' } }),
+      ].join('\n'),
+      coverage_jsonl: JSON.stringify({ finding: 'insufficient_coverage', have: 12, need: 30 }),
+      decision_contexts_jsonl: JSON.stringify({
+        context_id: 'ctx_1',
+        evidence: { observed_portfolio: true, observed_market: true, observed_news: false, signals_generated: 0 },
+      }),
+      reflections_jsonl: JSON.stringify({
+        reflection_id: 'refl_1',
+        decision_context_id: 'ctx_1',
+        mode: 'deterministic-runtime-reflection',
+        verdict: 'improve',
+        summary: 'Found 1 behavior gap; improve.',
+        emitted_improvement_intent_id: 'intent_1',
+        findings: [{ code: 'repeated-skip' }],
+      }),
+      improvement_intents_jsonl: JSON.stringify({ intent_id: 'intent_1', priority: 'high' }),
+      improvement_dispatches_jsonl: JSON.stringify({ intent_id: 'intent_1' }),
+      metrics_latest: { portfolio_value_usd: 10000, signals_generated: 0, trade_count: 1 },
+      strategies: { 'candidate.js': 'module.exports = {}' },
+    },
+  } as never)
+
+  assert.equal(artifacts.captured, true)
+  assert.equal(artifacts.decisions, 2)
+  assert.deepEqual(artifacts.actions, ['skip', 'trade'])
+  assert.deepEqual(artifacts.reasons, ['no-edge', 'rebalance'])
+  assert.equal(artifacts.latest_decision?.action, 'trade')
+  assert.deepEqual(artifacts.strategy_files, ['candidate.js'])
+  assert.equal(artifacts.coverage_findings, 1)
+  assert.equal(artifacts.decision_contexts, 1)
+  assert.equal(artifacts.reflections, 1)
+  assert.equal(artifacts.latest_reflection?.verdict, 'improve')
+  assert.deepEqual(artifacts.latest_reflection?.finding_codes, ['repeated-skip'])
+  assert.equal(artifacts.improvement_intents, 1)
+  assert.equal(artifacts.improvement_dispatches, 1)
+})
+
+test('strategy alignment catches prompt-to-config mandate mismatches', () => {
+  const noTrades = summarizeTrades({ status: 200, ok: true, json: [] } as never)
+  const runs = summarizeRuns({ status: 200, ok: true, json: [{ run_id: 'r1' }] } as never)
+
+  assert.equal(
+    classifyStrategyAlignment({
+      strategyType: 'perp',
+      strategyConfig: { available_protocols: ['gmx_v2'] },
+      userPrompt: 'I want an agent that trades ETH perps on Hyperliquid.',
+      trades: noTrades,
+      runs,
+    }),
+    'mismatch',
+  )
+
+  assert.equal(
+    classifyStrategyAlignment({
+      strategyType: 'yield',
+      strategyConfig: { available_protocols: ['aave_v3'] },
+      userPrompt: 'Build a diversified trading agent: 60% DEX, 30% yield, 10% prediction markets.',
+      trades: noTrades,
+      runs,
+    }),
+    'mismatch',
+  )
+})
+
+test('strategy alignment does not treat negative Hyperliquid mention as mandate', () => {
+  const noTrades = summarizeTrades({ status: 200, ok: true, json: [] } as never)
+  const runs = summarizeRuns({ status: 200, ok: true, json: [{ run_id: 'r1' }] } as never)
+
+  assert.equal(
+    classifyStrategyAlignment({
+      strategyType: 'perp',
+      strategyConfig: { available_protocols: ['gmx_v2', 'vertex'] },
+      userPrompt: 'Use GMX and Vertex. Do not use Hyperliquid native execution.',
+      trades: noTrades,
+      runs,
+    }),
+    'aligned',
+  )
+})

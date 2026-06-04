@@ -1238,6 +1238,13 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/reflection-loop.js",
+        include_str!("../prompts/tools/reflection_loop.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/self-improvement-loop.ts",
         include_str!("../prompts/tools/self_improvement_loop.ts"),
     )
@@ -1401,6 +1408,9 @@ mod tests {
         assert!(tool.contains("result_schema_version"));
         assert!(tool.contains("logs_written"));
         assert!(tool.contains("metrics_written"));
+        assert!(tool.contains("decision_context_written"));
+        assert!(tool.contains("reflection_written"));
+        assert!(tool.contains("reflection-loop"));
         assert!(tool.contains("fundHyperliquidMargin"));
         assert!(tool.contains("no-clear-hyperliquid-setup"));
     }
@@ -1412,6 +1422,9 @@ mod tests {
         assert!(common.contains("result_schema_version"));
         assert!(common.contains("logs_written"));
         assert!(common.contains("metrics_written"));
+        assert!(common.contains("decision_context_written"));
+        assert!(common.contains("reflection_written"));
+        assert!(common.contains("reflection-loop"));
         assert!(common.contains("function runTick"));
         assert!(common.contains("module.exports"));
     }

@@ -294,6 +294,8 @@ async function main() {
   const decisionCountBefore = lineCount(DECISION_LOG);
   const metricsMtimeBefore = fileMtimeMs(METRICS_FILE);
   const api = require('/home/agent/tools/api-client');
+  const config = api.loadConfig();
+  const harness = readJson(CANONICAL_HARNESS_FILE, readJson(HARNESS_FILE, {}));
 
   const [navResponse, modeResponse, fundingResponse, accountResponse, pricesResponse] =
     await Promise.all([
@@ -405,7 +407,6 @@ async function main() {
       }
 
       if (!decision) {
-        const config = api.loadConfig();
         const intent = {
           strategy_id: api.normalizeIntent({}).strategy_id,
           target_protocol: 'hyperliquid',
@@ -460,8 +461,13 @@ async function main() {
     trade_action: tradeAction,
     run_started_at: runStartedAt,
   };
+  const { provenanceHash } = require('/home/agent/tools/log-decision');
+  const recipe_hash = provenanceHash({ family: 'hyperliquid', harness, strategy_config: config.strategy_config ?? null });
+  const input_hash = provenanceHash({ family: 'hyperliquid', checked_state: state, intent: decision.intent ?? decision.setup ?? null });
+  decisionEntry.recipe_hash = recipe_hash;
+  decisionEntry.input_hash = input_hash;
   logDecision(decisionEntry);
-  writeMetrics({
+  const metrics = {
     action: decision.action,
     reason: decision.reason,
     portfolio_value_usd: totalNav,
@@ -470,19 +476,58 @@ async function main() {
     perp_margin_usdc: usablePerpMargin,
     positions_count: positions.length,
     open_orders_count: openOrders,
+    recipe_hash,
+    input_hash,
+  };
+  writeMetrics(metrics);
+
+  const runCompletedAt = nowIso();
+  const reflectionLoop = require('/home/agent/tools/reflection-loop');
+  const decisionContext = reflectionLoop.recordDecisionContext({
+    family: 'hyperliquid',
+    run_started_at: runStartedAt,
+    run_completed_at: runCompletedAt,
+    config,
+    harness,
+    checked_state: state,
+    decision,
+    result: {
+      funding_action: fundingAction,
+      api_wallet_approval_action: apiWalletApprovalAction,
+      trade_action: tradeAction,
+    },
+    metrics,
+    recipe_hash,
+    input_hash,
   });
+  const reflection = reflectionLoop.reflectOnDecisionContext(decisionContext);
 
   const result = {
     result_schema_version: 1,
+    family: 'hyperliquid',
     run_started_at: runStartedAt,
-    run_completed_at: nowIso(),
+    run_completed_at: runCompletedAt,
     checked_state: state,
     decision,
     funding_action: fundingAction,
     api_wallet_approval_action: apiWalletApprovalAction,
     trade_action: tradeAction,
+    decision_context: {
+      context_id: decisionContext.context_id,
+      evidence: decisionContext.evidence,
+    },
+    reflection: {
+      reflection_id: reflection.reflection_id,
+      decision_context_id: reflection.decision_context_id,
+      mode: reflection.mode,
+      verdict: reflection.verdict,
+      summary: reflection.summary,
+      emitted_improvement_intent_id: reflection.emitted_improvement_intent_id || null,
+    },
     logs_written: lineCount(DECISION_LOG) > decisionCountBefore,
     metrics_written: fileMtimeMs(METRICS_FILE) >= metricsMtimeBefore,
+    decision_context_written: Boolean(decisionContext.context_id),
+    reflection_written: Boolean(reflection.reflection_id),
   };
 
   process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -491,6 +536,7 @@ async function main() {
 main().catch((error) => {
   const result = {
     result_schema_version: 1,
+    family: 'hyperliquid',
     run_started_at: nowIso(),
     run_completed_at: nowIso(),
     checked_state: null,
@@ -504,6 +550,8 @@ main().catch((error) => {
     trade_action: { attempted: false },
     logs_written: false,
     metrics_written: false,
+    decision_context_written: false,
+    reflection_written: false,
   };
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exit(1);

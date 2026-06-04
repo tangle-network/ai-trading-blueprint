@@ -23,7 +23,7 @@ use crate::state::TradingBotRecord;
 const TICK_JSON_BEGIN: &str = "TANGLE_TICK_JSON>";
 const TICK_JSON_END: &str = "<TANGLE_TICK_END";
 
-// One exec reads all four artifacts and prints a single JSON object framed by
+// One exec reads all runtime artifacts and prints a single JSON object framed by
 // the sentinels above. Strategy sources are head-capped so a large workspace
 // can't blow the exec response. metrics_latest is parsed when valid JSON, else
 // passed through as the raw string (never throws). Missing files become null/{}.
@@ -49,6 +49,10 @@ let mp = null;
 try { mp = m ? JSON.parse(m) : null; } catch { mp = m; }
 const payload = JSON.stringify({
   decisions_jsonl: r('/home/agent/logs/decisions.jsonl'),
+  decision_contexts_jsonl: r('/home/agent/memory/decision-contexts.jsonl'),
+  reflections_jsonl: r('/home/agent/memory/reflections.jsonl'),
+  improvement_intents_jsonl: r('/home/agent/memory/improvement-intents.jsonl'),
+  improvement_dispatches_jsonl: r('/home/agent/memory/improvement-dispatches.jsonl'),
   coverage_jsonl: r('/home/agent/logs/tick_coverage.jsonl'),
   metrics_latest: mp,
   strategies: strat,
@@ -58,9 +62,9 @@ const E = '<TANGLE' + '_TICK_END';
 process.stdout.write('\n' + B + payload + E + '\n');
 NODE"#;
 
-/// Read `{ decisions_jsonl, coverage_jsonl, metrics_latest, strategies }` from
-/// the bot's sandbox. Returns an error string on missing sandbox / exec failure
-/// / unparsable output — callers fail closed (no fabricated "captured" flag).
+/// Read the bot's runtime evidence from its sandbox. Returns an error string on
+/// missing sandbox / exec failure / unparsable output — callers fail closed (no
+/// fabricated "captured" flag).
 #[tracing::instrument(name = "read_tick_artifacts", skip_all, fields(bot_id = %bot.id))]
 pub async fn read_bot_tick_artifacts(bot: &TradingBotRecord) -> Result<Value, String> {
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id)
@@ -118,6 +122,16 @@ mod tests {
                 .contains("coverage_jsonl: r('/home/agent/logs/tick_coverage.jsonl')"),
             "tick-artifacts reader must read /home/agent/logs/tick_coverage.jsonl into coverage_jsonl"
         );
+        assert!(
+            READ_TICK_ARTIFACTS_JS
+                .contains("decision_contexts_jsonl: r('/home/agent/memory/decision-contexts.jsonl')"),
+            "tick-artifacts reader must expose runtime DecisionContext records"
+        );
+        assert!(
+            READ_TICK_ARTIFACTS_JS
+                .contains("reflections_jsonl: r('/home/agent/memory/reflections.jsonl')"),
+            "tick-artifacts reader must expose runtime ReflectionRecord records"
+        );
     }
 
     // The payload shape the eval consumes must expose coverage_jsonl alongside
@@ -128,6 +142,10 @@ mod tests {
         let coverage_line = r#"{"timestamp":"2026-05-30T14:23:45.456Z","family":"mm","finding":"insufficient_coverage","have":12,"need":30,"metric":"candles"}"#;
         let payload = serde_json::json!({
             "decisions_jsonl": "{\"action\":\"skip\"}\n",
+            "decision_contexts_jsonl": "{\"context_id\":\"ctx_1\"}\n",
+            "reflections_jsonl": "{\"reflection_id\":\"refl_1\",\"decision_context_id\":\"ctx_1\"}\n",
+            "improvement_intents_jsonl": "{\"intent_id\":\"intent_1\"}\n",
+            "improvement_dispatches_jsonl": null,
             "coverage_jsonl": format!("{coverage_line}\n"),
             "metrics_latest": null,
             "strategies": {},

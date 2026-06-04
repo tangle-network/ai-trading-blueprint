@@ -6,7 +6,8 @@
 //      `logs_written` / `metrics_written` flags,
 //   2. a fresh `/home/agent/logs/decisions.jsonl` line whose timestamp is >= the
 //      run start and whose `action`/`reason` match the printed decision,
-//   3. a refreshed `/home/agent/metrics/latest.json`.
+//   3. a refreshed `/home/agent/metrics/latest.json`,
+//   4. a fresh decision context + runtime reflection in `/home/agent/memory`.
 // Hyperliquid keeps its own bespoke tool (hyperliquid_tick.js); this module is
 // the canonical runtime for every other family so the four tools never diverge.
 
@@ -539,19 +540,51 @@ async function runTick(family, decide) {
     const { provenanceHash } = require('/home/agent/tools/log-decision');
     const recipe_hash = provenanceHash({ family, harness: ctx.harness ?? {}, strategy_config: (config && config.strategy_config) ?? null });
     const input_hash = provenanceHash({ family, checked_state: out.checkedState ?? null, intent: decision.intent ?? null });
+    const metrics = { ...(out.metrics || {}), recipe_hash, input_hash };
     logDecision({ ...decision, ...(out.entryExtra || {}), state: out.checkedState ?? null, run_started_at: runStartedAt, recipe_hash, input_hash });
-    writeMetrics({ action: decision.action, reason: decision.reason, ...(out.metrics || {}), recipe_hash, input_hash });
+    writeMetrics({ action: decision.action, reason: decision.reason, ...metrics });
+
+    const runCompletedAt = nowIso();
+    const reflectionLoop = require('/home/agent/tools/reflection-loop');
+    const decisionContext = reflectionLoop.recordDecisionContext({
+      family,
+      run_started_at: runStartedAt,
+      run_completed_at: runCompletedAt,
+      config,
+      harness: ctx.harness,
+      checked_state: out.checkedState ?? null,
+      decision,
+      result: out.resultExtra || null,
+      metrics,
+      recipe_hash,
+      input_hash,
+    });
+    const reflection = reflectionLoop.reflectOnDecisionContext(decisionContext);
 
     const result = {
       result_schema_version: 1,
       family,
       run_started_at: runStartedAt,
-      run_completed_at: nowIso(),
+      run_completed_at: runCompletedAt,
       checked_state: out.checkedState ?? null,
       decision,
       ...(out.resultExtra || {}),
+      decision_context: {
+        context_id: decisionContext.context_id,
+        evidence: decisionContext.evidence,
+      },
+      reflection: {
+        reflection_id: reflection.reflection_id,
+        decision_context_id: reflection.decision_context_id,
+        mode: reflection.mode,
+        verdict: reflection.verdict,
+        summary: reflection.summary,
+        emitted_improvement_intent_id: reflection.emitted_improvement_intent_id || null,
+      },
       logs_written: lineCount(DECISION_LOG) > decisionCountBefore,
       metrics_written: fileMtimeMs(METRICS_FILE) >= metricsMtimeBefore,
+      decision_context_written: Boolean(decisionContext.context_id),
+      reflection_written: Boolean(reflection.reflection_id),
     };
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {
@@ -568,6 +601,8 @@ async function runTick(family, decide) {
       },
       logs_written: false,
       metrics_written: false,
+      decision_context_written: false,
+      reflection_written: false,
     };
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exit(1);

@@ -435,10 +435,27 @@ async fn run_direct_fast_tick(
                     .get("metrics_written")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
-                if valid_schema && has_decision && reported_logs && reported_metrics {
+                let reported_context = parsed
+                    .get("decision_context_written")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let reported_reflection = parsed
+                    .get("reflection_written")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if valid_schema
+                    && has_decision
+                    && reported_logs
+                    && reported_metrics
+                    && reported_context
+                    && reported_reflection
+                {
                     verify_tick_side_effects(bot, &parsed).await.err()
                 } else {
-                    Some("Direct fast tick JSON failed schema/side-effect flags".to_string())
+                    Some(
+                        "Direct fast tick JSON failed schema/decision/metrics/reflection flags"
+                            .to_string(),
+                    )
                 }
             }
             Err(_) => Some("Direct fast tick result was not deterministic JSON".to_string()),
@@ -585,6 +602,14 @@ fn fast_tick_tool_bundle(tool: &str) -> Option<Vec<(&'static str, &'static str)>
         (
             "/home/agent/tools/log-decision.js",
             include_str!("../prompts/tools/log_decision.js"),
+        ),
+        (
+            "/home/agent/tools/write-metrics.js",
+            include_str!("../prompts/tools/write_metrics.js"),
+        ),
+        (
+            "/home/agent/tools/reflection-loop.js",
+            include_str!("../prompts/tools/reflection_loop.js"),
         ),
     ];
 
@@ -761,9 +786,9 @@ async fn run_due_fast_ticks(
 }
 
 /// Runtime anti-fabrication check, family-agnostic: confirms the tick actually
-/// wrote a fresh `decisions.jsonl` line (timestamp >= run start, action/reason
-/// matching the printed decision) and refreshed `metrics/latest.json`. A tick
-/// that narrates an action without producing these side effects fails here.
+/// wrote fresh decisions/metrics plus the decision context and reflection that
+/// close the behavior loop. A tick that narrates an action without producing
+/// these side effects fails here.
 async fn verify_tick_side_effects(
     bot: &crate::state::TradingBotRecord,
     result_json: &Value,
@@ -782,6 +807,16 @@ async fn verify_tick_side_effects(
         .and_then(|decision| decision.get("reason"))
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let expected_context_id = result_json
+        .get("decision_context")
+        .and_then(|context| context.get("context_id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let expected_reflection_id = result_json
+        .get("reflection")
+        .and_then(|reflection| reflection.get("reflection_id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
 
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id)
         .map_err(|err| err.to_string())?;
@@ -790,6 +825,8 @@ const fs = require('fs');
 const started = Date.parse(process.env.EXPECTED_STARTED_AT || '');
 const expectedAction = process.env.EXPECTED_ACTION || '';
 const expectedReason = process.env.EXPECTED_REASON || '';
+const expectedContextId = process.env.EXPECTED_CONTEXT_ID || '';
+const expectedReflectionId = process.env.EXPECTED_REFLECTION_ID || '';
 
 function readLastJsonl(path) {
   try {
@@ -809,34 +846,73 @@ function readJson(path) {
   }
 }
 
+function actionOf(entry) {
+  if (!entry) return '';
+  if (typeof entry.action === 'string') return entry.action;
+  if (entry.decision && typeof entry.decision.action === 'string') return entry.decision.action;
+  return '';
+}
+
+function reasonOf(entry) {
+  if (!entry) return '';
+  if (typeof entry.reason === 'string') return entry.reason;
+  if (entry.decision && typeof entry.decision.reason === 'string') return entry.decision.reason;
+  return '';
+}
+
 const decision = readLastJsonl('/home/agent/logs/decisions.jsonl');
 const metrics = readJson('/home/agent/metrics/latest.json');
+const decisionContext = readLastJsonl('/home/agent/memory/decision-contexts.jsonl');
+const reflection = readLastJsonl('/home/agent/memory/reflections.jsonl');
 const decisionTs = decision && Date.parse(decision.timestamp || '');
 const metricsTs = metrics && Date.parse(metrics.timestamp || '');
+const contextTs = decisionContext && Date.parse(decisionContext.timestamp || '');
+const reflectionTs = reflection && Date.parse(reflection.timestamp || '');
 const decisionOk = Number.isFinite(started)
   && Number.isFinite(decisionTs)
   && decisionTs >= started
-  && (!expectedAction || decision.action === expectedAction)
-  && (!expectedReason || decision.reason === expectedReason);
+  && (!expectedAction || actionOf(decision) === expectedAction)
+  && (!expectedReason || reasonOf(decision) === expectedReason);
 const metricsOk = Number.isFinite(started)
   && Number.isFinite(metricsTs)
   && metricsTs >= started;
+const contextOk = Number.isFinite(started)
+  && Number.isFinite(contextTs)
+  && contextTs >= started
+  && (!expectedContextId || decisionContext.context_id === expectedContextId)
+  && (!expectedAction || actionOf(decisionContext) === expectedAction)
+  && (!expectedReason || reasonOf(decisionContext) === expectedReason);
+const reflectionOk = Number.isFinite(started)
+  && Number.isFinite(reflectionTs)
+  && reflectionTs >= started
+  && (!expectedReflectionId || reflection.reflection_id === expectedReflectionId)
+  && decisionContext
+  && reflection.decision_context_id === decisionContext.context_id;
 
 console.log(JSON.stringify({
   decision_ok: decisionOk,
   metrics_ok: metricsOk,
+  decision_context_ok: contextOk,
+  reflection_ok: reflectionOk,
   decision_timestamp: decision && decision.timestamp,
   metrics_timestamp: metrics && metrics.timestamp,
-  decision_action: decision && decision.action,
-  decision_reason: decision && decision.reason,
+  decision_context_timestamp: decisionContext && decisionContext.timestamp,
+  reflection_timestamp: reflection && reflection.timestamp,
+  decision_action: actionOf(decision),
+  decision_reason: reasonOf(decision),
+  decision_context_id: decisionContext && decisionContext.context_id,
+  reflection_id: reflection && reflection.reflection_id,
+  reflection_decision_context_id: reflection && reflection.decision_context_id,
 }));
 
-process.exit(decisionOk && metricsOk ? 0 : 2);
+process.exit(decisionOk && metricsOk && contextOk && reflectionOk ? 0 : 2);
 NODE"#;
     let env_json = json!({
         "EXPECTED_STARTED_AT": started_at,
         "EXPECTED_ACTION": expected_action,
         "EXPECTED_REASON": expected_reason,
+        "EXPECTED_CONTEXT_ID": expected_context_id,
+        "EXPECTED_REFLECTION_ID": expected_reflection_id,
     })
     .to_string();
     let exec = SandboxExecRequest {
@@ -920,11 +996,25 @@ async fn validate_fast_runs(response: &mut Value, all_bots: &[crate::state::Trad
             .get("metrics_written")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let reported_context = parsed
+            .get("decision_context_written")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let reported_reflection = parsed
+            .get("reflection_written")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
-        if !valid_schema || !has_decision || !reported_logs || !reported_metrics {
+        if !valid_schema
+            || !has_decision
+            || !reported_logs
+            || !reported_metrics
+            || !reported_context
+            || !reported_reflection
+        {
             set_task_failure(
                 entry,
-                "Fast tick JSON failed schema/side-effect flags".to_string(),
+                "Fast tick JSON failed schema/decision/metrics/reflection flags".to_string(),
             );
             continue;
         }
@@ -1218,6 +1308,8 @@ mod tests {
 
         assert!(paths.contains(&"/home/agent/tools/api-client.js"));
         assert!(paths.contains(&"/home/agent/tools/log-decision.js"));
+        assert!(paths.contains(&"/home/agent/tools/write-metrics.js"));
+        assert!(paths.contains(&"/home/agent/tools/reflection-loop.js"));
         assert!(paths.contains(&"/home/agent/tools/tick-common.js"));
         assert!(paths.contains(&"/home/agent/tools/tick-recipe-dsl.js"));
         assert!(paths.contains(&"/home/agent/tools/dex-mm-tick.js"));
@@ -1240,6 +1332,10 @@ mod tests {
             assert!(
                 paths.iter().any(|path| *path == expected_path),
                 "{tool} bundle must install the selected tool"
+            );
+            assert!(
+                paths.contains(&"/home/agent/tools/reflection-loop.js"),
+                "{tool} bundle must install the runtime reflection loop"
             );
         }
     }

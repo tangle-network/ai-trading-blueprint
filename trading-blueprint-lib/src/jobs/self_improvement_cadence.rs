@@ -247,6 +247,23 @@ function launch(label, command, args, extraEnv = {}) {
   return { pid: child.pid, log: logPath };
 }
 
+function selectGenerationIntent(defaultIntent) {
+  try {
+    const loop = require('/home/agent/tools/reflection-loop.js');
+    const selected = loop.nextImprovementIntent(defaultIntent);
+    if (selected.intent) {
+      loop.recordIntentDispatch(selected.intent, { launcher: 'self-improvement-cadence', pid: process.pid });
+    }
+    return selected;
+  } catch (error) {
+    return {
+      intent: null,
+      prompt: defaultIntent,
+      error: error && error.message ? error.message : String(error),
+    };
+  }
+}
+
 const mcpRpc = `${JSON.stringify({
   jsonrpc: '2.0',
   id: 1,
@@ -264,6 +281,18 @@ const out = {
 };
 
 if (process.env.RUN_GENERATION === '1') {
+  const selected = selectGenerationIntent(
+    process.env.SELF_IMPROVEMENT_INTENT || 'Periodic paper-only harness self-improvement.',
+  );
+  out.selected_generation_intent = selected.intent
+    ? {
+        intent_id: selected.intent.intent_id,
+        priority: selected.intent.priority || null,
+        reflection_id: selected.intent.reflection_id || null,
+        decision_context_id: selected.intent.decision_context_id || null,
+      }
+    : null;
+  if (selected.error) out.intent_selection_error = selected.error;
   out.generation = launch(
     'self-improvement-generation',
     'bun',
@@ -271,7 +300,7 @@ if (process.env.RUN_GENERATION === '1') {
       '--bun',
       '/home/agent/tools/self-improvement-loop.ts',
       'run',
-      process.env.SELF_IMPROVEMENT_INTENT || 'Periodic paper-only harness self-improvement.',
+      selected.prompt,
     ],
   );
 }
@@ -339,5 +368,14 @@ mod tests {
         candidate.trading_active = true;
         candidate.wind_down_started_at = Some(123);
         assert!(!eligible_paper_bot(&candidate));
+    }
+
+    #[test]
+    fn cadence_launcher_consumes_runtime_reflection_intents() {
+        let command = cadence_launcher_command();
+        assert!(command.contains("require('/home/agent/tools/reflection-loop.js')"));
+        assert!(command.contains("loop.nextImprovementIntent"));
+        assert!(command.contains("loop.recordIntentDispatch"));
+        assert!(command.contains("selected.prompt"));
     }
 }
