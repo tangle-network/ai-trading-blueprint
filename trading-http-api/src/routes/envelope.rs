@@ -26,9 +26,11 @@ use crate::{BotContext, MultiBotTradingState};
 /// so a single mutex is sufficient and avoids the complexity of a per-bot
 /// dashmap. See `audits/http-api-concurrency-audit.md` finding #1.
 static ENVELOPE_WRITE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static ENVELOPE_DIR: Lazy<PathBuf> =
+    Lazy::new(|| sandbox_runtime::store::state_dir().join("trading-envelopes"));
 
-fn envelope_dir() -> PathBuf {
-    sandbox_runtime::store::state_dir().join("trading-envelopes")
+fn envelope_dir() -> &'static Path {
+    ENVELOPE_DIR.as_path()
 }
 
 fn envelope_path(bot_id: &str) -> PathBuf {
@@ -318,4 +320,65 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
                 .delete(delete_envelope_handler),
         )
         .route("/envelope/status", get(envelope_status_handler))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal::Decimal;
+    use trading_runtime::{PerpsPolicy, TradingPolicy};
+
+    fn test_envelope(bot_id: &str, nonce: u64) -> SignedEnvelope {
+        SignedEnvelope {
+            version: 2,
+            bot_id: bot_id.to_string(),
+            vault_address: "0x0000000000000000000000000000000000000001".to_string(),
+            chain_id: 31337,
+            protocol: "hyperliquid".to_string(),
+            policy: TradingPolicy {
+                max_trade_size_usd: Decimal::from(1_000),
+                max_total_exposure_usd: Decimal::from(3_000),
+                max_drawdown_pct: Decimal::from(10),
+                can_open_positions: true,
+                perps: Some(PerpsPolicy {
+                    allowed_assets: vec!["ETH".to_string()],
+                    max_leverage: 5,
+                    max_stop_loss_distance: Decimal::new(5, 2),
+                    min_stop_loss_distance: Decimal::new(1, 2),
+                    require_stop_loss: false,
+                }),
+                vault: None,
+                clob: None,
+            },
+            approval_signers: vec!["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".to_string()],
+            min_signatures: 1,
+            issued_at: 1_700_000_000,
+            expires_at: 1_700_003_600,
+            nonce,
+            verifying_contract: "0x5FbDB2315678afecb367f032d93F642f64180aa3".to_string(),
+            enforcement: None,
+            signatures: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn envelope_storage_dir_is_stable_after_first_use() {
+        let first_dir = tempfile::tempdir().expect("first tempdir");
+        let second_dir = tempfile::tempdir().expect("second tempdir");
+        // SAFETY: this test intentionally exercises process-global state-dir
+        // mutation to prevent regressions in envelope storage path stability.
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", first_dir.path()) };
+
+        let bot_id = format!("envelope-dir-stable-{}", uuid::Uuid::new_v4());
+        let _ = clear_signed_envelope(&bot_id);
+        set_signed_envelope(&bot_id, &test_envelope(&bot_id, 7)).expect("persist envelope");
+
+        // SAFETY: see note above. Envelope storage must keep using the same
+        // process directory after it has been initialized.
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", second_dir.path()) };
+
+        let stored = get_signed_envelope(&bot_id).expect("stored envelope");
+        assert_eq!(stored.nonce, 7);
+        let _ = clear_signed_envelope(&bot_id);
+    }
 }
