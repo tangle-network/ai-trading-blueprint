@@ -24,6 +24,11 @@ const RUNS_DIR = join(EVOLVE_DIR, 'self-improvement');
 const TRACE_DIR = join(EVOLVE_DIR, 'traces');
 const KNOWLEDGE_ROOT = join(ROOT, '.agent-knowledge');
 const HARNESS_PATH = join(ROOT, 'config', 'harness.json');
+const MEMORY_DIR = join(ROOT, 'memory');
+const DECISION_CONTEXTS_FILE = join(MEMORY_DIR, 'decision-contexts.jsonl');
+const REFLECTIONS_FILE = join(MEMORY_DIR, 'reflections.jsonl');
+const IMPROVEMENT_INTENTS_FILE = join(MEMORY_DIR, 'improvement-intents.jsonl');
+const DECISION_LOG_FILE = join(ROOT, 'logs', 'decisions.jsonl');
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.sidecar', '.opencode', '.opencode-home', '.evolve']);
 const SECRET_PATH_RE = /(^|\/)(\.env(\.|$)|.*\.(pem|key|p12|pfx|keystore|wallet)|id_rsa|id_ed25519|secrets?\.json|credentials?\.json)$/i;
 const SECRET_TEXT_RE = /(api[_-]?key|private[_-]?key|secret|seed phrase|mnemonic|bearer)\s*[:=]\s*['"]?[A-Za-z0-9_./+=-]{24,}/i;
@@ -41,6 +46,22 @@ function readJson(path, fallback) {
     return JSON.parse(readFileSync(path, 'utf8'));
   } catch {
     return fallback;
+  }
+}
+
+function readJsonl(path, max = 50) {
+  try {
+    const lines = readFileSync(path, 'utf8').trim().split('\n').filter(Boolean);
+    return lines.slice(Math.max(0, lines.length - max)).map((line) => {
+      try {
+        const parsed = JSON.parse(line);
+        return parsed && typeof parsed === 'object' ? parsed : { value: parsed };
+      } catch {
+        return { parse_error: line.slice(0, 200) };
+      }
+    });
+  } catch {
+    return [];
   }
 }
 
@@ -99,6 +120,121 @@ function seedFor(runId, intent, index) {
 
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function arrayFrom(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringOrNull(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function numberOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function atPath(value, path) {
+  let current = value;
+  for (const key of path) {
+    if (!isRecord(current)) return null;
+    current = current[key];
+  }
+  return current ?? null;
+}
+
+function compactTraceValue(value, maxDepth = 4, maxKeys = 36, maxString = 500) {
+  if (maxDepth <= 0) {
+    if (Array.isArray(value)) return { type: 'array', length: value.length };
+    if (isRecord(value)) return { type: 'object', keys: Object.keys(value).slice(0, 12) };
+    return value ?? null;
+  }
+  if (value === null || value === undefined) return value ?? null;
+  if (typeof value === 'string') return value.length > maxString ? `${value.slice(0, maxString)}...` : value;
+  if (['number', 'boolean'].includes(typeof value)) return value;
+  if (Array.isArray(value)) return value.slice(0, 12).map((item) => compactTraceValue(item, maxDepth - 1, maxKeys, maxString));
+  if (!isRecord(value)) return String(value);
+  const out = {};
+  for (const key of Object.keys(value).slice(0, maxKeys)) {
+    if (/token|secret|private|authorization|api_key|apikey|password/i.test(key)) {
+      out[key] = '[redacted]';
+    } else {
+      out[key] = compactTraceValue(value[key], maxDepth - 1, maxKeys, maxString);
+    }
+  }
+  const keys = Object.keys(value);
+  if (keys.length > maxKeys) out._truncated_keys = keys.length - maxKeys;
+  return out;
+}
+
+function latestTraceSnapshot(config) {
+  const contexts = readJsonl(DECISION_CONTEXTS_FILE, 12);
+  const reflections = readJsonl(REFLECTIONS_FILE, 12);
+  const intents = readJsonl(IMPROVEMENT_INTENTS_FILE, 12);
+  const decisions = readJsonl(DECISION_LOG_FILE, 12);
+  const latestContext = contexts.at(-1) || null;
+  const latestReflection = reflections.at(-1) || null;
+  const latestIntent = intents.at(-1) || null;
+  const evidence = isRecord(latestContext?.evidence) ? latestContext.evidence : {};
+  const metrics = isRecord(latestContext?.metrics) ? latestContext.metrics : {};
+  const mandate = isRecord(latestContext?.mandate) ? latestContext.mandate : {};
+  const reflectionFindings = arrayFrom(latestReflection?.findings)
+    .filter(isRecord)
+    .map((finding) => ({
+      code: stringOrNull(finding.code),
+      severity: stringOrNull(finding.severity),
+      detail: stringOrNull(finding.detail),
+    }))
+    .filter((finding) => finding.code);
+  const prompt = stringOrNull(mandate.user_prompt)
+    || stringOrNull(atPath(config, ['strategy_config', 'user_prompt']))
+    || stringOrNull(config.user_prompt)
+    || stringOrNull(config.prompt);
+  const observedMarket = evidence.observed_market === true
+    || Object.keys(metrics).some((key) => /price|funding|rsi|ema|candle|volatility|spread|liquidity|market|reserve|apy|yield/i.test(key));
+  const observedPortfolio = evidence.observed_portfolio === true
+    || Object.keys(metrics).some((key) => /portfolio|position|nav|equity|balance|margin|idle|value/i.test(key));
+  const observedNews = evidence.observed_news === true || evidence.observed_external_signals === true;
+  return {
+    schema_version: 1,
+    generated_at: nowIso(),
+    counts: {
+      decision_contexts: contexts.length,
+      reflections: reflections.length,
+      improvement_intents: intents.length,
+      decisions: decisions.length,
+    },
+    latest_ids: {
+      decision_context_id: stringOrNull(latestContext?.context_id),
+      reflection_id: stringOrNull(latestReflection?.reflection_id),
+      improvement_intent_id: stringOrNull(latestIntent?.intent_id),
+    },
+    mandate: {
+      prompt,
+      strategy_type: stringOrNull(mandate.strategy_type) || stringOrNull(config.strategy_type),
+      family: stringOrNull(latestContext?.family),
+      alignment: stringOrNull(atPath(latestContext, ['evidence', 'mandate_alignment'])),
+    },
+    observations: {
+      market: observedMarket,
+      portfolio: observedPortfolio,
+      news_or_external_signals: observedNews,
+      prior_actions: evidence.observed_prior_actions === true || decisions.length > 1,
+      trade_execution: evidence.observed_trade_execution === true,
+      signals_generated: numberOrNull(evidence.signals_generated) ?? numberOrNull(metrics.signals_generated),
+    },
+    latest_context: compactTraceValue(latestContext, 4, 36, 500),
+    latest_reflection: compactTraceValue(latestReflection, 4, 36, 500),
+    latest_improvement_intent: compactTraceValue(latestIntent, 3, 30, 400),
+    recent_decisions: decisions.slice(-5).map((decision) => compactTraceValue(decision, 3, 24, 300)),
+    finding_codes: reflectionFindings.map((finding) => finding.code),
+    high_findings: reflectionFindings.filter((finding) => ['critical', 'high'].includes(finding.severity)).slice(0, 8),
+  };
 }
 
 function repairHarness(harness) {
@@ -491,6 +627,54 @@ function deterministicFinding(runId, intent, config, packageStatus) {
   };
 }
 
+function traceGroundedFinding(runId, intent, config, trace) {
+  const missing = [];
+  if (trace.counts.decision_contexts === 0) missing.push('decision-context');
+  if (trace.counts.reflections === 0) missing.push('reflection');
+  if (!trace.observations.market) missing.push('market-observation');
+  if (!trace.observations.portfolio) missing.push('portfolio-observation');
+
+  const highFindings = trace.high_findings || [];
+  const severity = missing.length || highFindings.length ? 'high' : 'info';
+  const claim = missing.length
+    ? `Self-improvement analyst is missing required runtime trace evidence: ${missing.join(', ')}.`
+    : highFindings.length
+      ? `Self-improvement analyst found ${highFindings.length} high-priority trace-backed behavior gap${highFindings.length === 1 ? '' : 's'}.`
+      : 'Self-improvement analyst consumed recent market, portfolio, mandate, and reflection trace evidence before selecting a candidate.';
+  const evidenceRefs = [
+    trace.latest_ids.decision_context_id ? { kind: 'artifact', uri: `artifact://memory/decision-contexts.jsonl#${trace.latest_ids.decision_context_id}` } : null,
+    trace.latest_ids.reflection_id ? { kind: 'artifact', uri: `artifact://memory/reflections.jsonl#${trace.latest_ids.reflection_id}` } : null,
+    trace.latest_ids.improvement_intent_id ? { kind: 'artifact', uri: `artifact://memory/improvement-intents.jsonl#${trace.latest_ids.improvement_intent_id}` } : null,
+  ].filter(Boolean);
+
+  return {
+    schema_version: '1.0.0',
+    finding_id: sha256(`trading-self-improvement-trace|${runId}|${trace.latest_ids.decision_context_id || 'missing'}|${trace.finding_codes.join(',')}`),
+    analyst_id: 'trading-trace-analyst',
+    produced_at: nowIso(),
+    severity,
+    area: 'runtime-trace-grounding',
+    claim,
+    confidence: missing.length ? 0.94 : 0.88,
+    evidence_refs: evidenceRefs.length ? evidenceRefs : [{ kind: 'artifact', uri: 'artifact://memory', excerpt: 'No runtime trace artifacts were available.' }],
+    rationale: [
+      `User intent: ${intent}`,
+      `Trace counts: contexts=${trace.counts.decision_contexts}, reflections=${trace.counts.reflections}, intents=${trace.counts.improvement_intents}, decisions=${trace.counts.decisions}.`,
+      `Observed market=${trace.observations.market}, portfolio=${trace.observations.portfolio}, prior_actions=${trace.observations.prior_actions}, news_or_external=${trace.observations.news_or_external_signals}.`,
+    ].join(' '),
+    recommended_action: missing.length
+      ? 'Repair tick instrumentation before promoting strategy changes; self-improvement must be grounded in market, portfolio, and prior-outcome traces.'
+      : 'Use the trace-backed finding set to choose the smallest paper-only harness mutation, then require backtest and forward-paper evidence before promotion.',
+    validation_plan: 'Run a fast tick, then bun --bun /home/agent/tools/reflection-loop.js status and bun --bun /home/agent/tools/self-improvement-loop.ts run "<trace-grounded intent>".',
+    subject: trace.latest_ids.decision_context_id || 'runtime-trace-missing',
+    metadata: {
+      run_id: runId,
+      trace_grounded: true,
+      trace,
+    },
+  };
+}
+
 function knowledgeProtocolText(proposals) {
   const blocks = [];
   for (const proposal of proposals || []) {
@@ -502,9 +686,14 @@ function knowledgeProtocolText(proposals) {
 }
 
 async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
-  const finding = deterministicFinding(runId, intent, config, packageStatus);
+  const traceSnapshot = latestTraceSnapshot(config);
+  const readinessFinding = deterministicFinding(runId, intent, config, packageStatus);
+  const traceFinding = traceGroundedFinding(runId, intent, config, traceSnapshot);
+  const findings = [readinessFinding, traceFinding];
   if (!packageStatus.available) {
-    writeFileSync(join(FINDINGS_DIR, 'findings.jsonl'), `${JSON.stringify({ ...finding, run_id: runId })}\n`, { flag: 'a' });
+    for (const finding of findings) {
+      writeFileSync(join(FINDINGS_DIR, 'findings.jsonl'), `${JSON.stringify({ ...finding, run_id: runId })}\n`, { flag: 'a' });
+    }
     const usage_event = safeRecordUsageEvent({
       surface: 'runtime-self-improvement',
       operation: 'analyst-loop',
@@ -512,10 +701,15 @@ async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
       status: 'skipped_missing_packages',
       success: true,
       input_chars: intent.length,
-      output_chars: JSON.stringify(finding).length,
-      metadata: { missing: packageStatus.missing, mode: 'fallback-jsonl' },
+      output_chars: JSON.stringify(findings).length,
+      metadata: {
+        missing: packageStatus.missing,
+        mode: 'fallback-jsonl',
+        trace_grounded: true,
+        trace: traceSnapshot,
+      },
     });
-    return { mode: 'fallback-jsonl', findings: [finding], applied_knowledge: [], missing: packageStatus.missing, usage_event };
+    return { mode: 'fallback-jsonl', findings, applied_knowledge: [], missing: packageStatus.missing, usage_event, trace_snapshot: traceSnapshot };
   }
 
   const { FindingsStore } = packageStatus.modules.agentEval;
@@ -524,8 +718,11 @@ async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
   const registry = {
     list: () => [{ id: 'trading-self-improvement' }],
     run: async () => ({
-      findings: [finding],
-      per_analyst: [{ analyst_id: 'trading-self-improvement', status: 'completed', findings_count: 1 }],
+      findings,
+      per_analyst: [
+        { analyst_id: 'trading-self-improvement', status: 'completed', findings_count: 1 },
+        { analyst_id: 'trading-trace-analyst', status: 'completed', findings_count: 1 },
+      ],
       total_cost_usd: 0,
     }),
   };
@@ -553,7 +750,7 @@ async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
       status: 'completed',
       success: true,
       duration_ms: Date.now() - startedAt,
-      input_chars: intent.length + JSON.stringify(config).length,
+      input_chars: intent.length + JSON.stringify(config).length + JSON.stringify(traceSnapshot).length,
       output_chars: JSON.stringify(result.analystResult || {}).length,
       usage: {
         costUsd: result.analystResult?.total_cost_usd,
@@ -561,6 +758,8 @@ async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
       },
       metadata: {
         mode: 'tangle-agent-packages',
+        trace_grounded: true,
+        trace: traceSnapshot,
         findings: result.analystResult?.findings?.length || 0,
         per_analyst: result.analystResult?.per_analyst || [],
       },
@@ -572,10 +771,11 @@ async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
       applied_knowledge: result.knowledge?.applied || [],
       diff: result.diff,
       usage_event,
+      trace_snapshot: traceSnapshot,
     };
   } catch (error) {
     const fallback = {
-      ...finding,
+      ...readinessFinding,
       run_id: runId,
       severity: 'medium',
       area: 'analyst-loop-runtime',
@@ -589,16 +789,22 @@ async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
       run_id: runId,
       status: 'failed',
       success: false,
-      input_chars: intent.length + JSON.stringify(config).length,
-      output_chars: JSON.stringify(fallback).length,
-      metadata: { mode: 'package-error-fallback-jsonl', error: String(error.stack || error.message || error) },
+      input_chars: intent.length + JSON.stringify(config).length + JSON.stringify(traceSnapshot).length,
+      output_chars: JSON.stringify([fallback, traceFinding]).length,
+      metadata: {
+        mode: 'package-error-fallback-jsonl',
+        trace_grounded: true,
+        trace: traceSnapshot,
+        error: String(error.stack || error.message || error),
+      },
     });
     return {
       mode: 'package-error-fallback-jsonl',
-      findings: [fallback],
+      findings: [fallback, traceFinding],
       applied_knowledge: [],
       error: String(error.stack || error.message || error),
       usage_event,
+      trace_snapshot: traceSnapshot,
     };
   }
 }

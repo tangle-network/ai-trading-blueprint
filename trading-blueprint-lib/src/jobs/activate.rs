@@ -1560,6 +1560,10 @@ mod tests {
         assert!(tool.contains("mutateHarness"));
         assert!(tool.contains("candidate_search"));
         assert!(tool.contains("candle_readiness"));
+        assert!(tool.contains("latestTraceSnapshot"));
+        assert!(tool.contains("traceGroundedFinding"));
+        assert!(tool.contains("trace_grounded"));
+        assert!(tool.contains("decision-contexts.jsonl"));
         assert!(tool.contains("package-error-fallback-jsonl"));
         assert!(tool.contains("FindingsStore"));
         assert!(tool.contains("runAnalystLoop"));

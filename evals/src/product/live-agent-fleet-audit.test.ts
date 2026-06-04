@@ -97,6 +97,19 @@ test('tick-artifact parser extracts decisions, reasons, metrics, and strategy fi
       improvement_dispatches_jsonl: JSON.stringify({ intent_id: 'intent_1' }),
       usage_telemetry_jsonl: [
         JSON.stringify({
+          event_id: 'usage_smoke',
+          surface: 'telemetry-smoke',
+          operation: 'usage-writer',
+          provider: 'smoke-test',
+          model: 'manual-writer',
+          input_tokens: 1,
+          output_tokens: 1,
+          total_tokens: 2,
+          cost_usd: 99,
+          token_count_status: 'reported',
+          metadata: { synthetic: true },
+        }),
+        JSON.stringify({
           event_id: 'usage_1',
           surface: 'operator-chat',
           operation: 'agents-run',
@@ -107,6 +120,7 @@ test('tick-artifact parser extracts decisions, reasons, metrics, and strategy fi
           total_tokens: 168,
           cost_usd: 0.0021,
           token_count_status: 'reported',
+          metadata: { trace_grounded: true, trace: { decision_context_id: 'ctx_1' } },
         }),
       ].join('\n'),
       metrics_latest: { portfolio_value_usd: 10000, signals_generated: 0, trade_count: 1 },
@@ -128,6 +142,8 @@ test('tick-artifact parser extracts decisions, reasons, metrics, and strategy fi
   assert.equal(artifacts.improvement_intents, 1)
   assert.equal(artifacts.improvement_dispatches, 1)
   assert.equal(artifacts.usage_telemetry.event_count, 1)
+  assert.equal(artifacts.usage_telemetry.synthetic_event_count, 1)
+  assert.equal(artifacts.usage_telemetry.trace_grounded_events, 1)
   assert.equal(artifacts.usage_telemetry.input_tokens, 120)
   assert.equal(artifacts.usage_telemetry.output_tokens, 48)
   assert.equal(artifacts.usage_telemetry.cost_usd, 0.0021)

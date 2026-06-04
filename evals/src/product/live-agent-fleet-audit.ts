@@ -91,10 +91,13 @@ interface UsageTelemetryEvent {
   cost_usd?: number | string | null
   cost_source?: string | null
   duration_ms?: number | string | null
+  metadata?: unknown
 }
 
 export interface UsageTelemetrySummary {
   event_count: number
+  synthetic_event_count: number
+  trace_grounded_events: number
   events_with_reported_tokens: number
   events_with_reported_or_estimated_cost: number
   input_tokens: number
@@ -118,6 +121,7 @@ export interface UsageTelemetrySummary {
     cost_usd: number | null
     cost_source: string | null
     duration_ms: number
+    trace_grounded: boolean
   }>
 }
 
@@ -270,6 +274,8 @@ export interface FleetAuditResult {
     total_recent_input_tokens: number
     total_recent_output_tokens: number
     total_usage_events: number
+    total_synthetic_usage_events: number
+    total_trace_grounded_usage_events: number
     bots_with_usage_telemetry: number
     total_usage_input_tokens: number
     total_usage_output_tokens: number
@@ -673,6 +679,9 @@ function buildFlags(input: {
   if (input.artifacts.usage_telemetry.event_count > 0 && input.artifacts.usage_telemetry.events_with_reported_tokens === 0) {
     flags.push('llm-token-counts-unreported')
   }
+  if (input.selfImprovementState === 'active' && input.artifacts.usage_telemetry.trace_grounded_events === 0) {
+    flags.push('llm-trace-grounding-missing')
+  }
   return flags
 }
 
@@ -707,6 +716,8 @@ function composeFleetAudit(operatorUrl: string, bots: BotAudit[]): FleetAuditRes
       total_recent_input_tokens: bots.reduce((sum, bot) => sum + bot.runs.input_tokens, 0),
       total_recent_output_tokens: bots.reduce((sum, bot) => sum + bot.runs.output_tokens, 0),
       total_usage_events: bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.event_count, 0),
+      total_synthetic_usage_events: bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.synthetic_event_count, 0),
+      total_trace_grounded_usage_events: bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.trace_grounded_events, 0),
       bots_with_usage_telemetry: bots.filter((bot) => bot.tick_artifacts.usage_telemetry.event_count > 0).length,
       total_usage_input_tokens: bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.input_tokens, 0),
       total_usage_output_tokens: bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.output_tokens, 0),
@@ -720,7 +731,7 @@ function composeFleetAudit(operatorUrl: string, bots: BotAudit[]): FleetAuditRes
     verdict: {
       recursive_self_improvement_live: botsWithSelfImprovementEvidence > 0,
       runtime_reflection_live: botsWithRuntimeReflectionEvidence > 0,
-      llm_market_reflection_live: bots.some((bot) => bot.loop_mode === 'agentic-llm-run' && bot.observations.market),
+      llm_market_reflection_live: bots.some((bot) => bot.tick_artifacts.usage_telemetry.trace_grounded_events > 0 && bot.observations.market),
       follows_user_mandates: botsWithStrategyMismatch === 0 ? 'yes' : botsWithStrategyMismatch < bots.length ? 'partially' : 'no',
       succinct_wiring_plan: [
         'Make each fast tick emit a compact DecisionContext: mandate, portfolio, open positions, recent fills, market snapshot, external/news signals, and prior decision outcome.',
@@ -747,6 +758,9 @@ export function renderFleetAuditMarkdown(result: FleetAuditResult): string {
   lines.push(`- User mandate adherence: **${result.verdict.follows_user_mandates}**.`)
   lines.push(`- ${result.summary.deterministic_fast_tick_bots}/${result.bot_count} bots are deterministic fast ticks; ${result.summary.agentic_llm_run_bots}/${result.bot_count} show LLM-token or transcript evidence in recent runs.`)
   lines.push(`- Usage telemetry: **${result.summary.total_usage_events} events** across ${result.summary.bots_with_usage_telemetry}/${result.bot_count} bots; reported/estimated cost **$${result.summary.total_usage_cost_usd.toFixed(6)}**; tokens **${result.summary.total_usage_input_tokens}/${result.summary.total_usage_output_tokens}** in/out.`)
+  if (result.summary.total_synthetic_usage_events > 0 || result.summary.total_trace_grounded_usage_events > 0) {
+    lines.push(`- Usage classification: **${result.summary.total_trace_grounded_usage_events} trace-grounded** events; **${result.summary.total_synthetic_usage_events} synthetic smoke** events excluded from cost totals.`)
+  }
   lines.push(`- ${result.summary.bots_with_trades}/${result.bot_count} bots have recent trades; ${result.summary.bots_with_runtime_reflection_evidence}/${result.bot_count} show runtime reflection; ${result.summary.bots_with_improvement_intents}/${result.bot_count} have queued improvement intents; ${result.summary.bots_with_self_improvement_evidence}/${result.bot_count} show promotion/evolution evidence.`)
   lines.push('')
   lines.push('## Fleet Table')
@@ -822,6 +836,8 @@ function parseJsonl(raw: string): Array<Record<string, unknown>> {
 function emptyUsageTelemetrySummary(): UsageTelemetrySummary {
   return {
     event_count: 0,
+    synthetic_event_count: 0,
+    trace_grounded_events: 0,
     events_with_reported_tokens: 0,
     events_with_reported_or_estimated_cost: 0,
     input_tokens: 0,
@@ -835,21 +851,24 @@ function emptyUsageTelemetrySummary(): UsageTelemetrySummary {
 }
 
 export function summarizeUsageTelemetry(events: Array<Record<string, unknown>>): UsageTelemetrySummary {
-  const inputTokens = events.reduce((sum, event) => sum + toNumber(event.input_tokens), 0)
-  const outputTokens = events.reduce((sum, event) => sum + toNumber(event.output_tokens), 0)
-  const totalTokens = events.reduce((sum, event) => sum + toNumber(event.total_tokens), 0) || inputTokens + outputTokens
-  const costUsd = events.reduce((sum, event) => sum + toNumber(event.cost_usd), 0)
+  const realEvents = events.filter((event) => !isSyntheticUsageEvent(event))
+  const inputTokens = realEvents.reduce((sum, event) => sum + toNumber(event.input_tokens), 0)
+  const outputTokens = realEvents.reduce((sum, event) => sum + toNumber(event.output_tokens), 0)
+  const totalTokens = realEvents.reduce((sum, event) => sum + toNumber(event.total_tokens), 0) || inputTokens + outputTokens
+  const costUsd = realEvents.reduce((sum, event) => sum + toNumber(event.cost_usd), 0)
   return {
-    event_count: events.length,
-    events_with_reported_tokens: events.filter((event) => event.token_count_status === 'reported').length,
-    events_with_reported_or_estimated_cost: events.filter((event) => event.cost_usd != null && Number.isFinite(Number(event.cost_usd))).length,
+    event_count: realEvents.length,
+    synthetic_event_count: events.length - realEvents.length,
+    trace_grounded_events: realEvents.filter(isTraceGroundedUsageEvent).length,
+    events_with_reported_tokens: realEvents.filter((event) => event.token_count_status === 'reported').length,
+    events_with_reported_or_estimated_cost: realEvents.filter((event) => event.cost_usd != null && Number.isFinite(Number(event.cost_usd))).length,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     total_tokens: totalTokens,
     cost_usd: Number(costUsd.toFixed(8)),
-    providers: uniqueSorted(events.map((event) => stringValue(event.provider))),
-    models: uniqueSorted(events.map((event) => stringValue(event.model))),
-    latest: events.slice(-5).map((event) => ({
+    providers: uniqueSorted(realEvents.map((event) => stringValue(event.provider))),
+    models: uniqueSorted(realEvents.map((event) => stringValue(event.model))),
+    latest: realEvents.slice(-5).map((event) => ({
       event_id: stringValue(event.event_id),
       timestamp: primitive(event.timestamp),
       surface: stringValue(event.surface),
@@ -864,8 +883,23 @@ export function summarizeUsageTelemetry(events: Array<Record<string, unknown>>):
       cost_usd: event.cost_usd != null && Number.isFinite(Number(event.cost_usd)) ? Number(event.cost_usd) : null,
       cost_source: stringValue(event.cost_source),
       duration_ms: toNumber(event.duration_ms),
+      trace_grounded: isTraceGroundedUsageEvent(event),
     })),
   }
+}
+
+function usageMetadata(event: Record<string, unknown>): Record<string, unknown> {
+  return isRecord(event.metadata) ? event.metadata : {}
+}
+
+function isSyntheticUsageEvent(event: Record<string, unknown>): boolean {
+  const metadata = usageMetadata(event)
+  return event.synthetic === true || metadata.synthetic === true || stringValue(event.surface) === 'telemetry-smoke'
+}
+
+function isTraceGroundedUsageEvent(event: Record<string, unknown>): boolean {
+  const metadata = usageMetadata(event)
+  return metadata.trace_grounded === true || isRecord(metadata.trace) || stringValue(event.operation) === 'trace-analyst-loop'
 }
 
 function decisionAction(decision: Record<string, unknown>): string | null {
