@@ -3854,11 +3854,47 @@ function tail(file, maxBytes = 20000) {
   }
 }
 
+function parseJsonl(raw) {
+  return String(raw || '')
+    .trim()
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try { return JSON.parse(line) } catch { return null }
+    })
+    .filter((entry) => entry && typeof entry === 'object')
+}
+
+function usageSummary(events, filter = {}) {
+  const filtered = events.filter((event) => {
+    if (filter.run_id && event.run_id !== filter.run_id) return false
+    if (filter.task_id && event.task_id !== filter.task_id) return false
+    return true
+  })
+  const sum = (key) => filtered.reduce((acc, event) => acc + (Number.isFinite(Number(event[key])) ? Number(event[key]) : 0), 0)
+  return {
+    event_count: filtered.length,
+    events_with_reported_tokens: filtered.filter((event) => event.token_count_status === 'reported').length,
+    events_with_reported_or_estimated_cost: filtered.filter((event) => event.cost_usd != null && Number.isFinite(Number(event.cost_usd))).length,
+    input_tokens: sum('input_tokens'),
+    output_tokens: sum('output_tokens'),
+    total_tokens: sum('total_tokens') || sum('input_tokens') + sum('output_tokens'),
+    cost_usd: Number(sum('cost_usd').toFixed(8)),
+    providers: [...new Set(filtered.map((event) => event.provider).filter(Boolean))].sort(),
+    models: [...new Set(filtered.map((event) => event.model).filter(Boolean))].sort(),
+    latest: filtered.slice(-5),
+  }
+}
+
 function epochish(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   const parsed = Date.parse(String(value || ''))
   return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0
 }
+
+const usageTelemetryJsonl = tail('/home/agent/telemetry/llm-usage.jsonl', 1000000)
+const usageEvents = parseJsonl(usageTelemetryJsonl)
 
 const mcpDir = '/home/agent/.evolve/mcp-self-improvement/tasks'
 const mcpRuns = jsonFiles(mcpDir).map(({ value: task }) => {
@@ -3879,6 +3915,7 @@ const mcpRuns = jsonFiles(mcpDir).map(({ value: task }) => {
     rounds_used: winner.rounds_used || shots.length || 0,
     failure: task.failure || winner.errored_reason || null,
     latest_shot: shots[shots.length - 1] || null,
+    usage_summary: task.usage_summary || usageSummary(usageEvents, { task_id: task.task_id }),
   }
 })
 
@@ -3906,6 +3943,7 @@ const runtimeRuns = jsonFiles(runtimeDir).map(({ file, value: report }) => {
     files_changed: [],
     tests: ['bun --bun /home/agent/tools/self-improvement-loop.ts status'],
     tests_passed: ['backtest_pass', 'paper_trial', 'evidence_met', 'promoted', 'staged_for_operator_approval', 'recorded'].includes(status),
+    usage_summary: report.usage_telemetry || usageSummary(usageEvents, { run_id: report.run_id || apiRun.run_id || null }),
     latest_shot: {
       run_id: report.run_id || null,
       package_status: report.package_status || null,
@@ -3920,6 +3958,8 @@ console.log(JSON.stringify({
   runs,
   runtime_runs: runtimeRuns,
   mcp_runs: mcpRuns,
+  usage_telemetry_jsonl: usageTelemetryJsonl,
+  usage_summary: usageSummary(usageEvents),
   logs: {
     generation: tail('/home/agent/logs/self-improvement-generation.log'),
     maintenance: tail('/home/agent/logs/self-improvement-maintenance.log'),
@@ -8326,6 +8366,14 @@ mod tests {
         assert!(
             READ_SELF_IMPROVEMENT_TASKS_JS.contains("self-improvement-generation.log"),
             "generation log tail must be exposed for failed/background runs"
+        );
+        assert!(
+            READ_SELF_IMPROVEMENT_TASKS_JS.contains("/home/agent/telemetry/llm-usage.jsonl"),
+            "self-improvement reader must expose sandbox LLM usage telemetry"
+        );
+        assert!(
+            READ_SELF_IMPROVEMENT_TASKS_JS.contains("usage_summary"),
+            "self-improvement reader must summarize usage per candidate"
         );
     }
 }

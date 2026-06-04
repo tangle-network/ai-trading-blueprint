@@ -8,6 +8,7 @@
 // candidate for the trading bot to backtest/promote through /evolution/*.
 
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import {
   existsSync,
   mkdirSync,
@@ -20,6 +21,13 @@ import {
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
+
+const require = createRequire(import.meta.url);
+const {
+  recordUsageEvent,
+  readUsageEvents,
+  summarizeUsageEvents,
+} = require('./usage-telemetry.js');
 
 function defaultRoot() {
   try {
@@ -60,6 +68,26 @@ const DEFAULT_TESTS = [
 ];
 const TERMINAL_VARIANT_STATES = new Set(['approved', 'errored', 'retired']);
 const activeTasks = new Map();
+
+function safeRecordUsageEvent(event) {
+  try {
+    return recordUsageEvent(event);
+  } catch (error) {
+    return {
+      telemetry_error: String(error.message || error),
+      surface: event?.surface || 'unknown',
+      operation: event?.operation || 'unknown',
+    };
+  }
+}
+
+function usageSummaryForTask(taskId) {
+  try {
+    return summarizeUsageEvents(readUsageEvents(), { task_id: taskId });
+  } catch (error) {
+    return { event_count: 0, error: String(error.message || error) };
+  }
+}
 
 function ensureDir(path) {
   mkdirSync(path, { recursive: true });
@@ -317,6 +345,7 @@ function runCodingAgent(task, variant, round) {
   const prompt = makeCodingPrompt(task, variant, round);
   writeFileSync(join(variant.worktree_path, '.self-improvement-prompt.md'), prompt, 'utf8');
   appendLog(task.task_id, `${variant.variant_id}: round ${round} coding command: ${variant.coding_command}`);
+  const startedAt = Date.now();
   return new Promise((resolve) => {
     const child = spawn(variant.coding_command, {
       cwd: variant.worktree_path,
@@ -354,7 +383,28 @@ function runCodingAgent(task, variant, round) {
       appendLog(task.task_id, `${variant.variant_id}: coding exited ${code ?? signal ?? 'unknown'}`);
       if (stdout.trim()) appendLog(task.task_id, `${variant.variant_id}: stdout\n${stdout.slice(-10000)}`);
       if (stderr.trim()) appendLog(task.task_id, `${variant.variant_id}: stderr\n${stderr.slice(-10000)}`);
-      resolve({ ok: code === 0, code: code ?? signal, stdout, stderr });
+      const usage_event = safeRecordUsageEvent({
+        surface: 'self-improvement-mcp',
+        operation: 'coding-agent',
+        task_id: task.task_id,
+        run_id: task.task_id,
+        variant_id: variant.variant_id,
+        shot_index: round,
+        round,
+        command: variant.coding_command,
+        status: code === 0 ? 'completed' : signal ? 'terminated' : 'failed',
+        success: code === 0,
+        duration_ms: Date.now() - startedAt,
+        input_chars: prompt.length,
+        output_chars: stdout.length + stderr.length,
+        metadata: {
+          harness_id: variant.harness_id,
+          exit: code ?? signal ?? 'unknown',
+          stdout_tail_sha256: sha(stdout.slice(-20000), 64),
+          stderr_tail_sha256: sha(stderr.slice(-20000), 64),
+        },
+      });
+      resolve({ ok: code === 0, code: code ?? signal, stdout, stderr, usage_event });
     });
     child.stdin.write(prompt);
     child.stdin.end();
@@ -389,6 +439,7 @@ function runReviewer(task, variant) {
       feedback: '',
     };
   }
+  const startedAt = Date.now();
   const command = renderTemplate(task.reviewer_command, {
     root: ROOT,
     worktree: variant.worktree_path,
@@ -409,12 +460,26 @@ function runReviewer(task, variant) {
   const recommendation = parsed?.recommendation || parsed?.validation?.recommendation || (result.ok ? 'ship' : 'error');
   const readiness = Number(parsed?.readiness || parsed?.validation?.merge_readiness || (result.ok ? 100 : 0));
   const approved = result.ok && ['ship', 'approve-with-nits', 'approved'].includes(String(recommendation));
+  const usage_event = safeRecordUsageEvent({
+    surface: 'self-improvement-mcp',
+    operation: 'reviewer-command',
+    task_id: task.task_id,
+    run_id: task.task_id,
+    variant_id: variant.variant_id,
+    command,
+    status: result.ok ? 'completed' : 'failed',
+    success: result.ok,
+    duration_ms: Date.now() - startedAt,
+    output_chars: text.length,
+    metadata: { recommendation, readiness },
+  });
   return {
     ok: result.ok,
     approved,
     recommendation,
     readiness,
     feedback: text.slice(-12000),
+    usage_event,
   };
 }
 
@@ -478,6 +543,7 @@ async function driveVariant(task, variant) {
         round,
         coding_ok: coding.ok,
         coding_exit: coding.code,
+        coding_usage_event: coding.usage_event,
         tests,
         review,
         diff_additions: variant.diff_additions,
@@ -727,6 +793,7 @@ function summarizeTask(task) {
       test_passed: variant.test_passed,
       errored_reason: variant.errored_reason,
     })),
+    usage_summary: usageSummaryForTask(task.task_id),
   };
 }
 

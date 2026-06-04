@@ -1245,6 +1245,13 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/usage-telemetry.js",
+        include_str!("../prompts/tools/usage_telemetry.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/self-improvement-loop.ts",
         include_str!("../prompts/tools/self_improvement_loop.ts"),
     )
@@ -1558,6 +1565,8 @@ mod tests {
         assert!(tool.contains("runAnalystLoop"));
         assert!(tool.contains("proposeFromFindings"));
         assert!(tool.contains("applyKnowledgeWriteBlocks"));
+        assert!(tool.contains("recordUsageEvent"));
+        assert!(tool.contains("usage_telemetry"));
     }
 
     #[test]
@@ -1602,6 +1611,8 @@ mod tests {
         assert!(tool.contains("recovering interrupted task state from worktree"));
         assert!(tool.contains("add -N ."));
         assert!(tool.contains("reset -q -- .self-improvement-prompt.md .self-improvement-spec.md"));
+        assert!(tool.contains("recordUsageEvent"));
+        assert!(tool.contains("usage_summary"));
         assert!(tool.contains("self_improvement.cancel"));
         assert!(tool.contains("self_improvement.promote_candidate"));
     }

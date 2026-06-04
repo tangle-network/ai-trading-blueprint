@@ -11,6 +11,11 @@ import { spawnSync } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
 const { apiCall, loadConfig } = require('./api-client.js');
+const {
+  recordUsageEvent,
+  readUsageEvents,
+  summarizeUsageEvents,
+} = require('./usage-telemetry.js');
 
 const ROOT = process.env.AGENT_WORKSPACE || '/home/agent';
 const EVOLVE_DIR = join(ROOT, '.evolve');
@@ -42,6 +47,26 @@ function readJson(path, fallback) {
 function writeJson(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function safeRecordUsageEvent(event) {
+  try {
+    return recordUsageEvent(event);
+  } catch (error) {
+    return {
+      telemetry_error: String(error.message || error),
+      surface: event?.surface || 'unknown',
+      operation: event?.operation || 'unknown',
+    };
+  }
+}
+
+function runUsageSummary(runId) {
+  try {
+    return summarizeUsageEvents(readUsageEvents(), { run_id: runId });
+  } catch (error) {
+    return { event_count: 0, error: String(error.message || error) };
+  }
 }
 
 function sha256(text) {
@@ -480,7 +505,17 @@ async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
   const finding = deterministicFinding(runId, intent, config, packageStatus);
   if (!packageStatus.available) {
     writeFileSync(join(FINDINGS_DIR, 'findings.jsonl'), `${JSON.stringify({ ...finding, run_id: runId })}\n`, { flag: 'a' });
-    return { mode: 'fallback-jsonl', findings: [finding], applied_knowledge: [], missing: packageStatus.missing };
+    const usage_event = safeRecordUsageEvent({
+      surface: 'runtime-self-improvement',
+      operation: 'analyst-loop',
+      run_id: runId,
+      status: 'skipped_missing_packages',
+      success: true,
+      input_chars: intent.length,
+      output_chars: JSON.stringify(finding).length,
+      metadata: { missing: packageStatus.missing, mode: 'fallback-jsonl' },
+    });
+    return { mode: 'fallback-jsonl', findings: [finding], applied_knowledge: [], missing: packageStatus.missing, usage_event };
   }
 
   const { FindingsStore } = packageStatus.modules.agentEval;
@@ -496,6 +531,7 @@ async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
   };
 
   try {
+    const startedAt = Date.now();
     const result = await runAnalystLoop({
       runId,
       registry,
@@ -510,12 +546,32 @@ async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
       },
       autoApply: { knowledge: true, knowledgeConfidenceThreshold: 0.85, improvement: false, improvementConfidenceThreshold: 0.9 },
     });
+    const usage_event = safeRecordUsageEvent({
+      surface: 'runtime-self-improvement',
+      operation: 'analyst-loop',
+      run_id: runId,
+      status: 'completed',
+      success: true,
+      duration_ms: Date.now() - startedAt,
+      input_chars: intent.length + JSON.stringify(config).length,
+      output_chars: JSON.stringify(result.analystResult || {}).length,
+      usage: {
+        costUsd: result.analystResult?.total_cost_usd,
+        total_cost_usd: result.analystResult?.total_cost_usd,
+      },
+      metadata: {
+        mode: 'tangle-agent-packages',
+        findings: result.analystResult?.findings?.length || 0,
+        per_analyst: result.analystResult?.per_analyst || [],
+      },
+    });
 
     return {
       mode: 'tangle-agent-packages',
       findings: result.analystResult.findings,
       applied_knowledge: result.knowledge?.applied || [],
       diff: result.diff,
+      usage_event,
     };
   } catch (error) {
     const fallback = {
@@ -527,11 +583,22 @@ async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
       recommended_action: 'Repair the package analyst persistence path, but do not block candle backfill, candidate search, or evolution lineage recording.',
     };
     writeFileSync(join(FINDINGS_DIR, 'findings.jsonl'), `${JSON.stringify(fallback)}\n`, { flag: 'a' });
+    const usage_event = safeRecordUsageEvent({
+      surface: 'runtime-self-improvement',
+      operation: 'analyst-loop',
+      run_id: runId,
+      status: 'failed',
+      success: false,
+      input_chars: intent.length + JSON.stringify(config).length,
+      output_chars: JSON.stringify(fallback).length,
+      metadata: { mode: 'package-error-fallback-jsonl', error: String(error.stack || error.message || error) },
+    });
     return {
       mode: 'package-error-fallback-jsonl',
       findings: [fallback],
       applied_knowledge: [],
       error: String(error.stack || error.message || error),
+      usage_event,
     };
   }
 }
@@ -622,6 +689,7 @@ async function run(intent) {
     },
     snapshot,
     self_improve: selfImprove,
+    usage_telemetry: runUsageSummary(runId),
   };
   writeJson(join(RUNS_DIR, `${runId}.json`), report);
   return report;

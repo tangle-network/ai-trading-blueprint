@@ -76,6 +76,51 @@ interface TradeRecord {
   }
 }
 
+interface UsageTelemetryEvent {
+  event_id?: string
+  timestamp?: string | number | null
+  surface?: string | null
+  operation?: string | null
+  provider?: string | null
+  model?: string | null
+  status?: string | null
+  token_count_status?: string | null
+  input_tokens?: number | string | null
+  output_tokens?: number | string | null
+  total_tokens?: number | string | null
+  cost_usd?: number | string | null
+  cost_source?: string | null
+  duration_ms?: number | string | null
+}
+
+export interface UsageTelemetrySummary {
+  event_count: number
+  events_with_reported_tokens: number
+  events_with_reported_or_estimated_cost: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  cost_usd: number
+  providers: string[]
+  models: string[]
+  latest: Array<{
+    event_id: string | null
+    timestamp: string | number | null
+    surface: string | null
+    operation: string | null
+    provider: string | null
+    model: string | null
+    status: string | null
+    token_count_status: string | null
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+    cost_usd: number | null
+    cost_source: string | null
+    duration_ms: number
+  }>
+}
+
 export interface RunSummary {
   status: number
   count: number
@@ -150,6 +195,7 @@ export interface TickArtifactSummary {
   improvement_intents: number
   latest_improvement_intent: unknown
   improvement_dispatches: number
+  usage_telemetry: UsageTelemetrySummary
   error?: string
 }
 
@@ -223,6 +269,11 @@ export interface FleetAuditResult {
     total_recent_runs: number
     total_recent_input_tokens: number
     total_recent_output_tokens: number
+    total_usage_events: number
+    bots_with_usage_telemetry: number
+    total_usage_input_tokens: number
+    total_usage_output_tokens: number
+    total_usage_cost_usd: number
     total_recent_trades: number
     flag_counts: Array<{ flag: string; count: number }>
   }
@@ -424,6 +475,7 @@ export function summarizeTickArtifacts(captureResult: EndpointCapture<unknown>):
       improvement_intents: 0,
       latest_improvement_intent: null,
       improvement_dispatches: 0,
+      usage_telemetry: emptyUsageTelemetrySummary(),
       ...(captureResult.error ? { error: captureResult.error } : {}),
     }
   }
@@ -435,6 +487,7 @@ export function summarizeTickArtifacts(captureResult: EndpointCapture<unknown>):
   const reflections = parseJsonl(String(payload.reflections_jsonl ?? ''))
   const improvementIntents = parseJsonl(String(payload.improvement_intents_jsonl ?? ''))
   const improvementDispatches = parseJsonl(String(payload.improvement_dispatches_jsonl ?? ''))
+  const usageTelemetry = summarizeUsageTelemetry(parseJsonl(String(payload.usage_telemetry_jsonl ?? '')))
   const latest = decisions.at(-1)
   const latestReflection = reflections.at(-1)
   const metricsLatest = payload.metrics_latest ?? null
@@ -481,6 +534,7 @@ export function summarizeTickArtifacts(captureResult: EndpointCapture<unknown>):
     improvement_intents: improvementIntents.length,
     latest_improvement_intent: improvementIntents.at(-1) ?? null,
     improvement_dispatches: improvementDispatches.length,
+    usage_telemetry: usageTelemetry,
   }
 }
 
@@ -613,6 +667,12 @@ function buildFlags(input: {
   if (input.artifacts.captured && input.artifacts.reflections === 0) flags.push('no-runtime-reflection-evidence')
   if (input.artifacts.latest_reflection?.verdict === 'improve') flags.push('runtime-reflection-says-improve')
   if (input.artifacts.improvement_intents > 0) flags.push('runtime-improvement-intent-queued')
+  if ((input.loopMode === 'agentic-llm-run' || input.selfImprovementState === 'active') && input.artifacts.usage_telemetry.event_count === 0) {
+    flags.push('llm-usage-telemetry-missing')
+  }
+  if (input.artifacts.usage_telemetry.event_count > 0 && input.artifacts.usage_telemetry.events_with_reported_tokens === 0) {
+    flags.push('llm-token-counts-unreported')
+  }
   return flags
 }
 
@@ -646,6 +706,11 @@ function composeFleetAudit(operatorUrl: string, bots: BotAudit[]): FleetAuditRes
       total_recent_runs: bots.reduce((sum, bot) => sum + bot.runs.count, 0),
       total_recent_input_tokens: bots.reduce((sum, bot) => sum + bot.runs.input_tokens, 0),
       total_recent_output_tokens: bots.reduce((sum, bot) => sum + bot.runs.output_tokens, 0),
+      total_usage_events: bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.event_count, 0),
+      bots_with_usage_telemetry: bots.filter((bot) => bot.tick_artifacts.usage_telemetry.event_count > 0).length,
+      total_usage_input_tokens: bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.input_tokens, 0),
+      total_usage_output_tokens: bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.output_tokens, 0),
+      total_usage_cost_usd: Number(bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.cost_usd, 0).toFixed(8)),
       total_recent_trades: bots.reduce((sum, bot) => sum + bot.trades.count, 0),
       flag_counts: Array.from(flagCounts.entries())
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
@@ -681,12 +746,13 @@ export function renderFleetAuditMarkdown(result: FleetAuditResult): string {
   lines.push(`- LLM market reflection live: **${result.verdict.llm_market_reflection_live ? 'yes' : 'no'}**.`)
   lines.push(`- User mandate adherence: **${result.verdict.follows_user_mandates}**.`)
   lines.push(`- ${result.summary.deterministic_fast_tick_bots}/${result.bot_count} bots are deterministic fast ticks; ${result.summary.agentic_llm_run_bots}/${result.bot_count} show LLM-token or transcript evidence in recent runs.`)
+  lines.push(`- Usage telemetry: **${result.summary.total_usage_events} events** across ${result.summary.bots_with_usage_telemetry}/${result.bot_count} bots; reported/estimated cost **$${result.summary.total_usage_cost_usd.toFixed(6)}**; tokens **${result.summary.total_usage_input_tokens}/${result.summary.total_usage_output_tokens}** in/out.`)
   lines.push(`- ${result.summary.bots_with_trades}/${result.bot_count} bots have recent trades; ${result.summary.bots_with_runtime_reflection_evidence}/${result.bot_count} show runtime reflection; ${result.summary.bots_with_improvement_intents}/${result.bot_count} have queued improvement intents; ${result.summary.bots_with_self_improvement_evidence}/${result.bot_count} show promotion/evolution evidence.`)
   lines.push('')
   lines.push('## Fleet Table')
   lines.push('')
-  lines.push('| Bot | Strategy | Loop | Runs | Tokens | Trades | Tick actions | Reflection | Intents | Self-improve | Alignment | Top flags |')
-  lines.push('| --- | --- | --- | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- |')
+  lines.push('| Bot | Strategy | Loop | Runs | Run tokens | Usage events | Usage cost | Trades | Tick actions | Reflection | Intents | Self-improve | Alignment | Top flags |')
+  lines.push('| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- |')
   for (const bot of result.bots) {
     lines.push([
       escapeCell(bot.name),
@@ -694,6 +760,8 @@ export function renderFleetAuditMarkdown(result: FleetAuditResult): string {
       bot.loop_mode,
       String(bot.runs.count),
       `${bot.runs.input_tokens}/${bot.runs.output_tokens}`,
+      String(bot.tick_artifacts.usage_telemetry.event_count),
+      `$${bot.tick_artifacts.usage_telemetry.cost_usd.toFixed(6)}`,
       String(bot.trades.count),
       escapeCell(bot.tick_artifacts.actions.join(', ') || '-'),
       bot.tick_artifacts.latest_reflection?.verdict ?? '-',
@@ -749,6 +817,55 @@ function parseJsonl(raw: string): Array<Record<string, unknown>> {
         return { parse_error: line.slice(0, 200) }
       }
     })
+}
+
+function emptyUsageTelemetrySummary(): UsageTelemetrySummary {
+  return {
+    event_count: 0,
+    events_with_reported_tokens: 0,
+    events_with_reported_or_estimated_cost: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+    cost_usd: 0,
+    providers: [],
+    models: [],
+    latest: [],
+  }
+}
+
+export function summarizeUsageTelemetry(events: Array<Record<string, unknown>>): UsageTelemetrySummary {
+  const inputTokens = events.reduce((sum, event) => sum + toNumber(event.input_tokens), 0)
+  const outputTokens = events.reduce((sum, event) => sum + toNumber(event.output_tokens), 0)
+  const totalTokens = events.reduce((sum, event) => sum + toNumber(event.total_tokens), 0) || inputTokens + outputTokens
+  const costUsd = events.reduce((sum, event) => sum + toNumber(event.cost_usd), 0)
+  return {
+    event_count: events.length,
+    events_with_reported_tokens: events.filter((event) => event.token_count_status === 'reported').length,
+    events_with_reported_or_estimated_cost: events.filter((event) => event.cost_usd != null && Number.isFinite(Number(event.cost_usd))).length,
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    total_tokens: totalTokens,
+    cost_usd: Number(costUsd.toFixed(8)),
+    providers: uniqueSorted(events.map((event) => stringValue(event.provider))),
+    models: uniqueSorted(events.map((event) => stringValue(event.model))),
+    latest: events.slice(-5).map((event) => ({
+      event_id: stringValue(event.event_id),
+      timestamp: primitive(event.timestamp),
+      surface: stringValue(event.surface),
+      operation: stringValue(event.operation),
+      provider: stringValue(event.provider),
+      model: stringValue(event.model),
+      status: stringValue(event.status),
+      token_count_status: stringValue(event.token_count_status),
+      input_tokens: toNumber(event.input_tokens),
+      output_tokens: toNumber(event.output_tokens),
+      total_tokens: toNumber(event.total_tokens),
+      cost_usd: event.cost_usd != null && Number.isFinite(Number(event.cost_usd)) ? Number(event.cost_usd) : null,
+      cost_source: stringValue(event.cost_source),
+      duration_ms: toNumber(event.duration_ms),
+    })),
+  }
 }
 
 function decisionAction(decision: Record<string, unknown>): string | null {

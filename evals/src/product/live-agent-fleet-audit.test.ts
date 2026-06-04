@@ -95,6 +95,20 @@ test('tick-artifact parser extracts decisions, reasons, metrics, and strategy fi
       }),
       improvement_intents_jsonl: JSON.stringify({ intent_id: 'intent_1', priority: 'high' }),
       improvement_dispatches_jsonl: JSON.stringify({ intent_id: 'intent_1' }),
+      usage_telemetry_jsonl: [
+        JSON.stringify({
+          event_id: 'usage_1',
+          surface: 'operator-chat',
+          operation: 'agents-run',
+          provider: 'zai-coding-plan',
+          model: 'glm-4.7',
+          input_tokens: 120,
+          output_tokens: 48,
+          total_tokens: 168,
+          cost_usd: 0.0021,
+          token_count_status: 'reported',
+        }),
+      ].join('\n'),
       metrics_latest: { portfolio_value_usd: 10000, signals_generated: 0, trade_count: 1 },
       strategies: { 'candidate.js': 'module.exports = {}' },
     },
@@ -113,6 +127,11 @@ test('tick-artifact parser extracts decisions, reasons, metrics, and strategy fi
   assert.deepEqual(artifacts.latest_reflection?.finding_codes, ['repeated-skip'])
   assert.equal(artifacts.improvement_intents, 1)
   assert.equal(artifacts.improvement_dispatches, 1)
+  assert.equal(artifacts.usage_telemetry.event_count, 1)
+  assert.equal(artifacts.usage_telemetry.input_tokens, 120)
+  assert.equal(artifacts.usage_telemetry.output_tokens, 48)
+  assert.equal(artifacts.usage_telemetry.cost_usd, 0.0021)
+  assert.deepEqual(artifacts.usage_telemetry.providers, ['zai-coding-plan'])
 })
 
 test('strategy alignment catches prompt-to-config mandate mismatches', () => {

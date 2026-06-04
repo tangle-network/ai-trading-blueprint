@@ -612,6 +612,10 @@ fn fast_tick_tool_bundle(tool: &str) -> Option<Vec<(&'static str, &'static str)>
             include_str!("../prompts/tools/reflection_loop.js"),
         ),
         (
+            "/home/agent/tools/usage-telemetry.js",
+            include_str!("../prompts/tools/usage_telemetry.js"),
+        ),
+        (
             "/home/agent/tools/self-improvement-loop.ts",
             include_str!("../prompts/tools/self_improvement_loop.ts"),
         ),
@@ -1314,6 +1318,7 @@ mod tests {
         assert!(paths.contains(&"/home/agent/tools/log-decision.js"));
         assert!(paths.contains(&"/home/agent/tools/write-metrics.js"));
         assert!(paths.contains(&"/home/agent/tools/reflection-loop.js"));
+        assert!(paths.contains(&"/home/agent/tools/usage-telemetry.js"));
         assert!(paths.contains(&"/home/agent/tools/self-improvement-loop.ts"));
         assert!(paths.contains(&"/home/agent/tools/tick-common.js"));
         assert!(paths.contains(&"/home/agent/tools/tick-recipe-dsl.js"));
@@ -1341,6 +1346,10 @@ mod tests {
             assert!(
                 paths.contains(&"/home/agent/tools/reflection-loop.js"),
                 "{tool} bundle must install the runtime reflection loop"
+            );
+            assert!(
+                paths.contains(&"/home/agent/tools/usage-telemetry.js"),
+                "{tool} bundle must install runtime usage telemetry"
             );
             assert!(
                 paths.contains(&"/home/agent/tools/self-improvement-loop.ts"),

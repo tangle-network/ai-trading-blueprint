@@ -53,6 +53,7 @@ const payload = JSON.stringify({
   reflections_jsonl: r('/home/agent/memory/reflections.jsonl'),
   improvement_intents_jsonl: r('/home/agent/memory/improvement-intents.jsonl'),
   improvement_dispatches_jsonl: r('/home/agent/memory/improvement-dispatches.jsonl'),
+  usage_telemetry_jsonl: r('/home/agent/telemetry/llm-usage.jsonl'),
   coverage_jsonl: r('/home/agent/logs/tick_coverage.jsonl'),
   metrics_latest: mp,
   strategies: strat,
@@ -123,6 +124,11 @@ mod tests {
             "tick-artifacts reader must read /home/agent/logs/tick_coverage.jsonl into coverage_jsonl"
         );
         assert!(
+            READ_TICK_ARTIFACTS_JS
+                .contains("usage_telemetry_jsonl: r('/home/agent/telemetry/llm-usage.jsonl')"),
+            "tick-artifacts reader must expose sandbox LLM usage telemetry"
+        );
+        assert!(
             READ_TICK_ARTIFACTS_JS.contains(
                 "decision_contexts_jsonl: r('/home/agent/memory/decision-contexts.jsonl')"
             ),
@@ -147,6 +153,7 @@ mod tests {
             "reflections_jsonl": "{\"reflection_id\":\"refl_1\",\"decision_context_id\":\"ctx_1\"}\n",
             "improvement_intents_jsonl": "{\"intent_id\":\"intent_1\"}\n",
             "improvement_dispatches_jsonl": null,
+            "usage_telemetry_jsonl": "{\"event_id\":\"usage_1\",\"input_tokens\":120,\"output_tokens\":48}\n",
             "coverage_jsonl": format!("{coverage_line}\n"),
             "metrics_latest": null,
             "strategies": {},

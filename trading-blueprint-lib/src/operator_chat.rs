@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::http::{StatusCode, header::CONTENT_TYPE};
 use axum::response::{
@@ -442,6 +442,7 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
             }
         }
     });
+    let started_at = Instant::now();
     let result = send_chat_request(
         &target,
         reqwest::Method::POST,
@@ -501,13 +502,167 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
     } else {
         assistant_text
     };
+    let usage_event = build_agent_run_usage_event(
+        &target,
+        &session_id,
+        &message,
+        &text,
+        status,
+        &payload,
+        started_at.elapsed().as_millis() as u64,
+    );
+    append_usage_event_to_sidecar(&target, usage_event.clone()).await;
     append_transcript_message(
         &target,
         &session_id,
         "assistant",
         text,
-        json!({ "transport": "agents/run", "status": status.as_u16() }),
+        json!({ "transport": "agents/run", "status": status.as_u16(), "usage_telemetry": usage_event }),
     );
+}
+
+fn build_agent_run_usage_event(
+    target: &SidecarChatTarget,
+    session_id: &str,
+    input_text: &str,
+    output_text: &str,
+    status: StatusCode,
+    payload: &Value,
+    duration_ms: u64,
+) -> Value {
+    let usage = agent_run_usage_payload(payload);
+    let input_tokens = usage_int(
+        &usage,
+        &[
+            "input_tokens",
+            "inputTokens",
+            "prompt_tokens",
+            "promptTokens",
+            "tokensIn",
+        ],
+    );
+    let output_tokens = usage_int(
+        &usage,
+        &[
+            "output_tokens",
+            "outputTokens",
+            "completion_tokens",
+            "completionTokens",
+            "tokensOut",
+        ],
+    );
+    let total_tokens =
+        usage_int(&usage, &["total_tokens", "totalTokens", "tokensTotal"]).or_else(|| {
+            Some(input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0)).filter(|value| *value > 0)
+        });
+    let token_count_status = if input_tokens.is_some() && output_tokens.is_some() {
+        "reported"
+    } else if input_tokens.is_some() || output_tokens.is_some() || total_tokens.is_some() {
+        "partial"
+    } else {
+        "unreported"
+    };
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    json!({
+        "schema_version": "1.0.0",
+        "event_id": format!("operator-chat-{}-{}", session_id, chrono::Utc::now().timestamp_millis()),
+        "timestamp": timestamp,
+        "workspace": "/home/agent",
+        "bot_id": serde_json::Value::Null,
+        "surface": "operator-chat",
+        "operation": "agents-run",
+        "run_id": serde_json::Value::Null,
+        "task_id": serde_json::Value::Null,
+        "session_id": session_id,
+        "trace_id": usage_string(&usage, &["trace_id", "traceId"]),
+        "provider": usage_string(&usage, &["provider"]),
+        "model": usage_string(&usage, &["model"]),
+        "model_source": "sidecar_response",
+        "command": serde_json::Value::Null,
+        "status": if status.is_success() { "completed" } else { "failed" },
+        "success": status.is_success(),
+        "duration_ms": duration_ms,
+        "input_chars": input_text.chars().count(),
+        "output_chars": output_text.chars().count(),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "cached_input_tokens": usage_int(&usage, &["cached_input_tokens", "cachedInputTokens"]),
+        "reasoning_tokens": usage_int(&usage, &["reasoning_tokens", "reasoningTokens"]),
+        "token_count_status": token_count_status,
+        "cost_usd": usage_number(&usage, &["cost_usd", "costUsd", "cost"]),
+        "cost_source": if usage_number(&usage, &["cost_usd", "costUsd", "cost"]).is_some() { "reported" } else { "unknown" },
+        "raw_usage": usage,
+        "metadata": {
+            "sandbox_id": target.sandbox_id,
+            "sidecar_status": status.as_u16(),
+        },
+    })
+}
+
+fn agent_run_usage_payload(payload: &Value) -> Value {
+    for pointer in [
+        "/data/usage",
+        "/usage",
+        "/data/result/usage",
+        "/data/turn/usage",
+        "/data/finalMessage/usage",
+    ] {
+        if let Some(value) = payload.pointer(pointer)
+            && value.is_object()
+        {
+            return value.clone();
+        }
+    }
+    json!({})
+}
+
+fn usage_int(usage: &Value, keys: &[&str]) -> Option<u64> {
+    usage_number(usage, keys).map(|value| value.max(0.0).round() as u64)
+}
+
+fn usage_number(usage: &Value, keys: &[&str]) -> Option<f64> {
+    for key in keys {
+        if let Some(value) = usage.get(*key) {
+            if let Some(number) = value.as_f64() {
+                if number.is_finite() {
+                    return Some(number);
+                }
+            }
+            if let Some(raw) = value.as_str()
+                && let Ok(number) = raw.trim().parse::<f64>()
+                && number.is_finite()
+            {
+                return Some(number);
+            }
+        }
+    }
+    None
+}
+
+fn usage_string(usage: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| usage.get(*key).and_then(Value::as_str))
+        .find(|value| !value.trim().is_empty())
+        .map(str::to_string)
+}
+
+async fn append_usage_event_to_sidecar(target: &SidecarChatTarget, event: Value) {
+    let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: target.sidecar_url.clone(),
+        command: r#"node -e "const fs=require('node:fs'); const path=require('node:path'); const event=JSON.parse(process.env.USAGE_EVENT || '{}'); const file='/home/agent/telemetry/llm-usage.jsonl'; fs.mkdirSync(path.dirname(file), { recursive: true }); fs.appendFileSync(file, JSON.stringify(event) + '\n');""#.to_string(),
+        cwd: "/home/agent".to_string(),
+        env_json: json!({ "USAGE_EVENT": event.to_string() }).to_string(),
+        timeout_ms: 10_000,
+    };
+    if let Err(error) =
+        ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, &target.sidecar_token).await
+    {
+        tracing::warn!(
+            sandbox_id = %target.sandbox_id,
+            "failed to append operator-chat usage telemetry: {error}"
+        );
+    }
 }
 
 fn should_route_owner_message_to_self_improvement(message: &str) -> bool {
@@ -926,6 +1081,46 @@ mod tests {
         assert!(!should_route_owner_message_to_self_improvement(
             "What strategy would you use for ETH today?"
         ));
+    }
+
+    #[test]
+    fn agent_run_usage_event_preserves_reported_tokens_and_cost() {
+        let target = SidecarChatTarget {
+            sandbox_id: "sandbox-usage".to_string(),
+            sidecar_url: "http://127.0.0.1:1".to_string(),
+            sidecar_token: "test-token".to_string(),
+        };
+        let payload = serde_json::json!({
+            "success": true,
+            "data": {
+                "usage": {
+                    "inputTokens": 1200,
+                    "outputTokens": 345,
+                    "costUsd": 0.017,
+                    "model": "glm-4.7",
+                    "provider": "zai-coding-plan"
+                }
+            }
+        });
+        let event = build_agent_run_usage_event(
+            &target,
+            "manual-sandbox-usage",
+            "what happened?",
+            "summary",
+            StatusCode::OK,
+            &payload,
+            42,
+        );
+
+        assert_eq!(event["surface"], "operator-chat");
+        assert_eq!(event["operation"], "agents-run");
+        assert_eq!(event["input_tokens"], 1200);
+        assert_eq!(event["output_tokens"], 345);
+        assert_eq!(event["total_tokens"], 1545);
+        assert_eq!(event["cost_usd"], 0.017);
+        assert_eq!(event["token_count_status"], "reported");
+        assert_eq!(event["provider"], "zai-coding-plan");
+        assert_eq!(event["model"], "glm-4.7");
     }
 
     #[test]
