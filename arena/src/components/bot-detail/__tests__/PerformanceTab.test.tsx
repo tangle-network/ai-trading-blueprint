@@ -127,9 +127,13 @@ let mockMetricsSummary: Record<string, number> | undefined = {
 };
 let mockPortfolio: Record<string, unknown> | undefined;
 let mockTrades: Trade[] = [];
+let mockLatestTrades: Trade[] | null = null;
+let mockMarkerTrades: Trade[] | null = null;
 let mockTradeTotal: number | null = null;
 let mockTradeEvidence: FillCountEvidence | null = null;
 let mockTradePageLoading = false;
+let mockLatestTradePageLoading = false;
+let mockMarkerTradePageLoading = false;
 let mockMarketCandles: Array<{
   timestamp: number;
   token: string;
@@ -154,21 +158,28 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
   useBotTrades: () => ({
     data: mockTrades,
   }),
-  useBotTradePage: () => ({
-    data: mockTradePageLoading
-      ? undefined
-      : {
-          trades: mockTrades,
-          total: mockTradeTotal,
-          evidence: mockTradeEvidence,
-          loaded: mockTrades.length,
-          limit: 100,
-          offset: 0,
-          hasTotal: mockTradeTotal != null,
-          isCapped: mockTradeTotal != null ? mockTrades.length < mockTradeTotal : false,
-          legacyArray: mockTradeTotal == null,
-        },
-  }),
+  useBotTradePage: (_botId: string, _botName = '', limit = 50) => {
+    const isLatestQuery = limit === 24;
+    const trades = (isLatestQuery ? mockLatestTrades : mockMarkerTrades) ?? mockTrades;
+    const loading = mockTradePageLoading
+      || (isLatestQuery ? mockLatestTradePageLoading : mockMarkerTradePageLoading);
+
+    return {
+      data: loading
+        ? undefined
+        : {
+            trades,
+            total: mockTradeTotal,
+            evidence: mockTradeEvidence,
+            loaded: trades.length,
+            limit: 100,
+            offset: 0,
+            hasTotal: mockTradeTotal != null,
+            isCapped: mockTradeTotal != null ? trades.length < mockTradeTotal : false,
+            legacyArray: mockTradeTotal == null,
+          },
+    };
+  },
   useBotMarketCandles: () => ({
     data: mockMarketCandles,
   }),
@@ -292,9 +303,13 @@ describe('PerformanceTab', () => {
     metricsIsError = false;
     mockPortfolio = undefined;
     mockTrades = [];
+    mockLatestTrades = null;
+    mockMarkerTrades = null;
     mockTradeTotal = null;
     mockTradeEvidence = null;
     mockTradePageLoading = false;
+    mockLatestTradePageLoading = false;
+    mockMarkerTradePageLoading = false;
     mockMarketCandles = [];
     operatorAuthMock.isAuthenticated = false;
     operatorAuthMock.token = null;
@@ -593,6 +608,40 @@ describe('PerformanceTab', () => {
     expect(screen.getByText('110')).toBeInTheDocument();
     expect(screen.getByText('6 loaded')).toBeInTheDocument();
     expect(screen.getByText('6 / 110')).toBeInTheDocument();
+  });
+
+  it('renders recent fills while historical chart marker backfill is still loading', () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-23T10:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 827,
+      },
+    ];
+    mockMetricsSummary = {
+      portfolio_value_usd: 10000,
+      total_pnl: 0,
+      trade_count: 827,
+    };
+    mockLatestTrades = [
+      makeTrade({
+        id: 'latest-fill',
+        timestamp: Date.parse('2026-04-23T10:40:00.000Z'),
+        notionalUsd: 123.45,
+      }),
+    ];
+    mockMarkerTradePageLoading = true;
+    mockTradeTotal = 827;
+
+    render(<PerformanceTab bot={makeBot({ totalTrades: 827 })} isLive />);
+
+    expect(screen.getAllByText('Fills').length).toBeGreaterThan(0);
+    expect(screen.getByText('1 / 827')).toBeInTheDocument();
+    expect(screen.getByText('$123.45')).toBeInTheDocument();
+    expect(screen.queryByText('Loading')).not.toBeInTheDocument();
   });
 
   it('prefers exact backend trade-store evidence over stale roster and metrics counts', () => {

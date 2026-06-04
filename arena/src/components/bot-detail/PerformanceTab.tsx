@@ -460,7 +460,14 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 30_000 : false,
   });
-  const { data: tradePage } = useBotTradePage(bot.id, bot.name, TRADE_MARKER_PAGE_SIZE, {
+  const { data: latestTradePage } = useBotTradePage(bot.id, bot.name, 24, {
+    chainId: bot.chainId,
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+    pages: 1,
+    refetchInterval: isLive ? 30_000 : false,
+  });
+  const { data: markerTradePage } = useBotTradePage(bot.id, bot.name, TRADE_MARKER_PAGE_SIZE, {
     chainId: bot.chainId,
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
@@ -468,8 +475,10 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     stopAtTimestampMs: selectedRangeStartMs,
     refetchInterval: isLive ? 30_000 : false,
   });
-  const tradePageIsPending = tradePage == null;
-  const trades = tradePage?.trades;
+  const tradePage = markerTradePage ?? latestTradePage;
+  const tradePageIsPending = latestTradePage == null && markerTradePage == null;
+  const trades = markerTradePage?.trades ?? latestTradePage?.trades;
+  const latestTrades = latestTradePage?.trades ?? markerTradePage?.trades;
   const marketCandleToken = useMemo(
     () => inferMarketCandleToken(bot, trades),
     [bot, trades],
@@ -552,12 +561,12 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const chartIsRenderable = chartPoints.length > 0 || hasMarketCandles;
 
   const fillCountEvidence = resolveFillCountEvidence({
-    backendEvidence: tradePage?.evidence,
+    backendEvidence: markerTradePage?.evidence ?? latestTradePage?.evidence,
     metricTradeCount: latestRenderableMetric?.trade_count,
     summaryTradeCount: metricsSummary?.trade_count,
     rosterTradeCount: bot.totalTrades,
-    visibleTradeCount: tradePage?.loaded ?? trades?.length ?? 0,
-    tradePageTotal: tradePage?.total,
+    visibleTradeCount: markerTradePage?.loaded ?? latestTradePage?.loaded ?? trades?.length ?? 0,
+    tradePageTotal: markerTradePage?.total ?? latestTradePage?.total,
   });
   const totalTradesValue = fillCountEvidence.value;
   const executionStatSubvalue = fillCountEvidenceSubvalue(fillCountEvidence);
@@ -594,7 +603,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const marketVolumeValue = marketCandles.length > 0
     ? marketCandles.reduce((sum, candle) => sum + candle.volume, 0)
     : null;
-  const recentTradeTape = useMemo(() => (trades ?? []).slice(0, 12), [trades]);
+  const recentTradeTape = useMemo(() => (latestTrades ?? []).slice(0, 12), [latestTrades]);
   const tradeDecisionItems = useMemo(
     () => buildDecisionItemsFromTrades(recentTradeTape),
     [recentTradeTape],
