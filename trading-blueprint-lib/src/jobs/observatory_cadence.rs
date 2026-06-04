@@ -10,14 +10,16 @@ use sandbox_runtime::store::PersistentStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::operator_chat::{AgenticChatTurnOptions, SidecarChatTarget};
 use crate::state::TradingBotRecord;
-use crate::workflow_compat::{WorkflowRunRecord, WorkflowRunStatus};
+use crate::workflow_compat::{WorkflowRunRecord, WorkflowRunStatus, WorkflowRunTranscriptRecord};
 
 static CADENCE: OnceCell<PersistentStore<ObservatoryCadenceRecord>> = OnceCell::new();
 
 const DEFAULT_INTERVAL_SECS: i64 = 4 * 60 * 60;
 const DEFAULT_JITTER_SECS: i64 = 15 * 60;
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_AGENTIC_REFLECTION_TIMEOUT_MS: u64 = 120_000;
 const DEFAULT_MAX_BOTS_PER_TICK: usize = 2;
 const DEFAULT_MAX_RUNS_PER_BOT_PER_DAY: usize = 6;
 const DEFAULT_MAX_COST_USD_PER_BOT_PER_DAY: f64 = 0.0;
@@ -127,6 +129,17 @@ fn env_f64(name: &str, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
+fn env_bool(name: &str, default: bool) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "0" | "false" | "no" | "off" | "disabled" => false,
+            "1" | "true" | "yes" | "on" | "enabled" => true,
+            _ => default,
+        })
+        .unwrap_or(default)
+}
+
 fn due(last: Option<i64>, now: i64, interval_secs: i64, jitter_secs: i64) -> bool {
     last.is_none_or(|last| {
         now.saturating_sub(last) >= interval_secs.saturating_add(jitter_secs.max(0))
@@ -175,7 +188,7 @@ fn align_cadence_day(record: &mut ObservatoryCadenceRecord, day_key: &str) -> bo
 }
 
 fn observatory_run_cost_usd(records: &Value) -> f64 {
-    records
+    let structured_cost = records
         .get("records")
         .and_then(|records| records.get("usage_summary"))
         .and_then(|usage| usage.get("cost_usd"))
@@ -191,7 +204,20 @@ fn observatory_run_cost_usd(records: &Value) -> f64 {
                 .and_then(Value::as_f64)
                 .unwrap_or(0.0)
         })
-        .max(0.0)
+        .max(0.0);
+    let agentic_cost = records
+        .get("agentic_reflection")
+        .and_then(|agentic| {
+            agentic.get("cost_usd").and_then(Value::as_f64).or_else(|| {
+                agentic
+                    .get("usage_event")
+                    .and_then(|usage| usage.get("cost_usd"))
+                    .and_then(Value::as_f64)
+            })
+        })
+        .unwrap_or(0.0)
+        .max(0.0);
+    structured_cost + agentic_cost
 }
 
 fn run_id_from_records(records: &Value, fallback: &str) -> String {
@@ -202,6 +228,128 @@ fn run_id_from_records(records: &Value, fallback: &str) -> String {
         .filter(|run_id| !run_id.is_empty())
         .unwrap_or(fallback)
         .to_string()
+}
+
+fn observatory_agentic_reflection_enabled() -> bool {
+    env_bool("OBSERVATORY_AGENTIC_REFLECTION_ENABLED", true)
+}
+
+fn observatory_agentic_reflection_timeout_ms() -> u64 {
+    env_u64(
+        "OBSERVATORY_AGENTIC_REFLECTION_TIMEOUT_MS",
+        DEFAULT_AGENTIC_REFLECTION_TIMEOUT_MS,
+    )
+}
+
+fn observatory_agentic_session_id(bot: &TradingBotRecord, started_at: u64) -> String {
+    format!("convo-{}-{started_at}", bot.id)
+}
+
+fn record_array_len(records: &Value, key: &str) -> usize {
+    records
+        .get("records")
+        .and_then(|records| records.get(key))
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+fn latest_pressure_level(records: &Value) -> String {
+    records
+        .get("records")
+        .and_then(|records| records.get("delegation_pressure"))
+        .and_then(|pressure| pressure.get("pressure_level"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn observatory_agentic_reflection_prompt(
+    bot: &TradingBotRecord,
+    run_id: &str,
+    records: &Value,
+) -> String {
+    let reflection_runs = record_array_len(records, "reflection_runs");
+    let ideas = record_array_len(records, "ideas");
+    let delegated_sessions = record_array_len(records, "delegated_work_sessions");
+    let research_tasks = record_array_len(records, "research_tasks");
+    let world_digests = record_array_len(records, "world_signal_digests");
+    let pressure_level = latest_pressure_level(records);
+    format!(
+        "You are the trading bot's operator agent running a read-only Observatory reflection.\n\n\
+Bot:\n\
+- id: {bot_id}\n\
+- name: {bot_name}\n\
+- strategy_type: {strategy_type}\n\
+- chain_id: {chain_id}\n\
+- paper_trade: {paper_trade}\n\
+- observatory_run_id: {run_id}\n\n\
+Fresh structured records just landed:\n\
+- reflection_runs: {reflection_runs}\n\
+- world_signal_digests: {world_digests}\n\
+- ideas: {ideas}\n\
+- delegated_work_sessions: {delegated_sessions}\n\
+- research_tasks: {research_tasks}\n\
+- delegation_pressure: {pressure_level}\n\n\
+Inspect the workspace if useful:\n\
+- /home/agent/memory/observatory/reflection-runs.jsonl\n\
+- /home/agent/memory/observatory/world-signal-digests.jsonl\n\
+- /home/agent/memory/observatory/ideas.jsonl\n\
+- /home/agent/memory/observatory/delegated-work-sessions.jsonl\n\
+- /home/agent/memory/observatory/research-tasks.jsonl\n\
+- /home/agent/memory/decision-contexts.jsonl\n\
+- /home/agent/logs/decisions.jsonl\n\
+- /home/agent/telemetry/llm-usage.jsonl\n\n\
+Constraints:\n\
+- Do not trade.\n\
+- Do not mutate live config.\n\
+- Do not promote anything.\n\
+- Do not create delegated work in this reflection.\n\
+- Keep it under 180 words.\n\n\
+Return exactly four compact sections:\n\
+Observed, Concern, Next safe action, Missing evidence.",
+        bot_id = bot.id,
+        bot_name = bot.name,
+        strategy_type = bot.strategy_type,
+        chain_id = bot.chain_id,
+        paper_trade = bot.paper_trade,
+    )
+}
+
+fn records_with_agentic_reflection(
+    mut records: Value,
+    agentic: Option<&crate::operator_chat::AgenticChatTurnResult>,
+    error: Option<&str>,
+) -> Value {
+    let reflection = if let Some(agentic) = agentic {
+        json!({
+            "enabled": true,
+            "session_id": agentic.session_id,
+            "status": agentic.status,
+            "input_tokens": agentic.input_tokens,
+            "output_tokens": agentic.output_tokens,
+            "cost_usd": agentic.cost_usd,
+            "trace_id": agentic.trace_id,
+            "assistant_text": agentic.assistant_text,
+            "usage_event": agentic.usage_event,
+        })
+    } else {
+        json!({
+            "enabled": observatory_agentic_reflection_enabled(),
+            "status": "unavailable",
+            "error": error,
+        })
+    };
+
+    if let Some(object) = records.as_object_mut() {
+        object.insert("agentic_reflection".to_string(), reflection);
+        return records;
+    }
+
+    json!({
+        "records": records,
+        "agentic_reflection": reflection,
+    })
 }
 
 fn truncate_result(value: &Value) -> String {
@@ -273,6 +421,8 @@ pub async fn trigger_observatory_for_bot(
 
     let started_at = chrono::Utc::now().timestamp().max(0) as u64;
     let fallback_run_id = format!("obs-{}-{started_at}", bot.id);
+    let trigger = options.trigger.clone();
+    let requested_by = options.requested_by.clone().unwrap_or_default();
     let exec_req = SandboxExecRequest {
         sidecar_url: sandbox.sidecar_url.clone(),
         command: "node /home/agent/tools/observatory-loop.js".to_string(),
@@ -282,8 +432,8 @@ pub async fn trigger_observatory_for_bot(
             "BOT_NAME": bot.name,
             "TRADING_BOT_ID": bot.id,
             "TRADING_BOT_NAME": bot.name,
-            "OBSERVATORY_TRIGGER": options.trigger,
-            "OBSERVATORY_REQUESTED_BY": options.requested_by.unwrap_or_default(),
+            "OBSERVATORY_TRIGGER": trigger.clone(),
+            "OBSERVATORY_REQUESTED_BY": requested_by.clone(),
         })
         .to_string(),
         timeout_ms: env_u64("OBSERVATORY_TRIGGER_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
@@ -292,7 +442,7 @@ pub async fn trigger_observatory_for_bot(
     let response = run_exec_request(&exec_req, &sandbox.token)
         .await
         .map_err(|e| format!("observatory exec failed: {e}"))?;
-    let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
+    let exec_completed_at = chrono::Utc::now().timestamp().max(0) as u64;
     let workflow_id = observatory_workflow_id(bot);
 
     let records = if response.exit_code == 0 {
@@ -315,10 +465,12 @@ pub async fn trigger_observatory_for_bot(
                 workflow_id,
                 status: WorkflowRunStatus::Failed,
                 started_at,
-                completed_at: Some(completed_at),
+                completed_at: Some(exec_completed_at),
                 session_id: None,
                 trace_id: None,
-                duration_ms: completed_at.saturating_sub(started_at).saturating_mul(1000),
+                duration_ms: exec_completed_at
+                    .saturating_sub(started_at)
+                    .saturating_mul(1000),
                 input_tokens: 0,
                 output_tokens: 0,
                 result: None,
@@ -329,23 +481,100 @@ pub async fn trigger_observatory_for_bot(
     };
 
     let run_id = run_id_from_records(&records, &fallback_run_id);
+    let (agentic_result, agentic_error) = if observatory_agentic_reflection_enabled() {
+        let target = SidecarChatTarget {
+            sandbox_id: sandbox.id.clone(),
+            sidecar_url: sandbox.sidecar_url.clone(),
+            sidecar_token: sandbox.token.clone(),
+        };
+        let session_id = observatory_agentic_session_id(bot, started_at);
+        let prompt = observatory_agentic_reflection_prompt(bot, &run_id, &records);
+        match crate::operator_chat::run_agentic_chat_turn(
+            target,
+            AgenticChatTurnOptions {
+                session_id,
+                message: prompt,
+                user_metadata: json!({
+                    "transport": "observatory",
+                    "source": trigger.clone(),
+                    "requested_by": requested_by.clone(),
+                    "bot_id": bot.id,
+                    "run_id": run_id,
+                }),
+                assistant_metadata: json!({
+                    "transport": "agents/run",
+                    "surface": "observatory",
+                    "operation": "read-only-reflection",
+                    "bot_id": bot.id,
+                    "run_id": run_id,
+                }),
+                timeout_ms: observatory_agentic_reflection_timeout_ms(),
+                surface: "observatory".to_string(),
+                operation: "read-only-reflection".to_string(),
+                bot_id: Some(bot.id.clone()),
+                run_id: Some(run_id.clone()),
+            },
+        )
+        .await
+        {
+            Ok(result) => (Some(result), None),
+            Err(error) => {
+                tracing::warn!(
+                    bot_id = %bot.id,
+                    run_id = %run_id,
+                    "observatory agentic reflection failed: {error}"
+                );
+                (None, Some(error))
+            }
+        }
+    } else {
+        (None, None)
+    };
+    let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
+    let result_records = records_with_agentic_reflection(
+        records.clone(),
+        agentic_result.as_ref(),
+        agentic_error.as_deref(),
+    );
     if let Some(workflow_id) = workflow_id {
+        if let Some(agentic) = agentic_result.as_ref() {
+            crate::workflow_compat::persist_workflow_run_transcript(WorkflowRunTranscriptRecord {
+                run_id: run_id.clone(),
+                session_id: agentic.session_id.clone(),
+                captured_at: completed_at,
+                messages: agentic.messages.clone(),
+            })
+            .map_err(|e| format!("persist observatory run transcript: {e}"))?;
+        }
         crate::workflow_compat::persist_workflow_run_record(WorkflowRunRecord {
             run_id: run_id.clone(),
             workflow_id,
             status: WorkflowRunStatus::Completed,
             started_at,
             completed_at: Some(completed_at),
-            session_id: None,
-            trace_id: records
-                .get("records_written")
-                .and_then(|written| written.get("reflection_run_id"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            session_id: agentic_result
+                .as_ref()
+                .map(|agentic| agentic.session_id.clone()),
+            trace_id: agentic_result
+                .as_ref()
+                .and_then(|agentic| agentic.trace_id.clone())
+                .or_else(|| {
+                    records
+                        .get("records_written")
+                        .and_then(|written| written.get("reflection_run_id"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                }),
             duration_ms: completed_at.saturating_sub(started_at).saturating_mul(1000),
-            input_tokens: 0,
-            output_tokens: 0,
-            result: Some(truncate_result(&records)),
+            input_tokens: agentic_result
+                .as_ref()
+                .map(|agentic| agentic.input_tokens)
+                .unwrap_or(0),
+            output_tokens: agentic_result
+                .as_ref()
+                .map(|agentic| agentic.output_tokens)
+                .unwrap_or(0),
+            result: Some(truncate_result(&result_records)),
             error: None,
         })
         .map_err(|e| format!("persist observatory run history: {e}"))?;
@@ -357,7 +586,7 @@ pub async fn trigger_observatory_for_bot(
         started_at,
         completed_at,
         workflow_id,
-        records,
+        records: result_records,
     })
 }
 
@@ -1065,6 +1294,74 @@ mod tests {
             }
         });
         assert_eq!(observatory_run_cost_usd(&nested), 0.0456);
+
+        let with_agentic = json!({
+            "records": {
+                "usage_summary": { "cost_usd": 0.01 }
+            },
+            "agentic_reflection": {
+                "cost_usd": 0.02
+            }
+        });
+        assert!((observatory_run_cost_usd(&with_agentic) - 0.03).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn agentic_reflection_prompt_is_read_only_and_evidence_grounded() {
+        let bot = TradingBotRecord {
+            id: "bot_1".to_string(),
+            name: "Bot".to_string(),
+            sandbox_id: "sandbox".to_string(),
+            vault_address: String::new(),
+            share_token: String::new(),
+            strategy_type: "dex".to_string(),
+            strategy_config: Value::Null,
+            risk_params: Value::Null,
+            chain_id: 8453,
+            rpc_url: String::new(),
+            trading_api_url: String::new(),
+            trading_api_token: String::new(),
+            workflow_id: Some(10),
+            trading_active: true,
+            created_at: 0,
+            operator_address: String::new(),
+            validator_service_ids: Vec::new(),
+            max_lifetime_days: 0,
+            paper_trade: true,
+            wind_down_started_at: None,
+            submitter_address: String::new(),
+            trading_loop_cron: String::new(),
+            call_id: 0,
+            service_id: 0,
+            harness_json: Value::Null,
+            validation_trust: Default::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
+            active_trial_run_id: None,
+            active_trial_candidate_hash: None,
+            pre_trial_harness_json: None,
+        };
+        let prompt = observatory_agentic_reflection_prompt(
+            &bot,
+            "obs-1",
+            &json!({
+                "records": {
+                    "reflection_runs": [{}],
+                    "world_signal_digests": [{}],
+                    "ideas": [{}],
+                    "delegated_work_sessions": [{}],
+                    "research_tasks": [{}],
+                    "delegation_pressure": { "pressure_level": "low" }
+                }
+            }),
+        );
+
+        assert!(prompt.contains("Do not trade."));
+        assert!(prompt.contains("Do not mutate live config."));
+        assert!(prompt.contains("Do not create delegated work"));
+        assert!(prompt.contains("/home/agent/memory/observatory/reflection-runs.jsonl"));
+        assert!(prompt.contains("Return exactly four compact sections"));
+        assert!(prompt.contains("delegation_pressure: low"));
     }
 
     #[test]
@@ -1099,5 +1396,7 @@ mod tests {
         assert!(source.contains("/home/agent/tools/self-improvement-loop.ts"));
         assert!(source.contains("/home/agent/tools/observatory-pressure.js"));
         assert!(source.contains("observatory_pressure.js"));
+        assert!(source.contains("run_agentic_chat_turn"));
+        assert!(source.contains("persist_workflow_run_transcript"));
     }
 }

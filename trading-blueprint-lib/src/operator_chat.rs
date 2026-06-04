@@ -23,6 +23,33 @@ pub struct SidecarChatTarget {
     pub sidecar_token: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct AgenticChatTurnOptions {
+    pub session_id: String,
+    pub message: String,
+    pub user_metadata: Value,
+    pub assistant_metadata: Value,
+    pub timeout_ms: u64,
+    pub surface: String,
+    pub operation: String,
+    pub bot_id: Option<String>,
+    pub run_id: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgenticChatTurnResult {
+    pub session_id: String,
+    pub assistant_text: String,
+    pub status: u16,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cost_usd: Option<f64>,
+    pub trace_id: Option<String>,
+    pub usage_event: Value,
+    pub payload: Value,
+    pub messages: Value,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChatSessionScope {
     ManualOnly,
@@ -421,6 +448,61 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
         return;
     }
 
+    let _ = execute_agent_run_turn(AgentRunTurnRequest {
+        target,
+        session_id,
+        message,
+        timeout_ms: default_chat_agent_run_timeout_ms(),
+        surface: "operator-chat".to_string(),
+        operation: "agents-run".to_string(),
+        bot_id: None,
+        run_id: None,
+        assistant_metadata: json!({ "transport": "agents/run" }),
+    })
+    .await;
+}
+
+struct AgentRunTurnRequest {
+    target: SidecarChatTarget,
+    session_id: String,
+    message: String,
+    timeout_ms: u64,
+    surface: String,
+    operation: String,
+    bot_id: Option<String>,
+    run_id: Option<String>,
+    assistant_metadata: Value,
+}
+
+pub async fn run_agentic_chat_turn(
+    target: SidecarChatTarget,
+    options: AgenticChatTurnOptions,
+) -> Result<AgenticChatTurnResult, String> {
+    append_transcript_message(
+        &target,
+        &options.session_id,
+        "user",
+        options.message.clone(),
+        options.user_metadata,
+    );
+
+    execute_agent_run_turn(AgentRunTurnRequest {
+        target,
+        session_id: options.session_id,
+        message: options.message,
+        timeout_ms: options.timeout_ms,
+        surface: options.surface,
+        operation: options.operation,
+        bot_id: options.bot_id,
+        run_id: options.run_id,
+        assistant_metadata: options.assistant_metadata,
+    })
+    .await
+}
+
+async fn execute_agent_run_turn(
+    request: AgentRunTurnRequest,
+) -> Result<AgenticChatTurnResult, String> {
     // Carry an inline profile whose `instructions` globs point opencode at the
     // operator charter + full trading protocol that activate.rs writes into the
     // workspace. Without this the sidecar builds OPENCODE_CONFIG_CONTENT with no
@@ -430,9 +512,9 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
     // OPENCODE_MODEL_* env the sidecar injects; we only add instructions here.
     let run_body = json!({
         "identifier": "default",
-        "message": message,
-        "sessionId": session_id.clone(),
-        "timeout": default_chat_agent_run_timeout_ms(),
+        "message": request.message.clone(),
+        "sessionId": request.session_id.clone(),
+        "timeout": request.timeout_ms,
         "backend": {
             "inlineProfile": {
                 "instructions": [
@@ -444,7 +526,7 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
     });
     let started_at = Instant::now();
     let result = send_chat_request(
-        &target,
+        &request.target,
         reqwest::Method::POST,
         "/agents/run",
         Some(run_body),
@@ -459,13 +541,15 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
                 Ok(bytes) => bytes,
                 Err(error) => {
                     append_transcript_message(
-                        &target,
-                        &session_id,
+                        &request.target,
+                        &request.session_id,
                         "assistant",
                         format!("Agent run failed to return a readable response: {error}"),
                         json!({ "transport": "agents/run", "status": "read_error" }),
                     );
-                    return;
+                    return Err(format!(
+                        "Agent run failed to return a readable response: {error}"
+                    ));
                 }
             };
             let payload: Value = serde_json::from_slice(&bytes).unwrap_or_else(
@@ -502,25 +586,70 @@ async fn run_agent_turn(target: SidecarChatTarget, session_id: String, message: 
     } else {
         assistant_text
     };
-    let usage_event = build_agent_run_usage_event(
-        &target,
-        &session_id,
-        &message,
+    let usage_event = build_agent_run_usage_event_for(
+        &request.target,
+        &request.session_id,
+        &request.message,
         &text,
         status,
         &payload,
         started_at.elapsed().as_millis() as u64,
+        &request.surface,
+        &request.operation,
+        request.bot_id.as_deref(),
+        request.run_id.as_deref(),
     );
-    append_usage_event_to_sidecar(&target, usage_event.clone()).await;
+    append_usage_event_to_sidecar(&request.target, usage_event.clone()).await;
+    let mut assistant_metadata = request.assistant_metadata;
+    merge_metadata_fields(
+        &mut assistant_metadata,
+        json!({
+            "transport": "agents/run",
+            "status": status.as_u16(),
+            "usage_telemetry": usage_event.clone(),
+        }),
+    );
     append_transcript_message(
-        &target,
-        &session_id,
+        &request.target,
+        &request.session_id,
         "assistant",
-        text,
-        json!({ "transport": "agents/run", "status": status.as_u16(), "usage_telemetry": usage_event }),
+        text.clone(),
+        assistant_metadata,
     );
+
+    let messages = transcript_messages_for_session(&request.target, &request.session_id);
+    let trace_id = usage_event
+        .get("trace_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let input_tokens = usage_event
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(u64::from(u32::MAX)) as u32;
+    let output_tokens = usage_event
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(u64::from(u32::MAX)) as u32;
+    let cost_usd = usage_event.get("cost_usd").and_then(Value::as_f64);
+
+    Ok(AgenticChatTurnResult {
+        session_id: request.session_id,
+        assistant_text: text,
+        status: status.as_u16(),
+        input_tokens,
+        output_tokens,
+        cost_usd,
+        trace_id,
+        usage_event,
+        payload,
+        messages,
+    })
 }
 
+#[cfg(test)]
 fn build_agent_run_usage_event(
     target: &SidecarChatTarget,
     session_id: &str,
@@ -529,6 +658,34 @@ fn build_agent_run_usage_event(
     status: StatusCode,
     payload: &Value,
     duration_ms: u64,
+) -> Value {
+    build_agent_run_usage_event_for(
+        target,
+        session_id,
+        input_text,
+        output_text,
+        status,
+        payload,
+        duration_ms,
+        "operator-chat",
+        "agents-run",
+        None,
+        None,
+    )
+}
+
+fn build_agent_run_usage_event_for(
+    target: &SidecarChatTarget,
+    session_id: &str,
+    input_text: &str,
+    output_text: &str,
+    status: StatusCode,
+    payload: &Value,
+    duration_ms: u64,
+    surface: &str,
+    operation: &str,
+    bot_id: Option<&str>,
+    run_id: Option<&str>,
 ) -> Value {
     let usage = agent_run_usage_payload(payload);
     let input_tokens = usage_int(
@@ -565,13 +722,13 @@ fn build_agent_run_usage_event(
     let timestamp = chrono::Utc::now().to_rfc3339();
     json!({
         "schema_version": "1.0.0",
-        "event_id": format!("operator-chat-{}-{}", session_id, chrono::Utc::now().timestamp_millis()),
+        "event_id": format!("{}-{}-{}", surface, session_id, chrono::Utc::now().timestamp_millis()),
         "timestamp": timestamp,
         "workspace": "/home/agent",
-        "bot_id": serde_json::Value::Null,
-        "surface": "operator-chat",
-        "operation": "agents-run",
-        "run_id": serde_json::Value::Null,
+        "bot_id": bot_id.map(Value::from).unwrap_or(Value::Null),
+        "surface": surface,
+        "operation": operation,
+        "run_id": run_id.map(Value::from).unwrap_or(Value::Null),
         "task_id": serde_json::Value::Null,
         "session_id": session_id,
         "trace_id": usage_string(&usage, &["trace_id", "traceId"]),
@@ -659,6 +816,18 @@ fn usage_string(usage: &Value, keys: &[&str]) -> Option<String> {
         .filter_map(|key| usage.get(*key).and_then(Value::as_str))
         .find(|value| !value.trim().is_empty())
         .map(str::to_string)
+}
+
+fn merge_metadata_fields(target: &mut Value, fields: Value) {
+    let Some(target_object) = target.as_object_mut() else {
+        *target = fields;
+        return;
+    };
+    if let Some(fields_object) = fields.as_object() {
+        for (key, value) in fields_object {
+            target_object.insert(key.clone(), value.clone());
+        }
+    }
 }
 
 async fn append_usage_event_to_sidecar(target: &SidecarChatTarget, event: Value) {
@@ -973,7 +1142,7 @@ fn append_transcript_message(
     role: &str,
     text: String,
     metadata: Value,
-) {
+) -> Value {
     let message_id = format!(
         "{}-{}",
         role,
@@ -982,11 +1151,16 @@ fn append_transcript_message(
             .unwrap_or_default()
             .as_millis()
     );
+    let timestamp = chrono::Utc::now().to_rfc3339();
     let message = json!({
         "info": {
             "id": message_id,
             "role": role,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "timestamp": timestamp,
+            "success": metadata
+                .get("status")
+                .and_then(Value::as_u64)
+                .is_none_or(|status| status < 400),
         },
         "parts": [{ "type": "text", "text": text }],
         "metadata": metadata,
@@ -995,8 +1169,9 @@ fn append_transcript_message(
         store
             .entry(transcript_key(&target.sandbox_id, session_id))
             .or_default()
-            .push(message);
+            .push(message.clone());
     }
+    message
 }
 
 pub fn append_operator_transcript_message(
@@ -1005,8 +1180,21 @@ pub fn append_operator_transcript_message(
     role: &str,
     text: String,
     metadata: Value,
-) {
-    append_transcript_message(target, session_id, role, text, metadata);
+) -> Value {
+    append_transcript_message(target, session_id, role, text, metadata)
+}
+
+pub fn transcript_messages_for_session(target: &SidecarChatTarget, session_id: &str) -> Value {
+    CHAT_TRANSCRIPTS
+        .lock()
+        .ok()
+        .and_then(|store| {
+            store
+                .get(&transcript_key(&target.sandbox_id, session_id))
+                .cloned()
+        })
+        .map(Value::Array)
+        .unwrap_or_else(|| Value::Array(Vec::new()))
 }
 
 pub async fn proxy_chat_events(
@@ -1172,6 +1360,48 @@ mod tests {
         assert_eq!(event["cost_usd"], 0.035);
         assert_eq!(event["cost_source"], "reported");
         assert_eq!(event["token_count_status"], "reported");
+    }
+
+    #[test]
+    fn agent_run_usage_event_supports_observatory_metadata() {
+        let target = SidecarChatTarget {
+            sandbox_id: "sandbox-observatory".to_string(),
+            sidecar_url: "http://127.0.0.1:1".to_string(),
+            sidecar_token: "test-token".to_string(),
+        };
+        let payload = serde_json::json!({
+            "success": true,
+            "data": {
+                "usage": {
+                    "inputTokens": 400,
+                    "outputTokens": 90,
+                    "traceId": "trace-observatory-1",
+                    "provider": "zai",
+                    "model": "glm-4.7"
+                }
+            }
+        });
+        let event = build_agent_run_usage_event_for(
+            &target,
+            "convo-bot-1-1775823900",
+            "reflect",
+            "Observed...",
+            StatusCode::OK,
+            &payload,
+            200,
+            "observatory",
+            "read-only-reflection",
+            Some("bot-1"),
+            Some("obs-1"),
+        );
+
+        assert_eq!(event["surface"], "observatory");
+        assert_eq!(event["operation"], "read-only-reflection");
+        assert_eq!(event["bot_id"], "bot-1");
+        assert_eq!(event["run_id"], "obs-1");
+        assert_eq!(event["trace_id"], "trace-observatory-1");
+        assert_eq!(event["input_tokens"], 400);
+        assert_eq!(event["output_tokens"], 90);
     }
 
     #[test]

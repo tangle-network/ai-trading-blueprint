@@ -254,7 +254,7 @@ describe('ObservatoryPage', () => {
 
   it('renders fleet observability records and immediate trigger control', async () => {
     const { default: ObservatoryPage } = await import('../observatory');
-    render(<ObservatoryPage />, { wrapper: createWrapper() });
+    const { container } = render(<ObservatoryPage />, { wrapper: createWrapper() });
 
     expect(hoisted.useTradingRouteAutoAuthMock).toHaveBeenCalledWith({
       enabled: true,
@@ -273,6 +273,9 @@ describe('ObservatoryPage', () => {
     expect(screen.getByLabelText('Work session transcript')).toBeInTheDocument();
     expect(screen.getByText('Driver')).toBeInTheDocument();
     expect(screen.getByText('Coding agent')).toBeInTheDocument();
+    expect(container.querySelector('[data-observatory-trace-role="user"]')).not.toBeNull();
+    expect(container.querySelector('[data-observatory-trace-role="assistant"]')).not.toBeNull();
+    expect(container.querySelector('[data-chat-role]')).toBeNull();
     expect(screen.getByText('Research-only Observatory task for bot bot-1.')).toBeInTheDocument();
     expect(screen.getByText('No result recorded yet. Current status: queued_research.')).toBeInTheDocument();
     expect(screen.getByText('Source-grounded finding is recorded.')).toBeInTheDocument();

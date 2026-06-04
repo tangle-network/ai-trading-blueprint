@@ -208,6 +208,15 @@ pub fn get_workflow_run_transcript(
         .map_err(|e| e.to_string())
 }
 
+pub fn persist_workflow_run_transcript(
+    record: WorkflowRunTranscriptRecord,
+) -> Result<WorkflowRunTranscriptRecord, String> {
+    workflow_run_transcripts_store()?
+        .insert(record.run_id.clone(), record.clone())
+        .map_err(|e| e.to_string())?;
+    Ok(record)
+}
+
 /// Test helper that mirrors the sibling's old name — inserts a transcript
 /// directly into the bin-local store. Used by `operator_api_tests.rs` to
 /// seed transcripts for the runs/transcript replay tests. Result-returning
@@ -216,9 +225,7 @@ pub fn get_workflow_run_transcript(
 pub fn insert_workflow_run_transcript_for_testing(
     record: WorkflowRunTranscriptRecord,
 ) -> Result<(), String> {
-    workflow_run_transcripts_store()?
-        .insert(record.run_id.clone(), record)
-        .map_err(|e| e.to_string())
+    persist_workflow_run_transcript(record).map(|_| ())
 }
 
 /// Apply-workflow-failure no-op. The sibling's `store_failed_execution`

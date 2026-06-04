@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
-import { ChatMessage } from '@tangle-network/sandbox-ui/chat';
 import { useAccount } from 'wagmi';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import {
@@ -462,35 +461,45 @@ function TraceMessage({
   children: string;
 }) {
   const messageRole = align === 'right' ? 'user' : 'assistant';
-  const avatar = (
-    <span
-      className={`${icon} text-base ${align === 'right' ? 'text-[#50d2c1]' : 'text-[var(--arena-terminal-text-muted)]'}`}
-      aria-hidden="true"
-    />
-  );
-  const detail = (
-    <div className="mt-2 truncate border-t border-[var(--arena-terminal-border)] pt-2 font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
-      {title}{meta ? ` · ${meta}` : ''}
-    </div>
-  );
+  const isUser = align === 'right';
 
   return (
     <div
-      className={`arena-observatory-chat-message flex [--avatar-size:1.75rem] [--chat-message-px:0.75rem] [--chat-message-py:0.625rem] [--radius-lg:0px] ${align === 'right' ? 'justify-end' : 'justify-start'}`}
+      className={`arena-observatory-chat-message flex ${isUser ? 'justify-end' : 'justify-start'}`}
     >
-      <ChatMessage
-        role={messageRole}
-        content={children}
-        userLabel={role}
-        assistantLabel={role}
-        avatar={avatar}
-        toolCalls={detail}
-        className={`max-w-[92%] border font-display text-sm ${
-          align === 'right'
+      <div
+        data-observatory-trace-role={messageRole}
+        className={`grid max-w-[92%] grid-cols-[1.75rem_minmax(0,1fr)] gap-2 border px-3 py-2.5 font-display text-sm ${
+          isUser
             ? 'border-[#50d2c1]/35 bg-[#50d2c1]/10 text-[var(--arena-terminal-text)]'
             : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)]'
         }`}
-      />
+      >
+        <span
+          className={`flex size-7 items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] ${icon} text-base ${
+            isUser ? 'text-[#50d2c1]' : 'text-[var(--arena-terminal-text-muted)]'
+          }`}
+          aria-hidden="true"
+        />
+        <span className="min-w-0">
+          <span className="flex min-w-0 items-center justify-between gap-3">
+            <span className="font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
+              {role}
+            </span>
+            {meta ? (
+              <span className="truncate text-right font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
+                {meta}
+              </span>
+            ) : null}
+          </span>
+          <span className="mt-2 block whitespace-pre-wrap break-words leading-5">
+            {children}
+          </span>
+          <span className="mt-2 block truncate border-t border-[var(--arena-terminal-border)] pt-2 font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
+            {title}
+          </span>
+        </span>
+      </div>
     </div>
   );
 }
