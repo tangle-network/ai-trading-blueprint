@@ -29,6 +29,9 @@ pub(crate) const SIDECAR_PROFILE_INSTRUCTIONS_PATH: &str =
 /// so the trading-operator identity must live here or the agent falls back to
 /// opencode's default "I'm a coding assistant" persona.
 pub(crate) const SIDECAR_AGENTS_MD_PATH: &str = "/home/agent/AGENTS.md";
+const TRADING_AGENT_AGENT_EVAL_VERSION: &str = "^0.70.0";
+const TRADING_AGENT_AGENT_KNOWLEDGE_VERSION: &str = "^1.5.0";
+const TRADING_AGENT_AGENT_RUNTIME_VERSION: &str = "^0.36.0";
 
 /// Operator identity + behavioural charter loaded into every opencode turn via
 /// `AGENTS.md`. The full operating protocol (API base URL, bearer token,
@@ -75,9 +78,9 @@ fn trading_agent_package_json() -> String {
             "mcp:self-improvement": "bun --bun /home/agent/tools/self-improvement-mcp-server.ts"
         },
         "dependencies": {
-            "@tangle-network/agent-eval": "^0.29.1",
-            "@tangle-network/agent-knowledge": "^1.3.0",
-            "@tangle-network/agent-runtime": "^0.10.0"
+            "@tangle-network/agent-eval": TRADING_AGENT_AGENT_EVAL_VERSION,
+            "@tangle-network/agent-knowledge": TRADING_AGENT_AGENT_KNOWLEDGE_VERSION,
+            "@tangle-network/agent-runtime": TRADING_AGENT_AGENT_RUNTIME_VERSION
         },
         "engines": {
             "node": ">=20"
@@ -1523,10 +1526,38 @@ mod tests {
             package["scripts"]["mcp:self-improvement"],
             "bun --bun /home/agent/tools/self-improvement-mcp-server.ts"
         );
-        assert!(package["dependencies"]["@tangle-network/agent-eval"].is_string());
-        assert!(package["dependencies"]["@tangle-network/agent-runtime"].is_string());
-        assert!(package["dependencies"]["@tangle-network/agent-knowledge"].is_string());
+        assert_eq!(
+            package["dependencies"]["@tangle-network/agent-eval"],
+            TRADING_AGENT_AGENT_EVAL_VERSION
+        );
+        assert_eq!(
+            package["dependencies"]["@tangle-network/agent-runtime"],
+            TRADING_AGENT_AGENT_RUNTIME_VERSION
+        );
+        assert_eq!(
+            package["dependencies"]["@tangle-network/agent-knowledge"],
+            TRADING_AGENT_AGENT_KNOWLEDGE_VERSION
+        );
         assert_eq!(package["engines"]["node"], ">=20");
+    }
+
+    #[test]
+    fn trading_agent_substrate_versions_match_root_package() {
+        let sandbox_package: serde_json::Value =
+            serde_json::from_str(&trading_agent_package_json()).expect("valid package json");
+        let root_package: serde_json::Value =
+            serde_json::from_str(include_str!("../../../package.json")).expect("root package json");
+        for dependency in [
+            "@tangle-network/agent-eval",
+            "@tangle-network/agent-runtime",
+            "@tangle-network/agent-knowledge",
+        ] {
+            assert_eq!(
+                sandbox_package["dependencies"][dependency],
+                root_package["dependencies"][dependency],
+                "{dependency} must stay aligned between the app and provisioned sandboxes"
+            );
+        }
     }
 
     #[test]
