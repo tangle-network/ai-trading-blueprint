@@ -70,8 +70,8 @@ export function ArenaPageHeader({
   const utilities = useContext(ArenaHeaderUtilitiesContext);
 
   return (
-    <section className="shrink-0 overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
-      <div className="flex min-h-12 flex-col gap-2 px-3 py-2 min-[1180px]:flex-row min-[1180px]:items-center">
+    <section className="shrink-0 overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+      <div className="flex min-h-14 flex-col gap-2 px-3 py-1.5 min-[1180px]:flex-row min-[1180px]:items-center">
         <div className={`flex min-w-0 items-center gap-3 ${titleWidthClassName}`}>
         <span
           className="h-2 w-2 shrink-0 rounded-full bg-[var(--arena-terminal-accent)]"

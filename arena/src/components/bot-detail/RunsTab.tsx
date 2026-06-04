@@ -569,7 +569,7 @@ function RunResultSummary({ result }: { result: string }) {
       {sections.map((section) => (
         <section
           key={section.title}
-          className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3"
+          className="border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3"
         >
           <h4 className="text-xs font-display font-semibold text-arena-elements-textPrimary">
             {section.title}

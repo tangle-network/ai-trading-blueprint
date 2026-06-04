@@ -5,17 +5,17 @@ interface SkeletonProps {
 export function Skeleton({ className }: SkeletonProps) {
   return (
     <div
-      className={`animate-pulse rounded-md bg-arena-elements-background-depth-3 ${className ?? ''}`}
+      className={`animate-pulse bg-[var(--arena-terminal-surface)] ${className ?? ''}`}
     />
   );
 }
 
 export function SkeletonCard({ className }: SkeletonProps) {
   return (
-    <div className={`glass-card rounded-xl p-5 space-y-3 ${className ?? ''}`}>
+    <div className={`border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 ${className ?? ''}`}>
       <Skeleton className="h-4 w-1/3" />
-      <Skeleton className="h-3 w-full" />
-      <Skeleton className="h-3 w-2/3" />
+      <Skeleton className="mt-3 h-3 w-full" />
+      <Skeleton className="mt-3 h-3 w-2/3" />
     </div>
   );
 }

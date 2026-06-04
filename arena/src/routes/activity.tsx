@@ -43,7 +43,7 @@ export default function ActivityPage() {
   const displayTradeCount = oneDayTradeCount > 0 ? oneDayTradeCount : fallbackTradeCount;
 
   return (
-    <div className="flex min-h-full w-full flex-col gap-2 lg:h-full lg:overflow-hidden">
+    <div className="flex min-h-full w-full flex-col lg:h-full lg:overflow-hidden">
       <ArenaPageHeader
         title="Activity"
         titleWidthClassName="min-[1180px]:w-[11rem]"
@@ -81,7 +81,7 @@ export default function ActivityPage() {
             bullets={['Deploy an agent', 'Track live fills', 'Inspect agent performance']}
           />
         ) : (
-          <div className="flex min-h-[20rem] items-center justify-center rounded-[6px] border border-[#273035] bg-[#0f1a1f] px-6 text-center">
+          <div className="flex min-h-[20rem] items-center justify-center border border-[#273035] bg-[#0f1a1f] px-6 text-center">
             <div>
               <div className="i-ph:pulse mx-auto mb-4 text-4xl text-[#697371]" aria-hidden="true" />
               <p className="font-display text-base font-semibold text-[#f6fefd]">No execution activity yet</p>

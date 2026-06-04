@@ -11,6 +11,7 @@ export const DEFAULT_REPO = 'tangle-network/ai-trading-blueprint'
 export const DEFAULT_LIN_LOGIN = 'vutuanlinh2k2'
 export const DEFAULT_OPERATOR_URL = 'https://178.104.232.124.sslip.io'
 export const DEFAULT_APP_URL = 'https://trading-arena.blueprint.tangle.tools'
+export const QA_PAPER_INITIAL_CAPITAL_USD = '10000'
 
 export type CoverageStatus = 'covered' | 'partial' | 'gap'
 
@@ -133,6 +134,20 @@ export interface DispatchResult {
 }
 
 const DEFAULT_DISPATCH_ISSUES = [57, 46, 45, 41, 9]
+
+export function buildQaPaperStrategyConfig(strategyConfig?: Record<string, unknown>): Record<string, unknown> {
+  const initialCapital = strategyConfig?.initial_capital_usd
+  const hasInitialCapital =
+    typeof initialCapital === 'number' ||
+    (typeof initialCapital === 'string' && initialCapital.trim().length > 0)
+
+  return {
+    ...strategyConfig,
+    paper_trade: true,
+    paper_safe: true,
+    initial_capital_usd: hasInitialCapital ? initialCapital : QA_PAPER_INITIAL_CAPITAL_USD,
+  }
+}
 
 export const ISSUE_SCENARIOS: IssueScenario[] = [
   {
@@ -457,6 +472,8 @@ async function provisionFreshLabBot(
       `use the product flow named by the issue instead`,
     )
   }
+  const strategyConfig = buildQaPaperStrategyConfig(spec.strategyConfig)
+  const chainId = strategyConfig.protocol_chain_id === 42161 ? 42161 : null
   if (dryRun) {
     return {
       id: `dry-run-fresh-${coverage.issue.number}`,
@@ -464,11 +481,11 @@ async function provisionFreshLabBot(
       strategy_type: spec.strategyType,
       prompt: spec.prompt,
       paper_trade: true,
-      chain_id: spec.strategyConfig?.protocol_chain_id === 42161 ? 42161 : null,
+      chain_id: chainId,
       sandbox_id: 'dry-run',
       vault_address: null,
       created_at: Date.now(),
-      strategy_config: spec.strategyConfig ?? null,
+      strategy_config: strategyConfig,
     }
   }
   if (!client) throw new Error('fresh bot provisioning requires an authenticated operator client')
@@ -476,7 +493,7 @@ async function provisionFreshLabBot(
     prompt: spec.prompt,
     name: spec.name,
     strategy_type: spec.strategyType,
-    ...(spec.strategyConfig ? { strategy_config: spec.strategyConfig } : {}),
+    strategy_config: strategyConfig,
   })
   await client.waitForVaultResolved(botId)
   await client.configureSecrets(botId, deterministicAgentEnv())
@@ -486,11 +503,11 @@ async function provisionFreshLabBot(
     strategy_type: spec.strategyType,
     prompt: spec.prompt,
     paper_trade: true,
-    chain_id: spec.strategyConfig?.protocol_chain_id === 42161 ? 42161 : null,
+    chain_id: chainId,
     sandbox_id: null,
     vault_address: null,
     created_at: Date.now(),
-    strategy_config: spec.strategyConfig ?? null,
+    strategy_config: strategyConfig,
   }
 }
 

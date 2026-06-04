@@ -110,6 +110,7 @@ export const FIRECRACKER_RUNTIME_SUPPORTED = false;
 export const DEFAULT_POSITION_SIZE_PCT = 10;
 export const MIN_POSITION_SIZE_PCT = 1;
 export const MAX_POSITION_SIZE_PCT = 100;
+export const DEFAULT_PAPER_INITIAL_CAPITAL_USD = '10000';
 
 export type RuntimeBackend = 'docker' | 'firecracker' | 'tee';
 
@@ -674,6 +675,8 @@ export function buildStrategyConfigForProvision({
     ),
   };
   if (paperTrade != null) config.paper_trade = paperTrade;
+  if (paperTrade === true)
+    config.initial_capital_usd = DEFAULT_PAPER_INITIAL_CAPITAL_USD;
   if (
     protocolChainId != null &&
     Number.isFinite(protocolChainId) &&
@@ -3612,7 +3615,7 @@ export default function ProvisionPage() {
 
   return (
     <div className="arena-trace-terminal min-h-full bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)]">
-      <div className="flex min-h-full w-full flex-col gap-2">
+      <div className="flex min-h-full w-full flex-col">
         <ArenaPageHeader
           title="Deploy"
           titleWidthClassName="min-[1180px]:w-[11rem]"

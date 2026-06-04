@@ -769,7 +769,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
 
   if (hasMetricsError) {
     return (
-      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
+      <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] py-16 text-center text-arena-elements-textSecondary">
         <div className="i-ph:warning-circle text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
         <h3 className="font-display font-semibold text-base text-arena-elements-textPrimary mb-2">
           Live performance unavailable
@@ -792,7 +792,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         className={`grid min-h-0 flex-1 gap-0 overflow-hidden ${workspaceGridClass}`}
         style={workspaceStyle}
       >
-        <div className="col-start-1 row-start-1 flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
+        <div className="col-start-1 row-start-1 flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
           <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[72px] min-[1120px]:flex-row min-[1120px]:items-stretch">
             <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1120px]:w-[178px] min-[1120px]:border-b-0 min-[1120px]:border-r">
               <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#123f3a] text-[#50d2c1]">
@@ -979,7 +979,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
               </div>
             ) : (
               <div className="grid h-full min-h-[260px] place-items-center gap-4 p-3 min-[1280px]:min-h-[420px]">
-                <div className="w-full max-w-3xl rounded-md border border-[#273035] bg-[#0b1418] p-5 text-left">
+                <div className="w-full max-w-3xl border border-[#273035] bg-[#0b1418] p-5 text-left">
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="font-data text-[11px] text-[#949e9c]">
@@ -1001,7 +1001,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                     ].map((item) => (
                       <div
                         key={item.label}
-                        className="min-w-0 rounded-[5px] border border-[#273035] bg-[#0f1a1f] px-3 py-2"
+                        className="min-w-0 border border-[#273035] bg-[#0f1a1f] px-3 py-2"
                       >
                         <div className="truncate font-data text-[10px] text-[#949e9c]">
                           {item.label}
@@ -1035,9 +1035,9 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             onClick={() => setLayout((current) => ({ ...current, fillsCollapsed: false }))}
           />
         ) : (
-        <aside className="col-start-1 row-start-3 flex min-h-0 flex-col overflow-hidden min-[1280px]:gap-2 min-[1600px]:col-start-3 min-[1600px]:row-start-1">
+        <aside className="col-start-1 row-start-3 flex min-h-0 flex-col overflow-hidden min-[1600px]:col-start-3 min-[1600px]:row-start-1">
           {tradePageIsPending ? (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-2">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] p-2">
               <div className="mb-2 flex shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-1 pb-2">
                 <h3 className="font-display text-sm font-semibold text-[#f6fefd]">
                   Fills
@@ -1050,7 +1050,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                 {Array.from({ length: 6 }, (_, index) => (
                   <div
                     key={index}
-                    className="rounded-[5px] border border-[#273035] bg-[#0b1418] px-3 py-3"
+                    className="border border-[#273035] bg-[#0b1418] px-3 py-3"
                   >
                     <Skeleton className="h-4 w-24" />
                     <Skeleton className="mt-2 h-3 w-40" />
@@ -1067,7 +1067,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
               className="min-h-0 flex-1"
             />
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-2">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] p-2">
               <div className="mb-1.5 flex h-8 shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-1 pb-1.5">
                 <h3 className="font-display text-sm font-semibold text-[#f6fefd]">
                   Fills
@@ -1078,7 +1078,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   {formatNumber(tradePage?.total ?? trades?.length ?? recentTradeTape.length, { maximumFractionDigits: 0 })}
                 </span>
               </div>
-              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_48px] overflow-hidden rounded-[5px] border border-[#273035] bg-[#0b1418]">
+              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_48px] overflow-hidden border border-[#273035] bg-[#0b1418]">
                 <div
                   className="min-h-0 overflow-y-auto [scrollbar-gutter:stable]"
                   aria-label="Recent fills"

@@ -107,7 +107,7 @@ export function TxDropdown({ align = 'end', side = 'down' }: { align?: 'start' |
       <button
         type="button"
         onClick={toggle}
-        className="relative rounded-lg border border-arena-elements-dividerColor/70 bg-arena-elements-bg-depth-3 p-2.5 text-arena-elements-textSecondary transition-[background-color,border-color,color,opacity] duration-150 hover:border-[#50d2c1]/35 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+        className="relative border border-arena-elements-dividerColor/70 bg-arena-elements-bg-depth-3 p-2.5 text-arena-elements-textSecondary transition-[background-color,border-color,color,opacity] duration-150 hover:border-[#50d2c1]/35 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
         aria-label="Transaction history"
         aria-expanded={open}
       >
@@ -124,7 +124,7 @@ export function TxDropdown({ align = 'end', side = 'down' }: { align?: 'start' |
 
       {open && (
         <div
-          className={`absolute ${align === 'start' ? 'left-0' : 'right-0'} ${side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} z-50 w-[min(20rem,calc(100vw-1rem))] max-h-[min(28rem,calc(100vh-1rem))] overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] shadow-[var(--arena-terminal-shadow-lg)]`}
+          className={`absolute ${align === 'start' ? 'left-0' : 'right-0'} ${side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} z-50 max-h-[min(28rem,calc(100vh-1rem))] w-[min(20rem,calc(100vw-1rem))] overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] shadow-[var(--arena-terminal-shadow-lg)]`}
         >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-arena-elements-dividerColor/50">

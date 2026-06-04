@@ -146,7 +146,7 @@ export function WalletButton({
                 role="menu"
                 aria-label="Account actions"
                 className={cn(
-                  'absolute z-50 max-h-[min(28rem,calc(100vh-1rem))] w-[min(18rem,calc(100vw-1rem))] overflow-y-auto overscroll-contain rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 text-[var(--arena-terminal-text)] shadow-[var(--arena-terminal-shadow-lg)]',
+                  'absolute z-50 max-h-[min(28rem,calc(100vh-1rem))] w-[min(18rem,calc(100vw-1rem))] overflow-y-auto overscroll-contain border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 text-[var(--arena-terminal-text)] shadow-[var(--arena-terminal-shadow-lg)]',
                   align === 'start' ? 'left-0' : 'right-0',
                   side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
                 )}
@@ -173,7 +173,7 @@ export function WalletButton({
                 </div>
 
                 {/* Chain status */}
-                <div className="mb-3 flex items-center gap-2.5 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 py-2.5">
+                <div className="mb-3 flex items-center gap-2.5 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 py-2.5">
                   <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${isWrongChain ? 'bg-amber-500 dark:bg-amber-400 animate-pulse' : 'bg-emerald-600 dark:bg-emerald-400'}`} />
                   <span className="flex-1 text-sm font-data text-[var(--arena-terminal-text-secondary)]">
                     {isWrongChain ? `Chain ${chainId}` : (targetChain?.name ?? 'Unknown')}

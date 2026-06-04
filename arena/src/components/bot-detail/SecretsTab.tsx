@@ -355,7 +355,7 @@ export function SecretsTab({ bot }: SecretsTabProps) {
 
   if (!detail) {
     return (
-      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
+      <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] py-16 text-center text-arena-elements-textSecondary">
         <div className="i-ph:lock-simple text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
         Bot detail not available from operator API.
       </div>
@@ -364,7 +364,7 @@ export function SecretsTab({ bot }: SecretsTabProps) {
 
   if (!isOwner) {
     return (
-      <div className="glass-card rounded-xl text-center py-16 text-arena-elements-textSecondary">
+      <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] py-16 text-center text-arena-elements-textSecondary">
         <div className="i-ph:shield-warning text-3xl mb-3 mx-auto text-arena-elements-textTertiary" />
         <h3 className="font-display font-semibold text-base text-arena-elements-textPrimary mb-2">
           Owner only
@@ -379,7 +379,7 @@ export function SecretsTab({ bot }: SecretsTabProps) {
   return (
     <>
       <div>
-        <div className="glass-card rounded-xl p-5 space-y-5">
+        <div className="space-y-5 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-5">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="font-display font-bold text-lg">Runtime Secrets</h3>
@@ -395,19 +395,19 @@ export function SecretsTab({ bot }: SecretsTabProps) {
           </div>
 
           {error && (
-            <div className="text-sm text-amber-500 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <div className="border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-500">
               {error}
             </div>
           )}
 
           {secretsConfigured && (
-            <div className="text-sm text-arena-elements-textSecondary p-3 rounded-lg bg-arena-elements-background-depth-3 border border-arena-elements-borderColor">
+            <div className="border border-arena-elements-borderColor bg-arena-elements-background-depth-3 p-3 text-sm text-arena-elements-textSecondary">
               Existing secret values stay hidden until you reveal them. Saving changes wipes the current user-provided secrets, restarts the sidecar, and activates the bot with the new set.
             </div>
           )}
 
           {!secretsConfigured && isAwaitingSecrets && (
-            <div className="text-sm text-emerald-500 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+            <div className="border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm text-emerald-500">
               This bot is provisioned and ready for activation.
             </div>
           )}
@@ -415,7 +415,7 @@ export function SecretsTab({ bot }: SecretsTabProps) {
           <button
             type="button"
             onClick={() => setUseOperatorKey(!useOperatorKey)}
-            className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-all text-left ${
+            className={`flex w-full items-center gap-3 border p-3 text-left transition-all ${
               useOperatorKey
                 ? 'border-violet-500/50 bg-violet-500/10 ring-1 ring-violet-500/20'
                 : 'border-arena-elements-borderColor bg-arena-elements-background-depth-3 hover:border-arena-elements-borderColorActive'

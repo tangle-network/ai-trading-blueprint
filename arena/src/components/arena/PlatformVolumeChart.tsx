@@ -327,13 +327,21 @@ export function PlatformVolumeChart({
   const [range, setRange] = useState<PlatformVolumeRange>('30d');
   const [mode, setMode] = useState<PlatformVolumeMode>('bucket');
   const { series, isLoading, isFetching } = usePlatformVolumeSeries(bots, range);
+  const displayStateRef = useRef({ range, series });
+  if (!isLoading || series.summary.totalTradeCount > 0 || displayStateRef.current.series.summary.totalTradeCount === 0) {
+    displayStateRef.current = { range, series };
+  }
+  const rangePending = isLoading && displayStateRef.current.range !== range;
+  const displayState = rangePending ? displayStateRef.current : { range, series };
+  const displaySeries = displayState.series;
   const selectedRange = PLATFORM_VOLUME_RANGES.find((item) => item.value === range) ?? PLATFORM_VOLUME_RANGES[2];
-  const modeLabel = mode === 'bucket' ? selectedRange.bucketLabel : MODES.find((item) => item.value === mode)?.label ?? 'Volume';
-  const buckets = series.buckets;
+  const displayRange = PLATFORM_VOLUME_RANGES.find((item) => item.value === displayState.range) ?? selectedRange;
+  const modeLabel = mode === 'bucket' ? displayRange.bucketLabel : MODES.find((item) => item.value === mode)?.label ?? 'Volume';
+  const buckets = displaySeries.buckets;
   const values = useMemo(() => buckets.map((bucket) =>
     getPlatformVolumeBucketValue(bucket, mode)), [buckets, mode]);
   const latestValue = values[values.length - 1] ?? 0;
-  const hasVolume = series.summary.totalUsd > 0;
+  const hasVolume = displaySeries.summary.totalUsd > 0;
   const activeBuckets = useMemo(() => buckets.filter((bucket) =>
     bucket.bucketUsd > 0 || bucket.totalTradeCount > 0), [buckets]);
   const latestActiveBucket = activeBuckets[activeBuckets.length - 1];
@@ -341,20 +349,20 @@ export function PlatformVolumeChart({
     if (!best || bucket.bucketUsd > best.bucketUsd) return bucket;
     return best;
   }, null), [activeBuckets]);
-  const liveShare = series.summary.totalUsd > 0 ? series.summary.liveUsd / series.summary.totalUsd : 0;
-  const pricedCoverage = series.summary.totalTradeCount > 0
-    ? series.summary.pricedTradeCount / series.summary.totalTradeCount
+  const liveShare = displaySeries.summary.totalUsd > 0 ? displaySeries.summary.liveUsd / displaySeries.summary.totalUsd : 0;
+  const pricedCoverage = displaySeries.summary.totalTradeCount > 0
+    ? displaySeries.summary.pricedTradeCount / displaySeries.summary.totalTradeCount
     : 0;
 
   return (
-    <section className={`${isCommand ? 'flex h-full min-h-0 flex-col border-[#273035] bg-[#0f1a1f]' : 'mb-4 rounded-xl border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60'} overflow-hidden border ${className}`}>
+    <section className={`${isCommand ? 'flex h-full min-h-0 flex-col border-[#273035] bg-[#0f1a1f]' : 'border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/60'} overflow-hidden border ${className}`}>
       <div className={`flex flex-col gap-2 border-b px-3 py-2 2xl:flex-row 2xl:items-center 2xl:justify-between ${isCommand ? 'border-[#273035] bg-[#0b1418]' : 'border-arena-elements-dividerColor/60 sm:px-5 sm:py-3'}`}>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className={`${isCommand ? 'text-[#f6fefd]' : 'text-arena-elements-textPrimary'} font-display text-lg font-semibold tracking-tight`}>
               Volume
             </h2>
-            {isFetching && !isLoading && (
+            {(isFetching || rangePending) && (!isLoading || rangePending) && (
               <span
                 className={`${isCommand ? 'text-[#697371]' : 'text-arena-elements-textTertiary'} i-ph:arrows-clockwise text-sm animate-spin`}
                 aria-label="Refreshing volume"
@@ -401,7 +409,7 @@ export function PlatformVolumeChart({
           >
             {MODES.map((item) => {
               const selected = item.value === mode;
-              const label = item.value === 'bucket' ? selectedRange.bucketLabel : item.label;
+              const label = item.value === 'bucket' ? displayRange.bucketLabel : item.label;
               return (
                 <button
                   key={item.value}
@@ -430,7 +438,7 @@ export function PlatformVolumeChart({
 
       <div className={`grid gap-0 ${isCommand ? 'min-h-0 flex-1' : 'xl:grid-cols-[minmax(0,1fr)_220px]'}`}>
         <div className={`${isCommand ? 'flex min-h-0 flex-col p-2' : 'min-h-[292px] p-4 sm:p-5'}`}>
-          {isLoading ? (
+          {isLoading && !rangePending ? (
             <Skeleton className={`${isCommand ? 'min-h-0 flex-1' : 'h-[260px]'} w-full`} />
           ) : hasVolume ? (
             <div className="relative flex h-full min-h-0 flex-col">
@@ -457,7 +465,7 @@ export function PlatformVolumeChart({
                       Total
                     </div>
                     <div className="mt-1 font-data text-xl font-bold text-arena-elements-textPrimary">
-                      {formatUsd(series.summary.totalUsd)}
+                      {formatUsd(displaySeries.summary.totalUsd)}
                     </div>
                   </div>
                 )}
@@ -466,23 +474,23 @@ export function PlatformVolumeChart({
               <PlatformVolumeTradingChart
                 buckets={buckets}
                 mode={mode}
-                bucketMs={series.bucketMs}
+                bucketMs={displaySeries.bucketMs}
                 heightClassName={isCommand ? 'min-h-0 flex-1' : 'h-[222px]'}
                 focusSparseActivity={isCommand}
               />
 
               {isCommand && (
                 <div className="grid shrink-0 grid-cols-4 border-t border-[#273035] bg-[#0b1418]">
-                  <VolumeTerminalStat label="Total" value={formatUsd(series.summary.totalUsd)} />
-                  <VolumeTerminalStat label="Live" value={formatUsd(series.summary.liveUsd)} detail={formatPercent(liveShare)} />
+                  <VolumeTerminalStat label="Total" value={formatUsd(displaySeries.summary.totalUsd)} />
+                  <VolumeTerminalStat label="Live" value={formatUsd(displaySeries.summary.liveUsd)} detail={formatPercent(liveShare)} />
                   <VolumeTerminalStat label="Peak" value={formatUsd(peakBucket?.bucketUsd ?? 0)} detail={peakBucket?.label ?? '-'} />
-                  <VolumeTerminalStat label="Fills" value={formatNumber(series.summary.totalTradeCount, { maximumFractionDigits: 0 })} detail={`${formatPercent(pricedCoverage)} priced`} />
+                  <VolumeTerminalStat label="Fills" value={formatNumber(displaySeries.summary.totalTradeCount, { maximumFractionDigits: 0 })} detail={`${formatPercent(pricedCoverage)} priced`} />
                 </div>
               )}
             </div>
           ) : (
             <div
-              className="flex h-[260px] items-center justify-center rounded-xl border border-dashed border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/42 text-center"
+              className="flex h-[260px] items-center justify-center border border-dashed border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-1/42 text-center"
               style={{
                 backgroundImage: 'linear-gradient(rgba(127,127,145,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(127,127,145,0.08) 1px, transparent 1px)',
                 backgroundSize: '48px 48px',
@@ -501,14 +509,14 @@ export function PlatformVolumeChart({
         <aside className={`${isCommand ? 'hidden' : ''} border-t border-arena-elements-dividerColor/60 p-4 sm:p-5 xl:border-l xl:border-t-0`}>
           <div className="grid grid-cols-2 gap-2 xl:grid-cols-1">
             {[
-              { label: 'Total volume', value: formatUsd(series.summary.totalUsd), icon: 'i-ph:chart-line-up' },
-              { label: 'Live notional', value: formatUsd(series.summary.liveUsd), icon: 'i-ph:lightning' },
-              { label: 'Paper notional', value: formatUsd(series.summary.paperUsd), icon: 'i-ph:notepad' },
-              { label: 'Priced trades', value: formatNumber(series.summary.pricedTradeCount, { maximumFractionDigits: 0 }), icon: 'i-ph:swap' },
+              { label: 'Total volume', value: formatUsd(displaySeries.summary.totalUsd), icon: 'i-ph:chart-line-up' },
+              { label: 'Live notional', value: formatUsd(displaySeries.summary.liveUsd), icon: 'i-ph:lightning' },
+              { label: 'Paper notional', value: formatUsd(displaySeries.summary.paperUsd), icon: 'i-ph:notepad' },
+              { label: 'Priced trades', value: formatNumber(displaySeries.summary.pricedTradeCount, { maximumFractionDigits: 0 }), icon: 'i-ph:swap' },
             ].map((stat) => (
               <div
                 key={stat.label}
-                className="rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/54 px-3 py-2.5"
+                className="border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/54 px-3 py-2.5"
               >
                 <div className="flex items-center gap-2 text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
                   <span className={`${stat.icon} text-sm`} aria-hidden="true" />

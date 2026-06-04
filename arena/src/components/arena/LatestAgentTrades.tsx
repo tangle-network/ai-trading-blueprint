@@ -554,7 +554,7 @@ function FillInspector({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
-        <section className="mb-3 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3">
+        <section className="mb-3 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3">
           <div className="mb-3 flex min-w-0 items-center gap-2.5">
             {hasOperatorAddress ? (
               <Identicon address={operatorAddress as Address} size={26} />
@@ -592,7 +592,7 @@ function FillInspector({
         </section>
 
         {(reasoning || identifiers.length > 0) && (
-          <section className="mt-3 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3">
+          <section className="mt-3 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3">
             {reasoning && (
               <p className="line-clamp-4 text-sm leading-6 text-[var(--arena-terminal-text-secondary)]">
                 {reasoning}

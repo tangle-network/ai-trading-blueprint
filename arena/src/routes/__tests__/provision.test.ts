@@ -276,6 +276,22 @@ describe('provision runtime backend helpers', () => {
     });
   });
 
+  it('adds starting paper capital when provisioning a paper strategy', async () => {
+    const { buildStrategyConfigForProvision } = await import('../provision');
+
+    expect(
+      buildStrategyConfigForProvision({
+        runtimeBackend: 'docker',
+        isTeeBlueprint: false,
+        paperTrade: true,
+      }),
+    ).toMatchObject({
+      runtime_backend: 'docker',
+      paper_trade: true,
+      initial_capital_usd: '10000',
+    });
+  });
+
   it('parses positive validator service IDs consistently', async () => {
     const { parsePositiveServiceIds, resolveValidatorServiceIds } = await import(
       '../provision'

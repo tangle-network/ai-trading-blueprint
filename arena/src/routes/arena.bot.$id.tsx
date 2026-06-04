@@ -159,7 +159,7 @@ function readAgentBackHref(state: unknown, id: string): string | null {
 
 function WorkspaceLoading() {
   return (
-    <div className="flex h-full min-h-[320px] items-center justify-center rounded-xl border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/42">
+    <div className="flex h-full min-h-[320px] items-center justify-center border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/42">
       <div className="text-center">
         <div className="i-ph:spinner-gap text-2xl text-arena-elements-textTertiary mx-auto animate-spin" />
         <div className="mt-3 font-data text-xs uppercase tracking-wider text-arena-elements-textTertiary">
@@ -375,7 +375,7 @@ export default function BotDetailPage() {
   if (!bot && (isLoading || isRouteFallbackLoading)) {
     return (
       <div className="flex h-full min-h-0 items-center justify-center p-6 text-center">
-        <div className="glass-card rounded-xl p-12 max-w-md">
+        <div className="glass-card rounded-none p-12 max-w-md">
           <div className="i-ph:arrow-clockwise text-4xl text-arena-elements-textTertiary mb-4 mx-auto animate-spin" />
           <p className="text-arena-elements-textSecondary text-sm">
             Loading agent data…
@@ -388,7 +388,7 @@ export default function BotDetailPage() {
   if (!bot) {
     return (
       <div className="flex h-full min-h-0 items-center justify-center p-6 text-center">
-        <div className="glass-card rounded-xl p-12 max-w-md">
+        <div className="glass-card rounded-none p-12 max-w-md">
           <div className="i-ph:robot text-4xl text-arena-elements-textTertiary mb-4 mx-auto" />
           <h1 className="font-display text-2xl font-bold mb-3">
             Agent Not Found
@@ -473,7 +473,7 @@ export default function BotDetailPage() {
             />
           </ErrorBoundary>
         ) : (
-          <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
+          <div className="glass-card rounded-none py-16 text-center text-arena-elements-textSecondary">
             Runs are unavailable for this operator.
           </div>
         );
@@ -494,7 +494,7 @@ export default function BotDetailPage() {
             />
           </ErrorBoundary>
         ) : (
-          <div className="glass-card rounded-xl py-16 text-center text-arena-elements-textSecondary">
+          <div className="glass-card rounded-none py-16 text-center text-arena-elements-textSecondary">
             Chat is unavailable for this operator.
           </div>
         );

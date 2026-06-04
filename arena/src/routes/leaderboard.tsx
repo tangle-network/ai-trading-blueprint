@@ -121,7 +121,7 @@ function AgentStat({
   title?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-[5px] border border-[#273035] bg-[#081013] px-3 py-2.5" title={title}>
+    <div className="min-w-0 border border-[#273035] bg-[#081013] px-3 py-2.5" title={title}>
       <div className="truncate font-mono text-[11px] uppercase tracking-[0.12em] text-[#697371]">{label}</div>
       <div className={`mt-1 truncate font-data text-xl font-bold tabular-nums ${tone}`}>{value}</div>
     </div>
@@ -531,7 +531,7 @@ export default function LeaderboardPage() {
   };
 
   return (
-    <div className="arena-trace-terminal flex min-h-full w-full flex-col gap-2 lg:h-full lg:overflow-hidden">
+    <div className="arena-trace-terminal flex min-h-full w-full flex-col lg:h-full lg:overflow-hidden">
       <ArenaPageHeader
         title="Agents"
         titleWidthClassName="min-[1180px]:w-[11rem]"
@@ -594,7 +594,7 @@ export default function LeaderboardPage() {
             bullets={['Deploy an agent', 'Track returns and fills', 'Configure operator secrets']}
           />
         ) : (
-          <div className="glass-card rounded-xl p-16 text-center">
+          <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-16 text-center">
             <div className="i-ph:robot text-4xl text-arena-elements-textTertiary mb-4 mx-auto" />
             <p className="text-base text-arena-elements-textSecondary mb-2">No agents deployed yet</p>
             <p className="text-sm text-arena-elements-textTertiary">

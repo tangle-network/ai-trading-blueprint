@@ -6,6 +6,18 @@ import { repoRoot } from '../lib/repo.js'
 import { runProductBrowserEval, type ProductBrowserEvalReport } from './browser-driver.js'
 
 const DEFAULT_E2E_PRIVATE_KEY = '0x59c6995e998f97a5a0044966f094538c9c9d5e636d8d43c4f88e4a70e58b332a'
+export const PRODUCT_API_PAPER_INITIAL_CAPITAL_USD = '10000'
+
+export interface ProductApiCreateBotBody {
+  prompt: string
+  name: string
+  strategy_type: string
+  strategy_config: {
+    paper_trade: true
+    paper_safe: true
+    initial_capital_usd: string
+  }
+}
 
 export interface LocalProductE2EOptions {
   baseUrl?: string
@@ -294,7 +306,7 @@ async function listProvisions(operatorUrl: string): Promise<{ callIds: Set<strin
   }
 }
 
-async function createBotThroughProductApi(operatorUrl: string, token: string, prompt: string): Promise<void> {
+export function buildProductApiBotCreateBody(prompt: string): ProductApiCreateBotBody {
   const promptLower = prompt.toLowerCase()
   const strategyType = promptLower.includes('yield') || promptLower.includes('lending') || promptLower.includes('aave')
     ? 'yield'
@@ -305,11 +317,29 @@ async function createBotThroughProductApi(operatorUrl: string, token: string, pr
         : promptLower.includes('perp') || promptLower.includes('leverage') || promptLower.includes('futures')
           ? 'perp'
           : 'dex'
-  await postJsonWithToken(`${operatorUrl}/api/bots`, token, {
+
+  return {
     prompt,
-    name: strategyType === 'hyperliquid_perp' ? 'Hyperliquid Perp Test' : prompt.slice(0, 50),
+    name: productApiBotName(strategyType),
     strategy_type: strategyType,
-  })
+    strategy_config: {
+      paper_trade: true,
+      paper_safe: true,
+      initial_capital_usd: PRODUCT_API_PAPER_INITIAL_CAPITAL_USD,
+    },
+  }
+}
+
+async function createBotThroughProductApi(operatorUrl: string, token: string, prompt: string): Promise<void> {
+  await postJsonWithToken(`${operatorUrl}/api/bots`, token, buildProductApiBotCreateBody(prompt))
+}
+
+function productApiBotName(strategyType: string): string {
+  if (strategyType === 'hyperliquid_perp') return 'QA Hyperliquid ETH Perp Trader'
+  if (strategyType === 'perp') return 'QA GMX Vertex Perp Trader'
+  if (strategyType === 'prediction') return 'QA Polymarket CLOB Paper Trader'
+  if (strategyType === 'yield') return 'QA Aave Morpho Yield Router'
+  return 'QA ETH/USDC Spot Paper Trader'
 }
 
 function parseBotList(value: unknown): BotListResponse {

@@ -35,6 +35,7 @@ const DEFAULT_CREATE_WORKSPACE_LAYOUT: CreateWorkspaceLayout = {
   railWidth: 360,
   railCollapsed: false,
 }
+const DEFAULT_PAPER_INITIAL_CAPITAL_USD = '10000'
 
 function normalizeCreateWorkspaceLayout(value: Partial<CreateWorkspaceLayout>): CreateWorkspaceLayout {
   return {
@@ -284,6 +285,21 @@ function buildCreatePrompt(draft: CreateStrategyDraft): string {
   ].filter(Boolean).join('\n')
 }
 
+function buildCreateStrategyConfig(draft: CreateStrategyDraft): Record<string, unknown> {
+  return {
+    paper_trade: true,
+    paper_safe: true,
+    initial_capital_usd: DEFAULT_PAPER_INITIAL_CAPITAL_USD,
+    launch_ticket: {
+      market: draft.market,
+      venue: draft.venue,
+      sizing: draft.sizing,
+      risk: draft.drawdown,
+      mode: draft.mode,
+    },
+  }
+}
+
 function clampDraftValue(value: string, maxLength = 80): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, maxLength)
 }
@@ -439,6 +455,7 @@ export default function CreateAgent() {
       mode: clampDraftValue(draft.mode, 32) || 'Paper start',
     }
     const createPrompt = buildCreatePrompt(cleanDraft)
+    const strategyConfig = buildCreateStrategyConfig(cleanDraft)
     setIsCreating(true)
     setStatus('Parsing mandate…')
     setError('')
@@ -465,6 +482,7 @@ export default function CreateAgent() {
           prompt: createPrompt,
           name: cleanDraft.name,
           strategy_type: cleanDraft.provisionStrategyType,
+          strategy_config: strategyConfig,
         }),
       })
 
@@ -483,6 +501,7 @@ export default function CreateAgent() {
             prompt: createPrompt,
             name: cleanDraft.name,
             strategy_type: cleanDraft.provisionStrategyType,
+            strategy_config: strategyConfig,
           }),
         })
       }
@@ -528,7 +547,7 @@ export default function CreateAgent() {
 
   return (
     <div className="arena-trace-terminal flex min-h-full w-full overflow-y-auto bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)] lg:h-full lg:min-h-0 lg:overflow-hidden">
-      <section className="flex w-full flex-1 flex-col gap-2 lg:h-full lg:min-h-0">
+      <section className="flex w-full flex-1 flex-col lg:h-full lg:min-h-0">
         <ArenaPageHeader
           title="Create"
           titleWidthClassName="min-[1180px]:w-[11rem]"
@@ -565,7 +584,7 @@ export default function CreateAgent() {
         >
           <form
             id="create-agent-form"
-            className="grid content-start rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] lg:col-start-1 lg:min-h-0 lg:self-start lg:grid-rows-[auto_auto_auto] lg:overflow-hidden"
+            className="grid content-start border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] lg:col-start-1 lg:min-h-0 lg:self-start lg:grid-rows-[auto_auto_auto] lg:overflow-hidden"
             onSubmit={(event) => {
               event.preventDefault()
               handleCreate()
@@ -601,8 +620,8 @@ export default function CreateAgent() {
               />
             </div>
 
-            <div className="grid items-start gap-3 border-t border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3 xl:grid-cols-[minmax(0,1fr)_320px]">
-              <section className="grid overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+            <div className="grid items-start gap-2 border-t border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-2 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <section className="grid overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
                   <div className="min-w-0">
                     <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
@@ -657,7 +676,7 @@ export default function CreateAgent() {
                 </div>
               </section>
 
-              <section className="grid overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+              <section className="grid overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
                 <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2">
                   <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
                     Risk Envelope
@@ -697,8 +716,8 @@ export default function CreateAgent() {
               onClick={() => setLayout((current) => ({ ...current, railCollapsed: false }))}
             />
           ) : (
-          <aside className="grid gap-2.5 lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:grid-rows-[auto_auto_auto_auto] lg:overflow-hidden">
-            <section className="grid overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+          <aside className="grid overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:grid-rows-[auto_auto_auto_auto]">
+            <section className="grid overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
               <div className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
                 <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[5px] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
                   <span className={`${detectedProfile.icon} text-lg`} aria-hidden="true" />
@@ -731,7 +750,7 @@ export default function CreateAgent() {
               </div>
             </section>
 
-            <section className="overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+            <section className="overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
               <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_8rem] border-b border-[var(--arena-terminal-border)] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--arena-terminal-text-subtle)]">
                 <span>#</span>
                 <span>Path</span>
@@ -744,7 +763,7 @@ export default function CreateAgent() {
               </div>
             </section>
 
-            <section className="overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+            <section className="overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
                 <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Execution</h2>
                 <span className="font-mono text-xs text-[var(--arena-terminal-accent)]">Paper</span>
@@ -756,7 +775,7 @@ export default function CreateAgent() {
               </div>
             </section>
 
-            <section className="grid gap-2 overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-2.5">
+            <section className="grid gap-2 overflow-hidden bg-[var(--arena-terminal-panel)] p-2.5">
               <div
                 id="agent-create-status"
                 aria-live="polite"

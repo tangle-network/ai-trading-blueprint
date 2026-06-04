@@ -40,7 +40,7 @@ export function EnvelopeNeededBanner({
     <div
       role="alert"
       aria-label="Envelope required"
-      className="mb-4 flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3"
+      className="mb-4 flex items-start gap-3 border border-amber-500/40 bg-amber-500/10 px-4 py-3"
     >
       <div className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500 animate-pulse" aria-hidden="true" />
       <div className="flex-1">

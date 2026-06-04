@@ -94,7 +94,7 @@ function isOperationsPanel(value: string | null | undefined): value is Operation
 
 function OperationsPanelLoading({ label }: { label?: string }) {
   return (
-    <div className="flex min-h-[280px] items-center justify-center rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+    <div className="flex min-h-[280px] items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
       <div className="text-center">
         <div className="i-ph:spinner-gap mx-auto text-2xl text-[var(--arena-terminal-text-muted)] animate-spin" />
         <div className="mt-3 font-data text-xs uppercase tracking-wider text-[var(--arena-terminal-text-muted)]">
@@ -323,7 +323,7 @@ function RecordSection({
       <div className="mb-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-accent)]">
         {title}
       </div>
-      <div className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3">
+      <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3">
         {rows.map((row) => (
           <DetailRow key={`${title}-${row.label}`} label={row.label} value={row.value} copyValue={row.copyValue} />
         ))}
@@ -586,7 +586,7 @@ function OperationsOverview({
       className={`flex h-full min-h-0 flex-col gap-2 xl:grid xl:gap-0 ${overviewGridClass}`}
       style={overviewStyle}
     >
-      <section className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] xl:col-start-1">
+      <section className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] xl:col-start-1">
         <div className="grid border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] min-[980px]:grid-cols-5">
           {statusCells.map((cell) => (
             <StatusCell
@@ -622,7 +622,7 @@ function OperationsOverview({
         </section>
 
         <div className="grid min-h-0 gap-2 overflow-auto p-3 [scrollbar-gutter:stable] lg:grid-cols-2">
-          <section className="flex min-h-0 flex-col rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-3">
+          <section className="flex min-h-0 flex-col border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-3">
             <div className="mb-1 flex items-center justify-between gap-3">
               <h3 className="font-display text-base font-semibold text-[var(--arena-terminal-text)]">
                 Guardrails
@@ -643,7 +643,7 @@ function OperationsOverview({
             </div>
           </section>
 
-          <section className="flex min-h-0 flex-col rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-3">
+          <section className="flex min-h-0 flex-col border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-3">
             <div className="mb-1 flex items-center justify-between gap-3">
               <h3 className="font-display text-base font-semibold text-[var(--arena-terminal-text)]">
                 Runtime Stack
@@ -684,7 +684,7 @@ function OperationsOverview({
           onClick={() => setLayout((current) => ({ ...current, recordCollapsed: false }))}
         />
       ) : (
-      <aside className="flex min-h-0 flex-col overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] xl:col-start-3">
+      <aside className="flex min-h-0 flex-col overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] xl:col-start-3">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2.5">
           <div className="min-w-0">
             <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-accent)]">
@@ -726,7 +726,7 @@ function OperationsPanelNav({
 }) {
   return (
     <nav
-      className="flex max-w-full gap-1 overflow-x-auto rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+      className="flex max-w-full gap-1 overflow-x-auto border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
       aria-label="Operations panels"
     >
       {items.map((item) => {
@@ -921,11 +921,12 @@ export function OperationsWorkspace({
     '[&_.text-arena-elements-textTertiary]:!text-[var(--arena-terminal-text-muted)]',
     '[&_.glass-card]:!border-[var(--arena-terminal-border)]',
     '[&_.glass-card]:!bg-[var(--arena-terminal-panel)]',
+    '[&_.glass-card]:!rounded-none',
   ].join(' ');
 
   return (
     <div
-      className={`arena-trace-terminal flex h-full min-h-0 flex-col overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text)] ${terminalOperationsClass}`}
+      className={`arena-trace-terminal flex h-full min-h-0 flex-col overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text)] ${terminalOperationsClass}`}
     >
       <div className="shrink-0 border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-3 py-2">
         <div className="flex flex-wrap items-center justify-between gap-3">

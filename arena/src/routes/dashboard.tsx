@@ -262,7 +262,7 @@ export default function HomePage() {
   if (isLoading && services.length === 0 && visibleMyBots.length === 0) {
     return (
       <div className="arena-trace-terminal min-h-full bg-[#081013] text-[#f6fefd]">
-        <div className="flex w-full flex-col gap-2">
+        <div className="flex w-full flex-col">
           <ArenaPageHeader
             title="My Agents"
             metrics={[
@@ -272,13 +272,13 @@ export default function HomePage() {
             ]}
             controls={<DashboardHeaderControls />}
           />
-          <section className="overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+          <section className="overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
             <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2 font-data text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-muted)]">
               Loading owner workspace
             </div>
             <div className="grid gap-3 p-3 md:grid-cols-2 lg:grid-cols-3">
               {Array.from({ length: 6 }).map((_, index) => (
-                <div key={index} className="h-36 animate-pulse rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]" />
+                <div key={index} className="h-36 animate-pulse border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]" />
               ))}
             </div>
           </section>
@@ -315,7 +315,7 @@ export default function HomePage() {
     },
   ];
   const servicesSection = services.length > 0 ? (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+    <section className="flex min-h-0 flex-col overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
       <div className="flex items-center gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-2">
         <h2 className="text-sm font-data uppercase tracking-wider text-[var(--arena-terminal-text-secondary)]">
           Services
@@ -349,7 +349,7 @@ export default function HomePage() {
     </section>
   ) : null;
   const myAgentsSection = hasBotSection ? (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+    <section className="flex min-h-0 flex-col overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-2">
         <h2 className="text-sm font-data uppercase tracking-wider text-[var(--arena-terminal-text-secondary)]">
           My Agents
@@ -396,8 +396,8 @@ export default function HomePage() {
     </section>
   ) : null;
   const emptySection = !hasContent ? (
-    <section className="grid gap-3 overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 lg:grid-cols-[minmax(0,1fr)_300px]">
-      <div className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-4">
+    <section className="grid gap-3 overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-4">
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-[5px] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
             <span className="i-ph:robot text-xl" aria-hidden="true" />
@@ -465,7 +465,7 @@ export default function HomePage() {
   // ── Main content ───────────────────────────────────────────────────────
   return (
     <div className="arena-trace-terminal min-h-full bg-[#081013] text-[#f6fefd] lg:h-full lg:overflow-hidden">
-      <div className="flex w-full flex-col gap-2 lg:h-full lg:min-h-0">
+      <div className="flex w-full flex-col lg:h-full lg:min-h-0">
         <ArenaPageHeader
           title="My Agents"
           metrics={dashboardMetrics}

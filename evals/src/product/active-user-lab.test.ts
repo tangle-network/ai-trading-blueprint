@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  buildQaPaperStrategyConfig,
   buildChatUrl,
   buildCoverage,
   dispatchActiveUserLab,
@@ -8,6 +9,7 @@ import {
   type LabBot,
   type LabIssue,
 } from './active-user-lab.js'
+import { buildProductApiBotCreateBody } from './local-stack-runner.js'
 
 const baseIssue: Omit<LabIssue, 'number' | 'title'> = {
   body: '',
@@ -139,6 +141,39 @@ test('buildCoverage does not treat negative Hyperliquid mentions as exact Hyperl
   assert.equal(coverage?.status, 'covered')
   assert.equal(coverage?.candidates[0]?.bot.id, 'bot-hyperliquid')
   assert.equal(coverage?.candidates.find((candidate) => candidate.bot.id === 'bot-gmx-vertex')?.exact, false)
+})
+
+test('buildQaPaperStrategyConfig always funds fresh QA paper bots', () => {
+  const config = buildQaPaperStrategyConfig({
+    paper_trade: false,
+    paper_safe: false,
+    protocol_chain_id: 42161,
+    initial_capital_usd: '25000',
+  })
+
+  assert.equal(config.paper_trade, true)
+  assert.equal(config.paper_safe, true)
+  assert.equal(config.protocol_chain_id, 42161)
+  assert.equal(config.initial_capital_usd, '25000')
+
+  const defaulted = buildQaPaperStrategyConfig()
+  assert.equal(defaulted.paper_trade, true)
+  assert.equal(defaulted.paper_safe, true)
+  assert.equal(defaulted.initial_capital_usd, '10000')
+})
+
+test('product API fallback creates named funded paper bots instead of prompt-sliced bots', () => {
+  const prompt = 'Local E2E 123: create a conservative ETH/USDC Uniswap paper trading agent with momentum checks.'
+  const body = buildProductApiBotCreateBody(prompt)
+
+  assert.equal(body.name, 'QA ETH/USDC Spot Paper Trader')
+  assert.notEqual(body.name, prompt.slice(0, 50))
+  assert.equal(body.strategy_type, 'dex')
+  assert.deepEqual(body.strategy_config, {
+    paper_trade: true,
+    paper_safe: true,
+    initial_capital_usd: '10000',
+  })
 })
 
 test('buildCoverage keeps vault collateral admin partial without workflow proof', () => {

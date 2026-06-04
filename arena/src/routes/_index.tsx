@@ -459,7 +459,7 @@ export default function IndexPage() {
     : totalTrades;
 
   return (
-    <div className="arena-trace-terminal flex min-h-full w-full flex-col gap-2 lg:h-full lg:overflow-hidden">
+    <div className="arena-trace-terminal flex min-h-full w-full flex-col lg:h-full lg:overflow-hidden">
       <ArenaPageHeader
         title="Tangle"
         titleWidthClassName="min-[1180px]:w-[11rem]"
@@ -501,7 +501,7 @@ export default function IndexPage() {
             bullets={['Deploy an agent', 'Track returns and fills', 'Configure operator secrets']}
           />
         ) : (
-        <div className="glass-card rounded-xl p-16 text-center">
+        <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-16 text-center">
           <div className="i-ph:robot text-4xl text-arena-elements-textTertiary mb-4 mx-auto" />
           <p className="text-base text-arena-elements-textSecondary mb-2">No agents deployed yet</p>
           <p className="text-sm text-arena-elements-textTertiary">
@@ -510,7 +510,7 @@ export default function IndexPage() {
         </div>
         )
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-2">
+        <div className="flex min-h-0 flex-1 flex-col">
           <HomePulseBoard
             latestActivity={latestActivity}
             topActivityBot={topActivity?.bot ?? null}

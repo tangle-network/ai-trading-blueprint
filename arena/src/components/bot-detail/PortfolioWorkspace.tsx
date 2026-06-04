@@ -176,6 +176,7 @@ export function PortfolioWorkspace({
     '[&_.glass-card]:!border-[var(--arena-terminal-border)]',
     '[&_.glass-card]:!bg-[var(--arena-terminal-panel)]',
     '[&_.glass-card]:!text-[var(--arena-terminal-text-secondary)]',
+    '[&_.glass-card]:!rounded-none',
     '[&_[data-slot=table-container]]:!rounded-none',
     '[&_[data-slot=table-container]]:!border-0',
     '[&_[data-slot=table-container]]:!bg-transparent',

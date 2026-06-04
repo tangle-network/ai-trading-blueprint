@@ -75,9 +75,9 @@ describe('ReasoningTab', () => {
   it('renders loading state with skeleton cards', () => {
     isLoading = true;
     const { container } = render(<ReasoningTab botId="bot-1" botName="Test Bot" />);
-    // Skeleton cards render as glass-card divs with animate-pulse children
-    const skeletonCards = container.querySelectorAll('.glass-card');
+    const skeletonCards = container.querySelectorAll('[class*="arena-terminal-border"]');
     expect(skeletonCards.length).toBe(3);
+    expect(container.querySelectorAll('.glass-card').length).toBe(0);
   });
 
   it('renders empty state when no validated trades', () => {

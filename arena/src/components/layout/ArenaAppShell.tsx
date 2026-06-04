@@ -148,7 +148,7 @@ function DesktopArenaSidebar({
     >
       <div className={cn(
         'flex shrink-0 items-center border-b border-[var(--arena-terminal-border)]',
-        sidebarCollapsed ? 'h-16 justify-center px-2' : 'h-14 justify-between gap-2 px-3',
+        sidebarCollapsed ? 'h-14 justify-center px-2' : 'h-14 justify-between gap-2 px-3',
       )}>
         {sidebarCollapsed ? (
           <div className="group/brand relative h-10 w-10">
@@ -328,7 +328,7 @@ function HeaderUtilityControls() {
 
 function ExpandedAccountDock() {
   return (
-    <div className="rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+    <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
       <div className={cn('min-w-0', terminalControlClass)}>
         <WalletButton align="start" side="up" />
       </div>
@@ -393,7 +393,7 @@ function NetworkButton({
       {open && (
         <div
           className={cn(
-            'absolute z-50 max-h-[min(24rem,calc(100vh-1rem))] w-[min(18rem,calc(100vw-1rem))] overflow-hidden rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-1.5 shadow-[var(--arena-terminal-shadow-lg)]',
+            'absolute z-50 max-h-[min(24rem,calc(100vh-1rem))] w-[min(18rem,calc(100vw-1rem))] overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-1.5 shadow-[var(--arena-terminal-shadow-lg)]',
             align === 'start' ? 'left-0' : 'right-0',
             side === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
           )}

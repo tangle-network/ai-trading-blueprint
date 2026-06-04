@@ -11,7 +11,7 @@ export function AuthBanner({ onAuth, isAuthenticating, error }: AuthBannerProps)
   const { isConnected } = useAccount();
 
   return (
-    <div className="glass-card rounded-xl p-8 text-center">
+    <div className="glass-card rounded-none p-8 text-center">
       <div className="i-ph:lock-key text-4xl text-arena-elements-textTertiary mb-4 mx-auto" />
       <h3 className="font-display font-semibold text-xl mb-2">Authenticate to Continue</h3>
       <p className="mx-auto max-w-2xl text-base text-arena-elements-textSecondary mb-5">

@@ -89,6 +89,16 @@ describe('create agent route', () => {
     expect(body.name).toBe('Polymarket Event Scout')
     expect(body.prompt).toContain('Polymarket')
     expect(body.prompt).toContain('Launch draft:')
+    expect(body.strategy_config).toMatchObject({
+      paper_trade: true,
+      paper_safe: true,
+      initial_capital_usd: '10000',
+      launch_ticket: {
+        market: 'Political events',
+        venue: 'Polymarket',
+        mode: 'Paper start',
+      },
+    })
   })
 
   it('supports launching a Hyperliquid perp tactic from the strategy book', async () => {
@@ -115,5 +125,26 @@ describe('create agent route', () => {
     expect(body.strategy_type).toBe('hyperliquid_perp')
     expect(body.name).toBe('ETH Perp Breakout')
     expect(body.prompt).toContain('Hyperliquid')
+    expect(body.strategy_config).toMatchObject({
+      paper_trade: true,
+      initial_capital_usd: '10000',
+      launch_ticket: {
+        market: 'ETH-PERP',
+        venue: 'Hyperliquid',
+      },
+    })
+  })
+
+  it('keeps the blueprint path rail as a contiguous stack without spacer gutters', async () => {
+    const { default: CreateAgent } = await import('../create')
+    render(<CreateAgent />)
+
+    const rail = screen.getByText('Path').closest('aside')
+
+    expect(rail).not.toBeNull()
+    expect(rail).toHaveClass('border', 'overflow-hidden')
+    expect(rail).not.toHaveClass('gap-2.5')
+    expect(rail).toContainElement(screen.getByText('Strategy Presets'))
+    expect(rail).toContainElement(screen.getByText('Execution'))
   })
 })

@@ -136,7 +136,7 @@ export default function VaultPage() {
               </ArenaHeaderLink>
             )}
           />
-          <section className="rounded-[6px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-8 text-center">
+          <section className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-8 text-center">
             <div className="i-ph:wallet mx-auto mb-4 text-3xl text-[var(--arena-terminal-text-muted)]" />
             <h1 className="font-display text-xl font-semibold text-[var(--arena-terminal-text)]">Invalid vault address</h1>
             <p className="mx-auto mt-2 max-w-md text-sm text-[var(--arena-terminal-text-muted)]">
@@ -247,7 +247,7 @@ export default function VaultPage() {
         />
 
         {navNeedsPricing ? (
-          <div className="glass-card rounded-[6px] border-amber-400/30 bg-amber-500/5 p-5">
+          <div className="glass-card rounded-none border-amber-400/30 bg-amber-500/5 p-5">
             <div className="flex items-start gap-3">
               <div className="i-ph:warning-circle text-lg text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
               <div>
@@ -261,7 +261,7 @@ export default function VaultPage() {
             </div>
           </div>
         ) : vault.hasNonDepositAssets ? (
-          <div className="glass-card rounded-[6px] border-emerald-400/30 bg-emerald-500/5 p-5">
+          <div className="glass-card rounded-none border-emerald-400/30 bg-emerald-500/5 p-5">
             <div className="flex items-start gap-3">
               <div className="i-ph:check-circle text-lg text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
               <div>
@@ -301,7 +301,7 @@ export default function VaultPage() {
         )}
 
         {vault.error ? (
-          <div className="glass-card rounded-[6px] p-8 text-center">
+          <div className="glass-card rounded-none p-8 text-center">
             <div className="i-ph:warning-circle text-3xl text-crimson-500 dark:text-crimson-400 mb-3 mx-auto" />
             <p className="text-base text-arena-elements-textSecondary mb-2">
               Could not read vault contract data.
@@ -318,14 +318,14 @@ export default function VaultPage() {
             </Button>
           </div>
         ) : !isConnected ? (
-          <div className="glass-card rounded-[6px] p-8 text-center">
+          <div className="glass-card rounded-none p-8 text-center">
             <div className="i-ph:wallet text-3xl text-arena-elements-textTertiary mb-3 mx-auto" />
             <p className="text-base text-arena-elements-textSecondary">
               Connect your wallet on {targetChainName} ({targetChainId}) to deposit or withdraw.
             </p>
           </div>
         ) : isWrongChain ? (
-          <div className="glass-card rounded-[6px] p-8 text-center">
+          <div className="glass-card rounded-none p-8 text-center">
             <div className="i-ph:arrow-square-out text-3xl text-amber-500 dark:text-amber-400 mb-3 mx-auto" />
             <p className="text-base text-arena-elements-textSecondary mb-4">
               This vault is on <span className="text-violet-700 dark:text-violet-400 font-semibold">{targetChainName} ({targetChainId})</span>. Your wallet is connected to chain {chainId}. Switch chains to deposit or withdraw.

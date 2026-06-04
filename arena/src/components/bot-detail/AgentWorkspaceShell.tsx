@@ -271,7 +271,7 @@ export function AgentWorkspaceShell({
         </div>
 
         <section
-          className="mt-4 rounded-[6px] border border-[#273035] bg-[#081013] p-3"
+          className="mt-4 border border-[#273035] bg-[#081013] p-3"
           aria-label="Agent account state"
           data-testid="agent-account-state"
         >
@@ -307,7 +307,7 @@ export function AgentWorkspaceShell({
           </div>
         </section>
 
-        <div className="mt-3 overflow-hidden rounded-[5px] border border-[#273035] bg-[#0f1a1f]">
+        <div className="mt-3 overflow-hidden border border-[#273035] bg-[#0f1a1f]">
           <div className="flex min-w-0 items-center">
             <code className="min-w-0 flex-1 truncate px-2.5 py-2 font-data text-xs text-[#d2dad7]" title={bot.operatorAddress}>
               {formatCompactAddress(bot.operatorAddress)}
@@ -387,7 +387,10 @@ export function AgentWorkspaceShell({
   );
 
   return (
-    <div ref={shellRef} className="arena-trace-terminal flex h-full min-h-0 overflow-hidden bg-[var(--arena-terminal-bg)]">
+    <div
+      ref={shellRef}
+      className="arena-trace-terminal flex h-full min-h-0 overflow-hidden bg-[var(--arena-terminal-bg)] [&_.glass-card]:!rounded-none [&_[class*='rounded'][class*='border']]:!rounded-none [&_[data-slot=table-container]]:!rounded-none [&_.relative.overflow-auto]:!rounded-none [&_table]:!rounded-none"
+    >
       {focusMode ? (
         <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="arena-trace-terminal shrink-0 border-b border-[#273035] bg-[#081013] text-[#f6fefd]">
