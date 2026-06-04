@@ -79,6 +79,32 @@ test('prompt allocation is honored without implicit paper-cycle oscillation', ()
   assert.equal(bySymbol(assets, 'WETH').target_source, 'prompt')
 })
 
+test('prompt allocation overrides stale harness portfolio targets', () => {
+  const multi = loadMultiTick(mockTick())
+
+  const assets = multi.targetAssets({
+    config: {
+      strategy_config: {
+        paper_trade: true,
+        user_prompt: 'Target allocation: 60% WETH, 40% USDC (ETH-tilted). Rebalance band 5%.',
+      },
+    },
+    harness: {
+      aggressive_paper_mode: true,
+      portfolio: {
+        assets: [
+          { symbol: 'WETH', target_weight: 0.9 },
+          { symbol: 'USDC', target_weight: 0.1 },
+        ],
+      },
+    },
+  })
+
+  assert.equal(bySymbol(assets, 'WETH').target, 0.6)
+  assert.equal(bySymbol(assets, 'USDC').target, 0.4)
+  assert.equal(bySymbol(assets, 'WETH').target_source, 'prompt')
+})
+
 test('structured portfolio assets can use symbols without addresses', () => {
   const multi = loadMultiTick(mockTick())
 

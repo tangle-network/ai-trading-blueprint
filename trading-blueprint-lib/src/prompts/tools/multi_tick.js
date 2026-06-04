@@ -55,16 +55,25 @@ function addressForAsset(asset, pairs) {
   return null;
 }
 
-function configuredPortfolioAssets(config, harness) {
+function firstAssetList(candidates) {
+  return candidates.find((candidate) => Array.isArray(candidate) && candidate.length >= 2) || null;
+}
+
+function userConfiguredPortfolioAssets(config) {
   const strategy = config.strategy_config || {};
-  const candidates = [
-    harness.portfolio && harness.portfolio.assets,
+  return firstAssetList([
     strategy.portfolio && strategy.portfolio.assets,
     strategy.assets,
     config.portfolio && config.portfolio.assets,
     config.assets,
-  ];
-  return candidates.find((candidate) => Array.isArray(candidate) && candidate.length >= 2) || null;
+  ]);
+}
+
+function harnessConfiguredPortfolioAssets(harness) {
+  return firstAssetList([
+    harness.portfolio && harness.portfolio.assets,
+    harness.assets,
+  ]);
 }
 
 function promptTexts(config) {
@@ -127,18 +136,23 @@ function targetAssets(ctx) {
   const { config, harness } = ctx;
   const pairs = t.pairTokens(config);
   const { weth, usdc } = pairs;
-  const configured = configuredPortfolioAssets(config, harness);
+  const configured = userConfiguredPortfolioAssets(config);
+  const promptAssets = configured ? null : assetsFromPrompt(config, pairs);
+  const harnessConfigured = configured || promptAssets || harnessConfiguredPortfolioAssets(harness);
   let assets;
-  if (Array.isArray(configured) && configured.length >= 2) {
-    assets = configured
+  if (promptAssets) {
+    assets = promptAssets;
+  } else if (Array.isArray(harnessConfigured) && harnessConfigured.length >= 2) {
+    const source = configured ? 'configured_portfolio' : 'harness_portfolio';
+    assets = harnessConfigured
       .map((a) => ({
         symbol: normalizedSymbol(a.symbol || a.asset || a.token || a.name || a.address),
         address: addressForAsset(a, pairs),
         target: targetWeight(a),
-        target_source: 'configured_portfolio',
+        target_source: source,
       }));
   } else {
-    assets = assetsFromPrompt(config, pairs);
+    assets = null;
   }
   if (!assets || assets.length < 2) {
     assets = [
