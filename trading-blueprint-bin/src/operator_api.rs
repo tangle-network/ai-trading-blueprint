@@ -958,6 +958,26 @@ fn configured_protocol_chain_id(execution_chain_id: u64) -> u64 {
         .unwrap_or(execution_chain_id)
 }
 
+fn is_hyperevm_chain(chain_id: u64) -> bool {
+    matches!(chain_id, 998 | 999)
+}
+
+fn default_hyperliquid_protocol_chain_id(execution_chain_id: u64) -> u64 {
+    if is_hyperevm_chain(execution_chain_id) {
+        execution_chain_id
+    } else {
+        998
+    }
+}
+
+fn create_bot_protocol_chain_id(strategy_type: &str, execution_chain_id: u64) -> u64 {
+    match trading_runtime::supported_assets::normalize_strategy_type(strategy_type).as_str() {
+        "perp" => 42161,
+        "hyperliquid_perp" => default_hyperliquid_protocol_chain_id(execution_chain_id),
+        _ => configured_protocol_chain_id(execution_chain_id),
+    }
+}
+
 fn parse_bool_env(raw: &str) -> Option<bool> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "y" | "on" => Some(true),
@@ -1122,6 +1142,78 @@ fn mentions_any(text: &str, needles: &[&str]) -> bool {
     needles
         .iter()
         .any(|needle| words.iter().any(|word| word == needle))
+}
+
+fn has_negative_hyperliquid_context(prompt_lower: &str) -> bool {
+    [
+        "no hyperliquid",
+        "not hyperliquid",
+        "not on hyperliquid",
+        "without hyperliquid",
+        "avoid hyperliquid",
+        "do not use hyperliquid",
+        "don't use hyperliquid",
+        "dont use hyperliquid",
+    ]
+    .iter()
+    .any(|phrase| prompt_lower.contains(phrase))
+}
+
+fn has_positive_hyperliquid_perp_mandate(prompt: &str) -> bool {
+    let prompt_lower = prompt.to_ascii_lowercase();
+    let mentions_hyperliquid =
+        prompt_lower.contains("hyperliquid") || prompt_lower.contains("hyperevm");
+    let mentions_perp_surface = [
+        "perp",
+        "perps",
+        "perpetual",
+        "perpetuals",
+        "futures",
+        "leverage",
+        "liquidation",
+    ]
+    .iter()
+    .any(|term| prompt_lower.contains(term));
+
+    mentions_hyperliquid
+        && mentions_perp_surface
+        && !has_negative_hyperliquid_context(&prompt_lower)
+}
+
+fn infer_create_bot_strategy_type(prompt: &str, requested: Option<&str>) -> String {
+    let requested = requested.map(str::trim).filter(|value| !value.is_empty());
+    if has_positive_hyperliquid_perp_mandate(prompt) {
+        let requested_strategy = requested
+            .map(trading_runtime::supported_assets::normalize_strategy_type)
+            .unwrap_or_else(|| "perp".to_string());
+        if matches!(requested_strategy.as_str(), "perp" | "hyperliquid_perp") {
+            return "hyperliquid_perp".to_string();
+        }
+    }
+
+    if let Some(strategy_type) = requested {
+        return strategy_type.to_string();
+    }
+
+    let prompt_lower = prompt.to_lowercase();
+    if prompt_lower.contains("yield")
+        || prompt_lower.contains("lending")
+        || prompt_lower.contains("aave")
+    {
+        "yield".into()
+    } else if prompt_lower.contains("polymarket")
+        || prompt_lower.contains("prediction")
+        || prompt_lower.contains("politic")
+    {
+        "prediction".into()
+    } else if prompt_lower.contains("perp")
+        || prompt_lower.contains("leverage")
+        || prompt_lower.contains("futures")
+    {
+        "perp".into()
+    } else {
+        "dex".into()
+    }
 }
 
 fn extract_pair(strategy_config: &serde_json::Value, prompt: &str) -> Option<String> {
@@ -1686,35 +1778,14 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         ));
     }
 
-    // Auto-detect strategy type from prompt
-    let prompt_lower = prompt.to_lowercase();
-    let strategy_type = body.strategy_type.clone().unwrap_or_else(|| {
-        if prompt_lower.contains("yield")
-            || prompt_lower.contains("lending")
-            || prompt_lower.contains("aave")
-        {
-            "yield".into()
-        } else if prompt_lower.contains("polymarket")
-            || prompt_lower.contains("prediction")
-            || prompt_lower.contains("politic")
-        {
-            "prediction".into()
-        } else if prompt_lower.contains("perp")
-            || prompt_lower.contains("leverage")
-            || prompt_lower.contains("futures")
-        {
-            "perp".into()
-        } else {
-            "dex".into()
-        }
-    });
+    let strategy_type = infer_create_bot_strategy_type(&prompt, body.strategy_type.as_deref());
 
     // Build a TradingProvisionRequest
     let chain_id: u64 = std::env::var("CHAIN_ID")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(31337);
-    let protocol_chain_id = configured_protocol_chain_id(chain_id);
+    let protocol_chain_id = create_bot_protocol_chain_id(&strategy_type, chain_id);
     let vault_factory = std::env::var("VAULT_FACTORY_ADDRESS")
         .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into());
     let asset_token = std::env::var("ASSET_TOKEN_ADDRESS")
@@ -7079,6 +7150,36 @@ mod tests {
             ),
             "ETH Perp Sentinel"
         );
+    }
+
+    #[test]
+    fn create_bot_infers_hyperliquid_perp_without_frontend_override() {
+        let prompt = "I want an agent that trades ETH perps on Hyperliquid with strict leverage and liquidation limits.";
+
+        assert_eq!(
+            infer_create_bot_strategy_type(prompt, None),
+            "hyperliquid_perp"
+        );
+        assert_eq!(
+            infer_create_bot_strategy_type(prompt, Some("perp")),
+            "hyperliquid_perp"
+        );
+        assert_eq!(create_bot_protocol_chain_id("hyperliquid_perp", 84532), 998);
+    }
+
+    #[test]
+    fn create_bot_keeps_non_hyperliquid_perps_on_generic_perp_pack() {
+        let prompt = "Trade ETH perps on GMX with 2x max leverage.";
+
+        assert_eq!(infer_create_bot_strategy_type(prompt, None), "perp");
+        assert_eq!(create_bot_protocol_chain_id("perp", 84532), 42161);
+    }
+
+    #[test]
+    fn create_bot_does_not_promote_negative_hyperliquid_mentions() {
+        let prompt = "Trade ETH perps on GMX, not on Hyperliquid.";
+
+        assert_eq!(infer_create_bot_strategy_type(prompt, None), "perp");
     }
 
     #[test]

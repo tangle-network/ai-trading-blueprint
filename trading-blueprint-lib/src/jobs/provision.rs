@@ -388,9 +388,21 @@ fn default_paper_cash_token_value(
         .or_else(|| Some(Value::String("USDC".to_string())))
 }
 
-fn default_protocol_chain_id_for_strategy(strategy_type: &str) -> Option<u64> {
+fn default_hyperliquid_protocol_chain_id(execution_chain_id: u64) -> u64 {
+    if is_hyperevm_chain(execution_chain_id) {
+        execution_chain_id
+    } else {
+        998
+    }
+}
+
+fn default_protocol_chain_id_for_strategy(
+    strategy_type: &str,
+    execution_chain_id: u64,
+) -> Option<u64> {
     match trading_runtime::supported_assets::normalize_strategy_type(strategy_type).as_str() {
         "perp" => Some(42161),
+        "hyperliquid_perp" => Some(default_hyperliquid_protocol_chain_id(execution_chain_id)),
         _ => None,
     }
 }
@@ -484,9 +496,10 @@ fn apply_strategy_defaults(
             .or_insert_with(|| Value::String(format!("{:#x}", request.asset_token)));
     }
 
+    let execution_chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
     if !strategy_config.contains_key("protocol_chain_id")
         && let Some(default_chain_id) =
-            default_protocol_chain_id_for_strategy(&request.strategy_type)
+            default_protocol_chain_id_for_strategy(&request.strategy_type, execution_chain_id)
     {
         strategy_config.insert(
             "protocol_chain_id".to_string(),
@@ -505,7 +518,6 @@ fn apply_strategy_defaults(
         }
     }
 
-    let execution_chain_id: u64 = request.chain_id.try_into().unwrap_or(1);
     let protocol_chain_id = configured_protocol_chain_id(strategy_config, execution_chain_id);
 
     if !strategy_config.contains_key("protocol_chain_id") && protocol_chain_id != execution_chain_id
@@ -1808,6 +1820,24 @@ mod tests {
             .expect("API wallet name");
         assert!(api_wallet_name.starts_with("hl-"));
         assert_eq!(api_wallet_name.len(), 16);
+    }
+
+    #[test]
+    fn hyperliquid_perp_defaults_to_hyperevm_protocol_chain_from_base_operator() {
+        let mut config = Map::new();
+        let request = provision_request("hyperliquid_perp", 84532);
+
+        apply_strategy_defaults(&mut config, &request, true, "trading-test-bot")
+            .expect("strategy defaults");
+
+        assert_eq!(
+            config.get("protocol_chain_id").and_then(Value::as_u64),
+            Some(998)
+        );
+        assert_eq!(
+            config.get("available_protocols"),
+            Some(&serde_json::json!(["hyperliquid"]))
+        );
     }
 
     #[test]
