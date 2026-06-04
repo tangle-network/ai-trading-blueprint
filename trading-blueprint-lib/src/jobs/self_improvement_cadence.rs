@@ -19,9 +19,11 @@ use trading_http_api::evolution_store::{self, status};
 static CADENCE: OnceCell<PersistentStore<SelfImprovementCadenceRecord>> = OnceCell::new();
 
 const DEFAULT_MAINTENANCE_INTERVAL_SECS: i64 = 15 * 60;
+const DEFAULT_INTENT_CHECK_INTERVAL_SECS: i64 = 60;
 const DEFAULT_GENERATION_INTERVAL_SECS: i64 = 6 * 60 * 60;
 const DEFAULT_LAUNCH_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_MAX_MAINTENANCE_BOTS_PER_TICK: usize = 3;
+const DEFAULT_MAX_INTENT_CHECK_BOTS_PER_TICK: usize = 3;
 const DEFAULT_MAX_GENERATION_BOTS_PER_TICK: usize = 1;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -29,6 +31,8 @@ pub struct SelfImprovementCadenceRecord {
     pub bot_id: String,
     #[serde(default)]
     pub last_maintenance_at: Option<i64>,
+    #[serde(default)]
+    pub last_intent_check_at: Option<i64>,
     #[serde(default)]
     pub last_generation_at: Option<i64>,
 }
@@ -103,15 +107,11 @@ fn has_open_generation_work(bot: &TradingBotRecord) -> Result<bool, String> {
         .any(|run| status::is_non_terminal(&run.status)))
 }
 
-fn generation_due(
-    bot: &TradingBotRecord,
-    record: &SelfImprovementCadenceRecord,
-    now: i64,
-    interval_secs: i64,
-) -> Result<bool, String> {
-    Ok(eligible_paper_bot(bot)
-        && due(record.last_generation_at, now, interval_secs)
-        && !has_open_generation_work(bot)?)
+fn summary_started_generation(summary: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(summary)
+        .ok()
+        .and_then(|value| value.get("generation").cloned())
+        .is_some()
 }
 
 /// Advance sandbox-local self-improvement maintenance for active paper bots.
@@ -129,9 +129,17 @@ pub async fn run_self_improvement_cadence(all_bots: &[TradingBotRecord]) {
         "SELF_IMPROVEMENT_GENERATION_INTERVAL_SECS",
         DEFAULT_GENERATION_INTERVAL_SECS,
     );
+    let intent_check_interval = env_i64(
+        "SELF_IMPROVEMENT_INTENT_CHECK_INTERVAL_SECS",
+        DEFAULT_INTENT_CHECK_INTERVAL_SECS,
+    );
     let max_maintenance = env_usize(
         "SELF_IMPROVEMENT_MAX_MAINTENANCE_BOTS_PER_TICK",
         DEFAULT_MAX_MAINTENANCE_BOTS_PER_TICK,
+    );
+    let max_intent_checks = env_usize(
+        "SELF_IMPROVEMENT_MAX_INTENT_CHECK_BOTS_PER_TICK",
+        DEFAULT_MAX_INTENT_CHECK_BOTS_PER_TICK,
     );
     let max_generation = env_usize(
         "SELF_IMPROVEMENT_MAX_GENERATION_BOTS_PER_TICK",
@@ -139,6 +147,7 @@ pub async fn run_self_improvement_cadence(all_bots: &[TradingBotRecord]) {
     );
 
     let mut maintenance_started = 0usize;
+    let mut intent_checks_started = 0usize;
     let mut generation_started = 0usize;
 
     for bot in all_bots.iter().filter(|bot| eligible_paper_bot(bot)) {
@@ -150,11 +159,10 @@ pub async fn run_self_improvement_cadence(all_bots: &[TradingBotRecord]) {
             }
         };
 
-        let do_maintenance = maintenance_started < max_maintenance
-            && due(record.last_maintenance_at, now, maintenance_interval);
-        let do_generation = if generation_started < max_generation {
-            match generation_due(bot, &record, now, generation_interval) {
-                Ok(due) => due,
+        let generation_capacity = generation_started < max_generation;
+        let no_open_generation_work = if generation_capacity {
+            match has_open_generation_work(bot) {
+                Ok(open) => !open,
                 Err(error) => {
                     tracing::warn!(bot_id = %bot.id, "self-improvement generation eligibility error: {error}");
                     false
@@ -163,25 +171,39 @@ pub async fn run_self_improvement_cadence(all_bots: &[TradingBotRecord]) {
         } else {
             false
         };
+        let can_start_generation = generation_capacity && no_open_generation_work;
+        let do_maintenance = maintenance_started < max_maintenance
+            && due(record.last_maintenance_at, now, maintenance_interval);
+        let do_generation =
+            can_start_generation && due(record.last_generation_at, now, generation_interval);
+        let do_intent_check = !do_generation
+            && can_start_generation
+            && intent_checks_started < max_intent_checks
+            && due(record.last_intent_check_at, now, intent_check_interval);
 
-        if !do_maintenance && !do_generation {
+        if !do_maintenance && !do_generation && !do_intent_check {
             continue;
         }
 
-        match launch_sandbox_cadence(bot, do_generation).await {
+        match launch_sandbox_cadence(bot, do_generation, do_generation || do_intent_check).await {
             Ok(summary) => {
                 if do_maintenance {
                     record.last_maintenance_at = Some(now);
                     maintenance_started += 1;
                 }
-                if do_generation {
+                if do_intent_check {
+                    record.last_intent_check_at = Some(now);
+                    intent_checks_started += 1;
+                }
+                let generation_launched = summary_started_generation(&summary);
+                if generation_launched {
                     record.last_generation_at = Some(now);
                     generation_started += 1;
                 }
                 if let Err(error) = save_cadence_record(record) {
                     tracing::warn!(bot_id = %bot.id, "self-improvement cadence persist error: {error}");
                 }
-                tracing::info!(bot_id = %bot.id, run_generation = do_generation, %summary, "self-improvement cadence launched");
+                tracing::info!(bot_id = %bot.id, run_generation = generation_launched, intent_check = do_intent_check, %summary, "self-improvement cadence launched");
             }
             Err(error) => {
                 tracing::warn!(bot_id = %bot.id, run_generation = do_generation, "self-improvement cadence launch failed: {error}");
@@ -193,6 +215,7 @@ pub async fn run_self_improvement_cadence(all_bots: &[TradingBotRecord]) {
 async fn launch_sandbox_cadence(
     bot: &TradingBotRecord,
     run_generation: bool,
+    allow_intent_generation: bool,
 ) -> Result<String, String> {
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id)
         .map_err(|e| format!("load sandbox {}: {e}", bot.sandbox_id))?;
@@ -206,6 +229,7 @@ async fn launch_sandbox_cadence(
         cwd: "/home/agent".to_string(),
         env_json: json!({
             "RUN_GENERATION": if run_generation { "1" } else { "0" },
+            "ALLOW_INTENT_GENERATION": if allow_intent_generation { "1" } else { "0" },
             "SELF_IMPROVEMENT_INTENT": intent,
         })
         .to_string(),
@@ -280,9 +304,10 @@ const out = {
   ),
 };
 
-const selected = selectGenerationIntent(
-  process.env.SELF_IMPROVEMENT_INTENT || 'Periodic paper-only harness self-improvement.',
-);
+const allowIntentGeneration = process.env.RUN_GENERATION === '1' || process.env.ALLOW_INTENT_GENERATION !== '0';
+const selected = allowIntentGeneration
+  ? selectGenerationIntent(process.env.SELF_IMPROVEMENT_INTENT || 'Periodic paper-only harness self-improvement.')
+  : { intent: null, prompt: process.env.SELF_IMPROVEMENT_INTENT || 'Periodic paper-only harness self-improvement.' };
 out.selected_generation_intent = selected.intent
   ? {
       intent_id: selected.intent.intent_id,
@@ -293,7 +318,7 @@ out.selected_generation_intent = selected.intent
   : null;
 if (selected.error) out.intent_selection_error = selected.error;
 
-if (process.env.RUN_GENERATION === '1' || selected.intent) {
+if (process.env.RUN_GENERATION === '1' || (allowIntentGeneration && selected.intent)) {
   out.generation = launch(
     'self-improvement-generation',
     'bun',
@@ -375,9 +400,21 @@ mod tests {
     fn cadence_launcher_consumes_runtime_reflection_intents() {
         let command = cadence_launcher_command();
         assert!(command.contains("require('/home/agent/tools/reflection-loop.js')"));
+        assert!(command.contains("ALLOW_INTENT_GENERATION"));
         assert!(command.contains("loop.nextImprovementIntent"));
         assert!(command.contains("loop.recordIntentDispatch"));
         assert!(command.contains("selected.prompt"));
-        assert!(command.contains("process.env.RUN_GENERATION === '1' || selected.intent"));
+        assert!(command.contains(
+            "process.env.RUN_GENERATION === '1' || (allowIntentGeneration && selected.intent)"
+        ));
+    }
+
+    #[test]
+    fn summary_generation_detection_is_json_structural() {
+        assert!(summary_started_generation(r#"{"generation":{"pid":123}}"#));
+        assert!(!summary_started_generation(
+            r#"{"selected_generation_intent":null}"#
+        ));
+        assert!(!summary_started_generation("generation"));
     }
 }

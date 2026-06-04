@@ -123,8 +123,9 @@ mod tests {
             "tick-artifacts reader must read /home/agent/logs/tick_coverage.jsonl into coverage_jsonl"
         );
         assert!(
-            READ_TICK_ARTIFACTS_JS
-                .contains("decision_contexts_jsonl: r('/home/agent/memory/decision-contexts.jsonl')"),
+            READ_TICK_ARTIFACTS_JS.contains(
+                "decision_contexts_jsonl: r('/home/agent/memory/decision-contexts.jsonl')"
+            ),
             "tick-artifacts reader must expose runtime DecisionContext records"
         );
         assert!(
