@@ -2805,6 +2805,9 @@ fn optional_session_caller(headers: &axum::http::HeaderMap) -> Option<String> {
 }
 
 fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusCode, String)> {
+    if is_operator_admin(caller) {
+        return Ok(());
+    }
     if !bot.submitter_address.is_empty()
         && caller.to_lowercase() != bot.submitter_address.to_lowercase()
     {
