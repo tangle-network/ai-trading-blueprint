@@ -1883,10 +1883,12 @@ async fn repair_bot_strategy(
             "strategy repair refuses winding-down bots",
         ));
     }
-    if bot.active_trial_run_id.is_some() || bot.active_trial_candidate_hash.is_some() {
+    let has_active_trial =
+        bot.active_trial_run_id.is_some() || bot.active_trial_candidate_hash.is_some();
+    if has_active_trial && !body.force {
         return Err(ApiError::message(
             StatusCode::CONFLICT,
-            "strategy repair refuses bots with an active self-improvement trial",
+            "strategy repair refuses bots with an active self-improvement trial unless force=true",
         ));
     }
 
@@ -1922,6 +1924,9 @@ async fn repair_bot_strategy(
     }
     if bot.harness_json != realigned.harness_json {
         changed_fields.push("harness_json".to_string());
+    }
+    if has_active_trial {
+        changed_fields.push("active_trial".to_string());
     }
 
     let changed = !changed_fields.is_empty();
@@ -2006,6 +2011,9 @@ async fn repair_bot_strategy(
             record.strategy_type = realigned.strategy_type.clone();
             record.strategy_config = final_config.clone();
             record.harness_json = realigned.harness_json.clone();
+            record.active_trial_run_id = None;
+            record.active_trial_candidate_hash = None;
+            record.pre_trial_harness_json = None;
         })
         .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -8198,6 +8206,77 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_repair_strategy_force_allows_active_trial_preview() {
+        ensure_state_dir();
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_test_admin_env(&_guard);
+        let mut bot = seed_bot(
+            "repair-active-trial-force-1",
+            TEST_AUTH_ADDRESS,
+            true,
+            "sandbox-repair-active-trial-force-1",
+        );
+        bot.strategy_type = "perp".to_string();
+        bot.chain_id = 84532;
+        bot.strategy_config = serde_json::json!({
+            "user_prompt": "Trade ETH perps on Hyperliquid",
+            "available_protocols": ["gmx_v2"],
+            "protocol_chain_id": 84532
+        });
+        bot.active_trial_run_id = Some("trial-1".to_string());
+        bot.active_trial_candidate_hash = Some("candidate-1".to_string());
+        state::bots()
+            .expect("bots store")
+            .insert(state::bot_key(&bot.id), bot)
+            .expect("update bot");
+
+        let app = build_operator_router();
+        let guarded_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/repair-active-trial-force-1/strategy/repair")
+                    .header("content-type", "application/json")
+                    .header("authorization", test_auth_header())
+                    .body(Body::from(r#"{"dry_run":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(guarded_response.status(), StatusCode::CONFLICT);
+
+        let forced_response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/repair-active-trial-force-1/strategy/repair")
+                    .header("content-type", "application/json")
+                    .header("authorization", test_auth_header())
+                    .body(Body::from(r#"{"dry_run":true,"force":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forced_response.status(), StatusCode::OK);
+        let body = forced_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["new_strategy_type"], "hyperliquid_perp");
+        assert!(
+            json["changed_fields"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "active_trial")
+        );
     }
 
     async fn spawn_mock_hyperliquid_nav_api() -> String {
