@@ -21,6 +21,12 @@ function protocolList(config) {
     : ['gmx_v2', 'vertex'];
 }
 
+function priceFor(prices, symbol) {
+  const entries = Array.isArray(prices.prices) ? prices.prices : [];
+  const match = entries.find((entry) => String(entry?.token || '').toUpperCase() === symbol);
+  return t.asNumber(match?.price_usd ?? prices[symbol] ?? prices[symbol.toLowerCase()], null);
+}
+
 async function decide(ctx) {
   const { api, config } = ctx;
   const strategyConfig = config.strategy_config || {};
@@ -28,9 +34,11 @@ async function decide(ctx) {
   const protocolChainId = t.chainId(config);
   const paperTrade = strategyConfig.paper_trade !== false;
 
-  const [portfolio, adapterList] = await Promise.all([
+  const [portfolio, adapterList, prices, ethCandles] = await Promise.all([
     safeApi(api, 'POST', '/portfolio/state', {}),
     safeApi(api, 'GET', '/adapters'),
+    safeApi(api, 'POST', '/market-data/prices', { tokens: ['ETH', 'BTC'] }),
+    t.fetchCandles(api, 'ETH').catch((error) => ({ error: error.message || String(error), candles: [] })),
   ]);
 
   const totalNav = t.asNumber(portfolio.total_value_usd, t.asNumber(strategyConfig.initial_capital_usd, 0));
@@ -59,6 +67,13 @@ async function decide(ctx) {
     total_nav_usd: totalNav,
     adapters_error: adapterList.error || null,
     portfolio_error: portfolio.error || null,
+    market: {
+      asset: 'ETH',
+      eth_price_usd: priceFor(prices, 'ETH'),
+      btc_price_usd: priceFor(prices, 'BTC'),
+      eth_candles: Array.isArray(ethCandles) ? ethCandles.length : 0,
+      candles_error: ethCandles && ethCandles.error ? ethCandles.error : null,
+    },
     hyperliquid_native_forbidden: true,
   };
 
@@ -69,6 +84,8 @@ async function decide(ctx) {
     perp_max_position_pct: maxPositionPct,
     configured_protocols_count: protocols.length,
     missing_config_count: missing.length,
+    eth_price_usd: checkedState.market.eth_price_usd,
+    eth_candle_count: checkedState.market.eth_candles,
   };
 
   if (missing.length > 0) {

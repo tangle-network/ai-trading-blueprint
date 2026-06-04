@@ -237,6 +237,7 @@ function objectHasKeyLike(value, pattern, depth = 4) {
   if (Array.isArray(value)) return value.some((item) => objectHasKeyLike(item, pattern, depth - 1));
   if (!isRecord(value)) return false;
   for (const [key, nested] of Object.entries(value)) {
+    if (key === 'external_signal_evidence') continue;
     if (pattern.test(key)) return true;
     if (objectHasKeyLike(nested, pattern, depth - 1)) return true;
   }
@@ -292,15 +293,18 @@ function classifyMandateAlignment(mandate, state, decision) {
 }
 
 function evidenceQuality({ state, metrics, decision, priorDecisions, mandate }) {
-  const text = `${objectText(state, 4)} ${objectText(metrics, 3)} ${objectText(decision, 3)}`;
-  const lower = lowerText(text);
-  const signalsGenerated = asNumber(isRecord(metrics) ? metrics.signals_generated : null, null);
+  const signalEvidence = signalEvidenceRecord(state, metrics);
+  const metricsForObservation = observationMetrics(metrics);
+  const signalsGenerated = signalEvidence.generated_signal_count ?? asNumber(isRecord(metrics) ? metrics.signals_generated : null, null);
   const observedPortfolio = objectHasKeyLike(state, /portfolio|position|nav|equity|balance|margin|idle|value/i)
-    || objectHasKeyLike(metrics, /portfolio|position|nav|equity|balance|margin|idle|value/i);
+    || objectHasKeyLike(metricsForObservation, /portfolio|position|nav|equity|balance|margin|idle|value/i);
   const observedMarket = objectHasKeyLike(state, /price|funding|rsi|ema|candle|volatility|spread|liquidity|market|reserve|apy|yield/i)
-    || objectHasKeyLike(metrics, /price|funding|rsi|ema|candle|volatility|spread|liquidity|market|reserve|apy|yield/i);
-  const observedNews = /news|headline|sentiment|event|catalyst/i.test(lower);
-  const observedExternalSignals = observedNews || (signalsGenerated ?? 0) > 0;
+    || objectHasKeyLike(metricsForObservation, /price|funding|rsi|ema|candle|volatility|spread|liquidity|market|reserve|apy|yield/i)
+    || signalEvidence.market_signal_count > 0;
+  const observedNews = signalEvidence.external_observation_count > 0
+    || objectHasKeyLike(state, /news|headline|sentiment|catalyst/i)
+    || objectHasKeyLike(metricsForObservation, /news|headline|sentiment|catalyst/i);
+  const observedExternalSignals = observedNews || (signalsGenerated ?? 0) > 0 || signalEvidence.checked;
   const tradeAction = isRecord(decision && decision.trade_action) ? decision.trade_action : {};
   const observedExecution = decisionAction(decision) === 'trade'
     || tradeAction.attempted === true
@@ -313,6 +317,10 @@ function evidenceQuality({ state, metrics, decision, priorDecisions, mandate }) 
     observed_prior_actions: priorDecisions.length > 1,
     observed_news: observedNews,
     observed_external_signals: observedExternalSignals,
+    external_signal_checked: signalEvidence.checked,
+    external_signal_required: signalEvidence.required,
+    external_signal_unavailable: signalEvidence.unavailable,
+    external_signal_source_status: signalEvidence.source_status,
     observed_trade_execution: observedExecution,
     signals_generated: signalsGenerated,
     mandate_alignment: mandateAlignment.status,
@@ -421,6 +429,37 @@ function wantsExternalSignals(mandate) {
   return /news|headline|sentiment|event|catalyst|prediction|polymarket|volatility|macro|election|politic/.test(prompt);
 }
 
+function signalEvidenceRecord(state, metrics) {
+  const stateEvidence = isRecord(state) && isRecord(state.external_signal_evidence)
+    ? state.external_signal_evidence
+    : {};
+  return {
+    checked: stateEvidence.checked === true || asNumber(metrics && metrics.external_signal_checked, 0) > 0,
+    required: stateEvidence.required === true || asNumber(metrics && metrics.external_signal_required, 0) > 0,
+    unavailable: stateEvidence.unavailable === true || asNumber(metrics && metrics.external_signal_unavailable, 0) > 0,
+    source_status: primitive(stateEvidence.source_status) ?? null,
+    market_signal_count: asNumber(stateEvidence.market_signal_count, asNumber(metrics && metrics.market_signal_count, 0)),
+    external_observation_count: asNumber(stateEvidence.external_observation_count, asNumber(metrics && metrics.external_observation_count, 0)),
+    generated_signal_count: asNumber(stateEvidence.generated_signal_count, asNumber(metrics && metrics.signals_generated, null)),
+  };
+}
+
+function observationMetrics(metrics) {
+  if (!isRecord(metrics)) return metrics;
+  const copy = { ...metrics };
+  for (const key of [
+    'external_signal_checked',
+    'external_signal_required',
+    'external_signal_provider_configured',
+    'external_signal_unavailable',
+    'market_signal_count',
+    'external_observation_count',
+  ]) {
+    delete copy[key];
+  }
+  return copy;
+}
+
 function buildReflectionFindings(context, contexts) {
   const findings = [];
   const evidence = isRecord(context.evidence) ? context.evidence : {};
@@ -436,10 +475,13 @@ function buildReflectionFindings(context, contexts) {
   if (!evidence.observed_prior_actions) {
     findings.push({ code: 'missing-prior-action-observation', severity: 'medium', detail: 'Tick context does not show enough prior decision/outcome history for adaptive behavior.' });
   }
-  if (wantsExternalSignals(context.mandate || {}) && !evidence.observed_external_signals) {
+  if (wantsExternalSignals(context.mandate || {}) && evidence.external_signal_unavailable) {
+    findings.push({ code: 'external-signal-source-unavailable', severity: 'medium', detail: 'Mandate benefits from external/news/event/sentiment context, but no external signal provider is configured for this sandbox.' });
+  }
+  if (wantsExternalSignals(context.mandate || {}) && !evidence.observed_external_signals && !evidence.external_signal_unavailable) {
     findings.push({ code: 'missing-external-signal-observation', severity: 'high', detail: 'Mandate needs external/news/event/sentiment context but no signal evidence was observed.' });
   }
-  if ((evidence.signals_generated ?? null) === 0 && wantsExternalSignals(context.mandate || {})) {
+  if ((evidence.signals_generated ?? null) === 0 && wantsExternalSignals(context.mandate || {}) && !evidence.external_signal_unavailable) {
     findings.push({ code: 'signals-generated-zero', severity: 'high', detail: 'Strategy requires external signals but metrics report signals_generated=0.' });
   }
 

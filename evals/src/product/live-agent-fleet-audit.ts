@@ -249,6 +249,10 @@ export interface BotAudit {
     trades: boolean
     market: boolean
     news: boolean
+    external_signals_checked: boolean
+    external_signals_required: boolean
+    external_signals_unavailable: boolean
+    external_signal_status: string | null
     signals_generated: number | null
   }
   flags: string[]
@@ -280,6 +284,9 @@ export interface FleetAuditResult {
     total_usage_input_tokens: number
     total_usage_output_tokens: number
     total_usage_cost_usd: number
+    bots_with_news_evidence: number
+    bots_with_external_signal_checks: number
+    bots_with_external_signals_unavailable: number
     total_recent_trades: number
     flag_counts: Array<{ flag: string; count: number }>
   }
@@ -354,6 +361,8 @@ async function inspectBot(client: OperatorClient, bot: BotRecord & { id: string 
   const loopMode = classifyLoopMode(runSummary)
   const selfImprovementState = classifySelfImprovement(selfImprovementSummary, revisionArenaSummary)
   const flags = buildFlags({
+    strategyType: bot.strategy_type ?? '',
+    userPrompt,
     loopMode,
     selfImprovementState,
     strategyAlignment,
@@ -635,21 +644,55 @@ function summarizeObservations(artifacts: TickArtifactSummary, trades: TradeSumm
   const metrics = isRecord(artifacts.metrics_latest) ? artifacts.metrics_latest : {}
   const latestContext = isRecord(artifacts.latest_decision_context) ? artifacts.latest_decision_context : {}
   const evidence = isRecord(latestContext.evidence) ? latestContext.evidence : {}
+  const checkedState = isRecord(latestContext.checked_state) ? latestContext.checked_state : {}
+  const externalEvidence = isRecord(checkedState.external_signal_evidence) ? checkedState.external_signal_evidence : {}
   const signalsGenerated = isFiniteNumber(metrics.signals_generated)
     ? Number(metrics.signals_generated)
     : isFiniteNumber(evidence.signals_generated)
       ? Number(evidence.signals_generated)
       : null
+  const externalSignalsChecked =
+    evidence.external_signal_checked === true
+    || externalEvidence.checked === true
+    || toNumber(metrics.external_signal_checked) > 0
+  const externalSignalsRequired =
+    evidence.external_signal_required === true
+    || externalEvidence.required === true
+    || toNumber(metrics.external_signal_required) > 0
+  const externalSignalsUnavailable =
+    evidence.external_signal_unavailable === true
+    || externalEvidence.unavailable === true
+    || toNumber(metrics.external_signal_unavailable) > 0
+  const externalSignalStatus = stringValue(evidence.external_signal_source_status) ?? stringValue(externalEvidence.source_status)
+  const marketMetricKeys = artifacts.metrics_keys.filter((key) => ![
+    'external_signal_checked',
+    'external_signal_required',
+    'external_signal_provider_configured',
+    'external_signal_unavailable',
+    'market_signal_count',
+    'external_observation_count',
+  ].includes(key))
   return {
     portfolio: evidence.observed_portfolio === true || artifacts.metrics_keys.some((key) => key.includes('portfolio') || key.includes('position')) || isFiniteNumber(metrics.portfolio_value_usd),
     trades: trades.count > 0 || artifacts.metrics_keys.includes('trade_count'),
-    market: evidence.observed_market === true || artifacts.metrics_keys.some((key) => /price|funding|rsi|ema|candle|volatility|spread|liquidity|market/i.test(key)),
+    market: evidence.observed_market === true || marketMetricKeys.some((key) => /price|funding|rsi|ema|candle|volatility|spread|liquidity|market/i.test(key)) || toNumber(metrics.market_signal_count) > 0,
     news: evidence.observed_news === true || artifacts.metrics_keys.some((key) => /news|headline|sentiment|event/i.test(key)),
+    external_signals_checked: externalSignalsChecked,
+    external_signals_required: externalSignalsRequired,
+    external_signals_unavailable: externalSignalsUnavailable,
+    external_signal_status: externalSignalStatus,
     signals_generated: signalsGenerated,
   }
 }
 
+function userPromptRequiresExternalSignals(userPrompt: string | null, strategyType: string): boolean {
+  const text = `${userPrompt ?? ''} ${strategyType}`.toLowerCase()
+  return /news|headline|sentiment|event|catalyst|prediction|polymarket|volatility|macro|election|politic/.test(text)
+}
+
 function buildFlags(input: {
+  strategyType: string
+  userPrompt: string | null
   loopMode: LoopMode
   selfImprovementState: SelfImprovementState
   strategyAlignment: StrategyAlignment
@@ -663,8 +706,10 @@ function buildFlags(input: {
   if (input.loopMode === 'inactive') flags.push('inactive-no-runs')
   if (input.selfImprovementState === 'not-firing') flags.push('no-self-improvement-evidence')
   if (input.selfImprovementState === 'inaccessible') flags.push('self-improvement-inaccessible')
-  if (!input.observations.news) flags.push('no-news-ingestion-evidence')
-  if ((input.observations.signals_generated ?? 0) === 0) flags.push('signals-generated-zero')
+  const requiresExternalSignals = input.observations.external_signals_required || userPromptRequiresExternalSignals(input.userPrompt, input.strategyType)
+  if (requiresExternalSignals && !input.observations.news && !input.observations.external_signals_checked) flags.push('no-news-ingestion-evidence')
+  if (requiresExternalSignals && input.observations.external_signals_unavailable) flags.push('external-signals-unavailable')
+  if (requiresExternalSignals && (input.observations.signals_generated ?? 0) === 0 && !input.observations.external_signals_unavailable) flags.push('signals-generated-zero')
   if (input.trades.count === 0) flags.push('no-trades-placed')
   if (input.strategyAlignment === 'mismatch') flags.push('strategy-mandate-mismatch')
   if (input.strategyAlignment === 'partial') flags.push('strategy-mandate-partial')
@@ -722,6 +767,9 @@ function composeFleetAudit(operatorUrl: string, bots: BotAudit[]): FleetAuditRes
       total_usage_input_tokens: bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.input_tokens, 0),
       total_usage_output_tokens: bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.output_tokens, 0),
       total_usage_cost_usd: Number(bots.reduce((sum, bot) => sum + bot.tick_artifacts.usage_telemetry.cost_usd, 0).toFixed(8)),
+      bots_with_news_evidence: bots.filter((bot) => bot.observations.news).length,
+      bots_with_external_signal_checks: bots.filter((bot) => bot.observations.external_signals_checked).length,
+      bots_with_external_signals_unavailable: bots.filter((bot) => bot.observations.external_signals_unavailable).length,
       total_recent_trades: bots.reduce((sum, bot) => sum + bot.trades.count, 0),
       flag_counts: Array.from(flagCounts.entries())
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
@@ -761,6 +809,7 @@ export function renderFleetAuditMarkdown(result: FleetAuditResult): string {
   if (result.summary.total_synthetic_usage_events > 0 || result.summary.total_trace_grounded_usage_events > 0) {
     lines.push(`- Usage classification: **${result.summary.total_trace_grounded_usage_events} trace-grounded** events; **${result.summary.total_synthetic_usage_events} synthetic smoke** events excluded from cost totals.`)
   }
+  lines.push(`- External signal evidence: **${result.summary.bots_with_news_evidence}/${result.bot_count} actual news/event evidence**, **${result.summary.bots_with_external_signal_checks}/${result.bot_count} checked**, **${result.summary.bots_with_external_signals_unavailable}/${result.bot_count} unavailable-source**.`)
   lines.push(`- ${result.summary.bots_with_trades}/${result.bot_count} bots have recent trades; ${result.summary.bots_with_runtime_reflection_evidence}/${result.bot_count} show runtime reflection; ${result.summary.bots_with_improvement_intents}/${result.bot_count} have queued improvement intents; ${result.summary.bots_with_self_improvement_evidence}/${result.bot_count} show promotion/evolution evidence.`)
   lines.push('')
   lines.push('## Fleet Table')

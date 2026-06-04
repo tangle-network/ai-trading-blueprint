@@ -607,14 +607,28 @@ fn agent_run_usage_payload(payload: &Value) -> Value {
         "/data/result/usage",
         "/data/turn/usage",
         "/data/finalMessage/usage",
+        "/data/metadata",
+        "/metadata",
     ] {
         if let Some(value) = payload.pointer(pointer)
             && value.is_object()
         {
-            return value.clone();
+            return normalize_agent_run_usage(value);
         }
     }
     json!({})
+}
+
+fn normalize_agent_run_usage(usage: &Value) -> Value {
+    let mut normalized = usage.clone();
+    if normalized.get("costUsd").is_none()
+        && normalized.get("cost_usd").is_none()
+        && let Some(cents) = usage_number(&normalized, &["spentCreditsCents"])
+        && let Some(object) = normalized.as_object_mut()
+    {
+        object.insert("costUsd".to_string(), json!(cents / 100.0));
+    }
+    normalized
 }
 
 fn usage_int(usage: &Value, keys: &[&str]) -> Option<u64> {
@@ -1121,6 +1135,43 @@ mod tests {
         assert_eq!(event["token_count_status"], "reported");
         assert_eq!(event["provider"], "zai-coding-plan");
         assert_eq!(event["model"], "glm-4.7");
+    }
+
+    #[test]
+    fn agent_run_usage_event_reads_runtime_metadata_usage() {
+        let target = SidecarChatTarget {
+            sandbox_id: "sandbox-runtime-usage".to_string(),
+            sidecar_url: "http://127.0.0.1:1".to_string(),
+            sidecar_token: "test-token".to_string(),
+        };
+        let payload = serde_json::json!({
+            "success": true,
+            "data": {
+                "finalText": "done",
+                "metadata": {
+                    "tokensIn": 222,
+                    "tokensOut": 111,
+                    "spentCreditsCents": 3.5,
+                    "model": "conversation-runtime"
+                }
+            }
+        });
+        let event = build_agent_run_usage_event(
+            &target,
+            "manual-runtime-usage",
+            "ping",
+            "done",
+            StatusCode::OK,
+            &payload,
+            25,
+        );
+
+        assert_eq!(event["input_tokens"], 222);
+        assert_eq!(event["output_tokens"], 111);
+        assert_eq!(event["total_tokens"], 333);
+        assert_eq!(event["cost_usd"], 0.035);
+        assert_eq!(event["cost_source"], "reported");
+        assert_eq!(event["token_count_status"], "reported");
     }
 
     #[test]

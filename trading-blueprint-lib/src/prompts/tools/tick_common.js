@@ -120,6 +120,119 @@ function stableHash(value) {
   return hash >>> 0;
 }
 
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function objectText(value, depth = 4) {
+  if (depth < 0 || value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (['number', 'boolean'].includes(typeof value)) return String(value);
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => objectText(item, depth - 1)).join(' ');
+  if (!isRecord(value)) return '';
+  return Object.entries(value)
+    .slice(0, 80)
+    .map(([key, nested]) => `${key} ${objectText(nested, depth - 1)}`)
+    .join(' ');
+}
+
+function countSignalKeys(value, pattern, depth = 4) {
+  if (depth < 0 || value === null || value === undefined) return 0;
+  if (Array.isArray(value)) {
+    return value.reduce((sum, item) => sum + countSignalKeys(item, pattern, depth - 1), 0);
+  }
+  if (!isRecord(value)) return 0;
+  let count = 0;
+  for (const [key, nested] of Object.entries(value)) {
+    if (key === 'external_signal_evidence') continue;
+    if (pattern.test(key)) count += 1;
+    count += countSignalKeys(nested, pattern, depth - 1);
+  }
+  return count;
+}
+
+function requiresExternalSignals(config, family) {
+  const strategy = isRecord(config && config.strategy_config) ? config.strategy_config : {};
+  const text = [
+    family,
+    config && config.strategy_type,
+    strategy.strategy_type,
+    strategy.user_prompt,
+    strategy.prompt,
+    strategy.market,
+    strategy.vertical,
+    objectText(strategy.available_protocols, 2),
+    objectText(strategy.tags, 2),
+  ].join(' ').toLowerCase();
+  return /news|headline|sentiment|event|catalyst|prediction|polymarket|volatility|macro|election|politic/.test(text);
+}
+
+function externalSignalProviderConfigured(config) {
+  const strategy = isRecord(config && config.strategy_config) ? config.strategy_config : {};
+  return Boolean(
+    process.env.NEWS_API_URL
+      || process.env.CRYPTO_NEWS_API_URL
+      || process.env.TANGLE_NEWS_API_URL
+      || process.env.EXTERNAL_SIGNAL_API_URL
+      || strategy.news_endpoint
+      || strategy.external_signal_endpoint
+      || strategy.sentiment_endpoint,
+  );
+}
+
+function buildExternalSignalEvidence({ config, family, checkedState, metrics }) {
+  const required = requiresExternalSignals(config, family);
+  const providerConfigured = externalSignalProviderConfigured(config);
+  const marketSignalCount =
+    countSignalKeys(checkedState, /price|funding|rsi|ema|candle|volatility|spread|liquidity|market|reserve|apy|yield|probability/i)
+    + countSignalKeys(metrics, /price|funding|rsi|ema|candle|volatility|spread|liquidity|market|reserve|apy|yield|probability/i);
+  const externalObservationCount =
+    countSignalKeys(checkedState, /headline|sentiment|catalyst|polymarket|gamma|clob|election|politic|macro|event/i)
+    + countSignalKeys(metrics, /headline|sentiment|catalyst|polymarket|gamma|clob|election|politic|macro|event/i);
+  const existingSignals = asNumber(metrics && metrics.signals_generated, 0);
+  const generatedSignalCount = Math.max(existingSignals, marketSignalCount + externalObservationCount);
+  const checked = required || externalObservationCount > 0 || providerConfigured;
+  const sourceStatus = externalObservationCount > 0
+    ? 'observed'
+    : !required
+      ? 'not_required'
+      : providerConfigured
+        ? 'checked_no_items'
+        : 'unavailable_no_provider';
+
+  return {
+    schema_version: 1,
+    checked,
+    required,
+    provider_configured: providerConfigured,
+    source_status: sourceStatus,
+    unavailable: sourceStatus === 'unavailable_no_provider',
+    market_signal_count: marketSignalCount,
+    external_observation_count: externalObservationCount,
+    generated_signal_count: generatedSignalCount,
+  };
+}
+
+function enrichSignalEvidence(ctx, checkedState, metrics) {
+  const targetState = isRecord(checkedState) ? checkedState : {};
+  const targetMetrics = isRecord(metrics) ? metrics : {};
+  const evidence = buildExternalSignalEvidence({
+    config: ctx && ctx.config,
+    family: ctx && ctx.family,
+    checkedState: targetState,
+    metrics: targetMetrics,
+  });
+  targetState.external_signal_evidence = evidence;
+  targetMetrics.external_signal_checked = 1;
+  targetMetrics.external_signal_required = evidence.required ? 1 : 0;
+  targetMetrics.external_signal_provider_configured = evidence.provider_configured ? 1 : 0;
+  targetMetrics.external_signal_unavailable = evidence.unavailable ? 1 : 0;
+  targetMetrics.market_signal_count = evidence.market_signal_count;
+  targetMetrics.external_observation_count = evidence.external_observation_count;
+  targetMetrics.signals_generated = evidence.generated_signal_count;
+  return { checkedState: targetState, metrics: targetMetrics, evidence };
+}
+
 function isPaperShowcaseMode(config, harness) {
   return Boolean(
     config
@@ -536,12 +649,13 @@ async function runTick(family, decide) {
     const ctx = { api, config, family, runStartedAt, harness: loadHarness() };
     const out = (await decide(ctx)) || {};
     const decision = out.decision || { action: 'skip', reason: `${family}-no-decision` };
+    const enriched = enrichSignalEvidence(ctx, out.checkedState ?? {}, out.metrics || {});
 
     const { provenanceHash } = require('/home/agent/tools/log-decision');
     const recipe_hash = provenanceHash({ family, harness: ctx.harness ?? {}, strategy_config: (config && config.strategy_config) ?? null });
-    const input_hash = provenanceHash({ family, checked_state: out.checkedState ?? null, intent: decision.intent ?? null });
-    const metrics = { ...(out.metrics || {}), recipe_hash, input_hash };
-    logDecision({ ...decision, ...(out.entryExtra || {}), state: out.checkedState ?? null, run_started_at: runStartedAt, recipe_hash, input_hash });
+    const input_hash = provenanceHash({ family, checked_state: enriched.checkedState, intent: decision.intent ?? null });
+    const metrics = { ...enriched.metrics, recipe_hash, input_hash };
+    logDecision({ ...decision, ...(out.entryExtra || {}), state: enriched.checkedState, run_started_at: runStartedAt, recipe_hash, input_hash });
     writeMetrics({ action: decision.action, reason: decision.reason, ...metrics });
 
     const runCompletedAt = nowIso();
@@ -552,7 +666,7 @@ async function runTick(family, decide) {
       run_completed_at: runCompletedAt,
       config,
       harness: ctx.harness,
-      checked_state: out.checkedState ?? null,
+      checked_state: enriched.checkedState,
       decision,
       result: out.resultExtra || null,
       metrics,
@@ -566,7 +680,7 @@ async function runTick(family, decide) {
       family,
       run_started_at: runStartedAt,
       run_completed_at: runCompletedAt,
-      checked_state: out.checkedState ?? null,
+      checked_state: enriched.checkedState,
       decision,
       ...(out.resultExtra || {}),
       decision_context: {
@@ -623,6 +737,13 @@ module.exports = {
   asNumber,
   clamp,
   stableHash,
+  isRecord,
+  objectText,
+  countSignalKeys,
+  requiresExternalSignals,
+  externalSignalProviderConfigured,
+  buildExternalSignalEvidence,
+  enrichSignalEvidence,
   isPaperShowcaseMode,
   normalizeCycleValues,
   cycleIndexForRun,

@@ -134,3 +134,59 @@ test('cadence selector dispatches each pending improvement intent once per coold
     restore()
   }
 })
+
+test('external signal evidence distinguishes unavailable provider from missing observation', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reflection-loop-'))
+  const { api, restore } = loadReflectionLoop(tmp)
+  try {
+    const context = api.recordDecisionContext({
+      family: 'prediction',
+      run_started_at: '2026-06-04T12:00:00.000Z',
+      run_completed_at: '2026-06-04T12:00:01.000Z',
+      config: {
+        bot_id: 'bot-politics',
+        strategy_type: 'prediction',
+        strategy_config: {
+          user_prompt: 'Trade prediction markets around politics and election catalysts.',
+          available_protocols: ['polymarket'],
+          paper_trade: true,
+        },
+      },
+      checked_state: {
+        portfolio_value_usd: 10000,
+        market: { probability_mid: 0.54 },
+        external_signal_evidence: {
+          checked: true,
+          required: true,
+          provider_configured: false,
+          source_status: 'unavailable_no_provider',
+          unavailable: true,
+          market_signal_count: 1,
+          external_observation_count: 0,
+          generated_signal_count: 0,
+        },
+      },
+      decision: { action: 'skip', reason: 'no-event-edge' },
+      metrics: {
+        portfolio_value_usd: 10000,
+        probability_mid: 0.54,
+        external_signal_checked: 1,
+        external_signal_required: 1,
+        external_signal_unavailable: 1,
+        signals_generated: 0,
+      },
+    })
+
+    assert.equal(context.evidence.observed_news, false)
+    assert.equal(context.evidence.observed_external_signals, true)
+    assert.equal(context.evidence.external_signal_unavailable, true)
+
+    const reflection = api.reflectOnDecisionContext(context)
+    const codes = reflection.findings.map((finding) => finding.code)
+    assert.ok(codes.includes('external-signal-source-unavailable'))
+    assert.ok(!codes.includes('missing-external-signal-observation'))
+    assert.ok(!codes.includes('signals-generated-zero'))
+  } finally {
+    restore()
+  }
+})

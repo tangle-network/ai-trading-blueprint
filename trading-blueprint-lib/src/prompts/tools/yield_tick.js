@@ -17,7 +17,13 @@ async function decide(ctx) {
   const minOrderUsd = t.asNumber(harness.min_order_usd, 10);
   const protocol = 'aave_v3';
 
-  const portfolio = t.body(await api.apiCall('POST', '/portfolio/state', {}));
+  const [portfolioBody, pricesBody] = await Promise.all([
+    api.apiCall('POST', '/portfolio/state', {}),
+    api.apiCall('POST', '/market-data/prices', { tokens: [usdc] }).catch(() => null),
+  ]);
+  const portfolio = t.body(portfolioBody);
+  const prices = t.priceMap(t.body(pricesBody));
+  const usdcPrice = prices.get(String(usdc).toLowerCase()) ?? 1;
   const positions = t.positionsOf(portfolio);
   const idleUsdc = t.vaultSpotAmount(portfolio, usdc);
   const suppliedUsd = positions
@@ -32,8 +38,18 @@ async function decide(ctx) {
     supplied_usd: suppliedUsd,
     total_stable_usd: totalStable,
     supplied_fraction: totalStable > 0 ? suppliedUsd / totalStable : 0,
+    market: {
+      asset: 'USDC',
+      usdc_price_usd: usdcPrice,
+      yield_venue: protocol,
+    },
   };
-  const metrics = { portfolio_value_usd: t.asNumber(portfolio.total_value_usd, totalStable), positions_count: positions.length };
+  const metrics = {
+    portfolio_value_usd: t.asNumber(portfolio.total_value_usd, totalStable),
+    positions_count: positions.length,
+    usdc_price_usd: usdcPrice,
+    yield_venue_count: 1,
+  };
 
   if (totalStable < minOrderUsd) {
     return { decision: { action: 'skip', reason: 'no-stable-balance', checkedState }, checkedState, metrics };

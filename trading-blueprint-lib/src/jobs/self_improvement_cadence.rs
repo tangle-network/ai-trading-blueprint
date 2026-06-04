@@ -219,12 +219,18 @@ async fn launch_sandbox_cadence(
 ) -> Result<String, String> {
     let sandbox = sandbox_runtime::runtime::get_sandbox_by_id(&bot.sandbox_id)
         .map_err(|e| format!("load sandbox {}: {e}", bot.sandbox_id))?;
+    crate::jobs::activate::ensure_sidecar_runtime_dirs(&sandbox.sidecar_url, &sandbox.token)
+        .await
+        .map_err(|e| format!("prepare self-improvement dirs: {e}"))?;
+    sync_self_improvement_tools_to_sidecar(&sandbox.sidecar_url, &sandbox.token)
+        .await
+        .map_err(|e| format!("sync self-improvement tools: {e}"))?;
     let intent = format!(
         "Periodic paper-only harness self-improvement for bot {}. Generate a TS-side candidate, record sandbox/evolution lineage, and leave promotion to the paper-trial conductor.",
         bot.id
     );
     let exec_req = SandboxExecRequest {
-        sidecar_url: sandbox.sidecar_url,
+        sidecar_url: sandbox.sidecar_url.clone(),
         command: cadence_launcher_command().to_string(),
         cwd: "/home/agent".to_string(),
         env_json: json!({
@@ -249,6 +255,45 @@ async fn launch_sandbox_cadence(
         ));
     }
     Ok(response.stdout.trim().to_string())
+}
+
+fn self_improvement_tool_bundle() -> Vec<(&'static str, &'static str)> {
+    vec![
+        (
+            "/home/agent/tools/api-client.js",
+            include_str!("../prompts/tools/api_client.js"),
+        ),
+        (
+            "/home/agent/tools/reflection-loop.js",
+            include_str!("../prompts/tools/reflection_loop.js"),
+        ),
+        (
+            "/home/agent/tools/usage-telemetry.js",
+            include_str!("../prompts/tools/usage_telemetry.js"),
+        ),
+        (
+            "/home/agent/tools/self-improvement-loop.ts",
+            include_str!("../prompts/tools/self_improvement_loop.ts"),
+        ),
+        (
+            "/home/agent/tools/self-improvement-mcp-server.ts",
+            include_str!("../prompts/tools/self_improvement_mcp_server.ts"),
+        ),
+        (
+            "/home/agent/tools/create-mcp-multishot-strategy-task.js",
+            include_str!("../prompts/tools/create_mcp_multishot_strategy_task.js"),
+        ),
+    ]
+}
+
+async fn sync_self_improvement_tools_to_sidecar(
+    sidecar_url: &str,
+    token: &str,
+) -> Result<(), String> {
+    for (path, content) in self_improvement_tool_bundle() {
+        crate::jobs::activate::write_file_to_sidecar(sidecar_url, token, path, content).await?;
+    }
+    Ok(())
 }
 
 fn cadence_launcher_command() -> &'static str {
@@ -407,6 +452,18 @@ mod tests {
         assert!(command.contains(
             "process.env.RUN_GENERATION === '1' || (allowIntentGeneration && selected.intent)"
         ));
+    }
+
+    #[test]
+    fn cadence_syncs_self_improvement_tools_before_launching() {
+        let bundle = self_improvement_tool_bundle();
+        let paths: Vec<_> = bundle.iter().map(|(path, _)| *path).collect();
+        assert!(paths.contains(&"/home/agent/tools/api-client.js"));
+        assert!(paths.contains(&"/home/agent/tools/reflection-loop.js"));
+        assert!(paths.contains(&"/home/agent/tools/usage-telemetry.js"));
+        assert!(paths.contains(&"/home/agent/tools/self-improvement-loop.ts"));
+        assert!(paths.contains(&"/home/agent/tools/self-improvement-mcp-server.ts"));
+        assert!(paths.contains(&"/home/agent/tools/create-mcp-multishot-strategy-task.js"));
     }
 
     #[test]
