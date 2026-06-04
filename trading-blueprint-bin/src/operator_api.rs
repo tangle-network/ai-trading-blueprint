@@ -8360,6 +8360,147 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_observatory_trigger_requires_auth() {
+        ensure_state_dir();
+
+        seed_bot(
+            "observatory-auth-required-1",
+            TEST_AUTH_ADDRESS,
+            true,
+            "sandbox-observatory-auth-required-1",
+        );
+
+        let app = build_operator_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/observatory-auth-required-1/observatory/trigger")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"reason":"test"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_observatory_trigger_rejects_wrong_submitter_before_sidecar() {
+        ensure_state_dir();
+
+        seed_bot(
+            "observatory-wrong-owner-1",
+            "0xDEAD000000000000000000000000000000000004",
+            true,
+            "sandbox-observatory-wrong-owner-1",
+        );
+
+        let app = build_operator_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots/observatory-wrong-owner-1/observatory/trigger")
+                    .header("content-type", "application/json")
+                    .header("authorization", test_auth_header())
+                    .body(Body::from(r#"{"reason":"test"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_observatory_overview_scopes_to_owner_and_hides_empty_submitters() {
+        ensure_state_dir();
+
+        seed_bot(
+            "observatory-owned-visible-1",
+            TEST_AUTH_ADDRESS,
+            true,
+            "sandbox-observatory-owned-visible-1",
+        );
+        seed_sandbox_with_secrets("sandbox-observatory-owned-visible-1");
+        seed_bot(
+            "observatory-other-hidden-1",
+            "0xDEAD000000000000000000000000000000000005",
+            true,
+            "sandbox-observatory-other-hidden-1",
+        );
+        seed_sandbox_with_secrets("sandbox-observatory-other-hidden-1");
+        seed_bot(
+            "observatory-empty-hidden-1",
+            "",
+            true,
+            "sandbox-observatory-empty-hidden-1",
+        );
+        seed_sandbox_with_secrets("sandbox-observatory-empty-hidden-1");
+
+        let app = build_operator_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/observatory/overview")
+                    .header("authorization", test_auth_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let bot_ids: Vec<String> = json
+            .get("bots")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|bot| bot.get("bot_id").and_then(serde_json::Value::as_str))
+            .map(str::to_string)
+            .collect();
+
+        assert!(bot_ids.iter().any(|id| id == "observatory-owned-visible-1"));
+        assert!(!bot_ids.iter().any(|id| id == "observatory-other-hidden-1"));
+        assert!(!bot_ids.iter().any(|id| id == "observatory-empty-hidden-1"));
+    }
+
+    #[tokio::test]
+    async fn test_observatory_feedback_rejects_unknown_action_before_sidecar() {
+        ensure_state_dir();
+
+        seed_bot(
+            "observatory-feedback-action-1",
+            TEST_AUTH_ADDRESS,
+            true,
+            "sandbox-observatory-feedback-action-1",
+        );
+
+        let app = build_operator_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(
+                        "/api/bots/observatory-feedback-action-1/observatory/ideas/idea-1/feedback",
+                    )
+                    .header("content-type", "application/json")
+                    .header("authorization", test_auth_header())
+                    .body(Body::from(r#"{"action":"promote_live"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn test_secrets_on_already_activated_bot() {
         ensure_state_dir();
 

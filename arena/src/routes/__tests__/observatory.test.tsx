@@ -13,6 +13,11 @@ const accountState = {
   isConnected: true,
 };
 
+const operatorAuthState = {
+  authCacheKey: '0xowner::https://operator.test' as string | null,
+  cachedToken: 'token' as string | null,
+};
+
 const overviewState = {
   isLoading: false,
   isFetching: false,
@@ -130,6 +135,13 @@ vi.mock('~/lib/hooks/useTradingRouteAutoAuth', () => ({
   useTradingRouteAutoAuth: hoisted.useTradingRouteAutoAuthMock,
 }));
 
+vi.mock('~/lib/hooks/useOperatorAuth', () => ({
+  useOperatorAuth: () => ({
+    authCacheKey: operatorAuthState.authCacheKey,
+    getCachedToken: () => operatorAuthState.cachedToken,
+  }),
+}));
+
 vi.mock('~/lib/operator/meta', () => ({
   ALL_TRADING_OPERATOR_API_URLS: ['https://operator.test'],
   HAS_TRADING_OPERATOR_API: true,
@@ -163,6 +175,8 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
 describe('ObservatoryPage', () => {
   beforeEach(() => {
     accountState.isConnected = true;
+    operatorAuthState.authCacheKey = '0xowner::https://operator.test';
+    operatorAuthState.cachedToken = 'token';
     overviewState.isLoading = false;
     overviewState.isFetching = false;
     overviewState.isError = false;
@@ -197,5 +211,18 @@ describe('ObservatoryPage', () => {
       ideaId: 'idea-1',
       action: 'delegate_research',
     });
+  });
+
+  it('renders records from a cached operator session without a connected wallet', async () => {
+    accountState.isConnected = false;
+    operatorAuthState.authCacheKey = '0xowner::https://operator.test';
+    operatorAuthState.cachedToken = 'token';
+
+    const { default: ObservatoryPage } = await import('../observatory');
+    render(<ObservatoryPage />, { wrapper: createWrapper() });
+
+    expect(screen.getByRole('heading', { name: 'Observatory' })).toBeInTheDocument();
+    expect(screen.getAllByText('ETH Perp Sentinel').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Connect owner wallet')).not.toBeInTheDocument();
   });
 });

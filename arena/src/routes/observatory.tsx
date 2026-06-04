@@ -23,6 +23,7 @@ import {
   useObservatoryOverview,
   useTriggerBotObservatory,
 } from '~/lib/hooks/useBotApi';
+import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
 import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
 
@@ -464,6 +465,9 @@ function Inspector({
 export default function ObservatoryPage() {
   const { isConnected } = useAccount();
   const apiUrl = ALL_TRADING_OPERATOR_API_URLS[0] ?? '';
+  const operatorAuth = useOperatorAuth(apiUrl);
+  const hasOperatorSession = Boolean(operatorAuth.authCacheKey && operatorAuth.getCachedToken());
+  const canLoadObservatory = HAS_TRADING_OPERATOR_API && (isConnected || hasOperatorSession);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = usePersistentWorkspaceLayout(
     OBSERVATORY_WORKSPACE_LAYOUT_KEY,
@@ -478,7 +482,7 @@ export default function ObservatoryPage() {
 
   const overview = useObservatoryOverview({
     operatorApiUrl: apiUrl,
-    enabled: isConnected && HAS_TRADING_OPERATOR_API,
+    enabled: canLoadObservatory,
     refetchInterval: 15_000,
   });
   const bots = useMemo(() => {
@@ -507,7 +511,7 @@ export default function ObservatoryPage() {
     flexBasis: `${layout.botListPercent}%`,
   };
 
-  if (!isConnected) {
+  if (!isConnected && !hasOperatorSession) {
     return (
       <ConnectWalletPanel
         title="Connect owner wallet"

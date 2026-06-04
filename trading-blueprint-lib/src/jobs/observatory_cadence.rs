@@ -16,8 +16,11 @@ use crate::workflow_compat::{WorkflowRunRecord, WorkflowRunStatus};
 static CADENCE: OnceCell<PersistentStore<ObservatoryCadenceRecord>> = OnceCell::new();
 
 const DEFAULT_INTERVAL_SECS: i64 = 4 * 60 * 60;
+const DEFAULT_JITTER_SECS: i64 = 15 * 60;
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_MAX_BOTS_PER_TICK: usize = 2;
+const DEFAULT_MAX_RUNS_PER_BOT_PER_DAY: usize = 6;
+const DEFAULT_MAX_COST_USD_PER_BOT_PER_DAY: f64 = 0.0;
 const OBSERVATORY_JSON_BEGIN: &str = "TANGLE_OBSERVATORY_JSON>";
 const OBSERVATORY_JSON_END: &str = "<TANGLE_OBSERVATORY_END";
 
@@ -26,6 +29,14 @@ pub struct ObservatoryCadenceRecord {
     pub bot_id: String,
     #[serde(default)]
     pub last_run_at: Option<i64>,
+    #[serde(default)]
+    pub day_key: Option<String>,
+    #[serde(default)]
+    pub runs_today: usize,
+    #[serde(default)]
+    pub cost_today_usd: f64,
+    #[serde(default)]
+    pub last_jitter_secs: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -108,8 +119,18 @@ fn env_usize(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-fn due(last: Option<i64>, now: i64, interval_secs: i64) -> bool {
-    last.is_none_or(|last| now.saturating_sub(last) >= interval_secs)
+fn env_f64(name: &str, default: f64) -> f64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .unwrap_or(default)
+}
+
+fn due(last: Option<i64>, now: i64, interval_secs: i64, jitter_secs: i64) -> bool {
+    last.is_none_or(|last| {
+        now.saturating_sub(last) >= interval_secs.saturating_add(jitter_secs.max(0))
+    })
 }
 
 fn eligible_observatory_bot(bot: &TradingBotRecord) -> bool {
@@ -118,6 +139,59 @@ fn eligible_observatory_bot(bot: &TradingBotRecord) -> bool {
 
 fn observatory_workflow_id(bot: &TradingBotRecord) -> Option<u64> {
     bot.workflow_id.map(|workflow_id| workflow_id + 1)
+}
+
+fn utc_day_key(timestamp: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(timestamp, 0)
+        .map(|time| time.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|| "1970-01-01".to_string())
+}
+
+fn stable_hash_u64(value: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn deterministic_jitter_secs(bot_id: &str, day_key: &str, max_jitter_secs: i64) -> i64 {
+    if max_jitter_secs <= 0 {
+        return 0;
+    }
+    (stable_hash_u64(&format!("{bot_id}:{day_key}")) % (max_jitter_secs as u64 + 1)) as i64
+}
+
+fn align_cadence_day(record: &mut ObservatoryCadenceRecord, day_key: &str) -> bool {
+    if record.day_key.as_deref() == Some(day_key) {
+        return false;
+    }
+    record.day_key = Some(day_key.to_string());
+    record.runs_today = 0;
+    record.cost_today_usd = 0.0;
+    record.last_jitter_secs = None;
+    true
+}
+
+fn observatory_run_cost_usd(records: &Value) -> f64 {
+    records
+        .get("records")
+        .and_then(|records| records.get("usage_summary"))
+        .and_then(|usage| usage.get("cost_usd"))
+        .and_then(Value::as_f64)
+        .unwrap_or_else(|| {
+            records
+                .get("records")
+                .and_then(|records| records.get("reflection_runs"))
+                .and_then(Value::as_array)
+                .and_then(|runs| runs.first())
+                .and_then(|run| run.get("usage_summary"))
+                .and_then(|usage| usage.get("cost_usd"))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0)
+        })
+        .max(0.0)
 }
 
 fn run_id_from_records(records: &Value, fallback: &str) -> String {
@@ -282,8 +356,18 @@ pub async fn trigger_observatory_for_bot(
 
 pub async fn run_observatory_cadence(all_bots: &[TradingBotRecord]) {
     let now = chrono::Utc::now().timestamp();
+    let day_key = utc_day_key(now);
     let interval = env_i64("OBSERVATORY_INTERVAL_SECS", DEFAULT_INTERVAL_SECS);
+    let max_jitter_secs = env_i64("OBSERVATORY_JITTER_SECS", DEFAULT_JITTER_SECS);
     let max_bots = env_usize("OBSERVATORY_MAX_BOTS_PER_TICK", DEFAULT_MAX_BOTS_PER_TICK);
+    let max_runs_per_bot_per_day = env_usize(
+        "OBSERVATORY_MAX_RUNS_PER_BOT_PER_DAY",
+        DEFAULT_MAX_RUNS_PER_BOT_PER_DAY,
+    );
+    let max_cost_per_bot_per_day = env_f64(
+        "OBSERVATORY_MAX_COST_USD_PER_BOT_PER_DAY",
+        DEFAULT_MAX_COST_USD_PER_BOT_PER_DAY,
+    );
     let mut started = 0usize;
 
     for bot in all_bots.iter().filter(|bot| eligible_observatory_bot(bot)) {
@@ -297,7 +381,43 @@ pub async fn run_observatory_cadence(all_bots: &[TradingBotRecord]) {
                 continue;
             }
         };
-        if !due(record.last_run_at, now, interval) {
+        let day_changed = align_cadence_day(&mut record, &day_key);
+        if record.runs_today >= max_runs_per_bot_per_day {
+            if day_changed {
+                if let Err(error) = save_cadence_record(record.clone()) {
+                    tracing::warn!(bot_id = %bot.id, "observatory cadence day reset persist error: {error}");
+                }
+            }
+            tracing::debug!(
+                bot_id = %bot.id,
+                runs_today = record.runs_today,
+                max_runs_per_bot_per_day,
+                "observatory cadence skipped by daily run cap"
+            );
+            continue;
+        }
+        if max_cost_per_bot_per_day > 0.0 && record.cost_today_usd >= max_cost_per_bot_per_day {
+            if day_changed {
+                if let Err(error) = save_cadence_record(record.clone()) {
+                    tracing::warn!(bot_id = %bot.id, "observatory cadence day reset persist error: {error}");
+                }
+            }
+            tracing::debug!(
+                bot_id = %bot.id,
+                cost_today_usd = record.cost_today_usd,
+                max_cost_per_bot_per_day,
+                "observatory cadence skipped by daily cost cap"
+            );
+            continue;
+        }
+        let jitter_secs = deterministic_jitter_secs(&bot.id, &day_key, max_jitter_secs);
+        record.last_jitter_secs = Some(jitter_secs);
+        if !due(record.last_run_at, now, interval, jitter_secs) {
+            if day_changed {
+                if let Err(error) = save_cadence_record(record) {
+                    tracing::warn!(bot_id = %bot.id, "observatory cadence day reset persist error: {error}");
+                }
+            }
             continue;
         }
 
@@ -312,6 +432,9 @@ pub async fn run_observatory_cadence(all_bots: &[TradingBotRecord]) {
         {
             Ok(result) => {
                 record.last_run_at = Some(now);
+                record.runs_today = record.runs_today.saturating_add(1);
+                record.cost_today_usd =
+                    (record.cost_today_usd + observatory_run_cost_usd(&result.records)).max(0.0);
                 started += 1;
                 if let Err(error) = save_cadence_record(record) {
                     tracing::warn!(bot_id = %bot.id, "observatory cadence persist error: {error}");
@@ -319,6 +442,7 @@ pub async fn run_observatory_cadence(all_bots: &[TradingBotRecord]) {
                 tracing::info!(
                     bot_id = %bot.id,
                     run_id = %result.run_id,
+                    jitter_secs,
                     "observatory cadence wrote record"
                 );
             }
@@ -612,6 +736,64 @@ mod tests {
         };
 
         assert_eq!(observatory_workflow_id(&bot), Some(11));
+    }
+
+    #[test]
+    fn scheduler_jitter_is_stable_and_bounded() {
+        let first = deterministic_jitter_secs("bot-1", "2026-06-04", 900);
+        let second = deterministic_jitter_secs("bot-1", "2026-06-04", 900);
+        assert_eq!(first, second);
+        assert!((0..=900).contains(&first));
+        assert_eq!(deterministic_jitter_secs("bot-1", "2026-06-04", 0), 0);
+    }
+
+    #[test]
+    fn due_respects_interval_plus_jitter() {
+        assert!(due(None, 1_000, 3_600, 900));
+        assert!(!due(Some(1_000), 4_599, 3_600, 0));
+        assert!(due(Some(1_000), 4_600, 3_600, 0));
+        assert!(!due(Some(1_000), 5_499, 3_600, 900));
+        assert!(due(Some(1_000), 5_500, 3_600, 900));
+    }
+
+    #[test]
+    fn cadence_record_resets_daily_counters() {
+        let mut record = ObservatoryCadenceRecord {
+            bot_id: "bot-1".to_string(),
+            last_run_at: Some(1),
+            day_key: Some("2026-06-03".to_string()),
+            runs_today: 4,
+            cost_today_usd: 0.25,
+            last_jitter_secs: Some(11),
+        };
+        assert!(align_cadence_day(&mut record, "2026-06-04"));
+        assert_eq!(record.day_key.as_deref(), Some("2026-06-04"));
+        assert_eq!(record.runs_today, 0);
+        assert_eq!(record.cost_today_usd, 0.0);
+        assert_eq!(record.last_jitter_secs, None);
+        assert!(!align_cadence_day(&mut record, "2026-06-04"));
+    }
+
+    #[test]
+    fn observatory_cost_is_extracted_from_current_run_payload() {
+        let top_level = json!({
+            "records": {
+                "usage_summary": { "cost_usd": 0.0123 },
+                "reflection_runs": [
+                    { "usage_summary": { "cost_usd": 9.0 } }
+                ]
+            }
+        });
+        assert_eq!(observatory_run_cost_usd(&top_level), 0.0123);
+
+        let nested = json!({
+            "records": {
+                "reflection_runs": [
+                    { "usage_summary": { "cost_usd": 0.0456 } }
+                ]
+            }
+        });
+        assert_eq!(observatory_run_cost_usd(&nested), 0.0456);
     }
 
     #[test]
