@@ -14,6 +14,7 @@ const primaryNavItems = [
   { label: 'Home', href: '/', icon: 'i-ph:trophy' },
   { label: 'Agents', href: '/leaderboard', icon: 'i-ph:table' },
   { label: 'Activity', href: '/activity', icon: 'i-ph:pulse' },
+  { label: 'Observatory', href: '/observatory', icon: 'i-ph:brain' },
   { label: 'My Agents', href: '/dashboard', icon: 'i-ph:house' },
   { label: 'Deploy', href: '/provision', icon: 'i-ph:rocket-launch' },
   { label: 'Create', href: '/create', icon: 'i-ph:chat-circle-dots' },

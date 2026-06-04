@@ -280,6 +280,10 @@ fn self_improvement_tool_bundle() -> Vec<(&'static str, &'static str)> {
             include_str!("../prompts/tools/self_improvement_mcp_server.ts"),
         ),
         (
+            "/home/agent/tools/observatory-loop.js",
+            include_str!("../prompts/tools/observatory_loop.js"),
+        ),
+        (
             "/home/agent/tools/create-mcp-multishot-strategy-task.js",
             include_str!("../prompts/tools/create_mcp_multishot_strategy_task.js"),
         ),

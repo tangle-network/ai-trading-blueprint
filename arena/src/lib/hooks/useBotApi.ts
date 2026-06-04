@@ -264,6 +264,160 @@ export interface RevisionArena {
   modes: RevisionModeCapability[];
 }
 
+export interface ObservatoryUsageSummary {
+  event_count: number;
+  reporting_status: 'not_applicable' | 'reported' | 'unreported' | string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  providers: string[];
+  models: string[];
+}
+
+export interface ObservatoryWorldSignalDigest {
+  digest_id: string;
+  bot_id: string;
+  created_at: string;
+  source_status: string;
+  freshness?: string | null;
+  confidence: string;
+  source_count: number;
+  signals: Array<{
+    kind: string;
+    count?: number;
+    summary: string;
+  }>;
+  unavailable_reason?: string | null;
+  evidence_ref?: string | null;
+}
+
+export interface ObservatoryFinding {
+  code: string;
+  severity: 'low' | 'medium' | 'high' | 'critical' | string;
+  summary: string;
+  source?: string;
+}
+
+export interface ObservatoryReflectionRun {
+  run_id: string;
+  bot_id: string;
+  bot_name?: string;
+  created_at: string;
+  trigger: string;
+  requested_by?: string | null;
+  mode: string;
+  world_model_questions: string[];
+  evidence: Record<string, unknown>;
+  conclusions: string[];
+  uncertainties: string[];
+  findings: ObservatoryFinding[];
+  idea_ids: string[];
+  delegated_session_ids: string[];
+  usage_summary: ObservatoryUsageSummary;
+}
+
+export interface ObservatoryIdea {
+  idea_id: string;
+  bot_id: string;
+  created_at: string;
+  title: string;
+  thesis: string;
+  evidence_refs: string[];
+  expected_value: string;
+  risk: string;
+  proposed_action: 'delegate_research' | 'delegate_build' | string;
+  status: string;
+  source_run_id: string;
+}
+
+export interface ObservatoryDelegatedWorkSession {
+  session_id: string;
+  bot_id: string;
+  source: string;
+  status: string;
+  created_at?: string | null;
+  idea_id?: string | null;
+  task_id?: string | null;
+  summary: string;
+  artifact_ref?: string | null;
+}
+
+export interface ObservatoryOwnerFeedback {
+  feedback_id: string;
+  bot_id: string;
+  idea_id: string;
+  action: string;
+  note?: string | null;
+  owner?: string | null;
+  created_at: string;
+}
+
+export interface ObservatoryRecords {
+  schema_version: number;
+  world_signal_digests: ObservatoryWorldSignalDigest[];
+  reflection_runs: ObservatoryReflectionRun[];
+  ideas: ObservatoryIdea[];
+  delegated_work_sessions: ObservatoryDelegatedWorkSession[];
+  owner_feedback: ObservatoryOwnerFeedback[];
+}
+
+export interface BotObservatoryResponse {
+  schema_version: number;
+  bot_id: string;
+  bot_name: string;
+  strategy_type: string;
+  trading_active: boolean;
+  paper_trade: boolean;
+  records: ObservatoryRecords;
+}
+
+export interface ObservatoryOverviewBot {
+  bot_id: string;
+  bot_name: string;
+  strategy_type: string;
+  trading_active: boolean;
+  paper_trade: boolean;
+  records: ObservatoryRecords;
+  error?: string | null;
+}
+
+export interface ObservatoryOverviewResponse {
+  schema_version: number;
+  bot_count: number;
+  totals: {
+    reflection_runs: number;
+    ideas: number;
+    delegated_work_sessions: number;
+  };
+  bots: ObservatoryOverviewBot[];
+}
+
+export interface ObservatoryTriggerResponse {
+  schema_version: number;
+  status: string;
+  bot_id: string;
+  run_id: string;
+  started_at: number;
+  completed_at: number;
+  workflow_id?: number | null;
+  records: {
+    schema_version: number;
+    bot_id: string;
+    created_at: string;
+    trigger: string;
+    records_written: {
+      world_signal_digest_id: string;
+      reflection_run_id: string;
+      idea_ids: string[];
+      delegated_session_ids: string[];
+    };
+    records: ObservatoryRecords & {
+      usage_summary?: ObservatoryUsageSummary;
+    };
+  };
+}
+
 export interface MarketCandle {
   timestamp: number;
   token: string;
@@ -1524,6 +1678,121 @@ export function useRevisionDecision(botId: string, options: BotApiQueryOptions =
       await queryClient.invalidateQueries({
         queryKey: ['revision-arena', apiUrl, botId, deploymentKind, auth.authCacheKey],
       });
+    },
+  });
+}
+
+export function useObservatoryOverview(options: BotApiQueryOptions = {}) {
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const enabled = options.enabled ?? true;
+
+  return useQuery<ObservatoryOverviewResponse>({
+    queryKey: ['observatory-overview', apiUrl, auth.authCacheKey],
+    queryFn: async () => {
+      return operatorJsonWithAuth<ObservatoryOverviewResponse>(
+        apiUrl,
+        '/api/observatory/overview',
+        auth,
+        { auth: true },
+      );
+    },
+    staleTime: 10_000,
+    refetchOnMount: 'always',
+    refetchInterval: options.refetchInterval,
+    enabled: enabled && !!apiUrl && !!auth.getCachedToken(),
+  });
+}
+
+export function useBotObservatory(botId: string, options: BotApiQueryOptions = {}) {
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
+  const enabled = options.enabled ?? true;
+
+  return useQuery<BotObservatoryResponse>({
+    queryKey: ['bot-observatory', apiUrl, botId, deploymentKind, auth.authCacheKey],
+    queryFn: async () => {
+      const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/observatory');
+      return fetchOperatorBotApi<BotObservatoryResponse>(apiUrl, auth, path, { auth: true });
+    },
+    staleTime: 10_000,
+    refetchOnMount: 'always',
+    refetchInterval: options.refetchInterval,
+    enabled: enabled && !!apiUrl && !!botId && !!auth.getCachedToken(),
+  });
+}
+
+export function useTriggerBotObservatory(botId: string, options: BotApiQueryOptions = {}) {
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
+  const queryClient = useQueryClient();
+
+  return useMutation<ObservatoryTriggerResponse, Error, string>({
+    mutationFn: async (reason = 'manual') => {
+      const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/observatory/trigger');
+      return operatorJsonWithAuth<ObservatoryTriggerResponse>(apiUrl, path, auth, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ['bot-observatory', apiUrl, botId, deploymentKind, auth.authCacheKey],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['observatory-overview', apiUrl, auth.authCacheKey],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['bot-runs', apiUrl, auth.authCacheKey, botId],
+        }),
+      ]);
+    },
+  });
+}
+
+export function useObservatoryIdeaFeedback(botId: string, options: BotApiQueryOptions = {}) {
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
+  const queryClient = useQueryClient();
+
+  return useMutation<unknown, Error, {
+    ideaId: string;
+    action: 'interesting' | 'rejected' | 'delegate_research' | 'delegate_build' | 'mute';
+    note?: string;
+  }>({
+    mutationFn: async (feedback: {
+      ideaId: string;
+      action: 'interesting' | 'rejected' | 'delegate_research' | 'delegate_build' | 'mute';
+      note?: string;
+    }) => {
+      const path = buildBotScopedPathForDeploymentKind(
+        deploymentKind,
+        botId,
+        `/observatory/ideas/${encodeURIComponent(feedback.ideaId)}/feedback`,
+      );
+      return operatorJsonWithAuth<unknown>(apiUrl, path, auth, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: feedback.action,
+          note: feedback.note,
+        }),
+      });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ['bot-observatory', apiUrl, botId, deploymentKind, auth.authCacheKey],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['observatory-overview', apiUrl, auth.authCacheKey],
+        }),
+      ]);
     },
   });
 }

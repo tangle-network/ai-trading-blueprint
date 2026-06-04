@@ -3,6 +3,7 @@ mod configure;
 mod deprovision;
 mod exec;
 mod extend;
+pub mod observatory_cadence;
 pub mod promotion_conductor;
 mod prompt;
 mod provision;

@@ -5,6 +5,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
+use futures_util::{StreamExt, stream};
 use sandbox_runtime::api_types::{
     CreateLiveTerminalSessionRequest, TerminalInputApiRequest, TerminalResizeApiRequest,
 };
@@ -576,6 +577,17 @@ struct RunListQuery {
     cursor: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct ObservatoryTriggerRequest {
+    reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ObservatoryIdeaFeedbackRequest {
+    action: String,
+    note: Option<String>,
+}
+
 #[derive(Serialize)]
 struct BotRunListResponse {
     runs: Vec<BotRunResponse>,
@@ -623,6 +635,7 @@ pub fn build_operator_router() -> Router {
         .route("/api/auth/challenge", post(create_challenge))
         .route("/api/auth/session", post(create_session))
         .route("/api/dex/assets/preflight", post(preflight_dex_asset_route))
+        .route("/api/observatory/overview", get(get_observatory_overview))
         // Bot management
         .route("/api/bots", get(list_bots).post(create_bot))
         .route("/api/bots/repair-names", post(repair_bot_names))
@@ -637,6 +650,15 @@ pub fn build_operator_router() -> Router {
         .route("/api/bots/{bot_id}/stop", post(stop_bot))
         .route("/api/bots/{bot_id}/run-now", post(run_now))
         .route("/api/bots/{bot_id}/runs", get(list_bot_runs))
+        .route("/api/bots/{bot_id}/observatory", get(get_bot_observatory))
+        .route(
+            "/api/bots/{bot_id}/observatory/trigger",
+            post(trigger_bot_observatory),
+        )
+        .route(
+            "/api/bots/{bot_id}/observatory/ideas/{idea_id}/feedback",
+            post(record_observatory_idea_feedback),
+        )
         .route("/api/bots/{bot_id}/runs/{run_id}", get(get_bot_run))
         .route(
             "/api/bots/{bot_id}/runs/{run_id}/messages",
@@ -2611,6 +2633,221 @@ async fn list_bot_runs(
         runs: runs.into_iter().map(|run| map_bot_run(&bot, run)).collect(),
         next_cursor,
     }))
+}
+
+async fn get_observatory_overview(
+    SessionAuth(caller): SessionAuth,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let all_bots = state::bots()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .values()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let visible_bots: Vec<_> = all_bots
+        .into_iter()
+        .filter(|bot| {
+            is_operator_admin(&caller)
+                || (!bot.submitter_address.is_empty()
+                    && bot.submitter_address.eq_ignore_ascii_case(&caller))
+        })
+        .filter(|bot| !state::bot_runtime_status(bot).archived)
+        .collect();
+
+    let bot_count = visible_bots.len();
+    let mut bot_records = stream::iter(visible_bots)
+        .map(|bot| async move {
+            match trading_blueprint_lib::jobs::observatory_cadence::read_observatory_records(&bot)
+                .await
+            {
+                Ok(records) => json!({
+                    "bot_id": bot.id,
+                    "bot_name": effective_bot_name(&bot),
+                    "strategy_type": bot.strategy_type,
+                    "trading_active": bot.trading_active,
+                    "paper_trade": bot.paper_trade,
+                    "records": records,
+                    "error": null,
+                }),
+                Err(error) => json!({
+                    "bot_id": bot.id,
+                    "bot_name": effective_bot_name(&bot),
+                    "strategy_type": bot.strategy_type,
+                    "trading_active": bot.trading_active,
+                    "paper_trade": bot.paper_trade,
+                    "records": {
+                        "schema_version": 1,
+                        "world_signal_digests": [],
+                        "reflection_runs": [],
+                        "ideas": [],
+                        "delegated_work_sessions": [],
+                        "owner_feedback": [],
+                    },
+                    "error": error,
+                }),
+            }
+        })
+        .buffer_unordered(4)
+        .collect::<Vec<_>>()
+        .await;
+    bot_records.sort_by(|a, b| {
+        a.get("bot_name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .cmp(
+                b.get("bot_name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+            )
+    });
+
+    let reflection_count: usize = bot_records
+        .iter()
+        .map(|entry| {
+            entry
+                .get("records")
+                .and_then(|records| records.get("reflection_runs"))
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0)
+        })
+        .sum();
+    let idea_count: usize = bot_records
+        .iter()
+        .map(|entry| {
+            entry
+                .get("records")
+                .and_then(|records| records.get("ideas"))
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0)
+        })
+        .sum();
+    let delegated_count: usize = bot_records
+        .iter()
+        .map(|entry| {
+            entry
+                .get("records")
+                .and_then(|records| records.get("delegated_work_sessions"))
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0)
+        })
+        .sum();
+
+    Ok(Json(json!({
+        "schema_version": 1,
+        "bot_count": bot_count,
+        "totals": {
+            "reflection_runs": reflection_count,
+            "ideas": idea_count,
+            "delegated_work_sessions": delegated_count,
+        },
+        "bots": bot_records,
+    })))
+}
+
+async fn get_bot_observatory(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+    let records = trading_blueprint_lib::jobs::observatory_cadence::read_observatory_records(&bot)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+
+    Ok(Json(json!({
+        "schema_version": 1,
+        "bot_id": bot.id,
+        "bot_name": effective_bot_name(&bot),
+        "strategy_type": bot.strategy_type,
+        "trading_active": bot.trading_active,
+        "paper_trade": bot.paper_trade,
+        "records": records,
+    })))
+}
+
+async fn trigger_bot_observatory(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+    Json(body): Json<ObservatoryTriggerRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+    let runtime = state::bot_runtime_status(&bot);
+    if !runtime.sandbox_exists {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("Bot {} has no live sandbox", bot.id),
+        ));
+    }
+    let reason = body
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("manual")
+        .to_string();
+    let result = trading_blueprint_lib::jobs::observatory_cadence::trigger_observatory_for_bot(
+        &bot,
+        trading_blueprint_lib::jobs::observatory_cadence::ObservatoryTriggerOptions {
+            trigger: reason,
+            requested_by: Some(caller),
+        },
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+
+    Ok(Json(json!({
+        "schema_version": 1,
+        "status": "completed",
+        "bot_id": result.bot_id,
+        "run_id": result.run_id,
+        "started_at": result.started_at,
+        "completed_at": result.completed_at,
+        "workflow_id": result.workflow_id,
+        "records": result.records,
+    })))
+}
+
+async fn record_observatory_idea_feedback(
+    SessionAuth(caller): SessionAuth,
+    Path((bot_id, idea_id)): Path<(String, String)>,
+    Json(body): Json<ObservatoryIdeaFeedbackRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+    let action = body.action.trim().to_ascii_lowercase();
+    if !matches!(
+        action.as_str(),
+        "interesting" | "rejected" | "reject" | "delegate_research" | "delegate_build" | "mute"
+    ) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Unsupported Observatory feedback action".to_string(),
+        ));
+    }
+    let normalized_action = if action == "reject" {
+        "rejected".to_string()
+    } else {
+        action
+    };
+    let result = trading_blueprint_lib::jobs::observatory_cadence::append_observatory_feedback(
+        &bot,
+        trading_blueprint_lib::jobs::observatory_cadence::ObservatoryFeedbackInput {
+            idea_id,
+            action: normalized_action,
+            note: body.note,
+            owner: Some(caller),
+        },
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+
+    Ok(Json(json!({
+        "schema_version": 1,
+        "status": "recorded",
+        "result": result,
+    })))
 }
 
 async fn get_bot_run(

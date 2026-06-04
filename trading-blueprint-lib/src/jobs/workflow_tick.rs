@@ -619,6 +619,10 @@ fn fast_tick_tool_bundle(tool: &str) -> Option<Vec<(&'static str, &'static str)>
             "/home/agent/tools/self-improvement-loop.ts",
             include_str!("../prompts/tools/self_improvement_loop.ts"),
         ),
+        (
+            "/home/agent/tools/observatory-loop.js",
+            include_str!("../prompts/tools/observatory_loop.js"),
+        ),
     ];
 
     match tool {
@@ -1184,6 +1188,10 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
     // 3.6. Self-improvement cadence: recover delegated MCP work and generate new
     //      backtest candidates through the sandbox TS tools when no trial is open.
     crate::jobs::self_improvement_cadence::run_self_improvement_cadence(&runnable_bots).await;
+
+    // 3.7. Observatory cadence: write owner-visible reflection/idea/delegation
+    //      artifacts without relying on the generic workflow runner.
+    crate::jobs::observatory_cadence::run_observatory_cadence(&runnable_bots).await;
 
     // 4. Run fee settlement for winding-down bots
     let winding_down: Vec<_> = bots()?
