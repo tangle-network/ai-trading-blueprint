@@ -3794,36 +3794,9 @@ async fn read_self_improvement_tasks(
     target: &trading_blueprint_lib::operator_chat::SidecarChatTarget,
     _bot_id: &str,
 ) -> Result<serde_json::Value, ApiError> {
-    let command = r#"node <<'NODE'
-const fs = require('node:fs')
-const p = '/home/agent/.evolve/mcp-self-improvement/tasks'
-const files = fs.existsSync(p) ? fs.readdirSync(p).filter((f) => f.endsWith('.json')).sort() : []
-const runs = files.map((file) => {
-  const task = JSON.parse(fs.readFileSync(`${p}/${file}`, 'utf8'))
-  const variants = task.variants || []
-  const winner = variants.find((v) => v.variant_id === task.winner_variant_id) || variants[variants.length - 1] || {}
-  const shots = winner.shots || []
-  return {
-    task_id: task.task_id,
-    status: task.status,
-    created_at: task.created_at || task.started_at || null,
-    updated_at: task.updated_at || null,
-    spec: task.spec || '',
-    winner_variant_id: task.winner_variant_id || null,
-    patch_sha256: task.patch_sha256 || null,
-    files_changed: task.files_changed || winner.files_changed || [],
-    tests: task.test_commands || [],
-    tests_passed: Boolean(winner.test_passed || shots.some((shot) => (shot.tests || []).length > 0 && (shot.tests || []).every((test) => test.ok))),
-    rounds_used: winner.rounds_used || shots.length || 0,
-    failure: task.failure || winner.errored_reason || null,
-    latest_shot: shots[shots.length - 1] || null,
-  }
-})
-console.log(JSON.stringify({ runs }))
-NODE"#;
     let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
         sidecar_url: target.sidecar_url.clone(),
-        command: command.to_string(),
+        command: READ_SELF_IMPROVEMENT_TASKS_JS.to_string(),
         cwd: "/home/agent".to_string(),
         env_json: "{}".to_string(),
         timeout_ms: 30_000,
@@ -3850,6 +3823,109 @@ NODE"#;
         )
     })
 }
+
+const READ_SELF_IMPROVEMENT_TASKS_JS: &str = r#"node <<'NODE'
+const fs = require('node:fs')
+
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return null }
+}
+
+function jsonFiles(dir) {
+  if (!fs.existsSync(dir)) return []
+  return fs.readdirSync(dir)
+    .filter((f) => f.endsWith('.json'))
+    .sort()
+    .map((file) => ({ file, value: readJson(`${dir}/${file}`) }))
+    .filter((entry) => entry.value && typeof entry.value === 'object')
+}
+
+function tail(file, maxBytes = 20000) {
+  try {
+    const stat = fs.statSync(file)
+    const fd = fs.openSync(file, 'r')
+    const len = Math.min(stat.size, maxBytes)
+    const buffer = Buffer.alloc(len)
+    fs.readSync(fd, buffer, 0, len, stat.size - len)
+    fs.closeSync(fd)
+    return buffer.toString('utf8')
+  } catch {
+    return null
+  }
+}
+
+function epochish(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const parsed = Date.parse(String(value || ''))
+  return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0
+}
+
+const mcpDir = '/home/agent/.evolve/mcp-self-improvement/tasks'
+const mcpRuns = jsonFiles(mcpDir).map(({ value: task }) => {
+  const variants = task.variants || []
+  const winner = variants.find((v) => v.variant_id === task.winner_variant_id) || variants[variants.length - 1] || {}
+  const shots = winner.shots || []
+  return {
+    task_id: task.task_id,
+    status: task.status,
+    created_at: task.created_at || task.started_at || null,
+    updated_at: task.updated_at || null,
+    spec: task.spec || '',
+    winner_variant_id: task.winner_variant_id || null,
+    patch_sha256: task.patch_sha256 || null,
+    files_changed: task.files_changed || winner.files_changed || [],
+    tests: task.test_commands || [],
+    tests_passed: Boolean(winner.test_passed || shots.some((shot) => (shot.tests || []).length > 0 && (shot.tests || []).every((test) => test.ok))),
+    rounds_used: winner.rounds_used || shots.length || 0,
+    failure: task.failure || winner.errored_reason || null,
+    latest_shot: shots[shots.length - 1] || null,
+  }
+})
+
+const runtimeDir = '/home/agent/.evolve/self-improvement'
+const runtimeRuns = jsonFiles(runtimeDir).map(({ file, value: report }) => {
+  const apiRun = report.self_improve?.data?.run || {}
+  const promotion = report.self_improve?.data?.promotion || {}
+  const statusCode = Number(report.self_improve?.status || 0)
+  const status = apiRun.status
+    || (statusCode >= 200 && statusCode < 300 ? 'recorded' : statusCode > 0 ? 'failed' : 'running_or_failed')
+  return {
+    task_id: report.run_id || apiRun.run_id || file.replace(/\.json$/, ''),
+    run_id: apiRun.run_id || report.run_id || null,
+    status,
+    source: 'runtime-reflection-loop',
+    created_at: report.created_at || apiRun.created_at || null,
+    updated_at: report.created_at || apiRun.created_at || null,
+    spec: report.intent || apiRun.user_intent || '',
+    user_intent: report.intent || apiRun.user_intent || '',
+    candidate_hash: apiRun.candidate_hash || null,
+    approved: typeof apiRun.approved === 'boolean' ? apiRun.approved : (typeof promotion.approved === 'boolean' ? promotion.approved : null),
+    blockers: apiRun.blockers || promotion.blockers || [],
+    candles_used: apiRun.candles_used ?? promotion.candles_used ?? null,
+    patch_sha256: null,
+    files_changed: [],
+    tests: ['bun --bun /home/agent/tools/self-improvement-loop.ts status'],
+    tests_passed: ['backtest_pass', 'paper_trial', 'evidence_met', 'promoted', 'staged_for_operator_approval', 'recorded'].includes(status),
+    latest_shot: {
+      run_id: report.run_id || null,
+      package_status: report.package_status || null,
+      candidate_search: report.candidate_search || null,
+      self_improve: report.self_improve || null,
+    },
+  }
+})
+
+const runs = [...runtimeRuns, ...mcpRuns].sort((a, b) => epochish(b.created_at) - epochish(a.created_at))
+console.log(JSON.stringify({
+  runs,
+  runtime_runs: runtimeRuns,
+  mcp_runs: mcpRuns,
+  logs: {
+    generation: tail('/home/agent/logs/self-improvement-generation.log'),
+    maintenance: tail('/home/agent/logs/self-improvement-maintenance.log'),
+  },
+}))
+NODE"#;
 
 // ── Chat session proxy handlers ─────────────────────────────────────────
 
@@ -8235,5 +8311,21 @@ mod tests {
         assert_eq!(position.leverage, Some(20.0));
         assert_eq!(position.liquidation_price, Some(1696.3270408163));
         assert_eq!(position.weight, Some((2.57049 / 8.187387) * 100.0));
+    }
+
+    #[test]
+    fn self_improvement_reader_includes_runtime_runs_and_generation_logs() {
+        assert!(
+            READ_SELF_IMPROVEMENT_TASKS_JS.contains("/home/agent/.evolve/self-improvement"),
+            "operator self-improvement route must expose runtime reflection-loop runs"
+        );
+        assert!(
+            READ_SELF_IMPROVEMENT_TASKS_JS.contains("runtime-reflection-loop"),
+            "runtime runs must be tagged so the UI can distinguish cadence-generated work"
+        );
+        assert!(
+            READ_SELF_IMPROVEMENT_TASKS_JS.contains("self-improvement-generation.log"),
+            "generation log tail must be exposed for failed/background runs"
+        );
     }
 }
