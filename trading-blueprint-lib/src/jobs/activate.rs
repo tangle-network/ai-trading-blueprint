@@ -1548,8 +1548,11 @@ mod tests {
         assert!(tool.contains("/evolution/sandbox/snapshot"));
         assert!(tool.contains("/evolution/promotion-gate"));
         assert!(tool.contains("/evolution/self-improve"));
+        assert!(tool.contains("ensureBacktestCandles"));
+        assert!(tool.contains("/market-data/candles/fetch"));
         assert!(tool.contains("mutateHarness"));
         assert!(tool.contains("candidate_search"));
+        assert!(tool.contains("candle_readiness"));
         assert!(tool.contains("FindingsStore"));
         assert!(tool.contains("runAnalystLoop"));
         assert!(tool.contains("proposeFromFindings"));

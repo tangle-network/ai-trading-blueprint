@@ -260,6 +260,48 @@ function envNumber(name) {
   return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
+function inferImprovementToken(intent, config) {
+  const explicit = process.env.SELF_IMPROVEMENT_TOKEN;
+  if (explicit) return explicit;
+  const text = `${intent || ''} ${JSON.stringify(config?.strategy_config || {})}`.toUpperCase();
+  if (text.includes('BTC')) return 'BTC';
+  if (text.includes('SOL')) return 'SOL';
+  return 'ETH';
+}
+
+function candleSourcesForIntent(intent) {
+  const lower = String(intent || '').toLowerCase();
+  const primary = lower.includes('hyperliquid') ? 'hyperliquid' : 'binance';
+  return [primary, 'binance', 'coinbase', 'hyperliquid'].filter((source, index, all) => all.indexOf(source) === index);
+}
+
+async function candleCount(token) {
+  const response = await apiCall('GET', `/market-data/candles?token=${encodeURIComponent(token)}&limit=25`);
+  const candles = Array.isArray(response.data?.candles) ? response.data.candles : [];
+  return { status: response.status, count: candles.length };
+}
+
+async function ensureBacktestCandles(token, intent, minimum = 20) {
+  const before = await candleCount(token).catch((error) => ({ status: 0, count: 0, error: String(error.message || error) }));
+  if (before.count >= minimum) return { ok: true, token, minimum, before, after: before, attempts: [] };
+
+  const attempts = [];
+  for (const source of candleSourcesForIntent(intent)) {
+    const attempt = await apiCall('POST', '/market-data/candles/fetch', {
+      tokens: [token],
+      interval: process.env.SELF_IMPROVEMENT_CANDLE_INTERVAL || '1h',
+      limit: Number(process.env.SELF_IMPROVEMENT_CANDLE_LIMIT || 500),
+      source,
+    }).catch((error) => ({ status: 0, data: String(error.message || error) }));
+    attempts.push({ source, status: attempt.status, data: attempt.data });
+    const after = await candleCount(token).catch((error) => ({ status: 0, count: 0, error: String(error.message || error) }));
+    if (after.count >= minimum) return { ok: true, token, minimum, before, after, attempts };
+  }
+
+  const after = await candleCount(token).catch((error) => ({ status: 0, count: 0, error: String(error.message || error) }));
+  return { ok: false, token, minimum, before, after, attempts };
+}
+
 function riskBudgetRequest(intent) {
   const lower = String(intent || '').toLowerCase();
   const hyperliquidPrediction = lower.includes('hyperliquid')
@@ -320,11 +362,13 @@ async function probeCandidate(current, candidate, token, trainPct, minPaperTrade
 
 async function selectCandidate(runId, intent, current) {
   const populationSize = Math.max(1, Math.min(Number(process.env.SELF_IMPROVEMENT_POPULATION_SIZE || 16), 64));
-  const token = process.env.SELF_IMPROVEMENT_TOKEN || 'ETH';
+  const config = loadConfig();
+  const token = inferImprovementToken(intent, config);
   const trainPct = Number(process.env.SELF_IMPROVEMENT_TRAIN_PCT || 0.7);
   const minPaperTrades = Number(process.env.SELF_IMPROVEMENT_MIN_PAPER_TRADES || 20);
   const maxPaperDrawdownPct = Number(process.env.SELF_IMPROVEMENT_MAX_PAPER_DRAWDOWN_PCT || 10);
   const riskBudget = riskBudgetRequest(intent);
+  const candle_readiness = await ensureBacktestCandles(token, intent);
   const probes = [];
 
   for (let i = 0; i < populationSize; i += 1) {
@@ -357,6 +401,7 @@ async function selectCandidate(runId, intent, current) {
   return {
     population_size: populationSize,
     token,
+    candle_readiness,
     train_pct: trainPct,
     min_paper_trades: minPaperTrades,
     max_paper_drawdown_pct: maxPaperDrawdownPct,
@@ -550,6 +595,8 @@ async function run(intent) {
     analyst,
     candidate_search: {
       population_size: candidateSearch.population_size,
+      token: candidateSearch.token,
+      candle_readiness: candidateSearch.candle_readiness,
       selected_index: candidateSearch.selected_index,
       backtest_passers: candidateSearch.backtest_passers,
       risk_budget: candidateSearch.risk_budget,
