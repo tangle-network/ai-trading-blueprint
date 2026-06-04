@@ -190,3 +190,54 @@ test('external signal evidence distinguishes unavailable provider from missing o
     restore()
   }
 })
+
+test('not-required external signal evidence stays unchecked even with market signals', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reflection-loop-'))
+  const { api, restore } = loadReflectionLoop(tmp)
+  try {
+    const context = api.recordDecisionContext({
+      family: 'perp',
+      run_started_at: '2026-06-04T12:05:00.000Z',
+      run_completed_at: '2026-06-04T12:05:01.000Z',
+      config: {
+        bot_id: 'bot-perp',
+        strategy_type: 'perp',
+        strategy_config: {
+          user_prompt: 'Trade ETH perps on GMX and Vertex.',
+          available_protocols: ['gmx_v2', 'vertex'],
+          paper_trade: true,
+        },
+      },
+      checked_state: {
+        total_nav_usdc: 10000,
+        market: { eth_price_usd: 1750, eth_candles: 80 },
+        external_signal_evidence: {
+          checked: false,
+          required: false,
+          provider_configured: false,
+          source_status: 'not_required',
+          unavailable: false,
+          market_signal_count: 7,
+          external_observation_count: 0,
+          generated_signal_count: 7,
+        },
+      },
+      decision: { action: 'skip', reason: 'paper-gmx-vertex-no-funding-edge-confirmed' },
+      metrics: {
+        portfolio_value_usd: 10000,
+        eth_price_usd: 1750,
+        external_signal_checked: 1,
+        external_signal_required: 0,
+        external_signal_unavailable: 0,
+        signals_generated: 7,
+      },
+    })
+
+    assert.equal(context.evidence.external_signal_checked, false)
+    assert.equal(context.evidence.external_signal_required, false)
+    assert.equal(context.evidence.external_signal_unavailable, false)
+    assert.equal(context.evidence.observed_external_signals, true)
+  } finally {
+    restore()
+  }
+})

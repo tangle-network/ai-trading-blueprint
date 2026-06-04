@@ -433,10 +433,13 @@ function signalEvidenceRecord(state, metrics) {
   const stateEvidence = isRecord(state) && isRecord(state.external_signal_evidence)
     ? state.external_signal_evidence
     : {};
+  const stateChecked = typeof stateEvidence.checked === 'boolean' ? stateEvidence.checked : null;
+  const stateRequired = typeof stateEvidence.required === 'boolean' ? stateEvidence.required : null;
+  const stateUnavailable = typeof stateEvidence.unavailable === 'boolean' ? stateEvidence.unavailable : null;
   return {
-    checked: stateEvidence.checked === true || asNumber(metrics && metrics.external_signal_checked, 0) > 0,
-    required: stateEvidence.required === true || asNumber(metrics && metrics.external_signal_required, 0) > 0,
-    unavailable: stateEvidence.unavailable === true || asNumber(metrics && metrics.external_signal_unavailable, 0) > 0,
+    checked: stateChecked ?? asNumber(metrics && metrics.external_signal_checked, 0) > 0,
+    required: stateRequired ?? asNumber(metrics && metrics.external_signal_required, 0) > 0,
+    unavailable: stateUnavailable ?? asNumber(metrics && metrics.external_signal_unavailable, 0) > 0,
     source_status: primitive(stateEvidence.source_status) ?? null,
     market_signal_count: asNumber(stateEvidence.market_signal_count, asNumber(metrics && metrics.market_signal_count, 0)),
     external_observation_count: asNumber(stateEvidence.external_observation_count, asNumber(metrics && metrics.external_observation_count, 0)),
