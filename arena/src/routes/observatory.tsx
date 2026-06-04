@@ -506,9 +506,8 @@ export default function ObservatoryPage() {
   const openIdeas = bots.reduce((sum, bot) => sum + countOpenIdeas(bot), 0);
   const delegated = overview.data?.totals.delegated_work_sessions ?? 0;
 
-  const botListStyle: CSSProperties = {
-    width: `${layout.botListPercent}%`,
-    flexBasis: `${layout.botListPercent}%`,
+  const botListStyle = {
+    '--observatory-bot-list-percent': `${layout.botListPercent}%`,
   };
 
   if (!isConnected && !hasOperatorSession) {
@@ -564,8 +563,8 @@ export default function ObservatoryPage() {
           aria-label="Agent Observatory"
         >
           <aside
-            style={botListStyle}
-            className="flex max-h-[40vh] min-h-0 shrink-0 flex-col overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] lg:max-h-none lg:border-b-0 lg:border-r"
+            style={botListStyle as CSSProperties}
+            className="flex max-h-[40vh] min-h-0 w-full shrink-0 flex-col overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] lg:max-h-none lg:w-[var(--observatory-bot-list-percent)] lg:basis-[var(--observatory-bot-list-percent)] lg:border-b-0 lg:border-r"
           >
             <div className="shrink-0 border-b border-[var(--arena-terminal-border)] px-3 py-2">
               <div className="flex items-center justify-between gap-3">
