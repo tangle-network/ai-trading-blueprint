@@ -245,6 +245,8 @@ describe('ObservatoryPage', () => {
     overviewState.isLoading = false;
     overviewState.isFetching = false;
     overviewState.isError = false;
+    overviewState.data.bots[0].records.ideas[0].proposed_action = 'delegate_research';
+    overviewState.data.bots[0].records.owner_feedback = [] as any;
     hoisted.useTradingRouteAutoAuthMock.mockClear();
     hoisted.triggerMutateMock.mockClear();
     hoisted.feedbackMutateMock.mockClear();
@@ -284,6 +286,34 @@ describe('ObservatoryPage', () => {
   it('records owner feedback from idea actions', async () => {
     const { default: ObservatoryPage } = await import('../observatory');
     render(<ObservatoryPage />, { wrapper: createWrapper() });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delegate research' }));
+    expect(hoisted.feedbackMutateMock).toHaveBeenCalledWith({
+      ideaId: 'idea-1',
+      action: 'delegate_research',
+    });
+  });
+
+  it('keeps delegated idea status and primary action visually consistent', async () => {
+    overviewState.data.bots[0].records.ideas[0].proposed_action = 'delegate_build';
+    overviewState.data.bots[0].records.owner_feedback = [
+      {
+        feedback_id: 'feedback-1',
+        idea_id: 'idea-1',
+        bot_id: 'bot-1',
+        owner: '0xowner',
+        action: 'delegate_research',
+        note: null,
+        created_at: '2026-06-04T10:01:00.000Z',
+      },
+    ] as any;
+
+    const { default: ObservatoryPage } = await import('../observatory');
+    render(<ObservatoryPage />, { wrapper: createWrapper() });
+
+    expect(screen.getByText('delegate_research')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delegate research' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delegate build' })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Delegate research' }));
     expect(hoisted.feedbackMutateMock).toHaveBeenCalledWith({

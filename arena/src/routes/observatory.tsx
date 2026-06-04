@@ -167,6 +167,18 @@ function pressureClass(level: string): string {
   return 'text-emerald-700 dark:text-emerald-300';
 }
 
+function delegateActionForIdea(
+  idea: ObservatoryIdea,
+  feedback?: string,
+): 'delegate_research' | 'delegate_build' {
+  if (feedback === 'delegate_research' || feedback === 'delegate_build') return feedback;
+  return idea.proposed_action === 'delegate_build' ? 'delegate_build' : 'delegate_research';
+}
+
+function delegateActionLabel(action: 'delegate_research' | 'delegate_build'): string {
+  return action === 'delegate_build' ? 'Delegate build' : 'Delegate research';
+}
+
 function researchTaskById(tasks: ObservatoryResearchTask[] | undefined): Map<string, ObservatoryResearchTask> {
   const map = new Map<string, ObservatoryResearchTask>();
   for (const task of tasks ?? []) {
@@ -295,6 +307,7 @@ function IdeaList({
     <div className="divide-y divide-[var(--arena-terminal-border)] border border-[var(--arena-terminal-border)]">
       {ideas.map((idea) => {
         const feedback = feedbackByIdeaId.get(idea.idea_id);
+        const delegateAction = delegateActionForIdea(idea, feedback);
         return (
           <article key={idea.idea_id} className="bg-[var(--arena-terminal-bg)] p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -322,10 +335,10 @@ function IdeaList({
               <button
                 type="button"
                 disabled={isPending}
-                onClick={() => onFeedback(idea.idea_id, idea.proposed_action === 'delegate_build' ? 'delegate_build' : 'delegate_research')}
+                onClick={() => onFeedback(idea.idea_id, delegateAction)}
                 className="h-7 border border-[#50d2c1]/35 bg-[#50d2c1]/10 px-2 font-display text-xs text-[var(--arena-terminal-text)] transition-colors hover:bg-[#50d2c1]/18 disabled:opacity-50"
               >
-                {idea.proposed_action === 'delegate_build' ? 'Delegate build' : 'Delegate research'}
+                {delegateActionLabel(delegateAction)}
               </button>
               <button
                 type="button"
@@ -691,69 +704,69 @@ function Inspector({
   const selectedIdea = selectedSession?.idea_id ? ideasById.get(selectedSession.idea_id) : null;
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--arena-terminal-panel)]">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[var(--arena-terminal-border)] px-4 py-3">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <h2 className="truncate font-display text-lg font-semibold text-[var(--arena-terminal-text)]">
-              {bot.bot_name}
-            </h2>
-            <Link
-              to={`/arena/bot/${encodeURIComponent(bot.bot_id)}`}
-              className="inline-flex h-7 items-center gap-1 border border-[var(--arena-terminal-border)] px-2 font-display text-xs text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-            >
-              <span className="i-ph:chart-line-up text-sm" aria-hidden="true" />
-              Open
-            </Link>
-          </div>
-          <p className="mt-1 truncate font-data text-xs text-[var(--arena-terminal-text-muted)]">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--arena-terminal-panel)]">
+      <div className="flex shrink-0 flex-col gap-3 border-b border-[var(--arena-terminal-border)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1">
+          <h2 className="min-w-0 max-w-full truncate font-display text-lg font-semibold text-[var(--arena-terminal-text)]">
+            {bot.bot_name}
+          </h2>
+          <p className="mt-1 max-w-full break-words font-data text-xs text-[var(--arena-terminal-text-muted)] sm:truncate">
             {reflection ? `${reflection.trigger} · ${formatDate(reflection.created_at)}` : 'No Observatory record yet'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onTrigger}
-          disabled={triggerPending}
-          className="inline-flex h-9 items-center gap-2 border border-[#50d2c1]/40 bg-[#50d2c1]/12 px-3 font-display text-sm font-medium text-[var(--arena-terminal-text)] transition-colors hover:bg-[#50d2c1]/20 disabled:cursor-wait disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-        >
-          <span className={triggerPending ? 'i-ph:spinner-gap animate-spin text-sm' : 'i-ph:eye text-sm'} aria-hidden="true" />
-          {triggerPending ? 'Observing' : 'Observe now'}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Link
+            to={`/arena/bot/${encodeURIComponent(bot.bot_id)}`}
+            className="inline-flex h-9 items-center gap-1 border border-[var(--arena-terminal-border)] px-2 font-display text-xs text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+          >
+            <span className="i-ph:chart-line-up text-sm" aria-hidden="true" />
+            Open
+          </Link>
+          <button
+            type="button"
+            onClick={onTrigger}
+            disabled={triggerPending}
+            className="inline-flex h-9 items-center gap-2 border border-[#50d2c1]/40 bg-[#50d2c1]/12 px-3 font-display text-sm font-medium text-[var(--arena-terminal-text)] transition-colors hover:bg-[#50d2c1]/20 disabled:cursor-wait disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+          >
+            <span className={triggerPending ? 'i-ph:spinner-gap animate-spin text-sm' : 'i-ph:eye text-sm'} aria-hidden="true" />
+            {triggerPending ? 'Observing' : 'Observe now'}
+          </button>
+        </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        <div className="grid gap-4">
-          <section>
-            <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4">
+        <div className="grid min-w-0 gap-4">
+          <section className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h3 className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Latest reflection</h3>
               {usage && (
-                <span className="font-data text-xs text-[var(--arena-terminal-text-muted)]">
+                <span className="w-full max-w-full break-words font-data text-xs text-[var(--arena-terminal-text-muted)] sm:w-auto sm:whitespace-nowrap">
                   {usage.reporting_status} · {usage.total_tokens} tok · {formatCost(usage.cost_usd)}
                 </span>
               )}
             </div>
             {reflection ? (
               <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3">
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_16rem]">
-                  <div>
+                <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_16rem]">
+                  <div className="min-w-0">
                     {reflection.conclusions.map((conclusion) => (
-                      <p key={conclusion} className="text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
+                      <p key={conclusion} className="break-words text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
                         {conclusion}
                       </p>
                     ))}
                   </div>
                   <div className="grid grid-cols-3 gap-2 font-data text-xs lg:grid-cols-1">
-                    <div>
+                    <div className="min-w-0">
                       <div className="text-base font-bold text-[var(--arena-terminal-text)]">{reflection.findings.length}</div>
-                      <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Findings</div>
+                      <div className="uppercase tracking-normal text-[var(--arena-terminal-text-muted)]">Findings</div>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="text-base font-bold text-[var(--arena-terminal-text)]">{reflection.idea_ids.length}</div>
-                      <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Ideas</div>
+                      <div className="uppercase tracking-normal text-[var(--arena-terminal-text-muted)]">Ideas</div>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className={`text-base font-bold ${pressureClass(pressure.pressure_level)}`}>{pressure.active_sessions}</div>
-                      <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Active</div>
+                      <div className="uppercase tracking-normal text-[var(--arena-terminal-text-muted)]">Active</div>
                     </div>
                   </div>
                 </div>
@@ -765,17 +778,17 @@ function Inspector({
             )}
           </section>
 
-          <section>
+          <section className="min-w-0">
             <h3 className="mb-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Signal digest</h3>
             <SignalDigest digest={digest} />
           </section>
 
-          <section>
+          <section className="min-w-0">
             <h3 className="mb-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Findings</h3>
             <FindingList findings={reflection?.findings ?? []} />
           </section>
 
-          <section>
+          <section className="min-w-0">
             <h3 className="mb-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Ideas</h3>
             <IdeaList
               ideas={bot.records.ideas}
@@ -785,7 +798,7 @@ function Inspector({
             />
           </section>
 
-          <section>
+          <section className="min-w-0">
             <h3 className="mb-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Delegated work</h3>
             <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
               <DelegatedWorkList
@@ -874,7 +887,7 @@ export default function ObservatoryPage() {
   }
 
   return (
-    <div className="flex min-h-full w-full flex-col lg:h-full lg:overflow-hidden">
+    <div className="flex min-h-full w-full min-w-0 flex-col overflow-x-hidden lg:h-full lg:overflow-hidden">
       <ArenaPageHeader
         title="Observatory"
         titleWidthClassName="min-[1180px]:w-[12rem]"
