@@ -266,8 +266,16 @@ describe('ObservatoryPage', () => {
     expect(screen.getByText('Dedupe')).toBeInTheDocument();
     expect(screen.getByText('Blocked')).toBeInTheDocument();
     expect(screen.getByText('active_delegation_cap')).toBeInTheDocument();
-    expect(screen.getByText(/manual_or_research_tick/)).toBeInTheDocument();
-    expect(screen.getByText(/research-1/)).toBeInTheDocument();
+    expect(screen.getAllByText(/manual_or_research_tick/).length).toBeGreaterThan(1);
+    expect(screen.getAllByText(/research-1/).length).toBeGreaterThan(1);
+    expect(screen.getByLabelText('Work session transcript')).toBeInTheDocument();
+    expect(screen.getByText('Driver')).toBeInTheDocument();
+    expect(screen.getByText('Coding agent')).toBeInTheDocument();
+    expect(screen.getByText('Research-only Observatory task for bot bot-1.')).toBeInTheDocument();
+    expect(screen.getByText('No result recorded yet. Current status: queued_research.')).toBeInTheDocument();
+    expect(screen.getByText('Source-grounded finding is recorded.')).toBeInTheDocument();
+    expect(screen.getByText('can_trade')).toBeInTheDocument();
+    expect(screen.getAllByText('false').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: /observe now/i }));
     expect(hoisted.triggerMutateMock).toHaveBeenCalledWith('manual');

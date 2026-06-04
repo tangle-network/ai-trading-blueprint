@@ -174,6 +174,14 @@ function researchTaskById(tasks: ObservatoryResearchTask[] | undefined): Map<str
   return map;
 }
 
+function ideaById(ideas: ObservatoryIdea[]): Map<string, ObservatoryIdea> {
+  const map = new Map<string, ObservatoryIdea>();
+  for (const idea of ideas) {
+    map.set(idea.idea_id, idea);
+  }
+  return map;
+}
+
 function useSelectedBot(bots: ObservatoryOverviewBot[]) {
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
 
@@ -338,10 +346,14 @@ function DelegatedWorkList({
   sessions,
   pressure,
   researchTasks,
+  selectedSessionId,
+  onSelectSession,
 }: {
   sessions: ObservatoryDelegatedWorkSession[];
   pressure: ObservatoryDelegationPressure;
   researchTasks?: ObservatoryResearchTask[];
+  selectedSessionId?: string | null;
+  onSelectSession: (sessionId: string) => void;
 }) {
   const uniqueSessions = uniqueDelegatedWorkSessions(sessions);
   const taskById = researchTaskById(researchTasks);
@@ -386,8 +398,19 @@ function DelegatedWorkList({
       <div className="divide-y divide-[var(--arena-terminal-border)]">
         {uniqueSessions.slice(0, 8).map((session) => {
           const task = session.task_id ? taskById.get(session.task_id) : null;
+          const selected = selectedSessionId === session.session_id;
           return (
-            <div key={session.session_id} className="grid gap-2 bg-[var(--arena-terminal-bg)] p-3 sm:grid-cols-[9rem_minmax(0,1fr)_7rem]">
+            <button
+              key={session.session_id}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onSelectSession(session.session_id)}
+              className={`grid w-full gap-2 p-3 text-left transition-colors sm:grid-cols-[9rem_minmax(0,1fr)_7rem] ${
+                selected
+                  ? 'bg-[var(--arena-terminal-panel-strong)]'
+                  : 'bg-[var(--arena-terminal-bg)] hover:bg-[var(--arena-terminal-panel)]'
+              } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#50d2c1]/60`}
+            >
               <span className="truncate font-data text-xs text-[var(--arena-terminal-text-muted)]">
                 {session.source}
               </span>
@@ -401,9 +424,174 @@ function DelegatedWorkList({
               <span className={`text-right font-data text-xs ${statusClass(session.status)}`}>
                 {session.status}
               </span>
-            </div>
+            </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function TraceMessage({
+  role,
+  title,
+  meta,
+  icon,
+  align = 'left',
+  children,
+}: {
+  role: string;
+  title: string;
+  meta?: string | null;
+  icon: string;
+  align?: 'left' | 'right';
+  children: string;
+}) {
+  return (
+    <div className={`flex ${align === 'right' ? 'justify-end' : 'justify-start'}`}>
+      <article
+        className={`max-w-[92%] border px-3 py-2.5 ${
+          align === 'right'
+            ? 'border-[#50d2c1]/35 bg-[#50d2c1]/10'
+            : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]'
+        }`}
+      >
+        <div className="mb-2 flex items-center gap-2">
+          <span className={`${icon} text-base ${align === 'right' ? 'text-[#50d2c1]' : 'text-[var(--arena-terminal-text-muted)]'}`} aria-hidden="true" />
+          <div className="min-w-0">
+            <div className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+              {role}
+            </div>
+            <div className="truncate font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
+              {title}{meta ? ` · ${meta}` : ''}
+            </div>
+          </div>
+        </div>
+        <p className="whitespace-pre-wrap break-words text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
+          {children}
+        </p>
+      </article>
+    </div>
+  );
+}
+
+function TraceDataPanel({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="min-w-0 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3">
+      <h5 className="mb-2 flex items-center gap-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+        <span className={`${icon} text-base text-[var(--arena-terminal-text-muted)]`} aria-hidden="true" />
+        {title}
+      </h5>
+      {children}
+    </section>
+  );
+}
+
+function WorkSessionTrace({
+  session,
+  task,
+  idea,
+}: {
+  session: ObservatoryDelegatedWorkSession | null;
+  task?: ObservatoryResearchTask | null;
+  idea?: ObservatoryIdea | null;
+}) {
+  if (!session) {
+    return (
+      <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3 text-sm text-[var(--arena-terminal-text-secondary)]">
+        Select delegated work to inspect its prompt, artifacts, and gates.
+      </div>
+    );
+  }
+
+  const safetyEntries = Object.entries(task?.safety_limits ?? {});
+  const evidenceRefs = task?.evidence_refs?.length ? task.evidence_refs : idea?.evidence_refs ?? [];
+  const driverText = task?.prompt ?? idea?.thesis ?? session.summary;
+  const agentText = task?.result_summary
+    || (task?.result_ref ? `Result artifact: ${task.result_ref}` : null)
+    || `No result recorded yet. Current status: ${session.status}.`;
+
+  return (
+    <div className="min-w-0 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)]" aria-label="Work session transcript">
+      <div className="border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h4 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+              {task?.title ?? session.summary}
+            </h4>
+            <p className="mt-1 truncate font-data text-xs text-[var(--arena-terminal-text-muted)]">
+              {session.source} · {formatDate(session.created_at)} · {session.task_id ?? session.session_id}
+            </p>
+          </div>
+          <span className={`font-data text-xs ${statusClass(session.status)}`}>
+            {session.status}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid gap-3 p-3">
+        <div className="space-y-3">
+          <TraceMessage
+            role="Driver"
+            title="Owner / Observatory"
+            meta={task?.worker_launch ?? session.source}
+            icon="i-ph:user-circle"
+            align="right"
+          >
+            {driverText}
+          </TraceMessage>
+
+          <TraceMessage
+            role="Coding agent"
+            title={task?.worker ?? 'Delegated worker'}
+            meta={session.status}
+            icon="i-ph:code"
+          >
+            {agentText}
+          </TraceMessage>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <TraceDataPanel title="Artifacts" icon="i-ph:archive">
+            <div className="mt-2 grid gap-1.5 font-data text-xs text-[var(--arena-terminal-text-secondary)]">
+              <span className="break-all">{session.artifact_ref ?? 'No session artifact recorded.'}</span>
+              {evidenceRefs.slice(0, 4).map((ref) => (
+                <span key={ref} className="break-all text-[var(--arena-terminal-text-muted)]">{ref}</span>
+              ))}
+            </div>
+          </TraceDataPanel>
+
+          <TraceDataPanel title="Gates" icon="i-ph:shield-check">
+            <div className="mt-2 grid gap-1.5 font-data text-xs text-[var(--arena-terminal-text-secondary)]">
+              {safetyEntries.length > 0 ? safetyEntries.map(([key, value]) => (
+                <span key={key} className="flex min-w-0 items-center justify-between gap-3">
+                  <span className="truncate text-[var(--arena-terminal-text-muted)]">{key}</span>
+                  <span className="shrink-0 text-[var(--arena-terminal-text)]">{String(value)}</span>
+                </span>
+              )) : (
+                <span>No explicit task safety limits recorded.</span>
+              )}
+            </div>
+          </TraceDataPanel>
+        </div>
+
+        {task?.acceptance_criteria?.length ? (
+          <TraceDataPanel title="Acceptance" icon="i-ph:list-checks">
+            <div className="mt-2 grid gap-1.5 text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
+              {task.acceptance_criteria.map((criterion) => (
+                <span key={criterion}>{criterion}</span>
+              ))}
+            </div>
+          </TraceDataPanel>
+        ) : null}
       </div>
     </div>
   );
@@ -451,6 +639,19 @@ function Inspector({
   });
   const reflection = bot ? latestReflection(bot) : null;
   const digest = bot ? latestDigest(bot) : null;
+  const delegatedSessions = useMemo(
+    () => uniqueDelegatedWorkSessions(bot?.records.delegated_work_sessions ?? []),
+    [bot?.records.delegated_work_sessions],
+  );
+  const taskById = useMemo(
+    () => researchTaskById(bot?.records.research_tasks),
+    [bot?.records.research_tasks],
+  );
+  const ideasById = useMemo(
+    () => ideaById(bot?.records.ideas ?? []),
+    [bot?.records.ideas],
+  );
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const feedbackByIdeaId = useMemo(() => {
     const map = new Map<string, string>();
     for (const item of bot?.records.owner_feedback ?? []) {
@@ -458,6 +659,15 @@ function Inspector({
     }
     return map;
   }, [bot?.records.owner_feedback]);
+
+  useEffect(() => {
+    if (delegatedSessions.length === 0) {
+      setSelectedSessionId(null);
+      return;
+    }
+    if (selectedSessionId && delegatedSessions.some((session) => session.session_id === selectedSessionId)) return;
+    setSelectedSessionId(delegatedSessions[0].session_id);
+  }, [delegatedSessions, selectedSessionId]);
 
   if (!bot) {
     return (
@@ -469,6 +679,9 @@ function Inspector({
 
   const usage = reflection?.usage_summary;
   const pressure = delegationPressureForBot(bot);
+  const selectedSession = delegatedSessions.find((session) => session.session_id === selectedSessionId) ?? delegatedSessions[0] ?? null;
+  const selectedTask = selectedSession?.task_id ? taskById.get(selectedSession.task_id) : null;
+  const selectedIdea = selectedSession?.idea_id ? ideasById.get(selectedSession.idea_id) : null;
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--arena-terminal-panel)]">
@@ -567,11 +780,20 @@ function Inspector({
 
           <section>
             <h3 className="mb-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Delegated work</h3>
-            <DelegatedWorkList
-              sessions={bot.records.delegated_work_sessions}
-              pressure={pressure}
-              researchTasks={bot.records.research_tasks}
-            />
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+              <DelegatedWorkList
+                sessions={bot.records.delegated_work_sessions}
+                pressure={pressure}
+                researchTasks={bot.records.research_tasks}
+                selectedSessionId={selectedSession?.session_id ?? null}
+                onSelectSession={setSelectedSessionId}
+              />
+              <WorkSessionTrace
+                session={selectedSession}
+                task={selectedTask}
+                idea={selectedIdea}
+              />
+            </div>
           </section>
         </div>
       </div>
