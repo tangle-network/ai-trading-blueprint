@@ -945,6 +945,8 @@ fn default_asset_token_address(chain_id: u64) -> Option<&'static str> {
         1 => Some("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), // Ethereum USDC
         8453 => Some("0x833589fCD6eDb6E08f4c7C32D4f71b54bDA02913"), // Base USDC
         84532 => Some("0x036CbD53842c5426634e7929541eC2318f3dCF7e"), // Base Sepolia USDC
+        998 => Some("0x2B3370eE501B4a559b57D449569354196457D8Ab"), // HyperEVM testnet USDC
+        999 => Some("0xb88339CB7199b77E23DB6E890353E22632Ba630f"), // HyperEVM mainnet USDC
         _ => None,
     }
 }
@@ -7165,6 +7167,10 @@ mod tests {
             "hyperliquid_perp"
         );
         assert_eq!(create_bot_protocol_chain_id("hyperliquid_perp", 84532), 998);
+        assert_eq!(
+            default_asset_token_address(998),
+            Some("0x2B3370eE501B4a559b57D449569354196457D8Ab")
+        );
     }
 
     #[test]
