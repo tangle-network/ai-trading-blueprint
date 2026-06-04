@@ -1437,6 +1437,8 @@ mod tests {
         assert!(tool.contains("reflection-loop"));
         assert!(tool.contains("fundHyperliquidMargin"));
         assert!(tool.contains("no-clear-hyperliquid-setup"));
+        assert!(tool.contains("const capitalBase = Math.max(totalNav, usablePerpMargin)"));
+        assert!(tool.contains("sizing_capital_base_usdc"));
     }
 
     #[test]

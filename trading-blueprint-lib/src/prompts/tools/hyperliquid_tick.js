@@ -208,7 +208,11 @@ async function detectSetup(api, prices, account, totalNav, usablePerpMargin) {
   const sizing = harness.position_sizing || {};
   const positionFraction = asNumber(sizing.fraction, 0.1);
   const minOrderUsd = asNumber(harness.min_order_usd, 10);
-  const targetNotional = totalNav * positionFraction;
+  const capitalBase = Math.max(totalNav, usablePerpMargin);
+  const rawTargetNotional = capitalBase * positionFraction;
+  const targetNotional = usablePerpMargin > 0
+    ? Math.min(rawTargetNotional, usablePerpMargin)
+    : rawTargetNotional;
 
   const positions = normalizePositions(account);
   for (const position of positions) {
@@ -237,6 +241,7 @@ async function detectSetup(api, prices, account, totalNav, usablePerpMargin) {
       clear: false,
       reason: 'target-notional-below-minimum',
       target_notional_usdc: targetNotional,
+      sizing_capital_base_usdc: capitalBase,
       min_order_usd: minOrderUsd,
       usable_perp_margin_usdc: usablePerpMargin,
     };
@@ -284,6 +289,7 @@ async function detectSetup(api, prices, account, totalNav, usablePerpMargin) {
     clear: false,
     reason: 'no-clear-hyperliquid-setup',
     target_notional_usdc: targetNotional,
+    sizing_capital_base_usdc: capitalBase,
     min_order_usd: minOrderUsd,
     usable_perp_margin_usdc: usablePerpMargin,
   };
