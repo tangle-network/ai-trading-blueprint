@@ -95,6 +95,39 @@ function dedupeBySessionId(sessions, limit = 100) {
     .slice(0, limit);
 }
 
+function semanticIdeaKey(idea) {
+  if (!idea || typeof idea !== 'object') return null;
+  const botId = String(idea.bot_id || '');
+  const proposedAction = String(idea.proposed_action || '');
+  const thesis = String(idea.thesis || idea.title || '').trim().toLowerCase();
+  if (!botId || !thesis) return null;
+  return `semantic:${botId}:${proposedAction}:${thesis}`;
+}
+
+function dedupeByIdeaKey(ideas, limit = 100) {
+  const byKey = new Map();
+  for (const idea of ideas) {
+    if (!idea || typeof idea !== 'object') continue;
+    const key = idea.dedupe_key || semanticIdeaKey(idea) || idea.idea_id;
+    if (!key) continue;
+    const existing = byKey.get(key);
+    const createdAt = timestampMs(idea.updated_at || idea.created_at);
+    const existingAt = timestampMs(existing?.updated_at || existing?.created_at);
+    if (!existing || createdAt >= existingAt) {
+      byKey.set(key, idea);
+    }
+  }
+  return [...byKey.values()]
+    .sort((a, b) => timestampMs(b.updated_at || b.created_at) - timestampMs(a.updated_at || a.created_at))
+    .slice(0, limit);
+}
+
+function latestIdeaForStableKey(ideas, stableKey) {
+  return dedupeByIdeaKey(ideas, 500)
+    .filter((idea) => idea.dedupe_key === stableKey)
+    .sort((a, b) => timestampMs(b.updated_at || b.created_at) - timestampMs(a.updated_at || a.created_at))[0] || null;
+}
+
 function activeDelegationStatus(status) {
   return /dispatch|queued|running|pending|await|open/i.test(String(status || ''));
 }
@@ -342,24 +375,76 @@ function buildFindings({ contexts, reflections, decisions, usage, signalEvidence
   return findings.slice(0, 10);
 }
 
+function findingCategory(finding) {
+  const text = `${finding?.code || ''} ${finding?.summary || ''}`;
+  if (/decision-context|runtime-reflection|decision-log|usage-telemetry|telemetry/i.test(text)) {
+    return 'instrumentation';
+  }
+  if (/signal|news|source|market|world|coverage|research/i.test(text)) {
+    return 'research';
+  }
+  return 'operating-loop';
+}
+
+function ideaTitleForFinding({ botId, botName, finding, category }) {
+  const name = botName || botId;
+  switch (finding.code) {
+    case 'missing-decision-context':
+      return `Restore ${name} decision context capture`;
+    case 'missing-runtime-reflection':
+      return `Restore ${name} reflection capture`;
+    case 'missing-decision-log':
+      return `Restore ${name} decision log capture`;
+    case 'usage-telemetry-unreported':
+      return `Complete ${name} usage telemetry`;
+    case 'external-signal-source-unavailable':
+      return `Restore ${name} external signal source`;
+    case 'external-signal-not-checked':
+      return `Research ${name} signal gap`;
+    case 'repeated-skip':
+      return `Reduce ${name} repeated skip decisions`;
+    case 'self-improvement-failures-present':
+      return `Repair ${name} self-improvement failures`;
+    default:
+      return category === 'research'
+        ? `Research ${name} signal gap`
+        : `Improve ${name} operating loop`;
+  }
+}
+
+function ideaExpectedValueForFinding({ category, finding }) {
+  if (category === 'research') {
+    return 'Give the bot a fresher market/world-model input before it changes trading behavior.';
+  }
+  if (category === 'instrumentation') {
+    return 'Restore the evidence trail operators need before approving reflection, delegation, or strategy changes.';
+  }
+  if (finding.code === 'repeated-skip') {
+    return 'Help the bot distinguish patient non-action from a stale or blocked decision process.';
+  }
+  return 'Reduce repeated bad operating patterns before proposing a strategy mutation.';
+}
+
 function ideaFromFinding({ botId, botName, runId, finding, evidenceRefs, timestamp }) {
   if (!finding) return null;
-  const isResearch = /signal|news|source|market|world|coverage|research/i.test(finding.code || finding.summary || '');
-  const title = isResearch
-    ? `Research ${botName || botId} signal gap`
-    : `Improve ${botName || botId} operating loop`;
+  const category = findingCategory(finding);
+  const findingCode = finding.code || `finding_${hash(finding).slice(0, 10)}`;
+  const dedupeKey = `observatory-idea:${botId}:${category}:${findingCode}`;
+  const title = ideaTitleForFinding({ botId, botName, finding, category });
   const idea = {
-    idea_id: `idea_${hash({ botId, runId, code: finding.code }).slice(0, 18)}`,
+    idea_id: `idea_${hash({ botId, category, code: findingCode }).slice(0, 18)}`,
     bot_id: botId,
     created_at: timestamp,
+    dedupe_key: dedupeKey,
+    category,
+    finding_code: findingCode,
+    finding_severity: finding.severity || 'medium',
     title,
     thesis: finding.summary,
     evidence_refs: evidenceRefs,
-    expected_value: isResearch
-      ? 'Give the bot a fresher market/world-model input before it changes trading behavior.'
-      : 'Reduce repeated bad operating patterns before proposing a strategy mutation.',
+    expected_value: ideaExpectedValueForFinding({ category, finding }),
     risk: 'paper_only_until_existing_promotion_gates_pass',
-    proposed_action: isResearch ? 'delegate_research' : 'delegate_build',
+    proposed_action: category === 'research' ? 'delegate_research' : 'delegate_build',
     status: 'open',
     source_run_id: runId,
   };
@@ -438,6 +523,7 @@ function buildObservatoryRun() {
   const intents = readJsonl(IMPROVEMENT_INTENTS_FILE, 80);
   const dispatches = readJsonl(IMPROVEMENT_DISPATCHES_FILE, 80);
   const researchTasks = readJsonl(RESEARCH_TASKS_FILE, 80);
+  const existingIdeas = readJsonl(IDEAS_FILE, 1000);
   const existingDelegatedWorkSessions = readJsonl(DELEGATED_WORK_FILE, 1000);
   const feedback = readJsonl(OWNER_FEEDBACK_FILE, 80);
   const usageEvents = readJsonl(USAGE_TELEMETRY_FILE, 300);
@@ -497,7 +583,10 @@ function buildObservatoryRun() {
     evidenceRefs,
     timestamp,
   });
-  const ideas = primaryIdea ? [primaryIdea] : [];
+  const existingPrimaryIdea = primaryIdea?.dedupe_key
+    ? latestIdeaForStableKey(existingIdeas, primaryIdea.dedupe_key)
+    : null;
+  const ideas = existingPrimaryIdea ? [existingPrimaryIdea] : primaryIdea ? [primaryIdea] : [];
   const generatedDelegatedWorkSessions = buildDelegatedWorkSessions({
     botId,
     ideas,
@@ -555,7 +644,7 @@ function buildObservatoryRun() {
 
   appendJsonl(WORLD_SIGNAL_DIGESTS_FILE, worldSignalDigest);
   appendJsonl(REFLECTION_RUNS_FILE, reflectionRun);
-  for (const idea of ideas) appendJsonl(IDEAS_FILE, idea);
+  if (primaryIdea && !existingPrimaryIdea) appendJsonl(IDEAS_FILE, primaryIdea);
   const existingDelegatedIds = new Set(readJsonl(DELEGATED_WORK_FILE, 1000).map((session) => session.session_id).filter(Boolean));
   for (const session of generatedDelegatedWorkSessions) {
     if (existingDelegatedIds.has(session.session_id)) continue;

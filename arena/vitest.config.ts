@@ -9,6 +9,10 @@ export default defineConfig({
   resolve: {
     alias: {
       // Stub browser-heavy packages we don't need to exercise in unit tests.
+      '@tangle-network/sandbox-ui/chat': path.join(
+        stubs,
+        'sandbox-ui-chat.tsx',
+      ),
       '@tangle-network/sandbox-ui/hooks': path.join(
         stubs,
         'sandbox-ui-hooks.ts',

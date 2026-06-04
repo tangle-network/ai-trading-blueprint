@@ -588,6 +588,47 @@ function dedupeBySessionId(sessions, limit = 100) {
     .sort((a, b) => timestampMs(b.created_at) - timestampMs(a.created_at))
     .slice(0, limit);
 }
+function semanticIdeaKey(idea) {
+  if (!idea || typeof idea !== 'object') return null;
+  const botId = String(idea.bot_id || '');
+  const proposedAction = String(idea.proposed_action || '');
+  const thesis = String(idea.thesis || idea.title || '').trim().toLowerCase();
+  if (!botId || !thesis) return null;
+  return `semantic:${botId}:${proposedAction}:${thesis}`;
+}
+function dedupeByIdeaKey(ideas, limit = 100) {
+  const byKey = new Map();
+  for (const idea of ideas) {
+    if (!idea || typeof idea !== 'object') continue;
+    const keys = [
+      idea.dedupe_key,
+      semanticIdeaKey(idea),
+      idea.idea_id ? `id:${idea.idea_id}` : null,
+    ].filter(Boolean);
+    if (keys.length === 0) continue;
+    let existing = null;
+    for (const key of keys) {
+      if (byKey.has(key)) {
+        existing = byKey.get(key);
+        break;
+      }
+    }
+    const candidateAt = timestampMs(idea.updated_at || idea.created_at);
+    const existingAt = timestampMs(existing?.updated_at || existing?.created_at);
+    const winner = !existing || candidateAt >= existingAt ? idea : existing;
+    for (const key of keys) byKey.set(key, winner);
+  }
+  const seen = new Set();
+  return [...byKey.values()]
+    .filter((idea) => {
+      const id = idea.idea_id || semanticIdeaKey(idea);
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .sort((a, b) => timestampMs(b.updated_at || b.created_at) - timestampMs(a.updated_at || a.created_at))
+    .slice(0, limit);
+}
 function activeDelegationStatus(status) {
   return /dispatch|queued|running|pending|await|open/i.test(String(status || ''));
 }
@@ -657,6 +698,7 @@ const root = '/home/agent/memory/observatory';
 const reflectionRuns = parseJsonl(read(`${root}/reflection-runs.jsonl`), 100);
 const rawDelegatedWorkSessions = parseJsonl(read(`${root}/delegated-work-sessions.jsonl`), 500);
 const delegatedWorkSessions = dedupeBySessionId(rawDelegatedWorkSessions, 100);
+const ideas = dedupeByIdeaKey(parseJsonl(read(`${root}/ideas.jsonl`), 500), 100);
 const latestReflection = reflectionRuns
   .slice()
   .sort((a, b) => timestampMs(b.created_at) - timestampMs(a.created_at))[0] || null;
@@ -665,7 +707,7 @@ const payload = {
   schema_version: 1,
   world_signal_digests: parseJsonl(read(`${root}/world-signal-digests.jsonl`), 100),
   reflection_runs: reflectionRuns,
-  ideas: parseJsonl(read(`${root}/ideas.jsonl`), 100),
+  ideas,
   research_tasks: parseJsonl(read(`${root}/research-tasks.jsonl`), 100),
   delegated_work_sessions: delegatedWorkSessions,
   owner_feedback: parseJsonl(read(`${root}/owner-feedback.jsonl`), 100),

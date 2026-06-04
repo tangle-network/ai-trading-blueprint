@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
+import { ChatMessage } from '@tangle-network/sandbox-ui/chat';
 import { useAccount } from 'wagmi';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import {
@@ -447,30 +448,36 @@ function TraceMessage({
   align?: 'left' | 'right';
   children: string;
 }) {
+  const messageRole = align === 'right' ? 'user' : 'assistant';
+  const avatar = (
+    <span
+      className={`${icon} text-base ${align === 'right' ? 'text-[#50d2c1]' : 'text-[var(--arena-terminal-text-muted)]'}`}
+      aria-hidden="true"
+    />
+  );
+  const detail = (
+    <div className="mt-2 truncate border-t border-[var(--arena-terminal-border)] pt-2 font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
+      {title}{meta ? ` · ${meta}` : ''}
+    </div>
+  );
+
   return (
-    <div className={`flex ${align === 'right' ? 'justify-end' : 'justify-start'}`}>
-      <article
-        className={`max-w-[92%] border px-3 py-2.5 ${
+    <div
+      className={`arena-observatory-chat-message flex [--avatar-size:1.75rem] [--chat-message-px:0.75rem] [--chat-message-py:0.625rem] [--radius-lg:0px] ${align === 'right' ? 'justify-end' : 'justify-start'}`}
+    >
+      <ChatMessage
+        role={messageRole}
+        content={children}
+        userLabel={role}
+        assistantLabel={role}
+        avatar={avatar}
+        toolCalls={detail}
+        className={`max-w-[92%] border font-display text-sm ${
           align === 'right'
-            ? 'border-[#50d2c1]/35 bg-[#50d2c1]/10'
-            : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]'
+            ? 'border-[#50d2c1]/35 bg-[#50d2c1]/10 text-[var(--arena-terminal-text)]'
+            : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)]'
         }`}
-      >
-        <div className="mb-2 flex items-center gap-2">
-          <span className={`${icon} text-base ${align === 'right' ? 'text-[#50d2c1]' : 'text-[var(--arena-terminal-text-muted)]'}`} aria-hidden="true" />
-          <div className="min-w-0">
-            <div className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
-              {role}
-            </div>
-            <div className="truncate font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
-              {title}{meta ? ` · ${meta}` : ''}
-            </div>
-          </div>
-        </div>
-        <p className="whitespace-pre-wrap break-words text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
-          {children}
-        </p>
-      </article>
+      />
     </div>
   );
 }

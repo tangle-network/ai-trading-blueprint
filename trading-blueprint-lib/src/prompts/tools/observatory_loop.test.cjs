@@ -81,6 +81,28 @@ test('buildObservatoryRun writes immediate records from current sandbox evidence
   });
 });
 
+test('repeated instrumentation gaps reuse one stable Observatory idea', () => {
+  withTempEnv((tmp) => {
+    const { buildObservatoryRun } = require('./observatory_loop.js');
+    const first = buildObservatoryRun();
+    const second = buildObservatoryRun();
+    const ideasFile = path.join(tmp, 'memory', 'observatory', 'ideas.jsonl');
+    const persistedIdeas = fs.readFileSync(ideasFile, 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+
+    assert.equal(persistedIdeas.length, 1);
+    assert.equal(first.records.ideas[0].idea_id, second.records.ideas[0].idea_id);
+    assert.equal(first.records.ideas[0].finding_code, 'missing-decision-context');
+    assert.equal(first.records.ideas[0].category, 'instrumentation');
+    assert.equal(first.records.ideas[0].proposed_action, 'delegate_build');
+    assert.match(first.records.ideas[0].title, /Restore ETH Perp Sentinel decision context capture/);
+    assert.match(first.records.ideas[0].expected_value, /evidence trail/);
+  });
+});
+
 test('usageSummary marks empty deterministic runs as not applicable', () => {
   const { usageSummary } = require('./observatory_loop.js');
   assert.deepEqual(usageSummary([]), {
