@@ -245,6 +245,13 @@ async fn sync_observatory_delegation_tools_to_sidecar(
     crate::jobs::activate::write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/observatory-pressure.js",
+        include_str!("../prompts/tools/observatory_pressure.js"),
+    )
+    .await?;
+    crate::jobs::activate::write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/self-improvement-mcp-server.ts",
         include_str!("../prompts/tools/self_improvement_mcp_server.ts"),
     )
@@ -1017,5 +1024,13 @@ mod tests {
         assert!(script.contains("paper-only delegated build"));
         assert!(script.contains("OBSERVATORY_MAX_ACTIVE_DELEGATIONS"));
         assert!(script.contains("pressure_blocked"));
+    }
+
+    #[test]
+    fn feedback_syncs_self_improvement_pressure_probe_dependency() {
+        let source = include_str!("observatory_cadence.rs");
+        assert!(source.contains("/home/agent/tools/self-improvement-loop.ts"));
+        assert!(source.contains("/home/agent/tools/observatory-pressure.js"));
+        assert!(source.contains("observatory_pressure.js"));
     }
 }

@@ -607,6 +607,13 @@ node /home/agent/tools/record-candle.js '{"token":"ETH","open":2500,"high":2520,
 
 You are not just a trading bot — you are a self-improving system. You have OpenCode (a coding AI runtime) and full filesystem access. You can read, write, and execute code. Use this power.
 
+Before opening any new research, coding, or self-improvement work, check delegation pressure:
+```
+node /home/agent/tools/observatory-pressure.js
+bun --bun /home/agent/tools/self-improvement-loop.ts status
+```
+If `allows_new_delegation` is false, do not spawn more work. Report the active delegation count, pressure level, CPU pressure, and deny reasons, then finish the trading decision with existing evidence.
+
 ### Every 10 iterations, run a meta-harness cycle:
 
 **1. Instrument yourself.** Read your own decision log (`/home/agent/logs/decisions.jsonl`) and metrics (`/home/agent/metrics/`). Calculate:
@@ -1209,6 +1216,9 @@ mod tests {
         let per_trade = build_loop_prompt("dex", ValidationTrust::PerTrade);
         assert!(per_trade.contains("Per-Trade"));
         assert!(!per_trade.contains("executeWithEnvelope"));
+        assert!(per_trade.contains("observatory-pressure.js"));
+        assert!(per_trade.contains("allows_new_delegation"));
+        assert!(per_trade.contains("CPU pressure"));
     }
 
     // ----- Learning-loop wiring (slippage learner + strategy bandit) -----

@@ -16,6 +16,7 @@ const {
   readUsageEvents,
   summarizeUsageEvents,
 } = require('./usage-telemetry.js');
+const { readObservatoryPressure } = require('./observatory-pressure.js');
 
 const ROOT = process.env.AGENT_WORKSPACE || '/home/agent';
 const EVOLVE_DIR = join(ROOT, '.evolve');
@@ -88,6 +89,48 @@ function runUsageSummary(runId) {
   } catch (error) {
     return { event_count: 0, error: String(error.message || error) };
   }
+}
+
+function currentDelegationPressure() {
+  try {
+    return readObservatoryPressure();
+  } catch (error) {
+    return {
+      schema_version: 1,
+      checked_at: nowIso(),
+      allows_new_delegation: false,
+      pressure_level: 'high',
+      deny_reasons: ['pressure_probe_error'],
+      error: String(error.message || error),
+    };
+  }
+}
+
+function recordPressureBlockedRun(runId, intent, delegationPressure) {
+  const usage_event = safeRecordUsageEvent({
+    surface: 'runtime-self-improvement',
+    operation: 'pressure-gate',
+    run_id: runId,
+    status: 'blocked',
+    success: true,
+    input_chars: intent.length,
+    output_chars: JSON.stringify(delegationPressure).length,
+    metadata: {
+      delegation_pressure: delegationPressure,
+      deny_reasons: delegationPressure.deny_reasons || [],
+    },
+  });
+  const report = {
+    run_id: runId,
+    created_at: nowIso(),
+    intent,
+    status: 'blocked_by_delegation_pressure',
+    delegation_pressure: delegationPressure,
+    usage_event,
+    usage_telemetry: runUsageSummary(runId),
+  };
+  writeJson(join(RUNS_DIR, `${runId}.json`), report);
+  return report;
 }
 
 function sha256(text) {
@@ -856,11 +899,13 @@ async function status() {
   const config = loadConfig();
   const packageStatus = await loadTanglePackages();
   const apiStatus = await apiCall('GET', '/evolution/status').catch((error) => ({ status: 0, data: String(error.message || error) }));
+  const delegationPressure = currentDelegationPressure();
   return {
     ok: packageStatus.available && apiStatus.status >= 200 && apiStatus.status < 300,
     workspace: ROOT,
     bot_id: config.bot_id || null,
     chain_id: config.chain_id || null,
+    delegation_pressure: delegationPressure,
     tangle_packages_available: packageStatus.available,
     missing_packages: packageStatus.missing,
     api_status: apiStatus.status,
@@ -872,6 +917,10 @@ async function run(intent) {
   ensureDirs();
   if (!intent || intent.trim().length < 12) throw new Error('intent must be at least 12 non-whitespace characters');
   const runId = `sandbox-self-improve-${Date.now()}`;
+  const delegationPressure = currentDelegationPressure();
+  if (delegationPressure.allows_new_delegation === false) {
+    return recordPressureBlockedRun(runId, intent, delegationPressure);
+  }
   const config = loadConfig();
   const packageStatus = await loadTanglePackages();
   const analyst = await runPackageAnalystLoop(runId, intent, config, packageStatus);
@@ -882,6 +931,7 @@ async function run(intent) {
     run_id: runId,
     created_at: nowIso(),
     intent,
+    delegation_pressure: delegationPressure,
     package_status: { available: packageStatus.available, missing: packageStatus.missing },
     analyst,
     candidate_search: {

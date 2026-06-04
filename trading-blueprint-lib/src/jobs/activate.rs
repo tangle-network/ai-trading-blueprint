@@ -1273,6 +1273,13 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/observatory-pressure.js",
+        include_str!("../prompts/tools/observatory_pressure.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/create-mcp-multishot-strategy-task.js",
         include_str!("../prompts/tools/create_mcp_multishot_strategy_task.js"),
     )
@@ -1578,6 +1585,8 @@ mod tests {
         assert!(tool.contains("applyKnowledgeWriteBlocks"));
         assert!(tool.contains("recordUsageEvent"));
         assert!(tool.contains("usage_telemetry"));
+        assert!(tool.contains("observatory-pressure"));
+        assert!(tool.contains("delegation_pressure"));
     }
 
     #[test]

@@ -284,6 +284,10 @@ fn self_improvement_tool_bundle() -> Vec<(&'static str, &'static str)> {
             include_str!("../prompts/tools/observatory_loop.js"),
         ),
         (
+            "/home/agent/tools/observatory-pressure.js",
+            include_str!("../prompts/tools/observatory_pressure.js"),
+        ),
+        (
             "/home/agent/tools/create-mcp-multishot-strategy-task.js",
             include_str!("../prompts/tools/create_mcp_multishot_strategy_task.js"),
         ),
@@ -337,6 +341,22 @@ function selectGenerationIntent(defaultIntent) {
   }
 }
 
+function readDelegationPressure() {
+  try {
+    const pressure = require('/home/agent/tools/observatory-pressure.js');
+    return pressure.readObservatoryPressure();
+  } catch (error) {
+    return {
+      schema_version: 1,
+      checked_at: new Date().toISOString(),
+      allows_new_delegation: false,
+      pressure_level: 'high',
+      deny_reasons: ['pressure_probe_error'],
+      error: error && error.message ? error.message : String(error),
+    };
+  }
+}
+
 const mcpRpc = `${JSON.stringify({
   jsonrpc: '2.0',
   id: 1,
@@ -353,7 +373,19 @@ const out = {
   ),
 };
 
-const allowIntentGeneration = process.env.RUN_GENERATION === '1' || process.env.ALLOW_INTENT_GENERATION !== '0';
+const delegationPressure = readDelegationPressure();
+const pressureAllowsGeneration = delegationPressure.allows_new_delegation !== false;
+out.delegation_pressure = delegationPressure;
+if (!pressureAllowsGeneration) {
+  out.generation_blocked = {
+    reason: 'delegation_pressure',
+    deny_reasons: delegationPressure.deny_reasons || [],
+    active_sessions: delegationPressure.active_sessions ?? null,
+    pressure_level: delegationPressure.pressure_level || 'unknown',
+  };
+}
+
+const allowIntentGeneration = pressureAllowsGeneration && (process.env.RUN_GENERATION === '1' || process.env.ALLOW_INTENT_GENERATION !== '0');
 const selected = allowIntentGeneration
   ? selectGenerationIntent(process.env.SELF_IMPROVEMENT_INTENT || 'Periodic paper-only harness self-improvement.')
   : { intent: null, prompt: process.env.SELF_IMPROVEMENT_INTENT || 'Periodic paper-only harness self-improvement.' };
@@ -367,7 +399,7 @@ out.selected_generation_intent = selected.intent
   : null;
 if (selected.error) out.intent_selection_error = selected.error;
 
-if (process.env.RUN_GENERATION === '1' || (allowIntentGeneration && selected.intent)) {
+if (pressureAllowsGeneration && (process.env.RUN_GENERATION === '1' || (allowIntentGeneration && selected.intent))) {
   out.generation = launch(
     'self-improvement-generation',
     'bun',
@@ -449,7 +481,10 @@ mod tests {
     fn cadence_launcher_consumes_runtime_reflection_intents() {
         let command = cadence_launcher_command();
         assert!(command.contains("require('/home/agent/tools/reflection-loop.js')"));
+        assert!(command.contains("require('/home/agent/tools/observatory-pressure.js')"));
         assert!(command.contains("ALLOW_INTENT_GENERATION"));
+        assert!(command.contains("delegation_pressure"));
+        assert!(command.contains("pressureAllowsGeneration"));
         assert!(command.contains("loop.nextImprovementIntent"));
         assert!(command.contains("loop.recordIntentDispatch"));
         assert!(command.contains("selected.prompt"));
@@ -467,6 +502,7 @@ mod tests {
         assert!(paths.contains(&"/home/agent/tools/usage-telemetry.js"));
         assert!(paths.contains(&"/home/agent/tools/self-improvement-loop.ts"));
         assert!(paths.contains(&"/home/agent/tools/self-improvement-mcp-server.ts"));
+        assert!(paths.contains(&"/home/agent/tools/observatory-pressure.js"));
         assert!(paths.contains(&"/home/agent/tools/create-mcp-multishot-strategy-task.js"));
     }
 

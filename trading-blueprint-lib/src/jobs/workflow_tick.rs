@@ -623,6 +623,10 @@ fn fast_tick_tool_bundle(tool: &str) -> Option<Vec<(&'static str, &'static str)>
             "/home/agent/tools/observatory-loop.js",
             include_str!("../prompts/tools/observatory_loop.js"),
         ),
+        (
+            "/home/agent/tools/observatory-pressure.js",
+            include_str!("../prompts/tools/observatory_pressure.js"),
+        ),
     ];
 
     match tool {
@@ -1328,6 +1332,7 @@ mod tests {
         assert!(paths.contains(&"/home/agent/tools/reflection-loop.js"));
         assert!(paths.contains(&"/home/agent/tools/usage-telemetry.js"));
         assert!(paths.contains(&"/home/agent/tools/self-improvement-loop.ts"));
+        assert!(paths.contains(&"/home/agent/tools/observatory-pressure.js"));
         assert!(paths.contains(&"/home/agent/tools/tick-common.js"));
         assert!(paths.contains(&"/home/agent/tools/tick-recipe-dsl.js"));
         assert!(paths.contains(&"/home/agent/tools/dex-mm-tick.js"));
@@ -1362,6 +1367,10 @@ mod tests {
             assert!(
                 paths.contains(&"/home/agent/tools/self-improvement-loop.ts"),
                 "{tool} bundle must install the runtime self-improvement loop"
+            );
+            assert!(
+                paths.contains(&"/home/agent/tools/observatory-pressure.js"),
+                "{tool} bundle must install the delegation pressure probe"
             );
         }
     }
