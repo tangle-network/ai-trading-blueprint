@@ -12,8 +12,8 @@ use sandbox_runtime::CreateSandboxParams;
 use sandbox_runtime::SandboxRecord;
 use trading_http_api::routes::hyperliquid::normalize_hyperliquid_api_wallet_name;
 use trading_runtime::supported_assets::{
-    ValuationAdapterKind, default_protocol_for_strategy, default_protocols_for_strategy,
-    supported_assets_for_config,
+    ValuationAdapterKind, all_execution_protocols, default_protocol_for_strategy,
+    default_protocols_for_strategy, supported_assets_for_config,
 };
 
 /// Keyed lock set for provision dedup — prevents TOCTOU race between
@@ -396,6 +396,15 @@ fn default_hyperliquid_protocol_chain_id(execution_chain_id: u64) -> u64 {
     }
 }
 
+fn default_protocol_chain_id_for_protocol(protocol: &str, execution_chain_id: u64) -> u64 {
+    match protocol.trim().to_ascii_lowercase().as_str() {
+        "hyperliquid" => default_hyperliquid_protocol_chain_id(execution_chain_id),
+        "gmx_v2" | "vertex" => 42161,
+        "polymarket_clob" => 137,
+        _ => execution_chain_id,
+    }
+}
+
 fn default_protocol_chain_id_for_strategy(
     strategy_type: &str,
     execution_chain_id: u64,
@@ -414,6 +423,33 @@ fn string_array_value(values: &[&str]) -> Value {
             .map(|value| Value::String((*value).to_string()))
             .collect(),
     )
+}
+
+fn default_protocol_chain_ids_value(execution_chain_id: u64) -> Value {
+    let mut chains = Map::new();
+    for protocol in all_execution_protocols() {
+        chains.insert(
+            (*protocol).to_string(),
+            Value::Number(
+                default_protocol_chain_id_for_protocol(protocol, execution_chain_id).into(),
+            ),
+        );
+    }
+    Value::Object(chains)
+}
+
+fn configured_protocol_chain_id_for_protocol(
+    strategy_config: &Map<String, Value>,
+    protocol: &str,
+    execution_chain_id: u64,
+) -> u64 {
+    strategy_config
+        .get("protocol_chain_ids")
+        .and_then(Value::as_object)
+        .and_then(|chains| chains.get(protocol))
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| default_protocol_chain_id_for_protocol(protocol, execution_chain_id))
 }
 
 fn configured_protocols_for_strategy(
@@ -439,6 +475,16 @@ fn configured_protocols_for_strategy(
                 .map(|value| (*value).to_string())
                 .collect()
         })
+}
+
+fn asset_gate_strategy_for_protocol<'a>(request_strategy_type: &'a str, protocol: &str) -> &'a str {
+    match protocol.trim().to_ascii_lowercase().as_str() {
+        "uniswap_v3" | "aerodrome" => "dex",
+        "aave_v3" | "morpho_vault" => "yield",
+        "polymarket_clob" => "prediction",
+        "hyperliquid" => "hyperliquid_perp",
+        _ => request_strategy_type,
+    }
 }
 
 fn has_configured_asset_token(asset_token: alloy::primitives::Address) -> bool {
@@ -528,32 +574,49 @@ fn apply_strategy_defaults(
         );
     }
 
-    let default_protocols = default_protocols_for_strategy(&request.strategy_type);
-    if !default_protocols.is_empty() {
+    let preferred_protocols = default_protocols_for_strategy(&request.strategy_type)
+        .iter()
+        .copied()
+        .filter(|protocol| all_execution_protocols().contains(protocol))
+        .collect::<Vec<_>>();
+    if !preferred_protocols.is_empty() {
         strategy_config
-            .entry("available_protocols".to_string())
-            .or_insert_with(|| string_array_value(default_protocols));
+            .entry("preferred_protocols".to_string())
+            .or_insert_with(|| string_array_value(&preferred_protocols));
+    }
+    strategy_config
+        .entry("available_protocols".to_string())
+        .or_insert_with(|| string_array_value(all_execution_protocols()));
+    strategy_config
+        .entry("protocol_chain_ids".to_string())
+        .or_insert_with(|| default_protocol_chain_ids_value(execution_chain_id));
 
-        let supported_assets =
-            configured_protocols_for_strategy(&request.strategy_type, strategy_config)
-                .iter()
-                .flat_map(|protocol| {
-                    supported_assets_for_config(
-                        &request.strategy_type,
-                        protocol_chain_id,
-                        protocol,
-                        Some(&Value::Object(strategy_config.clone())),
-                    )
-                })
-                .collect::<Vec<_>>();
-        if !supported_assets.is_empty() {
-            strategy_config
-                .entry("supported_assets".to_string())
-                .and_modify(|value| {
-                    *value = serde_json::to_value(&supported_assets).unwrap_or(Value::Null);
-                })
-                .or_insert_with(|| serde_json::to_value(supported_assets).unwrap_or(Value::Null));
-        }
+    let supported_assets =
+        configured_protocols_for_strategy(&request.strategy_type, strategy_config)
+            .iter()
+            .flat_map(|protocol| {
+                let asset_strategy =
+                    asset_gate_strategy_for_protocol(&request.strategy_type, protocol);
+                let asset_chain_id = configured_protocol_chain_id_for_protocol(
+                    strategy_config,
+                    protocol,
+                    execution_chain_id,
+                );
+                supported_assets_for_config(
+                    asset_strategy,
+                    asset_chain_id,
+                    protocol,
+                    Some(&Value::Object(strategy_config.clone())),
+                )
+            })
+            .collect::<Vec<_>>();
+    if !supported_assets.is_empty() {
+        strategy_config
+            .entry("supported_assets".to_string())
+            .and_modify(|value| {
+                *value = serde_json::to_value(&supported_assets).unwrap_or(Value::Null);
+            })
+            .or_insert_with(|| serde_json::to_value(supported_assets).unwrap_or(Value::Null));
     }
 
     if normalized_strategy == "volatility" {
@@ -574,7 +637,9 @@ fn remove_strategy_pack_derived_fields(strategy_config: &mut Map<String, Value>)
     for key in [
         "strategy_type",
         "protocol_chain_id",
+        "protocol_chain_ids",
         "available_protocols",
+        "preferred_protocols",
         "supported_assets",
         "asset_universe",
         "asset_token",
@@ -1992,7 +2057,19 @@ mod tests {
         );
         assert_eq!(
             config.get("available_protocols"),
+            Some(&serde_json::json!(all_execution_protocols()))
+        );
+        assert_eq!(
+            config.get("preferred_protocols"),
             Some(&serde_json::json!(["hyperliquid"]))
+        );
+        assert_eq!(
+            config
+                .get("protocol_chain_ids")
+                .and_then(Value::as_object)
+                .and_then(|chains| chains.get("hyperliquid"))
+                .and_then(Value::as_u64),
+            Some(998)
         );
         assert_eq!(
             config
@@ -2001,19 +2078,17 @@ mod tests {
                 .map(str::to_ascii_lowercase),
             Some(HYPEREVM_TESTNET_USDC.to_ascii_lowercase())
         );
-        assert_eq!(
-            realigned
-                .strategy_config
-                .pointer("/supported_assets/0/protocol")
-                .and_then(Value::as_str),
-            Some("hyperliquid")
-        );
-        assert_eq!(
-            realigned
-                .strategy_config
-                .pointer("/supported_assets/0/chain_id")
-                .and_then(Value::as_u64),
-            Some(998)
+        let supported_assets = realigned
+            .strategy_config
+            .get("supported_assets")
+            .and_then(Value::as_array)
+            .expect("supported assets");
+        assert!(
+            supported_assets.iter().any(|asset| {
+                asset.get("protocol").and_then(Value::as_str) == Some("hyperliquid")
+                    && asset.get("chain_id").and_then(Value::as_u64) == Some(998)
+            }),
+            "supported assets must include Hyperliquid on HyperEVM"
         );
         assert!(config.get("asset_universe").is_none());
         assert!(config.get("protocol").is_none());
@@ -2062,6 +2137,10 @@ mod tests {
 
         assert_eq!(
             config.get("available_protocols"),
+            Some(&serde_json::json!(all_execution_protocols()))
+        );
+        assert_eq!(
+            config.get("preferred_protocols"),
             Some(&serde_json::json!(["hyperliquid"]))
         );
         assert_eq!(
@@ -2104,7 +2183,15 @@ mod tests {
         );
         assert_eq!(
             config.get("available_protocols"),
-            Some(&serde_json::json!(["hyperliquid"]))
+            Some(&serde_json::json!(all_execution_protocols()))
+        );
+        assert_eq!(
+            config
+                .get("protocol_chain_ids")
+                .and_then(Value::as_object)
+                .and_then(|chains| chains.get("hyperliquid"))
+                .and_then(Value::as_u64),
+            Some(998)
         );
     }
 
@@ -2118,6 +2205,10 @@ mod tests {
 
         assert_eq!(
             config.get("available_protocols"),
+            Some(&serde_json::json!(all_execution_protocols()))
+        );
+        assert_eq!(
+            config.get("preferred_protocols"),
             Some(&serde_json::json!(["gmx_v2", "vertex"]))
         );
         assert_eq!(
@@ -2138,12 +2229,24 @@ mod tests {
         assert_eq!(
             config.get("available_protocols"),
             Some(&serde_json::json!([
+                "uniswap_v3",
+                "aerodrome",
+                "aave_v3",
+                "morpho_vault",
+                "polymarket_clob",
+                "gmx_v2",
+                "vertex",
+                "hyperliquid"
+            ]))
+        );
+        assert_eq!(
+            config.get("preferred_protocols"),
+            Some(&serde_json::json!([
                 "polymarket_clob",
                 "uniswap_v3",
                 "gmx_v2",
                 "hyperliquid",
-                "vertex",
-                "coingecko"
+                "vertex"
             ]))
         );
         assert_eq!(

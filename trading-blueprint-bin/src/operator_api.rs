@@ -8154,11 +8154,20 @@ mod tests {
         assert_eq!(json["strategy_config"]["protocol_chain_id"], 998);
         assert_eq!(
             json["strategy_config"]["available_protocols"],
-            serde_json::json!(["hyperliquid"])
+            serde_json::json!(trading_runtime::supported_assets::all_execution_protocols())
         );
         assert_eq!(
-            json["strategy_config"]["supported_assets"][0]["protocol"],
-            "hyperliquid"
+            json["strategy_config"]["preferred_protocols"],
+            serde_json::json!(["hyperliquid"])
+        );
+        let supported_assets = json["strategy_config"]["supported_assets"]
+            .as_array()
+            .expect("supported assets");
+        assert!(
+            supported_assets.iter().any(|asset| {
+                asset["protocol"] == "hyperliquid" && asset["chain_id"] == serde_json::json!(998)
+            }),
+            "supported assets must include Hyperliquid on HyperEVM"
         );
 
         let stored = state::get_bot("repair-hyperliquid-dry-run-1")

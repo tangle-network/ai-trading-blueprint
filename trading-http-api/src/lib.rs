@@ -278,6 +278,19 @@ pub fn protocol_chain_id_from_config(
         .unwrap_or(execution_chain_id)
 }
 
+pub fn protocol_chain_id_for_protocol_from_config(
+    execution_chain_id: u64,
+    strategy_config: &serde_json::Value,
+    target_protocol: &str,
+) -> u64 {
+    strategy_config
+        .get("protocol_chain_ids")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|chains| chains.get(target_protocol))
+        .and_then(|value| positive_u64_from_value(Some(value)))
+        .unwrap_or_else(|| protocol_chain_id_from_config(execution_chain_id, strategy_config))
+}
+
 pub fn protocol_chain_id_from_env(execution_chain_id: u64) -> u64 {
     positive_u64_from_env("PROTOCOL_CHAIN_ID")
         .or_else(|| positive_u64_from_env("FORK_BASE_CHAIN_ID"))
@@ -641,6 +654,31 @@ mod tests {
     #[test]
     fn missing_protocol_allow_list_is_unrestricted() {
         assert!(validate_protocol_available(&json!({}), "hyperliquid").is_ok());
+    }
+
+    #[test]
+    fn protocol_chain_id_uses_protocol_specific_map_before_legacy_default() {
+        let config = json!({
+            "protocol_chain_id": 998,
+            "protocol_chain_ids": {
+                "uniswap_v3": 84532,
+                "gmx_v2": 42161,
+                "hyperliquid": 998
+            }
+        });
+
+        assert_eq!(
+            protocol_chain_id_for_protocol_from_config(84532, &config, "uniswap_v3"),
+            84532
+        );
+        assert_eq!(
+            protocol_chain_id_for_protocol_from_config(84532, &config, "gmx_v2"),
+            42161
+        );
+        assert_eq!(
+            protocol_chain_id_for_protocol_from_config(84532, &config, "unknown"),
+            998
+        );
     }
 
     #[test]

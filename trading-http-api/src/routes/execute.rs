@@ -3676,8 +3676,11 @@ async fn execute_multi_bot(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
     crate::validate_protocol_available(&bot.strategy_config, &req.intent.target_protocol)
         .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
-    let protocol_chain_id =
-        crate::protocol_chain_id_from_config(bot.chain_id, &bot.strategy_config);
+    let protocol_chain_id = crate::protocol_chain_id_for_protocol_from_config(
+        bot.chain_id,
+        &bot.strategy_config,
+        &req.intent.target_protocol,
+    );
     validate_chain_tokens(
         Some(protocol_chain_id),
         &req.intent.token_in,

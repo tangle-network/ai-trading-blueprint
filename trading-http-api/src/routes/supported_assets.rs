@@ -26,6 +26,16 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
     Router::new().route("/supported-assets", get(supported_assets_multi_bot))
 }
 
+fn strategy_type_for_protocol(protocol: &str) -> Option<&'static str> {
+    match protocol {
+        "uniswap_v3" | "aerodrome" => Some("dex"),
+        "aave_v3" | "morpho_vault" => Some("yield"),
+        "polymarket_clob" => Some("prediction"),
+        "hyperliquid" => Some("hyperliquid_perp"),
+        _ => None,
+    }
+}
+
 async fn supported_assets(
     State(state): State<Arc<TradingApiState>>,
     Query(query): Query<SupportedAssetsQuery>,
@@ -78,17 +88,16 @@ async fn supported_assets_multi_bot(
                 "Bot context not resolved — check auth middleware".into(),
             )
         })?;
-    let chain_id = query.chain_id.unwrap_or_else(|| {
-        crate::protocol_chain_id_from_config(bot.chain_id, &bot.strategy_config)
-    });
     let configured_strategy = bot
         .strategy_config
         .get("strategy_type")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("dex");
+    let requested_protocol = query.protocol.as_deref();
     let strategy_type = query
         .strategy_type
         .as_deref()
+        .or_else(|| requested_protocol.and_then(strategy_type_for_protocol))
         .unwrap_or(configured_strategy);
     let protocol = query
         .protocol
@@ -100,6 +109,13 @@ async fn supported_assets_multi_bot(
                 "strategy_type or protocol is required".to_string(),
             )
         })?;
+    let chain_id = query.chain_id.unwrap_or_else(|| {
+        crate::protocol_chain_id_for_protocol_from_config(
+            bot.chain_id,
+            &bot.strategy_config,
+            protocol,
+        )
+    });
 
     Ok(Json(serde_json::json!({
         "bot_id": bot.bot_id,

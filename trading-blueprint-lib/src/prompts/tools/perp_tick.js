@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Deterministic paper GMX/Vertex perp tick.
+// EVM perp baseline tick.
 //
-// This is not the Hyperliquid native path. It proves the EVM perp bot has the
-// intended Arbitrum venue surface and writes risk-aware no-trade evidence.
+// It proves the bot can inspect the GMX/Vertex venue surface and write
+// risk-aware no-trade evidence without treating other wired perp venues as
+// forbidden.
 
 const t = require('/home/agent/tools/tick-common');
 
@@ -31,7 +32,7 @@ async function decide(ctx) {
   const { api, config } = ctx;
   const strategyConfig = config.strategy_config || {};
   const protocols = protocolList(config);
-  const protocolChainId = t.chainId(config);
+  const protocolChainId = t.chainIdForProtocol(config, 'gmx_v2');
   const paperTrade = strategyConfig.paper_trade !== false;
 
   const [portfolio, adapterList, prices, ethCandles] = await Promise.all([
@@ -43,7 +44,8 @@ async function decide(ctx) {
 
   const totalNav = t.asNumber(portfolio.total_value_usd, t.asNumber(strategyConfig.initial_capital_usd, 0));
   const perps = strategyConfig.perps || {};
-  const venues = Array.isArray(perps.venues) ? perps.venues.map(String) : protocols;
+  const evmPerpProtocols = protocols.filter((protocol) => ['gmx_v2', 'vertex'].includes(protocol));
+  const venues = Array.isArray(perps.venues) ? perps.venues.map(String) : evmPerpProtocols;
   const maxLeverage = t.asNumber(perps.max_leverage, 2);
   const maxPositionPct = t.asNumber(perps.max_position_pct, 5);
 
@@ -59,6 +61,12 @@ async function decide(ctx) {
     protocol_chain_id: protocolChainId,
     available_protocols: protocols,
     venues,
+    cross_venue_capability: {
+      hyperliquid_available: protocols.includes('hyperliquid'),
+      gmx_v2_chain_id: t.chainIdForProtocol(config, 'gmx_v2'),
+      vertex_chain_id: t.chainIdForProtocol(config, 'vertex'),
+      hyperliquid_chain_id: t.chainIdForProtocol(config, 'hyperliquid'),
+    },
     perps: {
       max_leverage: maxLeverage,
       max_position_pct: maxPositionPct,
@@ -74,7 +82,7 @@ async function decide(ctx) {
       eth_candles: Array.isArray(ethCandles) ? ethCandles.length : 0,
       candles_error: ethCandles && ethCandles.error ? ethCandles.error : null,
     },
-    hyperliquid_native_forbidden: true,
+    hyperliquid_native_forbidden: false,
   };
 
   const metrics = {

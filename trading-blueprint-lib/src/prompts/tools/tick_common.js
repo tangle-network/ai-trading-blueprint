@@ -294,6 +294,13 @@ function chainId(config) {
   );
 }
 
+function chainIdForProtocol(config, protocol) {
+  const chains = config && config.strategy_config && config.strategy_config.protocol_chain_ids;
+  const value = chains && chains[protocol];
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : chainId(config);
+}
+
 // Quote (USDC) + primary base (WETH) token addresses for the bot's chain.
 function pairTokens(config) {
   const id = chainId(config);
@@ -750,6 +757,7 @@ module.exports = {
   paperCycleWeight,
   loadHarness,
   chainId,
+  chainIdForProtocol,
   pairTokens,
   tokenDecimals,
   decimalToBaseUnits,

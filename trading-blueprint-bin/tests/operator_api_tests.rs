@@ -723,7 +723,7 @@ async fn spawn_mock_fast_tick_sidecar() -> String {
                         "protocol_chain_id": 42161,
                         "available_protocols": ["gmx_v2", "vertex"],
                         "venues": ["gmx_v2", "vertex"],
-                        "hyperliquid_native_forbidden": true
+                        "hyperliquid_native_forbidden": false
                     },
                     "decision": {
                         "action": "skip",
@@ -4271,7 +4271,7 @@ async fn test_run_now_fast_tick_uses_deterministic_executor() {
         "{result}"
     );
     assert!(
-        result.contains(r#""hyperliquid_native_forbidden":true"#),
+        result.contains(r#""hyperliquid_native_forbidden":false"#),
         "{result}"
     );
 }

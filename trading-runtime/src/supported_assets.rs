@@ -602,6 +602,19 @@ pub fn default_protocol_for_strategy(strategy_type: &str) -> Option<&'static str
         .copied()
 }
 
+pub fn all_execution_protocols() -> &'static [&'static str] {
+    &[
+        "uniswap_v3",
+        "aerodrome",
+        "aave_v3",
+        "morpho_vault",
+        "polymarket_clob",
+        "gmx_v2",
+        "vertex",
+        "hyperliquid",
+    ]
+}
+
 pub fn default_protocols_for_strategy(strategy_type: &str) -> &'static [&'static str] {
     match normalize_strategy_type(strategy_type).as_str() {
         "dex" => &["uniswap_v3"],
@@ -1025,6 +1038,13 @@ mod tests {
                 "coingecko"
             ]
         );
+    }
+
+    #[test]
+    fn all_execution_protocols_excludes_data_only_sources() {
+        assert!(all_execution_protocols().contains(&"hyperliquid"));
+        assert!(all_execution_protocols().contains(&"uniswap_v3"));
+        assert!(!all_execution_protocols().contains(&"coingecko"));
     }
 
     // ── parse-error surface + fallback behavior ─────────────────────────────

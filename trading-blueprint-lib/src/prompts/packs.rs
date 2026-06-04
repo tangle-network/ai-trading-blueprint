@@ -701,7 +701,7 @@ Focus on majors first — ETH and BTC have the deepest liquidity and tightest sp
 
 Scan funding rates across GMX v2 and Vertex every iteration. Store them in the signals table for cross-venue comparison.
 
-This strategy is restricted to vault-based EVM execution on Arbitrum-compatible targets. Use only `target_protocol: "gmx_v2"` or `target_protocol: "vertex"`. Do not use Hyperliquid native endpoints from this strategy; Hyperliquid requires a separate native/API execution mode.
+This methodology is the default vault-based EVM perp playbook for Arbitrum-compatible targets. Prefer `target_protocol: "gmx_v2"` or `target_protocol: "vertex"` when the owner mandate points at EVM perps, but do not treat the methodology as a venue prison. If another wired venue has better risk-adjusted execution and the mandate allows it, compare it and route through the validated execution path for that protocol.
 
 ### Signal Framework
 
@@ -757,8 +757,11 @@ Always compare execution cost (fees + expected slippage) across venues before ro
 
 const HYPERLIQUID_PERP_STRATEGY_METHODOLOGY: &str = r#"## Hyperliquid Perpetual Futures Strategy
 
-This strategy is dedicated to native Hyperliquid perp trading. It is separate
-from the generic EVM perp strategy. Use only `target_protocol: "hyperliquid"`.
+This methodology is the default native Hyperliquid perp playbook. Treat
+`target_protocol: "hyperliquid"` as the mandate-preferred route when the owner
+asked for Hyperliquid, not as a permanent ban on comparing or recommending other
+wired venues. Any route away from the preferred venue must be evidence-backed,
+inside the owner mandate, and approved by `/validate`.
 
 ### Account Model
 
@@ -1588,6 +1591,19 @@ fn build_profile_instructions(
                 .collect::<Vec<_>>()
         })
         .filter(|values| !values.is_empty());
+    let preferred_protocols = config
+        .strategy_config
+        .get("preferred_protocols")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty());
 
     // Use override if provided, otherwise use pack expert prompt
     let effective_expert = if expert_override.is_empty() {
@@ -1751,8 +1767,12 @@ Endpoints:
         chain_id = config.chain_id,
         available_protocols_line = available_protocols
             .map(|protocols| format!(
-                "- Available Protocols: {}\n- Do not use any `target_protocol` outside this list.",
-                protocols.join(", ")
+                "- Execution Protocols: {}\n- These are venue capabilities, not your identity. Prefer the owner mandate{}; route elsewhere only when the evidence is better, risk limits pass, and `/validate` approves.",
+                protocols.join(", "),
+                preferred_protocols
+                    .as_ref()
+                    .map(|values| format!(" ({})", values.join(", ")))
+                    .unwrap_or_default()
             ))
             .unwrap_or_default(),
         self_improvement_contract = super::SELF_IMPROVEMENT_BLOCK,

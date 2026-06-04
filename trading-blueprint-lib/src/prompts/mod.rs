@@ -122,9 +122,12 @@ pub fn build_pack_loop_prompt(
             )
         }
         "hyperliquid_perp" => format!(
-            "Trading tick ({name}). Run exactly this command:\n\n\
-             `node /home/agent/tools/hyperliquid-tick.js`\n\n\
-             Return only the final JSON object printed by that command. Do not summarize it, rewrite it, or place trades outside that tool. You have {max_turns} turns.",
+            "Trading tick ({name}). Run the mandate-preferred baseline first:\n\n\
+             1. `node /home/agent/tools/hyperliquid-tick.js`\n\
+             2. If it trades, return the final JSON object and stop.\n\
+             3. If it skips, inspect `/supported-assets`, `/adapters`, portfolio state, and recent decisions. Decide whether another wired venue has a better risk-adjusted route inside the owner mandate.\n\
+             4. Execute away from Hyperliquid only when the venue is in `available_protocols`, the evidence beats the preferred route, and `/validate` approves. Otherwise log the best alternative as a mandate revision or improvement hypothesis.\n\n\
+             Be decisive — you have {max_turns} turns.",
             name = pack.name,
             max_turns = pack.max_turns,
         ),
@@ -202,6 +205,7 @@ fn yield_loop_execute_snippet(validation_trust: ValidationTrust) -> String {
 /// Build the complete system prompt for a trading bot sidecar.
 pub fn build_system_prompt(strategy_type: &str, config: &crate::state::TradingBotRecord) -> String {
     let supported_assets = supported_assets_prompt_line(&config.strategy_config);
+    let execution_protocols = execution_protocols_prompt_line(&config.strategy_config);
     let base = format!(
         r#"You are an autonomous DeFi trading agent operating within a secure sandbox.
 Your role is to analyze market conditions and execute trades through the Trading HTTP API.
@@ -237,6 +241,7 @@ Authorization: Bearer {token}
 - Execution chain ID: {chain_id}
 - Execution RPC: {rpc_url}
 - Supported trade assets: {supported_assets}
+{execution_protocols}
 - Live candidate trades are allowed only inside a returned risk-budget decision. If `/execute` rejects the decision as expired, over cap, wrong candidate/revision, or wrong venue, skip and log the reason.
 - For Aave decisions, use `/home/agent/tools/aave-reserve-status.js` before trading so you only consider assets available on the live fork.
 - POST /circuit-breaker/check — Check if circuit breaker is triggered
@@ -298,6 +303,7 @@ Use /strategy/tick in your trading loop to get rule-based signals. You can:
         chain_id = config.chain_id,
         rpc_url = config.rpc_url,
         supported_assets = supported_assets,
+        execution_protocols = execution_protocols,
         risk_params = serde_json::to_string_pretty(&config.risk_params).unwrap_or_default(),
     );
 
@@ -320,6 +326,37 @@ Use /strategy/tick in your trading loop to get rule-based signals. You can:
 
     format!(
         "{base}\n## Strategy\n{strategy_fragment}\n\n{fee_schedule}\n\n{SELF_IMPROVEMENT_BLOCK}\n\n{MEMORY_BLOCK}"
+    )
+}
+
+fn string_array_field(strategy_config: &serde_json::Value, key: &str) -> Option<Vec<String>> {
+    strategy_config
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .filter(|values| !values.is_empty())
+}
+
+fn execution_protocols_prompt_line(strategy_config: &serde_json::Value) -> String {
+    let Some(protocols) = string_array_field(strategy_config, "available_protocols") else {
+        return "- Execution protocols: ask GET /adapters and /supported-assets before routing."
+            .to_string();
+    };
+    let preferred = string_array_field(strategy_config, "preferred_protocols")
+        .map(|values| format!(" Preferred mandate routes: {}.", values.join(", ")))
+        .unwrap_or_default();
+    format!(
+        "- Execution protocols: {}. These are venue capabilities, not your identity.{} Route away from the mandate preference only when evidence is better, risk limits pass, and /validate approves.",
+        protocols.join(", "),
+        preferred
     )
 }
 
@@ -867,7 +904,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hyperliquid_perp_loop_prompt_uses_hyperliquid_workflow_only() {
+    fn test_hyperliquid_perp_loop_prompt_uses_hyperliquid_as_preferred_baseline() {
         let pack = packs::get_pack("hyperliquid_perp").unwrap();
         let mut config = test_config();
         config.strategy_type = "hyperliquid_perp".to_string();
@@ -875,9 +912,9 @@ mod tests {
         let prompt = build_pack_loop_prompt(&pack, &config, ValidationTrust::PerTrade);
 
         assert!(prompt.contains("node /home/agent/tools/hyperliquid-tick.js"));
-        assert!(prompt.contains("Return only the final JSON object"));
-        assert!(prompt.contains("Do not summarize it"));
-        assert!(prompt.contains("Do not"));
+        assert!(prompt.contains("mandate-preferred baseline"));
+        assert!(prompt.contains("another wired venue"));
+        assert!(prompt.contains("/validate"));
         assert!(!prompt.contains("/hyperliquid/order"));
         assert!(!prompt.contains("getHyperliquidNav"));
         assert!(!prompt.contains("fundHyperliquidMargin"));

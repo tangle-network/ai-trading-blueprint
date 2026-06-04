@@ -8,6 +8,7 @@ use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::{Json, Router, extract::State, routing::post};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::sync::Arc;
 use trading_runtime::aave_v3_registry::market_for_chain;
 use trading_runtime::adapters::ActionParams;
@@ -172,9 +173,9 @@ fn uses_direct_non_vault_execution(protocol: &str) -> bool {
 fn strategy_type_for_protocol(protocol: &str) -> Option<&'static str> {
     match protocol {
         "uniswap_v3" | "aerodrome" => Some("dex"),
-        "aave_v3" => Some("yield"),
+        "aave_v3" | "morpho_vault" => Some("yield"),
         "polymarket_clob" => Some("prediction"),
-        "hyperliquid" => Some("perp"),
+        "hyperliquid" => Some("hyperliquid_perp"),
         _ => None,
     }
 }
@@ -183,6 +184,35 @@ pub(crate) fn strategy_type_from_config(strategy_config: &serde_json::Value) -> 
     strategy_config
         .get("strategy_type")
         .and_then(serde_json::Value::as_str)
+}
+
+fn strategy_type_supports_protocol(strategy_type: &str, protocol: &str) -> bool {
+    match normalize_strategy_type(strategy_type).as_str() {
+        "dex" | "mm" | "multi" => matches!(protocol, "uniswap_v3" | "aerodrome"),
+        "yield" => matches!(protocol, "aave_v3" | "morpho_vault"),
+        "prediction" => protocol == "polymarket_clob",
+        "perp" => matches!(protocol, "gmx_v2" | "vertex" | "hyperliquid"),
+        "hyperliquid_perp" => protocol == "hyperliquid",
+        _ => false,
+    }
+}
+
+fn asset_gate_strategy_type<'a>(
+    configured_strategy_type: Option<&'a str>,
+    protocol: &str,
+) -> Option<Cow<'a, str>> {
+    match (
+        configured_strategy_type,
+        strategy_type_for_protocol(protocol),
+    ) {
+        (Some(configured), Some(_)) if strategy_type_supports_protocol(configured, protocol) => {
+            Some(Cow::Owned(normalize_strategy_type(configured)))
+        }
+        (Some(_), Some(protocol_strategy)) => Some(Cow::Borrowed(protocol_strategy)),
+        (Some(configured), None) => Some(Cow::Owned(normalize_strategy_type(configured))),
+        (None, Some(protocol_strategy)) => Some(Cow::Borrowed(protocol_strategy)),
+        (None, None) => None,
+    }
 }
 
 fn action_kind_for_protocol(protocol: &str) -> u64 {
@@ -1150,8 +1180,11 @@ async fn validate_multi_bot(
     crate::validate_protocol_available(&bot.strategy_config, &req.target_protocol)
         .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
 
-    let protocol_chain_id =
-        crate::protocol_chain_id_from_config(bot.chain_id, &bot.strategy_config);
+    let protocol_chain_id = crate::protocol_chain_id_for_protocol_from_config(
+        bot.chain_id,
+        &bot.strategy_config,
+        &req.target_protocol,
+    );
     req.metadata = crate::enrich_yield_safety_metadata(
         &req.target_protocol,
         &req.action,
@@ -1472,9 +1505,10 @@ pub(crate) async fn validate_supported_trade_assets(
     let Some(chain_id) = chain_id else {
         return Ok(());
     };
-    let Some(strategy_type) = strategy_type.or_else(|| strategy_type_for_protocol(protocol)) else {
+    let Some(strategy_type) = asset_gate_strategy_type(strategy_type, protocol) else {
         return Ok(());
     };
+    let strategy_type = strategy_type.as_ref();
 
     let input_asset = require_supported_asset(
         strategy_type,
@@ -1750,6 +1784,30 @@ mod tests {
         })
         .await
         .expect("WETH/USDC should be supported");
+    }
+
+    #[tokio::test]
+    async fn asset_gate_uses_protocol_family_when_config_strategy_is_different() {
+        let config = serde_json::json!({
+            "strategy_type": "hyperliquid_perp",
+            "available_protocols": ["hyperliquid", "uniswap_v3"],
+            "protocol_chain_ids": { "uniswap_v3": 31339, "hyperliquid": 998 }
+        });
+
+        validate_supported_trade_assets(SupportedTradeAssetValidation {
+            strategy_type: strategy_type_from_config(&config),
+            strategy_config: Some(&config),
+            chain_id: Some(31339),
+            protocol: "uniswap_v3",
+            token_in: MAINNET_WETH_ADDRESS,
+            token_out: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            metadata: None,
+            vault_address: None,
+            rpc_url: None,
+            require_vault_valuation: false,
+        })
+        .await
+        .expect("protocol family should drive the DEX asset gate");
     }
 
     #[tokio::test]
