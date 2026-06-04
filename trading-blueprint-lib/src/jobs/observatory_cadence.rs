@@ -529,7 +529,14 @@ pub async fn append_observatory_feedback(
             response.stderr.trim()
         ));
     }
-    Ok(json!({ "feedback": entry }))
+    let script_result = serde_json::from_str::<Value>(response.stdout.trim()).unwrap_or_else(
+        |_| json!({ "ok": true, "parse_warning": "feedback script stdout was not JSON" }),
+    );
+    Ok(json!({
+        "feedback": entry,
+        "delegated_work_session": script_result.get("delegated_work_session").cloned().unwrap_or(Value::Null),
+        "dispatch": script_result.get("dispatch").cloned().unwrap_or(Value::Null),
+    }))
 }
 
 fn uuid_like(value: &Value) -> String {
@@ -623,7 +630,7 @@ const delegatedWorkSessions = dedupeBySessionId(rawDelegatedWorkSessions, 100);
 const latestReflection = reflectionRuns
   .slice()
   .sort((a, b) => timestampMs(b.created_at) - timestampMs(a.created_at))[0] || null;
-const pressure = latestReflection?.delegation_pressure || delegationPressure(delegatedWorkSessions, latestReflection?.usage_summary);
+const pressure = delegationPressure(rawDelegatedWorkSessions, latestReflection?.usage_summary);
 const payload = {
   schema_version: 1,
   world_signal_digests: parseJsonl(read(`${root}/world-signal-digests.jsonl`), 100),
@@ -667,6 +674,24 @@ function parseJsonl(file) {
   } catch {
     return [];
   }
+}
+function timestampMs(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+function dedupeBySessionId(sessions, limit = 500) {
+  const byId = new Map();
+  for (const session of sessions) {
+    const sessionId = session && typeof session === 'object' ? session.session_id : null;
+    if (!sessionId) continue;
+    const existing = byId.get(sessionId);
+    if (!existing || timestampMs(session.created_at) >= timestampMs(existing.created_at)) {
+      byId.set(sessionId, session);
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => timestampMs(b.created_at) - timestampMs(a.created_at))
+    .slice(0, limit);
 }
 function sha(value, len = 18) {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, len);
@@ -797,7 +822,7 @@ appendJsonl(feedbackFile, entry);
 
 const action = String(entry.action || '');
 const idea = parseJsonl(ideasFile).reverse().find((item) => item.idea_id === entry.idea_id) || null;
-const existingDelegations = parseJsonl(delegatedFile);
+const existingDelegations = dedupeBySessionId(parseJsonl(delegatedFile));
 const activeDelegations = existingDelegations.filter((item) => activeDelegationStatus(item.status));
 const existingActiveForIdea = activeDelegations.find((item) => item.idea_id === entry.idea_id);
 let delegated = null;

@@ -417,6 +417,7 @@ function buildObservatoryRun() {
   const intents = readJsonl(IMPROVEMENT_INTENTS_FILE, 80);
   const dispatches = readJsonl(IMPROVEMENT_DISPATCHES_FILE, 80);
   const researchTasks = readJsonl(RESEARCH_TASKS_FILE, 80);
+  const existingDelegatedWorkSessions = readJsonl(DELEGATED_WORK_FILE, 1000);
   const feedback = readJsonl(OWNER_FEEDBACK_FILE, 80);
   const usageEvents = readJsonl(USAGE_TELEMETRY_FILE, 300);
   const mcpTasks = readJsonFiles(path.join(ROOT, '.evolve', 'mcp-self-improvement', 'tasks'), 30);
@@ -476,13 +477,17 @@ function buildObservatoryRun() {
     timestamp,
   });
   const ideas = primaryIdea ? [primaryIdea] : [];
-  const delegatedWorkSessions = buildDelegatedWorkSessions({
+  const generatedDelegatedWorkSessions = buildDelegatedWorkSessions({
     botId,
     ideas,
     dispatches,
     mcpTasks,
     runtimeRuns,
   });
+  const delegatedWorkSessions = dedupeBySessionId(
+    [...existingDelegatedWorkSessions, ...generatedDelegatedWorkSessions],
+    100,
+  );
   const workPressure = delegationPressure(delegatedWorkSessions, usage);
 
   const reflectionRun = {
@@ -531,7 +536,7 @@ function buildObservatoryRun() {
   appendJsonl(REFLECTION_RUNS_FILE, reflectionRun);
   for (const idea of ideas) appendJsonl(IDEAS_FILE, idea);
   const existingDelegatedIds = new Set(readJsonl(DELEGATED_WORK_FILE, 1000).map((session) => session.session_id).filter(Boolean));
-  for (const session of delegatedWorkSessions) {
+  for (const session of generatedDelegatedWorkSessions) {
     if (existingDelegatedIds.has(session.session_id)) continue;
     appendJsonl(DELEGATED_WORK_FILE, session);
     existingDelegatedIds.add(session.session_id);
