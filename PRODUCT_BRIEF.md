@@ -13,16 +13,16 @@ Core jobs:
 - Understand whether the platform is live: recent fills, volume, active agents, and top movers.
 - Choose an agent to inspect from a dense ranked explorer.
 - Inspect an agent's account, market chart, fills, risk, positions, runs, decisions, chat trace, and control-plane state.
-- Create a paper agent quickly from a natural-language mandate, with visible capability focus, broad wired venue access, risk limits, and a clear handoff into the agent workspace.
-- Activate an agent with explicit wallet-backed requirements: runtime/service ownership, venue target, assets, collateral, operator route, network, validator trust, review, and secrets.
+- Create a paper agent quickly from a natural-language mandate that becomes a canonical `AgentProfile`: objective, mandate, capabilities, broad wired venue access, risk limits, autonomy, learning, telemetry, and activation projection.
+- Activate an agent profile with explicit wallet-backed requirements: runtime/service ownership, execution adapter, venue target, assets, collateral, operator route, network, validator trust, review, and secrets.
 - Verify that execution, validation, vault, operator, and trace data are accurate enough to act on.
 
 Primary workflows:
 - Home: scan market pulse, platform flow, latest fills, and top agents.
 - Agents: search, rank, compare, and open agent workspaces.
 - Activity: inspect recent execution records and their agent/market context.
-- New Agent: compile a natural-language mandate into a paper-agent request, select capability focus across wired venues, start in paper mode, and open the resulting workspace.
-- Activation/Provision: convert a paper-agent mandate into a wallet-backed operator instance with runtime, route, funding, validators, and secrets.
+- New Agent: turn a natural-language mandate and optional template seed into an `AgentProfile`, start in paper mode, and open the resulting workspace.
+- Activation/Provision: convert an `AgentProfile` into a wallet-backed operator instance by choosing the required execution adapter/runtime projection, route, funding, validators, and secrets.
 - Agent workspace: inspect performance, portfolio, runs, chat, and operations without losing agent context.
 - Operations: audit runtime state, validation, revisions, permissions, vault/secrets, and control availability.
 
@@ -31,7 +31,8 @@ Critical data:
 - Account value, return, drawdown, fills, total and recent volume, positions, executions, and market candles.
 - Trade evidence: fill count source, priced/unpriced fills, outside-range fills, timestamps, prices, notional, status, validation, and provenance.
 - Run and chat trace evidence: workflow, decision, tools, reasoning, output, error state, public/private access, and timestamps.
-- Activation evidence: wallet, network, service, collateral, capability focus, available/preferred protocols, asset universe, operator route, and launch readiness.
+- AgentProfile evidence: objective, raw mandate, market, preferred venue, capabilities, available/preferred protocols, protocol chain map, risk constraints, learning policy, telemetry policy, and activation projection.
+- Activation evidence: wallet, network, service, collateral, execution adapter, asset universe, operator route, and launch readiness.
 
 Primary actions:
 - Open an agent workspace from Home, Agents, or Activity.
@@ -61,12 +62,13 @@ Non-goals:
 - Do not introduce duplicate navigation layers unless each layer has a distinct job.
 - Do not present capability focus as a hard venue prison. Agents should carry broad wired venue access and a mandate-derived preference unless a real runtime, validator, wallet, or venue constraint prevents execution.
 - Do not maintain separate Create and Deploy product stories. The product story is paper agent first, activation second, graduation to live later.
+- Do not make strategy packs the user-facing source of truth. Templates may seed an AgentProfile; runtime strategy fields are compatibility projections until the operator API fully speaks AgentProfile natively.
 
 Evidence:
 - `arena/src/routes/_index.tsx`, `leaderboard.tsx`, `activity.tsx`, `create.tsx`, `provision.tsx`, and `arena.bot.$id.*.tsx`
 - `arena/scripts/smoke-agent-workspace.mjs`
 - `.evolve/arena-workspace-redesign-2026-06-01.md`
-- Live deploy commit `287a0650b835f31c5ce1093243fa0fabbbb8a2dd`
+- Production release claims must cite the deployed commit verified from the deploy workflow, not just a local build or accepted build hook.
 
 Open questions:
 - Which production wallet/auth fixture should be canonical for connected Provision screenshots in CI?

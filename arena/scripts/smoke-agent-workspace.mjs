@@ -69,16 +69,16 @@ const LIVE_SECTION_EXPECTATIONS = {
 const FIXTURE_HOME_EXPECTATIONS = ['Tangle', 'Volume', 'Fills', 'ETH Macro Scalper'];
 const FIXTURE_LEADERBOARD_EXPECTATIONS = ['Agents', '24H Vol', 'Active', 'ETH Macro Scalper', 'HL Perp'];
 const FIXTURE_ACTIVITY_EXPECTATIONS = ['Activity', '24H Vol', 'Fills', 'ETH Macro Scalper', 'ETH-PERP'];
-const FIXTURE_CREATE_EXPECTATIONS = ['Create', 'Mandate', 'Launch Ticket', 'Prediction Markets', 'Review in Deploy'];
-const FIXTURE_PROVISION_EXPECTATIONS = ['Deploy', 'Launch Check', 'Owner Wallet', 'Connect Wallet'];
+const FIXTURE_CREATE_EXPECTATIONS = ['New Agent', 'Mandate', 'Agent Profile', 'Prediction Markets', 'Prepare Live Activation'];
+const FIXTURE_PROVISION_EXPECTATIONS = ['Activate', 'Launch Check', 'Owner Wallet', 'Connect Wallet'];
 const FIXTURE_PROVISION_CONNECTED_EXPECTATIONS = [
-  'Deploy',
+  'Activate',
   'Base Sepolia',
-  'Strategy',
+  'Agent Profile',
   'Agent Identity',
-  'Provision Review',
+  'Activation Review',
   'Hyperliquid Guardrails',
-  'Review Provision',
+  'Review Activation',
 ];
 
 function parseArgs(argv) {
@@ -1695,7 +1695,7 @@ async function assertCollapsibleRails(page, baseUrl, botId) {
       return metrics.pathname.endsWith('/dashboard')
         && /My Agents/i.test(metrics.labels)
         && /Home/i.test(metrics.labels)
-        && /Deploy/i.test(metrics.labels)
+        && /New Agent/i.test(metrics.labels)
         ? metrics
         : false;
     }, { timeoutMs: 12_000, intervalMs: 250 });

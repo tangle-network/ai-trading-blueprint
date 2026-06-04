@@ -3,14 +3,14 @@ import { fallbackBotDisplayName, resolveBotDisplayName } from './botNames';
 
 describe('botNames', () => {
   it('uses the strategy label when no name is available', () => {
-    expect(resolveBotDisplayName({ strategyType: 'dex' })).toBe('DEX Spot Trading');
+    expect(resolveBotDisplayName({ strategyType: 'dex' })).toBe('DEX Spot');
   });
 
   it('drops fabricated strategy-agent placeholders from stale frontend state', () => {
     expect(resolveBotDisplayName({
       fallbackName: 'dex Agent',
       strategyType: 'dex',
-    })).toBe('DEX Spot Trading');
+    })).toBe('DEX Spot');
   });
 
   it('keeps authoritative names from the backend or provisions', () => {

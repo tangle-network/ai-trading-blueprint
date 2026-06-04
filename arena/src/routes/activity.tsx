@@ -56,7 +56,7 @@ export default function ActivityPage() {
           <>
             <ArenaHeaderLink to="/" icon="i-ph:chart-line-up">Terminal</ArenaHeaderLink>
             <ArenaHeaderLink to="/leaderboard" icon="i-ph:table">Agents</ArenaHeaderLink>
-            <ArenaHeaderLink to="/provision" icon="i-ph:plus-bold" variant="primary">Deploy</ArenaHeaderLink>
+            <ArenaHeaderLink to="/create" icon="i-ph:plus-bold" variant="primary">New Agent</ArenaHeaderLink>
           </>
         )}
       />
@@ -77,16 +77,16 @@ export default function ActivityPage() {
         ) : !isConnected ? (
           <ConnectWalletPanel
             title="Connect your wallet to get started"
-            description="Connect a wallet to deploy agents or follow live execution activity."
-            bullets={['Deploy an agent', 'Track live fills', 'Inspect agent performance']}
+            description="Connect a wallet to create agents or follow live execution activity."
+            bullets={['Create an agent', 'Track live fills', 'Inspect agent performance']}
           />
         ) : (
           <div className="flex min-h-[20rem] items-center justify-center border border-[#273035] bg-[#0f1a1f] px-6 text-center">
             <div>
               <div className="i-ph:pulse mx-auto mb-4 text-4xl text-[#697371]" aria-hidden="true" />
               <p className="font-display text-base font-semibold text-[#f6fefd]">No execution activity yet</p>
-              <Link to="/provision" className="mt-2 inline-flex text-sm font-display text-[#50d2c1] hover:text-[#c8fffb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60">
-                Deploy an agent
+              <Link to="/create" className="mt-2 inline-flex text-sm font-display text-[#50d2c1] hover:text-[#c8fffb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60">
+                Create an agent
               </Link>
             </div>
           </div>

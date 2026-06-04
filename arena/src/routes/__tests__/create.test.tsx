@@ -34,7 +34,7 @@ describe('create agent route', () => {
     const { default: CreateAgent } = await import('../create')
     render(<CreateAgent />)
 
-    expect(screen.getByLabelText('Trading agent strategy prompt')).toHaveValue(
+    expect(screen.getByLabelText('Trading agent mandate prompt')).toHaveValue(
       'I want an agent that trades ETH perps on Hyperliquid, using breakout retests with strict max leverage, liquidation buffer, and drawdown limits.',
     )
     expect(screen.getAllByRole('button', { name: /hyperliquid perp/i }).some((button) => button.getAttribute('aria-pressed') === 'true')).toBe(true)
@@ -52,7 +52,7 @@ describe('create agent route', () => {
     const { default: CreateAgent } = await import('../create')
     render(<CreateAgent />)
 
-    const textbox = screen.getByLabelText('Trading agent strategy prompt')
+    const textbox = screen.getByLabelText('Trading agent mandate prompt')
     fireEvent.change(textbox, { target: { value: 'Create a paper ETH strategy' } })
     fireEvent.keyDown(textbox, { key: 'Enter' })
     fireEvent.keyDown(textbox, { key: 'Enter' })
@@ -77,7 +77,7 @@ describe('create agent route', () => {
     render(<CreateAgent />)
 
     fireEvent.click(screen.getByText('Polymarket news edge').closest('button')!)
-    expect(screen.getByLabelText('Trading agent strategy prompt')).toHaveValue(
+    expect(screen.getByLabelText('Trading agent mandate prompt')).toHaveValue(
       'I want to trade political and news events on Polymarket. Find markets with edge and manage positions.',
     )
 
@@ -89,19 +89,48 @@ describe('create agent route', () => {
     expect(body.strategy_type).toBe('prediction')
     expect(body.name).toBe('Polymarket Event Scout')
     expect(body.prompt).toContain('Polymarket')
-    expect(body.prompt).toContain('Launch draft:')
+    expect(body.prompt).toContain('Agent profile:')
     expect(body.prompt).toContain('Venue access: all wired protocols')
+    expect(body.agent_profile).toMatchObject({
+      schema: 'tangle.trading.agent-profile.v1',
+      name: 'Polymarket Event Scout',
+      objective: {
+        primary: 'make_money',
+      },
+      mandate: {
+        market: 'Political events',
+        preferredVenue: 'Polymarket',
+      },
+      capabilities: {
+        focus: ['Prediction Markets'],
+        availableProtocols: expect.arrayContaining(['hyperliquid', 'uniswap_v3', 'polymarket_clob']),
+        preferredProtocols: ['polymarket_clob'],
+        venueAccessMode: 'all_wired_with_preferences',
+      },
+      autonomy: {
+        selfImprovement: 'enabled',
+      },
+      telemetry: {
+        trackTokenUsage: true,
+        trackCost: true,
+      },
+      activation: {
+        paperFirst: true,
+        projectedStrategyType: 'prediction',
+      },
+    })
     expect(body.strategy_config).toMatchObject({
       paper_trade: true,
       paper_safe: true,
       initial_capital_usd: '10000',
+      agent_profile: body.agent_profile,
       available_protocols: expect.arrayContaining(['hyperliquid', 'uniswap_v3', 'polymarket_clob']),
       preferred_protocols: ['polymarket_clob'],
       protocol_chain_ids: expect.objectContaining({
         hyperliquid: 998,
         polymarket_clob: 137,
       }),
-      launch_ticket: {
+      agent_profile_summary: {
         market: 'Political events',
         venue: 'Polymarket',
         capabilities: ['Prediction Markets'],
@@ -110,7 +139,7 @@ describe('create agent route', () => {
     })
   })
 
-  it('supports launching a Hyperliquid perp tactic from the strategy book', async () => {
+  it('supports launching a Hyperliquid perp tactic from a mandate template', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({
       bot_id: 'perp-bot',
       status: 'active',
@@ -127,7 +156,7 @@ describe('create agent route', () => {
         .map((element) => element.closest('button'))
         .find(Boolean)!,
     )
-    expect(screen.getByLabelText('Trading agent strategy prompt')).toHaveValue(
+    expect(screen.getByLabelText('Trading agent mandate prompt')).toHaveValue(
       'I want an agent that trades ETH perps on Hyperliquid, using breakout retests with strict max leverage, liquidation buffer, and drawdown limits.',
     )
 
@@ -139,12 +168,24 @@ describe('create agent route', () => {
     expect(body.strategy_type).toBe('hyperliquid_perp')
     expect(body.name).toBe('ETH Perp Breakout')
     expect(body.prompt).toContain('Hyperliquid')
+    expect(body.agent_profile).toMatchObject({
+      schema: 'tangle.trading.agent-profile.v1',
+      name: 'ETH Perp Breakout',
+      capabilities: {
+        focus: ['Hyperliquid Perps'],
+        preferredProtocols: ['hyperliquid'],
+      },
+      activation: {
+        projectedStrategyType: 'hyperliquid_perp',
+      },
+    })
     expect(body.strategy_config).toMatchObject({
       paper_trade: true,
       initial_capital_usd: '10000',
+      agent_profile: body.agent_profile,
       available_protocols: expect.arrayContaining(['hyperliquid', 'uniswap_v3', 'gmx_v2', 'vertex']),
       preferred_protocols: ['hyperliquid'],
-      launch_ticket: {
+      agent_profile_summary: {
         market: 'ETH-PERP',
         venue: 'Hyperliquid',
         capabilities: ['Hyperliquid Perps'],
@@ -161,7 +202,7 @@ describe('create agent route', () => {
     expect(rail).not.toBeNull()
     expect(rail).toHaveClass('border', 'overflow-hidden')
     expect(rail).not.toHaveClass('gap-2.5')
-    expect(rail).toContainElement(screen.getByText('Mandate Seeds'))
+    expect(rail).toContainElement(screen.getByText('Mandate Templates'))
     expect(rail).toContainElement(screen.getByText('Execution'))
   })
 })

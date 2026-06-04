@@ -874,6 +874,7 @@ fn classify_preflight_error(err: &str) -> StatusCode {
 #[derive(Deserialize)]
 struct CreateBotRequest {
     /// Free-form strategy description from the user
+    #[serde(default)]
     prompt: String,
     /// Optional strategy type override (auto-detected from prompt if omitted)
     #[serde(default)]
@@ -887,6 +888,11 @@ struct CreateBotRequest {
     /// Optional JSON-encoded structured config for CLI callers.
     #[serde(default)]
     strategy_config_json: Option<String>,
+    /// Canonical owner-facing agent definition. Strategy config is a runtime
+    /// projection from this profile while existing adapters still require
+    /// `strategy_type`.
+    #[serde(default)]
+    agent_profile: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -1075,9 +1081,19 @@ fn build_strategy_bootstrap_memory(
     date: &str,
     timestamp: &str,
     prompt: &str,
+    agent_profile: Option<&serde_json::Value>,
 ) -> (String, String, String) {
     let conversation_file = strategy_context_filename(date);
-    let strategy_content = format!("# Strategy Brief\n\n## Owner ({timestamp})\n{prompt}\n");
+    let profile_section = agent_profile
+        .filter(|profile| !profile.is_null())
+        .map(|profile| {
+            let pretty =
+                serde_json::to_string_pretty(profile).unwrap_or_else(|_| profile.to_string());
+            format!("\n## AgentProfile\n```json\n{pretty}\n```\n")
+        })
+        .unwrap_or_default();
+    let strategy_content =
+        format!("# Strategy Brief\n\n## Owner ({timestamp})\n{prompt}\n{profile_section}");
     let toc_content = format!(
         "# Memory Index\nUpdated: {date} | Iteration: 0\n\n\
          ## Conversations\n\
@@ -1096,7 +1112,7 @@ fn build_strategy_bootstrap_memory(
 fn create_bot_strategy_config(
     body: &CreateBotRequest,
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
-    if let Some(raw) = body
+    let mut config = if let Some(raw) = body
         .strategy_config_json
         .as_deref()
         .map(str::trim)
@@ -1104,17 +1120,50 @@ fn create_bot_strategy_config(
     {
         let parsed = serde_json::from_str::<serde_json::Value>(raw)
             .map_err(|e| format!("strategy_config_json is not valid JSON: {e}"))?;
-        return parsed
+        parsed
             .as_object()
             .cloned()
-            .ok_or_else(|| "strategy_config_json must be a JSON object".to_string());
+            .ok_or_else(|| "strategy_config_json must be a JSON object".to_string())?
+    } else {
+        match body.strategy_config.as_ref() {
+            None | Some(serde_json::Value::Null) => serde_json::Map::new(),
+            Some(serde_json::Value::Object(map)) => map.clone(),
+            Some(_) => return Err("strategy_config must be a JSON object".to_string()),
+        }
+    };
+
+    if let Some(profile) = body.agent_profile.as_ref() {
+        if !profile.is_object() {
+            return Err("agent_profile must be a JSON object".to_string());
+        }
+        config.insert("agent_profile".to_string(), profile.clone());
     }
 
-    match body.strategy_config.as_ref() {
-        None | Some(serde_json::Value::Null) => Ok(serde_json::Map::new()),
-        Some(serde_json::Value::Object(map)) => Ok(map.clone()),
-        Some(_) => Err("strategy_config must be a JSON object".to_string()),
+    Ok(config)
+}
+
+fn string_at_path<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a str> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment)?;
     }
+    current
+        .as_str()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+}
+
+fn prompt_from_agent_profile(agent_profile: &serde_json::Value) -> Option<&str> {
+    string_at_path(agent_profile, &["mandate", "raw"])
+        .or_else(|| string_at_path(agent_profile, &["mandate", "text"]))
+        .or_else(|| string_at_path(agent_profile, &["mandate", "summary"]))
+}
+
+fn strategy_type_from_agent_profile(agent_profile: &serde_json::Value) -> Option<&str> {
+    string_at_path(agent_profile, &["activation", "projectedStrategyType"])
+        .or_else(|| string_at_path(agent_profile, &["activation", "executionAdapter"]))
+        .or_else(|| string_at_path(agent_profile, &["execution", "adapter", "strategy_type"]))
+        .or_else(|| string_at_path(agent_profile, &["compatibility", "strategy_type"]))
 }
 
 fn env_string(keys: &[&str]) -> Option<String> {
@@ -1187,6 +1236,11 @@ fn prompt_from_config(strategy_config: &serde_json::Value) -> Option<&str> {
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .or_else(|| {
+            strategy_config
+                .get("agent_profile")
+                .and_then(prompt_from_agent_profile)
+        })
 }
 
 fn config_string(strategy_config: &serde_json::Value, keys: &[&str]) -> Option<String> {
@@ -2104,15 +2158,30 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, format!("Bad body: {e}")))?;
     let body: CreateBotRequest = serde_json::from_slice(&bytes)
         .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, format!("Bad JSON: {e}")))?;
+    let mut strategy_config = create_bot_strategy_config(&body)
+        .map_err(|message| ApiError::message(StatusCode::BAD_REQUEST, message))?;
+    let strategy_config_from_request = serde_json::Value::Object(strategy_config.clone());
     let prompt = body.prompt.trim().to_string();
+    let prompt = if prompt.is_empty() {
+        prompt_from_config(&strategy_config_from_request)
+            .map(str::to_string)
+            .unwrap_or_default()
+    } else {
+        prompt
+    };
     if prompt.is_empty() {
         return Err(ApiError::message(
             StatusCode::BAD_REQUEST,
-            "prompt is required".to_string(),
+            "prompt or agent_profile.mandate.raw is required".to_string(),
         ));
     }
 
-    let strategy_type = infer_create_bot_strategy_type(&prompt, body.strategy_type.as_deref());
+    let requested_strategy_type = body.strategy_type.as_deref().or_else(|| {
+        strategy_config_from_request
+            .get("agent_profile")
+            .and_then(strategy_type_from_agent_profile)
+    });
+    let strategy_type = infer_create_bot_strategy_type(&prompt, requested_strategy_type);
 
     // Build a TradingProvisionRequest
     let chain_id: u64 = std::env::var("CHAIN_ID")
@@ -2126,8 +2195,6 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
     let rpc_url = std::env::var("HTTP_RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".into());
     let paper_trade = default_paper_trade_for_chain(chain_id);
 
-    let mut strategy_config = create_bot_strategy_config(&body)
-        .map_err(|message| ApiError::message(StatusCode::BAD_REQUEST, message))?;
     strategy_config
         .entry("user_prompt".to_string())
         .or_insert_with(|| serde_json::Value::String(prompt.clone()));
@@ -2148,11 +2215,16 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
     persist_name_metadata(&mut strategy_config, &name_resolution);
     let name = name_resolution.name.clone();
 
+    let final_strategy_config = serde_json::Value::Object(strategy_config);
+    let agent_profile_for_response = final_strategy_config
+        .get("agent_profile")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
     let request = trading_blueprint_lib::TradingProvisionRequest {
         name: name.clone(),
         strategy_type: strategy_type.clone(),
-        strategy_config_json: serde_json::to_string(&serde_json::Value::Object(strategy_config))
-            .unwrap_or_default(),
+        strategy_config_json: serde_json::to_string(&final_strategy_config).unwrap_or_default(),
         risk_params_json: r#"{"max_drawdown_pct":10}"#.into(),
         factory_address: vault_factory
             .parse()
@@ -2222,6 +2294,12 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         "USER_STRATEGY_PROMPT".into(),
         serde_json::Value::String(prompt.clone()),
     );
+    if !agent_profile_for_response.is_null() {
+        user_env.insert(
+            "AGENT_PROFILE_JSON".into(),
+            serde_json::Value::String(agent_profile_for_response.to_string()),
+        );
+    }
 
     let mut activation_error = None;
     let activate_result =
@@ -2247,8 +2325,12 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
     {
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
         let timestamp = chrono::Utc::now().format("%H:%M UTC").to_string();
-        let (conversation_file, strategy_content, toc_content) =
-            build_strategy_bootstrap_memory(&date, &timestamp, &prompt);
+        let (conversation_file, strategy_content, toc_content) = build_strategy_bootstrap_memory(
+            &date,
+            &timestamp,
+            &prompt,
+            Some(&agent_profile_for_response),
+        );
 
         let writes: &[(&str, &str)] = &[
             (
@@ -2300,6 +2382,8 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         "trading_api_token": trading_api_token,
         "activation_error": activation_error,
         "prompt": prompt,
+        "agent_profile": agent_profile_for_response,
+        "strategy_config": final_strategy_config,
     })))
 }
 
@@ -7356,6 +7440,7 @@ mod tests {
                 "volatility_params": { "realized_window_hours": 24 }
             })),
             strategy_config_json: None,
+            agent_profile: None,
         };
 
         let config = create_bot_strategy_config(&req).expect("strategy config");
@@ -7378,6 +7463,7 @@ mod tests {
                 r#"{"protocol_chain_id":42161,"available_protocols":["gmx_v2","vertex"]}"#
                     .to_string(),
             ),
+            agent_profile: None,
         };
 
         let config = create_bot_strategy_config(&req).expect("strategy config");
@@ -7397,11 +7483,59 @@ mod tests {
             name: None,
             strategy_config: Some(serde_json::json!(["gmx_v2"])),
             strategy_config_json: None,
+            agent_profile: None,
         };
 
         let err = create_bot_strategy_config(&req).expect_err("non-object config rejected");
 
         assert!(err.contains("strategy_config must be a JSON object"));
+    }
+
+    #[test]
+    fn create_bot_strategy_config_accepts_agent_profile_as_source_of_intent() {
+        let agent_profile = serde_json::json!({
+            "schema": "tangle.trading.agent-profile.v1",
+            "name": "ETH Perp Sentinel",
+            "mandate": {
+                "raw": "Trade ETH perps on Hyperliquid with strict liquidation buffers.",
+                "market": "ETH-PERP",
+                "preferredVenue": "Hyperliquid"
+            },
+            "activation": {
+                "projectedStrategyType": "perp"
+            },
+            "capabilities": {
+                "availableProtocols": ["hyperliquid", "gmx_v2", "vertex"],
+                "preferredProtocols": ["hyperliquid"]
+            }
+        });
+        let req = CreateBotRequest {
+            prompt: String::new(),
+            strategy_type: None,
+            name: None,
+            strategy_config: Some(serde_json::json!({
+                "paper_trade": true
+            })),
+            strategy_config_json: None,
+            agent_profile: Some(agent_profile.clone()),
+        };
+
+        let config = create_bot_strategy_config(&req).expect("strategy config");
+        let config_value = serde_json::Value::Object(config.clone());
+        let profile_prompt = prompt_from_config(&config_value).expect("profile prompt");
+        let requested_strategy = config
+            .get("agent_profile")
+            .and_then(strategy_type_from_agent_profile);
+
+        assert_eq!(config["agent_profile"], agent_profile);
+        assert_eq!(
+            profile_prompt,
+            "Trade ETH perps on Hyperliquid with strict liquidation buffers."
+        );
+        assert_eq!(
+            infer_create_bot_strategy_type(profile_prompt, requested_strategy),
+            "hyperliquid_perp"
+        );
     }
 
     fn naming_test_bot(
@@ -7695,6 +7829,7 @@ mod tests {
             "2026-04-22",
             "07:25 UTC",
             "Create a conservative Base Sepolia paper-trading bot.",
+            None,
         );
 
         assert_eq!(
@@ -7964,6 +8099,7 @@ mod tests {
             active_trial_candidate_hash: None,
             pre_trial_harness_json: None,
         };
+        let expected_name = effective_bot_name(&bot);
         let _ = store.insert(state::bot_key("wd-bot"), bot);
 
         let app = build_operator_router();
@@ -7982,7 +8118,7 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["wind_down_started_at"], 5000);
-        assert_eq!(json["name"], "Wind Down Bot");
+        assert_eq!(json["name"], expected_name);
     }
 
     #[tokio::test]

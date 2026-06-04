@@ -120,11 +120,31 @@ describe('ConfigureStep', () => {
     expect(screen.getByPlaceholderText('e.g. Base USDC/WETH swing bot…')).toBeInTheDocument();
   });
 
-  it('renders capability focus grid', () => {
+  it('renders activation adapter grid', () => {
     render(<ConfigureStep {...defaultProps()} />);
-    expect(screen.getByText('Capability Focus')).toBeInTheDocument();
+    expect(screen.getByText('Activation Adapter')).toBeInTheDocument();
     expect(screen.getAllByText('DEX Swing').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('DeFi Yield')).toBeInTheDocument();
+  });
+
+  it('surfaces the inherited agent profile separately from the activation adapter', () => {
+    render(
+      <ConfigureStep
+        {...defaultProps({
+          name: 'ETH Perp Sentinel',
+          agentProfileName: 'ETH Perp Sentinel',
+          agentProfileObjective: 'Autonomously trade and improve the mandate.',
+          capabilityFocusLabels: ['Hyperliquid Perps', 'DEX Spot'],
+          availableProtocolCount: 8,
+        })}
+      />,
+    );
+
+    expect(screen.getByText('Agent Profile')).toBeInTheDocument();
+    expect(screen.getAllByText('ETH Perp Sentinel').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Adapter')).toBeInTheDocument();
+    expect(screen.getAllByText('8 wired protocols').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Autonomously trade and improve the mandate.')).toBeInTheDocument();
   });
 
   it('renders prediction market section separately', () => {

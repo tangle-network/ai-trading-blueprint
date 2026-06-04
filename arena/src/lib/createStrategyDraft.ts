@@ -1,7 +1,13 @@
+import {
+  readStoredTradingAgentProfile,
+  type TradingAgentProfile,
+} from './agentProfile'
+
 export interface CreateStrategyDraft {
   name: string
   strategyType: string
   provisionStrategyType: string
+  agentProfile?: TradingAgentProfile
   capabilityFocus?: string[]
   availableProtocols?: string[]
   preferredProtocols?: string[]
@@ -38,6 +44,7 @@ export function safeLoadStoredCreateStrategyDraft(): CreateStrategyDraft | null 
       name: readString(parsed.name),
       strategyType: readString(parsed.strategyType),
       provisionStrategyType: readString(parsed.provisionStrategyType),
+      agentProfile: readStoredTradingAgentProfile(parsed.agentProfile),
       capabilityFocus: Array.isArray(parsed.capabilityFocus)
         ? parsed.capabilityFocus.map(readString).filter(Boolean)
         : undefined,

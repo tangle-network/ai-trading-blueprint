@@ -103,7 +103,7 @@ export function DeployStep({
               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm font-data">
                 <SummaryRow label="Blueprint" value={selectedBlueprint?.name ?? 'Instance'} />
                 <SummaryRow label="Agent" value={name} />
-                <SummaryRow label="Focus" value={selectedPack.name} />
+                <SummaryRow label="Adapter" value={selectedPack.name} />
                 <SummaryRow label="Frequency" value={`Every ${cronToHuman(effectiveCron)}`} />
                 <SummaryRow
                   label="Operators"
@@ -186,7 +186,7 @@ export function DeployStep({
               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm font-data">
                 <SummaryRow label="Service" value={`#${serviceId}`} />
                 <SummaryRow label="Agent" value={name} />
-                <SummaryRow label="Focus" value={selectedPack.name} />
+                <SummaryRow label="Adapter" value={selectedPack.name} />
                 <SummaryRow label="Frequency" value={`Every ${cronToHuman(effectiveCron)}`} />
                 <SummaryRow
                   label="On-chain call"

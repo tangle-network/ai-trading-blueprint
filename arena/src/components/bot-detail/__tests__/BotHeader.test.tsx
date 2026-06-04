@@ -65,7 +65,7 @@ describe('BotHeader', () => {
 
     render(<BotHeader bot={makeBot()} />);
 
-    expect(screen.getByRole('heading', { name: 'DEX Spot Trading' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'DEX Spot' })).toBeInTheDocument();
   });
 
   it('renders live runtime values instead of stale bot summary values', () => {

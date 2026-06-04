@@ -474,7 +474,7 @@ export default function IndexPage() {
         controls={(
           <>
             <ArenaHeaderLink to="/leaderboard" icon="i-ph:table">Agents</ArenaHeaderLink>
-            <ArenaHeaderLink to="/provision" icon="i-ph:plus-bold" variant="primary">Deploy</ArenaHeaderLink>
+            <ArenaHeaderLink to="/create" icon="i-ph:plus-bold" variant="primary">New Agent</ArenaHeaderLink>
           </>
         )}
       />
@@ -497,15 +497,15 @@ export default function IndexPage() {
         ) : !isConnected ? (
           <ConnectWalletPanel
             title="Connect your wallet to get started"
-            description="Connect a wallet to deploy an agent or follow live performance."
-            bullets={['Deploy an agent', 'Track returns and fills', 'Configure operator secrets']}
+            description="Connect a wallet to create an agent or follow live performance."
+            bullets={['Create an agent', 'Track returns and fills', 'Configure operator secrets']}
           />
         ) : (
         <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-16 text-center">
           <div className="i-ph:robot text-4xl text-arena-elements-textTertiary mb-4 mx-auto" />
           <p className="text-base text-arena-elements-textSecondary mb-2">No agents deployed yet</p>
           <p className="text-sm text-arena-elements-textTertiary">
-            <Link to="/provision" className="text-violet-700 dark:text-violet-400 hover:underline">Deploy an agent</Link> to get started.
+            <Link to="/create" className="text-violet-700 dark:text-violet-400 hover:underline">Create an agent</Link> to get started.
           </p>
         </div>
         )

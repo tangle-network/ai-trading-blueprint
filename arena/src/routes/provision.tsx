@@ -71,6 +71,7 @@ import { AdvancedSettingsDialog } from '~/components/provision/AdvancedSettingsD
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import { safeLoadStoredCreateStrategyDraft } from '~/lib/createStrategyDraft';
+import type { TradingAgentProfile } from '~/lib/agentProfile';
 import { resolveBotId as resolveBot } from '~/lib/utils/resolveBotId';
 import {
   buildBotScopedPath,
@@ -143,6 +144,7 @@ interface StrategyConfigOptions {
   customInstructions?: string;
   firecrackerRuntimeSupported?: boolean;
   paperTrade?: boolean;
+  agentProfile?: TradingAgentProfile;
   protocolChainId?: number;
   availableProtocols?: string[];
   preferredProtocols?: string[];
@@ -660,6 +662,7 @@ export function buildStrategyConfigForProvision({
   customInstructions,
   firecrackerRuntimeSupported,
   paperTrade,
+  agentProfile,
   protocolChainId,
   availableProtocols,
   preferredProtocols,
@@ -688,6 +691,7 @@ export function buildStrategyConfigForProvision({
   ) {
     config.protocol_chain_id = protocolChainId;
   }
+  if (agentProfile) config.agent_profile = agentProfile;
   if (availableProtocols?.length)
     config.available_protocols = availableProtocols;
   if (preferredProtocols?.length)
@@ -1195,14 +1199,14 @@ export function validateStrategyExecutionSelection(
   if (!pack) {
     return {
       ok: false,
-      message: 'Select a valid strategy profile before provisioning.',
+      message: 'Select a valid execution adapter before provisioning.',
     };
   }
 
   if (pack.executionMode === 'none') {
     return {
       ok: false,
-      message: `${pack.name} requires multi-chain orchestration and cannot be provisioned from the single-chain flow yet.`,
+      message: `${pack.name} requires multi-chain orchestration and cannot be activated from the single-chain flow yet.`,
     };
   }
 
@@ -1210,7 +1214,7 @@ export function validateStrategyExecutionSelection(
     if (!paperTrade) {
       return {
         ok: false,
-        message: `${pack.name} is paper-trading only until multi-chain execution is supported.`,
+        message: `${pack.name} is paper-only until multi-chain execution is supported.`,
       };
     }
     return { ok: true };
@@ -1514,6 +1518,7 @@ export default function ProvisionPage() {
   const [customConversationCron, setCustomConversationCron] = useState('');
   const [customResearchCron, setCustomResearchCron] = useState('');
   const [draftProtocolIntent, setDraftProtocolIntent] = useState<{
+    agentProfile?: TradingAgentProfile;
     capabilityFocus?: string[];
     availableProtocols?: string[];
     preferredProtocols?: string[];
@@ -1877,10 +1882,10 @@ export default function ProvisionPage() {
     enabledCompatibleExecutionTargets.length > 0;
   const strategyExecutionNotice = (() => {
     if (selectedPack.executionMode === 'paper-only') {
-      return `${selectedPack.name} is paper-trading only until multi-chain execution is supported.`;
+      return `${selectedPack.name} is paper-only until multi-chain execution is supported.`;
     }
     if (selectedPack.executionMode === 'none') {
-      return `${selectedPack.name} requires multi-chain orchestration and cannot be provisioned from this single-chain flow yet.`;
+      return `${selectedPack.name} requires multi-chain orchestration and cannot be activated from this single-chain flow yet.`;
     }
     if (enabledCompatibleExecutionTargets.length === 0) {
       return `${selectedPack.name} supports ${formatSupportedChains(selectedPack.supportedChainIds)}, but none are enabled in this deployment.`;
@@ -1926,6 +1931,7 @@ export default function ProvisionPage() {
     );
     setCustomInstructions(draft.prompt);
     setDraftProtocolIntent({
+      agentProfile: draft.agentProfile,
       capabilityFocus: draft.capabilityFocus,
       availableProtocols: draft.availableProtocols,
       preferredProtocols: draft.preferredProtocols,
@@ -2027,7 +2033,7 @@ export default function ProvisionPage() {
     const chainId = snapshot?.targetChainId ?? targetChain.id;
     addTx(
       txHash,
-      `Deploy ${provisionName} (${packName})`,
+      `Activate ${provisionName} (${packName})`,
       chainId,
     );
     addProvision({
@@ -2291,6 +2297,7 @@ export default function ProvisionPage() {
             customExpertKnowledge,
             customInstructions,
             paperTrade: provisionPaperTrade,
+            agentProfile: draftProtocolIntent?.agentProfile,
             availableProtocols: draftProtocolIntent?.availableProtocols,
             preferredProtocols: draftProtocolIntent?.preferredProtocols,
             protocolChainIds: draftProtocolIntent?.protocolChainIds,
@@ -2771,6 +2778,7 @@ export default function ProvisionPage() {
       customExpertKnowledge,
       customInstructions,
       paperTrade: provisionPaperTrade,
+      agentProfile: draftProtocolIntent?.agentProfile,
       availableProtocols: draftProtocolIntent?.availableProtocols,
       preferredProtocols: draftProtocolIntent?.preferredProtocols,
       protocolChainIds: draftProtocolIntent?.protocolChainIds,
@@ -3029,6 +3037,7 @@ export default function ProvisionPage() {
       isTeeBlueprint: !!selectedBlueprint?.isTee,
       customExpertKnowledge,
       customInstructions,
+      agentProfile: draftProtocolIntent?.agentProfile,
       availableProtocols: draftProtocolIntent?.availableProtocols,
       preferredProtocols: draftProtocolIntent?.preferredProtocols,
       protocolChainIds: draftProtocolIntent?.protocolChainIds,
@@ -3791,6 +3800,8 @@ export default function ProvisionPage() {
             strategyType={strategyType}
             setStrategyType={setStrategyType}
             selectedPack={selectedPack}
+            agentProfileName={draftProtocolIntent?.agentProfile?.name}
+            agentProfileObjective={draftProtocolIntent?.agentProfile?.objective.description}
             isInstance={isInstance}
             serviceId={serviceId}
             serviceInfo={serviceInfo}

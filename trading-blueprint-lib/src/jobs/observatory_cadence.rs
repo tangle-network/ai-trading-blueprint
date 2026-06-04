@@ -152,7 +152,7 @@ fn eligible_observatory_bot(bot: &TradingBotRecord) -> bool {
 
 pub fn observatory_workflow_id(bot: &TradingBotRecord) -> u64 {
     bot.workflow_id
-        .map(|workflow_id| workflow_id + 1)
+        .map(|workflow_id| workflow_id + 3)
         .unwrap_or_else(|| stable_hash_u64(&format!("observatory:{}", bot.id)))
 }
 
@@ -1283,7 +1283,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn observatory_workflow_uses_research_slot() {
+    fn observatory_workflow_uses_dedicated_slot() {
         let bot = TradingBotRecord {
             id: "bot_1".to_string(),
             name: "Bot".to_string(),
@@ -1318,7 +1318,7 @@ mod tests {
             pre_trial_harness_json: None,
         };
 
-        assert_eq!(observatory_workflow_id(&bot), 11);
+        assert_eq!(observatory_workflow_id(&bot), 13);
     }
 
     #[test]
@@ -1371,7 +1371,7 @@ mod tests {
         assert_ne!(first, 0);
 
         bot.workflow_id = Some(10);
-        assert_eq!(observatory_workflow_id(&bot), 11);
+        assert_eq!(observatory_workflow_id(&bot), 13);
     }
 
     #[test]

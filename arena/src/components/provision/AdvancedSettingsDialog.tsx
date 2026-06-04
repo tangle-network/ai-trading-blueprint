@@ -175,7 +175,7 @@ export function AdvancedSettingsDialog({
           <TabsContent value="full" className="flex-1 min-h-0 mt-3 overflow-y-auto pr-1">
             <div className="space-y-3">
               <p className="text-xs text-arena-elements-textSecondary">
-                Read-only. Edit the "Expert Knowledge" tab to modify the strategy section. Values
+                Read-only. Edit the "Expert Knowledge" tab to modify protocol and method context. Values
                 in {'{{'}braces{'}}'} are filled by the operator at runtime.
               </p>
               <pre className="w-full min-h-64 max-h-[50vh] overflow-auto rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-4 py-3 text-sm font-data text-arena-elements-textSecondary leading-relaxed whitespace-pre-wrap">
@@ -187,7 +187,7 @@ export function AdvancedSettingsDialog({
           <TabsContent value="expert" className="flex-1 min-h-0 mt-3 overflow-y-auto pr-1">
             <div className="space-y-3 p-px">
               <p className="text-xs text-arena-elements-textSecondary">
-                Injected under "Expert Strategy Knowledge". Edit protocol APIs, contracts, or
+                Injected under expert knowledge. Edit protocol APIs, contracts, or
                 methodology.
               </p>
               <textarea

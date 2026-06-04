@@ -4,6 +4,10 @@ import { Link, useNavigate } from 'react-router'
 import { Button } from '@tangle-network/blueprint-ui/components'
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader'
 import { saveCreateStrategyDraft, type CreateStrategyDraft } from '~/lib/createStrategyDraft'
+import {
+  buildTradingAgentProfile,
+  type TradingAgentProfile,
+} from '~/lib/agentProfile'
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth'
 import {
   ALL_TRADING_OPERATOR_API_URLS,
@@ -202,7 +206,7 @@ const STRATEGY_PROFILES: Record<StrategyType, {
     icon: 'i-ph:newspaper-clipping',
   },
   perp: {
-    label: 'Perp Strategy',
+    label: 'Perps',
     venue: 'Hyperliquid Perps',
     route: 'Fast replay -> margin check -> workspace',
     envelope: 'Leverage cap, liquidation buffer, latency check',
@@ -402,8 +406,9 @@ function buildCreatePrompt(draft: CreateStrategyDraft, capabilityIds: Capability
   return [
     draft.prompt.trim(),
     '',
-    'Launch draft:',
+    'Agent profile:',
     `Agent name: ${draft.name}`,
+    'Objective: make money through risk-adjusted self-improvement',
     `Primary capability: ${primaryCapabilityFor(capabilityIds, draft.strategyType as StrategyType).label}`,
     `Capability focus: ${capabilityLabels(capabilityIds).join(', ')}`,
     `Venue access: all wired protocols (${ALL_WIRED_PROTOCOLS.join(', ')})`,
@@ -416,17 +421,46 @@ function buildCreatePrompt(draft: CreateStrategyDraft, capabilityIds: Capability
   ].filter(Boolean).join('\n')
 }
 
-function buildCreateStrategyConfig(draft: CreateStrategyDraft, capabilityIds: CapabilityId[]): Record<string, unknown> {
+function buildCreateAgentProfile(
+  draft: CreateStrategyDraft,
+  capabilityIds: CapabilityId[],
+  templateLabel?: string,
+): TradingAgentProfile {
+  const normalizedCapabilityIds = normalizeCapabilityIds(capabilityIds)
+  return buildTradingAgentProfile({
+    name: draft.name,
+    prompt: draft.prompt,
+    market: draft.market,
+    venue: draft.venue,
+    sizing: draft.sizing,
+    drawdown: draft.drawdown,
+    mode: draft.mode,
+    capabilityFocus: capabilityLabels(normalizedCapabilityIds),
+    availableProtocols: ALL_WIRED_PROTOCOLS,
+    preferredProtocols: preferredProtocolsForCapabilities(normalizedCapabilityIds),
+    protocolChainIds: PROTOCOL_CHAIN_IDS,
+    projectedStrategyType: draft.provisionStrategyType,
+    templateLabel,
+    initialCapitalUsd: DEFAULT_PAPER_INITIAL_CAPITAL_USD,
+  })
+}
+
+function buildCreateStrategyConfig(
+  draft: CreateStrategyDraft,
+  capabilityIds: CapabilityId[],
+  agentProfile: TradingAgentProfile,
+): Record<string, unknown> {
   const normalizedCapabilityIds = normalizeCapabilityIds(capabilityIds)
   return {
     paper_trade: true,
     paper_safe: true,
     initial_capital_usd: DEFAULT_PAPER_INITIAL_CAPITAL_USD,
+    agent_profile: agentProfile,
     available_protocols: ALL_WIRED_PROTOCOLS,
     preferred_protocols: preferredProtocolsForCapabilities(normalizedCapabilityIds),
     protocol_chain_ids: PROTOCOL_CHAIN_IDS,
     capability_focus: normalizedCapabilityIds,
-    launch_ticket: {
+    agent_profile_summary: {
       market: draft.market,
       venue: draft.venue,
       capabilities: capabilityLabels(normalizedCapabilityIds),
@@ -437,10 +471,15 @@ function buildCreateStrategyConfig(draft: CreateStrategyDraft, capabilityIds: Ca
   }
 }
 
-function attachCapabilityFields(draft: CreateStrategyDraft, capabilityIds: CapabilityId[]): CreateStrategyDraft {
+function attachCapabilityFields(
+  draft: CreateStrategyDraft,
+  capabilityIds: CapabilityId[],
+  agentProfile: TradingAgentProfile,
+): CreateStrategyDraft {
   const normalizedCapabilityIds = normalizeCapabilityIds(capabilityIds)
   return {
     ...draft,
+    agentProfile,
     capabilityFocus: capabilityLabels(normalizedCapabilityIds),
     availableProtocols: ALL_WIRED_PROTOCOLS,
     preferredProtocols: preferredProtocolsForCapabilities(normalizedCapabilityIds),
@@ -546,7 +585,7 @@ export default function CreateAgent() {
   )
   const launchPathRows = useMemo(() => [
     ['01', 'Parse Mandate', selectedHint.label],
-    ['02', 'Edit Ticket', draft.name],
+    ['02', 'Tune Profile', draft.name],
     ['03', 'Apply Risk', draft.drawdown],
     ['04', 'Open Workspace', '/performance'],
   ], [draft.drawdown, draft.name, selectedHint.label])
@@ -565,11 +604,12 @@ export default function CreateAgent() {
   }, [])
   const persistDraft = useCallback(() => {
     const promptWithDraft = buildCreatePrompt(draft, selectedCapabilityIds)
+    const agentProfile = buildCreateAgentProfile(draft, selectedCapabilityIds, selectedHint.label)
     saveCreateStrategyDraft({
-      ...attachCapabilityFields(draft, selectedCapabilityIds),
+      ...attachCapabilityFields(draft, selectedCapabilityIds, agentProfile),
       prompt: promptWithDraft,
     })
-  }, [draft, selectedCapabilityIds])
+  }, [draft, selectedCapabilityIds, selectedHint.label])
   const workspaceStyle = {
     '--create-rail-width': `${layout.railWidth}px`,
   } as CSSProperties
@@ -617,7 +657,8 @@ export default function CreateAgent() {
       mode: clampDraftValue(draft.mode, 32) || 'Paper start',
     }
     const createPrompt = buildCreatePrompt(cleanDraft, selectedCapabilityIds)
-    const strategyConfig = buildCreateStrategyConfig(cleanDraft, selectedCapabilityIds)
+    const agentProfile = buildCreateAgentProfile(cleanDraft, selectedCapabilityIds, selectedHint.label)
+    const strategyConfig = buildCreateStrategyConfig(cleanDraft, selectedCapabilityIds, agentProfile)
     setIsCreating(true)
     setStatus('Parsing mandate…')
     setError('')
@@ -643,6 +684,7 @@ export default function CreateAgent() {
         body: JSON.stringify({
           prompt: createPrompt,
           name: cleanDraft.name,
+          agent_profile: agentProfile,
           strategy_type: cleanDraft.provisionStrategyType,
           strategy_config: strategyConfig,
         }),
@@ -662,6 +704,7 @@ export default function CreateAgent() {
           body: JSON.stringify({
             prompt: createPrompt,
             name: cleanDraft.name,
+            agent_profile: agentProfile,
             strategy_type: cleanDraft.provisionStrategyType,
             strategy_config: strategyConfig,
           }),
@@ -685,7 +728,7 @@ export default function CreateAgent() {
       const activationError = typeof data.activation_error === 'string' ? data.activation_error : ''
       setStatus(activationError ? 'Agent created. Activation needs attention…' : 'Agent created. Opening workspace…')
       saveCreateStrategyDraft({
-        ...attachCapabilityFields(cleanDraft, selectedCapabilityIds),
+        ...attachCapabilityFields(cleanDraft, selectedCapabilityIds, agentProfile),
         prompt: createPrompt,
       })
 
@@ -698,7 +741,7 @@ export default function CreateAgent() {
       setError(message)
       setIsCreating(false)
     }
-  }, [draft, draftStrategyType, prompt, isCreating, getToken, navigate, selectedCapabilityIds])
+  }, [draft, draftStrategyType, prompt, isCreating, getToken, navigate, selectedCapabilityIds, selectedHint.label])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -721,7 +764,7 @@ export default function CreateAgent() {
           controls={(
             <>
               <WorkspaceControlButton
-                label={layout.railCollapsed ? 'Restore strategy rail' : 'Minimize strategy rail'}
+                label={layout.railCollapsed ? 'Restore profile rail' : 'Minimize profile rail'}
                 icon={layout.railCollapsed ? 'i-ph:sidebar-simple' : 'i-ph:minus-bold'}
                 onClick={() => setLayout((current) => ({
                   ...current,
@@ -754,7 +797,7 @@ export default function CreateAgent() {
           >
             <div className="grid shrink-0 gap-3 border-b border-[var(--arena-terminal-border)] px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
               <label
-                htmlFor="agent-strategy-prompt"
+                htmlFor="agent-mandate-prompt"
                 className="font-display text-base font-semibold text-[var(--arena-terminal-text)]"
               >
                 Mandate
@@ -767,7 +810,7 @@ export default function CreateAgent() {
 
             <div className="grid shrink-0 bg-[var(--arena-terminal-bg)]">
               <textarea
-                id="agent-strategy-prompt"
+                id="agent-mandate-prompt"
                 ref={textareaRef}
                 value={prompt}
                 onChange={(e) => {
@@ -778,9 +821,9 @@ export default function CreateAgent() {
                 onKeyDown={handleKeyDown}
                 placeholder="Trade ETH-PERP momentum with 3x max leverage, 5% max drawdown, and a liquidation buffer…"
                 disabled={isCreating}
-                name="agent-strategy-prompt"
+                name="agent-mandate-prompt"
                 autoComplete="off"
-                aria-label="Trading agent strategy prompt"
+                aria-label="Trading agent mandate prompt"
                 aria-describedby="agent-create-status"
                 className="h-[150px] resize-none bg-[var(--arena-terminal-bg)] px-4 py-3 font-mono text-[15px] leading-6 text-[var(--arena-terminal-text)] placeholder:text-[var(--arena-terminal-text-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--arena-terminal-accent)] disabled:opacity-50 md:h-[136px] lg:h-[124px] min-[1440px]:h-[136px]"
               />
@@ -791,7 +834,7 @@ export default function CreateAgent() {
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
                   <div className="min-w-0">
                     <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
-                      Launch Ticket
+                      Agent Profile
                     </h2>
                     <p className="truncate font-mono text-[11px] text-[var(--arena-terminal-text-muted)]">
                       {selectedHint.shorthand}
@@ -890,14 +933,14 @@ export default function CreateAgent() {
           <WorkspaceResizeHandle
             orientation="vertical"
             className="hidden lg:col-start-2 lg:row-start-1 lg:flex"
-            ariaLabel="Resize strategy rail"
-            title="Drag to resize strategy rail"
+            ariaLabel="Resize profile rail"
+            title="Drag to resize profile rail"
             onPointerDown={startRailResize}
           />
 
           {layout.railCollapsed ? (
             <WorkspaceCollapsedPane
-              label="Strategy"
+              label="Profile"
               icon="i-ph:strategy"
               orientation="vertical"
               className="hidden lg:col-start-3 lg:row-start-1 lg:flex"
@@ -911,7 +954,7 @@ export default function CreateAgent() {
                   <span className={`${detectedProfile.icon} text-lg`} aria-hidden="true" />
                 </span>
                 <div className="min-w-0">
-                  <h2 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">Mandate Seeds</h2>
+                  <h2 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">Mandate Templates</h2>
                   <p className="truncate font-mono text-xs text-[var(--arena-terminal-text-muted)]">{detectedProfile.label} / {detectedProfile.venue}</p>
                 </div>
               </div>

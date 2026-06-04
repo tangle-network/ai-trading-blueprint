@@ -82,7 +82,7 @@ Endpoints:
 
 - Vault Address: {{injected by operator}}
 - Chain ID: {{injected by operator}}
-- Strategy: ${strategyType}
+- Execution Adapter: ${strategyType}
 
 ## Risk Parameters
 
@@ -109,10 +109,10 @@ ${expertKnowledge}
 export const strategyPacks: StrategyPackDef[] = [
   {
     id: 'dex',
-    name: 'DEX Spot Trading',
+    name: 'DEX Spot',
     providers: ['Uniswap V3', 'CoinGecko'],
     description:
-      'Spot trading on decentralized exchanges. Discovers pools, tracks prices, executes swaps.',
+      'Swap execution, pool discovery, price tracking, and DEX route validation.',
     executionMode: 'single-chain',
     supportedChainIds: [1, 8453, 42161, 137, 10, 31339, 84532],
     cron: '0 */5 * * * *',
@@ -149,9 +149,9 @@ Build tools for:
   },
   {
     id: 'prediction',
-    name: 'Prediction Market Trading',
+    name: 'Prediction Markets',
     providers: ['Polymarket', 'CoinGecko'],
-    description: 'Trades event outcomes on Polymarket using the CLOB API.',
+    description: 'Polymarket CLOB execution and event-market discovery.',
     executionMode: 'single-chain',
     supportedChainIds: [137],
     cron: '0 */15 * * * *',
@@ -276,9 +276,9 @@ Best timing: Enter 7-30 days before resolution when consensus is forming but odd
   },
   {
     id: 'yield',
-    name: 'DeFi Yield Optimization',
+    name: 'DeFi Yield',
     providers: ['Aave V3', 'Morpho', 'CoinGecko'],
-    description: 'Finds the best DeFi lending/borrowing yields across protocols.',
+    description: 'Aave and Morpho lending execution with rate discovery and rebalance guards.',
     executionMode: 'single-chain',
     supportedChainIds: [1, 8453],
     cron: '0 */15 * * * *',
@@ -308,7 +308,7 @@ Rebalance when rate differential exceeds 50bps after gas costs.`,
   },
   {
     id: 'perp',
-    name: 'Perpetual Futures',
+    name: 'EVM Perps',
     providers: ['GMX V2', 'Vertex', 'CoinGecko'],
     description: 'Vault-based EVM perpetual futures on Arbitrum via GMX v2 and Vertex.',
     executionMode: 'single-chain',
@@ -371,10 +371,10 @@ Before opening new risk:
   },
   {
     id: 'volatility',
-    name: 'Volatility Trading',
+    name: 'Volatility',
     providers: ['Polymarket', 'Uniswap V3', 'GMX V2', 'Hyperliquid', 'Vertex', 'CoinGecko'],
     description:
-      'Trades implied vs realized volatility using funding rates and prediction markets.',
+      'Paper-mode volatility research across funding, prediction markets, and spot routes.',
     executionMode: 'paper-only',
     supportedChainIds: [],
     cron: '0 */10 * * * *',
@@ -443,15 +443,15 @@ Select 3-5 markets: Volume > $100k, spread < 3%, moderate volatility.
   },
   {
     id: 'multi',
-    name: 'Cross-Strategy',
+    name: 'Cross-Market Allocator',
     providers: ['All protocols'],
-    description: 'Allocates capital across prediction, yield, perps, and spot strategies.',
+    description: 'Paper allocator across prediction, yield, perps, and spot venues.',
     executionMode: 'none',
     supportedChainIds: [],
     cron: '0 */5 * * * *',
     conversationCron: CONVERSATION_CRON_5_MIN,
     researchCron: RESEARCH_CRON_2_HOURS,
-    scheduleReason: 'Multi-strategy bots are heavier, so research is spaced out.',
+    scheduleReason: 'Cross-market agents are heavier, so research is spaced out.',
     maxTurns: 20,
     timeoutMs: 300_000,
     expertKnowledge: `### Capital Allocation Model
@@ -467,7 +467,7 @@ Rebalance weekly by Sharpe ratio:
 - Sharpe < 0.5: decrease allocation -5%
 - Never > 40% or < 10% per strategy
 
-### Cross-Strategy Signal Integration
+### Cross-Market Signal Integration
 - Crypto prices \u2192 inform prediction bets
 - Yield data \u2192 guide capital allocation
 - Funding rates \u2192 directional bias for perps + predictions
@@ -475,7 +475,7 @@ Rebalance weekly by Sharpe ratio:
 
 ### Risk Management (Portfolio-Wide)
 - Maximum 3% daily drawdown across all strategies
-- Per-strategy drawdown limit: 5%
+- Per-adapter drawdown limit: 5%
 - Cash buffer: always keep 10% in stablecoins`,
   },
 ];

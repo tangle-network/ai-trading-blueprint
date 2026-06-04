@@ -68,6 +68,8 @@ interface ConfigureStepProps {
   strategyType: string;
   setStrategyType: (v: string) => void;
   selectedPack: StrategyPackDef;
+  agentProfileName?: string;
+  agentProfileObjective?: string;
   isInstance: boolean;
   serviceId: string;
   serviceInfo: ServiceInfo | null;
@@ -102,6 +104,8 @@ export function ConfigureStep({
   strategyType,
   setStrategyType,
   selectedPack,
+  agentProfileName,
+  agentProfileObjective,
   isInstance,
   serviceId,
   serviceInfo,
@@ -174,7 +178,8 @@ export function ConfigureStep({
       ? selectedAssets.map((asset) => asset.symbol).join(' / ')
       : isDexStrategy
         ? 'No Assets'
-        : 'Strategy Defined';
+        : 'Profile Defined';
+  const profileLabel = agentProfileName || name || inheritedFocusLabel;
   const infrastructureSummary = isInstance
     ? `Instance service mode with ${selectedOperators.size} selected operator${selectedOperators.size === 1 ? '' : 's'}.`
     : `Service #${serviceId}: ${
@@ -231,8 +236,8 @@ export function ConfigureStep({
       <div className="grid gap-px bg-[var(--arena-terminal-border)] lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,0.8fr)]">
         <LaunchHeaderCell
           icon={<Database className="h-4 w-4" />}
-          label="Mandate"
-          value={inheritedFocusLabel}
+          label="Agent Profile"
+          value={profileLabel}
           detail={accessLabel}
         />
         <LaunchHeaderCell
@@ -276,7 +281,7 @@ export function ConfigureStep({
             </label>
           </ProvisionPanel>
 
-          <ProvisionPanel title="Capability Focus" action={(
+          <ProvisionPanel title="Activation Adapter" action={(
             <Button
               type="button"
               variant="outline"
@@ -354,8 +359,13 @@ export function ConfigureStep({
           >
             <div className="space-y-2.5">
               <ReadRow label="Focus" value={inheritedFocusLabel} />
+              <ReadRow label="Profile" value={profileLabel} />
+              <ReadRow label="Adapter" value={selectedPack.name} />
               <ReadRow label="Mode" value={executionModeLabel} />
               <ReadRow label="Access" value={accessLabel} />
+              {agentProfileObjective && (
+                <ReadRow label="Objective" value={agentProfileObjective} />
+              )}
               {executionTargetLabel && (
                 <ReadRow label="Target" value={executionTargetLabel} />
               )}
@@ -600,7 +610,7 @@ export function ConfigureStep({
               <div className="grid gap-2">
                 <GuardrailRow
                   label="Policy"
-                  value="Strategy-defined"
+                  value="Profile-defined"
                 />
                 <GuardrailRow
                   label="Margin"
