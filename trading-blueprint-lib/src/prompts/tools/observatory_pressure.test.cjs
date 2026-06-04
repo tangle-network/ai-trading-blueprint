@@ -48,15 +48,24 @@ test('observatory pressure dedupes sessions and blocks at active cap', () => {
   process.env.OBSERVATORY_MAX_CPU_PRESSURE = '999';
   try {
     const { readObservatoryPressure } = loadFresh();
-    const pressure = readObservatoryPressure();
+    const pressure = readObservatoryPressure({
+      nowMs: Date.parse('2026-06-04T00:05:00Z'),
+      activeDispatchTtlSecs: 60 * 60,
+    });
     assert.equal(pressure.unique_sessions, 2);
     assert.equal(pressure.active_sessions, 1);
+    assert.equal(pressure.stale_active_sessions, 0);
     assert.equal(pressure.terminal_sessions, 1);
     assert.equal(pressure.duplicate_rows_removed, 1);
     assert.equal(pressure.allows_new_delegation, false);
     assert.deepEqual(pressure.deny_reasons, ['active_delegation_cap']);
 
-    const relaxed = readObservatoryPressure({ maxActiveDelegations: 3, maxCpuPressure: 999 });
+    const relaxed = readObservatoryPressure({
+      maxActiveDelegations: 3,
+      maxCpuPressure: 999,
+      nowMs: Date.parse('2026-06-04T00:05:00Z'),
+      activeDispatchTtlSecs: 60 * 60,
+    });
     assert.equal(relaxed.allows_new_delegation, true);
     assert.deepEqual(relaxed.deny_reasons, []);
   } finally {
@@ -68,5 +77,59 @@ test('observatory pressure dedupes sessions and blocks at active cap', () => {
     else process.env.OBSERVATORY_MAX_ACTIVE_DELEGATIONS = previousMaxActive;
     if (previousMaxCpu === undefined) delete process.env.OBSERVATORY_MAX_CPU_PRESSURE;
     else process.env.OBSERVATORY_MAX_CPU_PRESSURE = previousMaxCpu;
+  }
+});
+
+test('observatory pressure stops counting stale dispatch markers as active work', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'observatory-pressure-'));
+  const observatoryDir = path.join(tmp, 'memory', 'observatory');
+  fs.mkdirSync(observatoryDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(observatoryDir, 'delegated-work-sessions.jsonl'),
+    [
+      JSON.stringify({
+        session_id: 'old_dispatch',
+        status: 'dispatched',
+        source: 'improvement-dispatch',
+        created_at: '2026-06-04T00:00:00Z',
+      }),
+      JSON.stringify({
+        session_id: 'fresh_dispatch',
+        status: 'dispatched',
+        source: 'improvement-dispatch',
+        created_at: '2026-06-04T01:55:00Z',
+      }),
+      JSON.stringify({
+        session_id: 'real_running',
+        status: 'running',
+        source: 'self-improvement-mcp',
+        created_at: '2026-06-04T00:00:00Z',
+      }),
+    ].join('\n'),
+  );
+
+  const previousWorkspace = process.env.AGENT_WORKSPACE;
+  const previousObservatoryDir = process.env.AGENT_OBSERVATORY_DIR;
+  process.env.AGENT_WORKSPACE = tmp;
+  process.env.AGENT_OBSERVATORY_DIR = observatoryDir;
+  try {
+    const { readObservatoryPressure } = loadFresh();
+    const pressure = readObservatoryPressure({
+      maxActiveDelegations: 3,
+      maxCpuPressure: 999,
+      nowMs: Date.parse('2026-06-04T02:00:00Z'),
+      activeDispatchTtlSecs: 30 * 60,
+    });
+
+    assert.equal(pressure.unique_sessions, 3);
+    assert.equal(pressure.active_sessions, 2);
+    assert.equal(pressure.stale_active_sessions, 1);
+    assert.equal(pressure.by_status.dispatched, 2);
+    assert.equal(pressure.allows_new_delegation, true);
+  } finally {
+    if (previousWorkspace === undefined) delete process.env.AGENT_WORKSPACE;
+    else process.env.AGENT_WORKSPACE = previousWorkspace;
+    if (previousObservatoryDir === undefined) delete process.env.AGENT_OBSERVATORY_DIR;
+    else process.env.AGENT_OBSERVATORY_DIR = previousObservatoryDir;
   }
 });

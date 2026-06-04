@@ -925,9 +925,29 @@ function activeDelegationStatus(status) {
 function terminalDelegationStatus(status) {
   return /complete|pass|done|blocked|failed|error|reject|cancel/i.test(String(status || ''));
 }
+const DEFAULT_ACTIVE_DISPATCH_TTL_SECS = 30 * 60;
+function staleDispatchMarker(session, nowMs, ttlMs) {
+  if (!activeDelegationStatus(session && session.status)) return false;
+  const status = String(session.status || '').toLowerCase();
+  const source = String(session.source || '').toLowerCase();
+  if (status !== 'dispatched' && source !== 'improvement-dispatch') return false;
+  const createdMs = timestampMs(session.created_at);
+  return createdMs > 0 && nowMs - createdMs > ttlMs;
+}
+function activeDelegationSessions(sessions, nowMs = Date.now(), dispatchTtlMs = DEFAULT_ACTIVE_DISPATCH_TTL_SECS * 1000) {
+  return sessions.filter((session) =>
+    activeDelegationStatus(session.status) && !staleDispatchMarker(session, nowMs, dispatchTtlMs)
+  );
+}
 function delegationPressure(sessions, usage = {}) {
   const unique = dedupeBySessionId(sessions, 500);
-  const active = unique.filter((session) => activeDelegationStatus(session.status));
+  const activeDispatchTtlSecs = Number.isFinite(Number(process.env.OBSERVATORY_ACTIVE_DISPATCH_TTL_SECS))
+    ? Number(process.env.OBSERVATORY_ACTIVE_DISPATCH_TTL_SECS)
+    : DEFAULT_ACTIVE_DISPATCH_TTL_SECS;
+  const activeDispatchTtlMs = Math.max(1, activeDispatchTtlSecs) * 1000;
+  const nowMs = Date.now();
+  const active = activeDelegationSessions(unique, nowMs, activeDispatchTtlMs);
+  const staleActive = unique.filter((session) => staleDispatchMarker(session, nowMs, activeDispatchTtlMs));
   const terminal = unique.filter((session) => terminalDelegationStatus(session.status));
   const byStatus = {};
   const bySource = {};
@@ -959,6 +979,7 @@ function delegationPressure(sessions, usage = {}) {
   return {
     unique_sessions: unique.length,
     active_sessions: active.length,
+    stale_active_sessions: staleActive.length,
     terminal_sessions: terminal.length,
     duplicate_rows_removed: Math.max(0, sessions.length - unique.length),
     by_status: byStatus,
@@ -978,6 +999,7 @@ function delegationPressure(sessions, usage = {}) {
       max_active_delegations: maxActiveDelegations,
       max_cpu_pressure: maxCpuPressure,
       min_free_memory_mb: minFreeMemoryMb,
+      active_dispatch_ttl_secs: activeDispatchTtlSecs,
     },
     pressure_level: denyReasons.length > 0 ? 'high' : active.length >= mediumActiveThreshold || cpuPressure >= Math.max(0.5, maxCpuPressure * 0.7) ? 'medium' : 'low',
     allows_new_delegation: denyReasons.length === 0,

@@ -12,6 +12,7 @@ const ROOT = process.env.AGENT_WORKSPACE || '/home/agent';
 const MEMORY_DIR = process.env.AGENT_MEMORY_DIR || path.join(ROOT, 'memory');
 const OBSERVATORY_DIR = process.env.AGENT_OBSERVATORY_DIR || path.join(MEMORY_DIR, 'observatory');
 const DELEGATED_WORK_FILE = process.env.AGENT_OBSERVATORY_DELEGATED_WORK_FILE || path.join(OBSERVATORY_DIR, 'delegated-work-sessions.jsonl');
+const DEFAULT_ACTIVE_DISPATCH_TTL_SECS = 30 * 60;
 
 function readJsonl(file, max = 500) {
   try {
@@ -57,6 +58,21 @@ function terminalDelegationStatus(status) {
   return /complete|pass|done|blocked|failed|error|reject|cancel/i.test(String(status || ''));
 }
 
+function staleDispatchMarker(session, nowMs, ttlMs) {
+  if (!activeDelegationStatus(session && session.status)) return false;
+  const status = String(session.status || '').toLowerCase();
+  const source = String(session.source || '').toLowerCase();
+  if (status !== 'dispatched' && source !== 'improvement-dispatch') return false;
+  const createdMs = timestampMs(session.created_at);
+  return createdMs > 0 && nowMs - createdMs > ttlMs;
+}
+
+function activeDelegationSessions(sessions, nowMs = Date.now(), dispatchTtlMs = DEFAULT_ACTIVE_DISPATCH_TTL_SECS * 1000) {
+  return sessions.filter((session) =>
+    activeDelegationStatus(session.status) && !staleDispatchMarker(session, nowMs, dispatchTtlMs)
+  );
+}
+
 function numberFromEnv(name, fallback) {
   const value = Number(process.env[name]);
   return Number.isFinite(value) ? value : fallback;
@@ -81,10 +97,16 @@ function readObservatoryPressure(options = {}) {
   const minFreeMemoryMb = Number.isFinite(Number(options.minFreeMemoryMb))
     ? Number(options.minFreeMemoryMb)
     : numberFromEnv('OBSERVATORY_MIN_FREE_MEMORY_MB', 512);
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+  const activeDispatchTtlSecs = Number.isFinite(Number(options.activeDispatchTtlSecs))
+    ? Number(options.activeDispatchTtlSecs)
+    : numberFromEnv('OBSERVATORY_ACTIVE_DISPATCH_TTL_SECS', DEFAULT_ACTIVE_DISPATCH_TTL_SECS);
+  const activeDispatchTtlMs = Math.max(1, activeDispatchTtlSecs) * 1000;
 
   const rawSessions = readJsonl(DELEGATED_WORK_FILE, 1000);
   const unique = dedupeBySessionId(rawSessions, 500);
-  const active = unique.filter((session) => activeDelegationStatus(session.status));
+  const active = activeDelegationSessions(unique, nowMs, activeDispatchTtlMs);
+  const staleActive = unique.filter((session) => staleDispatchMarker(session, nowMs, activeDispatchTtlMs));
   const terminal = unique.filter((session) => terminalDelegationStatus(session.status));
   const load1 = os.loadavg()[0] || 0;
   const cpuCount = os.cpus().length || 1;
@@ -109,6 +131,7 @@ function readObservatoryPressure(options = {}) {
     checked_at: new Date().toISOString(),
     unique_sessions: unique.length,
     active_sessions: active.length,
+    stale_active_sessions: staleActive.length,
     terminal_sessions: terminal.length,
     duplicate_rows_removed: Math.max(0, rawSessions.length - unique.length),
     by_status: summarizeBy(unique, (session) => session.status),
@@ -124,6 +147,7 @@ function readObservatoryPressure(options = {}) {
       max_active_delegations: maxActiveDelegations,
       max_cpu_pressure: maxCpuPressure,
       min_free_memory_mb: minFreeMemoryMb,
+      active_dispatch_ttl_secs: activeDispatchTtlSecs,
     },
     pressure_level: pressureLevel,
     allows_new_delegation: denyReasons.length === 0,
@@ -133,8 +157,10 @@ function readObservatoryPressure(options = {}) {
 
 module.exports = {
   activeDelegationStatus,
+  activeDelegationSessions,
   dedupeBySessionId,
   readObservatoryPressure,
+  staleDispatchMarker,
   terminalDelegationStatus,
 };
 
