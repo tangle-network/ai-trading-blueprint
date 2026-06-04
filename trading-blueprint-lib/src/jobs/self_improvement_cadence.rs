@@ -280,19 +280,20 @@ const out = {
   ),
 };
 
-if (process.env.RUN_GENERATION === '1') {
-  const selected = selectGenerationIntent(
-    process.env.SELF_IMPROVEMENT_INTENT || 'Periodic paper-only harness self-improvement.',
-  );
-  out.selected_generation_intent = selected.intent
-    ? {
-        intent_id: selected.intent.intent_id,
-        priority: selected.intent.priority || null,
-        reflection_id: selected.intent.reflection_id || null,
-        decision_context_id: selected.intent.decision_context_id || null,
-      }
-    : null;
-  if (selected.error) out.intent_selection_error = selected.error;
+const selected = selectGenerationIntent(
+  process.env.SELF_IMPROVEMENT_INTENT || 'Periodic paper-only harness self-improvement.',
+);
+out.selected_generation_intent = selected.intent
+  ? {
+      intent_id: selected.intent.intent_id,
+      priority: selected.intent.priority || null,
+      reflection_id: selected.intent.reflection_id || null,
+      decision_context_id: selected.intent.decision_context_id || null,
+    }
+  : null;
+if (selected.error) out.intent_selection_error = selected.error;
+
+if (process.env.RUN_GENERATION === '1' || selected.intent) {
   out.generation = launch(
     'self-improvement-generation',
     'bun',
@@ -377,5 +378,6 @@ mod tests {
         assert!(command.contains("loop.nextImprovementIntent"));
         assert!(command.contains("loop.recordIntentDispatch"));
         assert!(command.contains("selected.prompt"));
+        assert!(command.contains("process.env.RUN_GENERATION === '1' || selected.intent"));
     }
 }
