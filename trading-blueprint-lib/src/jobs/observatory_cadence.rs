@@ -554,7 +554,7 @@ pub async fn trigger_observatory_for_bot(
                         "run_id": run_id_for_task.clone(),
                     }),
                     assistant_metadata: json!({
-                        "transport": "opencode/exec",
+                        "transport": "model/direct",
                         "surface": "observatory",
                         "operation": "read-only-reflection",
                         "bot_id": bot_id.clone(),

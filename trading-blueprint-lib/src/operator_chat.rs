@@ -474,6 +474,21 @@ struct AgentRunTurnRequest {
     assistant_metadata: Value,
 }
 
+#[derive(Clone, Debug)]
+struct DirectAgenticModelConfig {
+    api_key: String,
+    base_url: String,
+    provider: String,
+    model: String,
+}
+
+#[derive(Clone, Debug)]
+struct DirectAgenticModelResult {
+    status: StatusCode,
+    text: String,
+    payload: Value,
+}
+
 pub async fn run_agentic_chat_turn(
     target: SidecarChatTarget,
     options: AgenticChatTurnOptions,
@@ -513,77 +528,10 @@ pub async fn run_bounded_agentic_exec_turn(
     );
 
     let timeout_ms = options.timeout_ms.max(1_000);
-    let timeout_secs = (timeout_ms / 1_000).max(1).to_string();
-    let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
-        sidecar_url: target.sidecar_url.clone(),
-        command: r#"node <<'NODE'
-const { spawnSync } = require('node:child_process');
-const timeoutSecs = String(process.env.AGENT_TIMEOUT_SECS || '60');
-const prompt = String(process.env.AGENT_PROMPT || '');
-const result = spawnSync('timeout', [`${timeoutSecs}s`, 'opencode', 'run', prompt], {
-  cwd: '/home/agent',
-  encoding: 'utf8',
-  timeout: (Number(timeoutSecs) + 10) * 1000,
-  maxBuffer: 4 * 1024 * 1024,
-});
-if (result.stdout) process.stdout.write(result.stdout);
-if (result.stderr) process.stderr.write(result.stderr);
-if (result.error) {
-  console.error(result.error.stack || result.error.message || String(result.error));
-  process.exit(1);
-}
-process.exit(result.status ?? 1);
-NODE"#
-            .to_string(),
-        cwd: "/home/agent".to_string(),
-        env_json: json!({
-            "AGENT_PROMPT": options.message.clone(),
-            "AGENT_TIMEOUT_SECS": timeout_secs,
-        })
-        .to_string(),
-        timeout_ms: timeout_ms.saturating_add(15_000),
-    };
-
     let started_at = Instant::now();
-    let exec_result =
-        ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, &target.sidecar_token).await;
-    let (status, payload, text) = match exec_result {
-        Ok(response) => {
-            let status = if response.exit_code == 0 {
-                StatusCode::OK
-            } else if response.exit_code == 124 {
-                StatusCode::GATEWAY_TIMEOUT
-            } else {
-                StatusCode::BAD_GATEWAY
-            };
-            let stdout = response.stdout.trim();
-            let stderr = response.stderr.trim();
-            let text = if !stdout.is_empty() {
-                stdout.to_string()
-            } else if response.exit_code == 124 {
-                format!("Agentic reflection timed out after {timeout_ms}ms.")
-            } else if !stderr.is_empty() {
-                format!("Agentic reflection failed.\n\n{stderr}")
-            } else {
-                format!(
-                    "Agentic reflection exited without text. exit_code={}",
-                    response.exit_code
-                )
-            };
-            (
-                status,
-                json!({
-                    "success": status.is_success(),
-                    "response": text,
-                    "exit_code": response.exit_code,
-                    "stderr": stderr,
-                    "usage": {
-                        "token_count_status": "unreported"
-                    }
-                }),
-                text,
-            )
-        }
+    let direct_result = call_direct_agentic_model(&options.message, timeout_ms).await;
+    let (status, payload, text) = match direct_result {
+        Ok(result) => (result.status, result.payload, result.text),
         Err(error) => {
             let text = format!("Agentic reflection transport failed: {error}");
             (
@@ -618,7 +566,7 @@ NODE"#
     merge_metadata_fields(
         &mut assistant_metadata,
         json!({
-            "transport": "opencode/exec",
+            "transport": "model/direct",
             "status": status.as_u16(),
             "usage_telemetry": usage_event.clone(),
         }),
@@ -661,6 +609,194 @@ NODE"#
         payload,
         messages,
     })
+}
+
+async fn call_direct_agentic_model(
+    prompt: &str,
+    timeout_ms: u64,
+) -> Result<DirectAgenticModelResult, String> {
+    let configs = direct_agentic_model_configs();
+    if configs.is_empty() {
+        return Err(
+            "No agentic reflection model configured. Set OPENCODE_MODEL_API_KEY, ZAI_API_KEY, or TANGLE_API_KEY."
+                .to_string(),
+        );
+    }
+
+    let mut failures = Vec::new();
+    for config in configs {
+        match call_direct_agentic_model_with_config(&config, prompt, timeout_ms).await {
+            Ok(result) => return Ok(result),
+            Err(error) => failures.push(format!("{}:{}: {error}", config.provider, config.model)),
+        }
+    }
+
+    Err(failures.join("; "))
+}
+
+fn direct_agentic_model_configs() -> Vec<DirectAgenticModelConfig> {
+    let mut configs = Vec::new();
+    if let Some(api_key) = env_string(&["OPENCODE_MODEL_API_KEY"]) {
+        configs.push(DirectAgenticModelConfig {
+            api_key,
+            base_url: env_string(&["OPENCODE_MODEL_BASE_URL"])
+                .unwrap_or_else(|| "https://api.z.ai/api/coding/paas/v4".to_string()),
+            provider: env_string(&["OPENCODE_MODEL_PROVIDER"])
+                .unwrap_or_else(|| "zai-coding-plan".to_string()),
+            model: env_string(&["OPENCODE_MODEL_NAME"]).unwrap_or_else(|| "glm-4.7".to_string()),
+        });
+    }
+    if let Some(api_key) = env_string(&["ZAI_GLM_API_KEY", "ZAI_API_KEY"]) {
+        configs.push(DirectAgenticModelConfig {
+            api_key,
+            base_url: "https://api.z.ai/api/coding/paas/v4".to_string(),
+            provider: "zai-coding-plan".to_string(),
+            model: env_string(&["OBSERVATORY_AGENTIC_MODEL", "BOT_NAMING_ZAI_MODEL"])
+                .unwrap_or_else(|| "glm-4.7".to_string()),
+        });
+    }
+    if let Some(api_key) = env_string(&["TANGLE_ROUTER_API_KEY", "TANGLE_API_KEY"]) {
+        let base_url = env_string(&["TANGLE_ROUTER_BASE_URL", "OPENCODE_MODEL_BASE_URL"])
+            .unwrap_or_else(|| "https://router.tangle.tools/v1".to_string());
+        configs.push(DirectAgenticModelConfig {
+            api_key,
+            base_url,
+            provider: "tangle-router".to_string(),
+            model: env_string(&["OBSERVATORY_AGENTIC_MODEL", "TANGLE_ROUTER_MODEL"])
+                .unwrap_or_else(|| "anthropic/claude-sonnet-4-6".to_string()),
+        });
+    }
+    configs
+}
+
+fn env_string(keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| std::env::var(key).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+async fn call_direct_agentic_model_with_config(
+    config: &DirectAgenticModelConfig,
+    prompt: &str,
+    timeout_ms: u64,
+) -> Result<DirectAgenticModelResult, String> {
+    let timeout = Duration::from_millis(timeout_ms.clamp(1_000, 180_000));
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
+    let response = client
+        .post(url)
+        .bearer_auth(&config.api_key)
+        .json(&json!({
+            "model": config.model,
+            "temperature": 0.35,
+            "max_tokens": 450,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are the bot's autonomous operator reflection loop. Produce a real, evidence-grounded thought for the owner. Do not trade, mutate config, or delegate work in this turn."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status =
+        StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let body = response
+        .json::<Value>()
+        .await
+        .map_err(|e| format!("model response JSON decode failed: {e}"))?;
+    let text = direct_agentic_model_text(&body)
+        .unwrap_or_else(|| direct_agentic_model_error_text(status, &body));
+    let usage = direct_agentic_usage_payload(&body, config);
+    let payload = json!({
+        "success": status.is_success() && !text.trim().is_empty(),
+        "response": text,
+        "data": {
+            "finalText": text,
+            "usage": usage,
+        },
+        "metadata": {
+            "provider": config.provider,
+            "model": config.model,
+            "transport": "model/direct",
+        },
+        "provider_response": {
+            "id": body.get("id").cloned().unwrap_or(Value::Null),
+            "object": body.get("object").cloned().unwrap_or(Value::Null),
+            "created": body.get("created").cloned().unwrap_or(Value::Null),
+            "model": body.get("model").cloned().unwrap_or(Value::Null),
+            "usage": body.get("usage").cloned().unwrap_or(Value::Null),
+            "choices": body.get("choices").cloned().unwrap_or(Value::Null),
+            "error": body.get("error").cloned().unwrap_or(Value::Null),
+        },
+    });
+
+    Ok(DirectAgenticModelResult {
+        status,
+        text,
+        payload,
+    })
+}
+
+fn direct_agentic_model_text(body: &Value) -> Option<String> {
+    body.pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .or_else(|| body.pointer("/choices/0/text").and_then(Value::as_str))
+        .or_else(|| body.get("output_text").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn direct_agentic_model_error_text(status: StatusCode, body: &Value) -> String {
+    body.pointer("/error/message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(|message| {
+            format!(
+                "Agentic reflection failed with HTTP {}: {message}",
+                status.as_u16()
+            )
+        })
+        .unwrap_or_else(|| {
+            format!(
+                "Agentic reflection completed without text. model_status={}",
+                status.as_u16()
+            )
+        })
+}
+
+fn direct_agentic_usage_payload(body: &Value, config: &DirectAgenticModelConfig) -> Value {
+    let mut usage = body.get("usage").cloned().unwrap_or_else(|| json!({}));
+    if !usage.is_object() {
+        usage = json!({});
+    }
+    if let Some(object) = usage.as_object_mut() {
+        object
+            .entry("provider".to_string())
+            .or_insert_with(|| Value::String(config.provider.clone()));
+        object
+            .entry("model".to_string())
+            .or_insert_with(|| Value::String(config.model.clone()));
+        if let Some(id) = body.get("id").and_then(Value::as_str)
+            && !id.is_empty()
+        {
+            object
+                .entry("trace_id".to_string())
+                .or_insert_with(|| Value::String(id.to_string()));
+        }
+    }
+    usage
 }
 
 async fn execute_agent_run_turn(
@@ -1565,6 +1701,20 @@ mod tests {
         assert_eq!(event["trace_id"], "trace-observatory-1");
         assert_eq!(event["input_tokens"], 400);
         assert_eq!(event["output_tokens"], 90);
+    }
+
+    #[test]
+    fn bounded_observatory_turn_uses_direct_model_transport() {
+        let source = include_str!("operator_chat.rs");
+        let bounded = source
+            .split("pub async fn run_bounded_agentic_exec_turn")
+            .nth(1)
+            .and_then(|tail| tail.split("async fn execute_agent_run_turn").next())
+            .expect("bounded observatory helper should exist");
+
+        assert!(bounded.contains("/chat/completions"));
+        assert!(bounded.contains("\"model/direct\""));
+        assert!(!bounded.contains("'opencode', 'run'"));
     }
 
     #[test]
