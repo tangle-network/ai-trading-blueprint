@@ -19,6 +19,7 @@
     "eval:trading-personas": "npm run build:evals --silent && node dist/evals/bin/agent-eval-trading-personas.js",
     "agent:user-lab": "npm run build:evals --silent && node dist/evals/bin/active-user-lab.js",
     "agent:fleet-audit": "npm run build:evals --silent && node dist/evals/bin/live-agent-fleet-audit.js",
+    "release:local-artifacts": "scripts/release-local-artifacts.sh",
     "typecheck:evals": "tsc -p evals/tsconfig.json --noEmit",
     "eval:harness-self-improve": "npm run build:evals --silent && node dist/evals/bin/harness-self-improve-eval.js",
     "eval:per-bot-self-improve": "npm run build:evals --silent && node dist/evals/bin/per-bot-self-improve-eval.js"
