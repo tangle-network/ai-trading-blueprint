@@ -5,6 +5,7 @@ import {
   classifyLoopMode,
   classifySelfImprovement,
   classifyStrategyAlignment,
+  summarizeObservatory,
   summarizeRevisionArena,
   summarizeRuns,
   summarizeTickArtifacts,
@@ -148,6 +149,122 @@ test('tick-artifact parser extracts decisions, reasons, metrics, and strategy fi
   assert.equal(artifacts.usage_telemetry.output_tokens, 48)
   assert.equal(artifacts.usage_telemetry.cost_usd, 0.0021)
   assert.deepEqual(artifacts.usage_telemetry.providers, ['zai-coding-plan'])
+})
+
+test('observatory summary proves freshness, usage accounting, and gated delegated builds', () => {
+  const now = new Date().toISOString()
+  const summary = summarizeObservatory({
+    status: 200,
+    ok: true,
+    json: {
+      records: {
+        world_signal_digests: [{ created_at: now }],
+        reflection_runs: [{
+          created_at: now,
+          usage_summary: {
+            reporting_status: 'unreported',
+            event_count: 1,
+            total_tokens: 0,
+            cost_usd: 0,
+          },
+        }],
+        ideas: [{ created_at: now, idea_id: 'idea_1' }],
+        research_tasks: [],
+        delegated_work_sessions: [{
+          created_at: now,
+          source: 'owner-feedback:self-improvement-mcp',
+          status: 'queued',
+          artifact_ref: 'artifact://mcp-self-improvement/tasks/task_1.json',
+          summary: 'Owner delegated build work for an instrumentation idea.',
+        }],
+        owner_feedback: [],
+        delegation_pressure: {
+          active_sessions: 1,
+          pressure_level: 'medium',
+          allows_new_delegation: true,
+          deny_reasons: [],
+        },
+      },
+    },
+  } as never, { id: 'bot_1', trading_active: true })
+
+  assert.equal(summary.capability, 'installed')
+  assert.equal(summary.fresh_24h, true)
+  assert.equal(summary.fresh_48h, true)
+  assert.equal(summary.usage_reporting_status, 'unreported')
+  assert.equal(summary.usage_present_or_unreported, true)
+  assert.equal(summary.delegated_build_session_count, 1)
+  assert.equal(summary.delegated_build_safe, true)
+  assert.equal(summary.delegation_pressure.pressure_level, 'medium')
+})
+
+test('observatory summary flags active empty/error bots and skips inactive bots explicitly', () => {
+  const emptyActive = summarizeObservatory({
+    status: 200,
+    ok: true,
+    json: { records: {} },
+  } as never, { id: 'bot_1', trading_active: true })
+  assert.equal(emptyActive.capability, 'empty')
+  assert.equal(emptyActive.fresh_24h, false)
+  assert.equal(emptyActive.usage_present_or_unreported, false)
+
+  const errorActive = summarizeObservatory({
+    status: 502,
+    ok: false,
+    json: null,
+    error: 'load sandbox failed',
+  }, { id: 'bot_2', trading_active: true })
+  assert.equal(errorActive.capability, 'error')
+  assert.equal(errorActive.error, 'load sandbox failed')
+
+  const inactive = summarizeObservatory({
+    status: 502,
+    ok: false,
+    json: null,
+    error: 'load sandbox failed',
+  }, { id: 'bot_3', trading_active: false })
+  assert.equal(inactive.capability, 'skipped')
+  assert.equal(inactive.skip_reason, 'bot_not_trading_active')
+})
+
+test('observatory delegated build safety treats blocked paper self-improvement as gated', () => {
+  const now = new Date().toISOString()
+  const summary = summarizeObservatory({
+    status: 200,
+    ok: true,
+    json: {
+      records: {
+        world_signal_digests: [{ created_at: now }],
+        reflection_runs: [{
+          created_at: now,
+          usage_summary: { reporting_status: 'not_applicable', event_count: 0 },
+        }],
+        ideas: [],
+        research_tasks: [],
+        delegated_work_sessions: [
+          {
+            created_at: now,
+            source: 'runtime-self-improvement',
+            status: 'backtest_pass',
+            summary: 'Improve paper-only behavior and leave live promotion blocked for the conductor.',
+            artifact_ref: 'artifact://self-improvement/run.json',
+          },
+          {
+            created_at: now,
+            source: 'improvement-dispatch',
+            status: 'dispatched',
+            summary: 'intent_1',
+            artifact_ref: 'artifact://memory/decision-contexts.jsonl#ctx_1',
+          },
+        ],
+        owner_feedback: [],
+      },
+    },
+  } as never, { id: 'bot_1', trading_active: true })
+
+  assert.equal(summary.delegated_build_session_count, 2)
+  assert.equal(summary.unsafe_delegated_build_session_count, 0)
+  assert.equal(summary.delegated_build_safe, true)
 })
 
 test('strategy alignment catches prompt-to-config mandate mismatches', () => {

@@ -7,6 +7,7 @@ import { OperatorApiError, OperatorClient } from '../sim/operator-client.js'
 export type LoopMode = 'deterministic-fast-tick' | 'agentic-llm-run' | 'inactive' | 'unknown'
 export type SelfImprovementState = 'active' | 'not-firing' | 'inaccessible' | 'unknown'
 export type StrategyAlignment = 'aligned' | 'partial' | 'mismatch' | 'inactive'
+export type ObservatoryCapability = 'installed' | 'empty' | 'error' | 'skipped'
 
 export interface LiveFleetAuditOptions {
   operatorUrl?: string
@@ -226,6 +227,40 @@ export interface RevisionArenaSummary {
   error?: string
 }
 
+export interface ObservatorySummary {
+  status: number
+  capability: ObservatoryCapability
+  skip_reason: string | null
+  error?: string
+  world_signal_digests: number
+  reflection_runs: number
+  ideas: number
+  research_tasks: number
+  delegated_work_sessions: number
+  owner_feedback: number
+  latest_artifact_at: string | number | null
+  latest_reflection_at: string | number | null
+  latest_world_signal_at: string | number | null
+  latest_idea_at: string | number | null
+  latest_delegated_at: string | number | null
+  fresh_24h: boolean
+  fresh_48h: boolean
+  usage_reporting_status: string | null
+  usage_event_count: number
+  usage_total_tokens: number
+  usage_cost_usd: number
+  usage_present_or_unreported: boolean
+  delegation_pressure: {
+    active_sessions: number | null
+    pressure_level: string | null
+    allows_new_delegation: boolean | null
+    deny_reasons: string[]
+  }
+  delegated_build_safe: boolean
+  delegated_build_session_count: number
+  unsafe_delegated_build_session_count: number
+}
+
 export interface BotAudit {
   id: string
   name: string
@@ -238,6 +273,7 @@ export interface BotAudit {
   trades: TradeSummary
   portfolio: EndpointCapture
   tick_artifacts: TickArtifactSummary
+  observatory: ObservatorySummary
   self_improvement: EvolutionSummary
   revision_arena: RevisionArenaSummary
   sessions: EndpointCapture
@@ -288,6 +324,17 @@ export interface FleetAuditResult {
     bots_with_external_signal_checks: number
     bots_with_external_signals_unavailable: number
     total_recent_trades: number
+    observatory_capable_bots: number
+    observatory_skipped_bots: number
+    observatory_error_bots: number
+    observatory_empty_bots: number
+    observatory_fresh_24h_bots: number
+    observatory_fresh_48h_bots: number
+    observatory_usage_present_or_unreported_bots: number
+    observatory_delegated_build_safe_bots: number
+    observatory_total_reflection_runs: number
+    observatory_total_ideas: number
+    observatory_total_delegated_work_sessions: number
     flag_counts: Array<{ flag: string; count: number }>
   }
   bots: BotAudit[]
@@ -295,6 +342,13 @@ export interface FleetAuditResult {
     recursive_self_improvement_live: boolean
     runtime_reflection_live: boolean
     llm_market_reflection_live: boolean
+    observatory_rollout_gate: {
+      capable_or_skipped: boolean
+      fresh_24h_ratio: number
+      fresh_48h_ratio: number
+      usage_accounted: boolean
+      delegated_build_gated: boolean
+    }
     follows_user_mandates: 'yes' | 'partially' | 'no'
     succinct_wiring_plan: string[]
   }
@@ -333,11 +387,12 @@ async function buildClient(operatorUrl: string, options: LiveFleetAuditOptions):
 async function inspectBot(client: OperatorClient, bot: BotRecord & { id: string }): Promise<BotAudit> {
   const id = bot.id
   const encoded = encodeURIComponent(id)
-  const [runs, trades, portfolio, artifacts, selfImprove, arena, sessions] = await Promise.all([
+  const [runs, trades, portfolio, artifacts, observatory, selfImprove, arena, sessions] = await Promise.all([
     capture<unknown>(client, `/api/bots/${encoded}/runs?limit=200`),
     capture<unknown>(client, `/api/bots/${encoded}/trades?limit=200`),
     capture<unknown>(client, `/api/bots/${encoded}/portfolio/state`),
     capture<unknown>(client, `/api/bots/${encoded}/tick-artifacts`),
+    capture<unknown>(client, `/api/bots/${encoded}/observatory`),
     capture<unknown>(client, `/api/bots/${encoded}/evolution/self-improve/runs`),
     capture<unknown>(client, `/api/bots/${encoded}/evolution/revision-arena`),
     capture<unknown>(client, `/api/bots/${encoded}/session/sessions?limit=20`),
@@ -346,6 +401,7 @@ async function inspectBot(client: OperatorClient, bot: BotRecord & { id: string 
   const runSummary = summarizeRuns(runs)
   const tradeSummary = summarizeTrades(trades)
   const artifactSummary = summarizeTickArtifacts(artifacts)
+  const observatorySummary = summarizeObservatory(observatory, bot)
   const selfImprovementSummary = summarizeEvolution(selfImprove)
   const revisionArenaSummary = summarizeRevisionArena(arena)
   const strategyConfig = bot.strategy_config
@@ -369,6 +425,7 @@ async function inspectBot(client: OperatorClient, bot: BotRecord & { id: string 
     runs: runSummary,
     trades: tradeSummary,
     artifacts: artifactSummary,
+    observatory: observatorySummary,
     observations,
   })
 
@@ -384,6 +441,7 @@ async function inspectBot(client: OperatorClient, bot: BotRecord & { id: string 
     trades: tradeSummary,
     portfolio,
     tick_artifacts: artifactSummary,
+    observatory: observatorySummary,
     self_improvement: selfImprovementSummary,
     revision_arena: revisionArenaSummary,
     sessions,
@@ -598,6 +656,81 @@ export function summarizeRevisionArena(captureResult: EndpointCapture<unknown>):
   }
 }
 
+export function summarizeObservatory(captureResult: EndpointCapture<unknown>, bot: BotRecord): ObservatorySummary {
+  const inactiveSkipReason = bot.trading_active === false ? 'bot_not_trading_active' : null
+  if (!captureResult.ok) {
+    if (inactiveSkipReason) {
+      return emptyObservatorySummary({
+        status: captureResult.status,
+        capability: 'skipped',
+        skipReason: inactiveSkipReason,
+        ...(captureResult.error ? { error: captureResult.error } : {}),
+      })
+    }
+    return emptyObservatorySummary({
+      status: captureResult.status,
+      capability: 'error',
+      skipReason: null,
+      ...(captureResult.error ? { error: captureResult.error } : {}),
+    })
+  }
+
+  const payload = isRecord(captureResult.json) ? captureResult.json : {}
+  const records = isRecord(payload.records) ? payload.records : payload
+  const worldSignals = arrayFromResponse<Record<string, unknown>>(records, 'world_signal_digests')
+  const reflections = arrayFromResponse<Record<string, unknown>>(records, 'reflection_runs')
+  const ideas = arrayFromResponse<Record<string, unknown>>(records, 'ideas')
+  const researchTasks = arrayFromResponse<Record<string, unknown>>(records, 'research_tasks')
+  const delegated = arrayFromResponse<Record<string, unknown>>(records, 'delegated_work_sessions')
+  const feedback = arrayFromResponse<Record<string, unknown>>(records, 'owner_feedback')
+  const latestWorldSignal = latestTimestampValue(worldSignals)
+  const latestReflection = latestTimestampValue(reflections)
+  const latestIdea = latestTimestampValue(ideas)
+  const latestDelegated = latestTimestampValue(delegated)
+  const latestArtifact = latestTimestampValue([
+    ...worldSignals,
+    ...reflections,
+    ...ideas,
+    ...researchTasks,
+    ...delegated,
+    ...feedback,
+  ])
+  const usage = observatoryUsageSummary(records, reflections)
+  const pressure = observatoryDelegationPressure(records)
+  const buildSafety = summarizeDelegatedBuildSafety(delegated)
+  const totalRecords = worldSignals.length + reflections.length + ideas.length + researchTasks.length + delegated.length + feedback.length
+  const capability: ObservatoryCapability = totalRecords > 0 ? 'installed' : inactiveSkipReason ? 'skipped' : 'empty'
+  const now = Date.now()
+
+  return {
+    status: captureResult.status,
+    capability,
+    skip_reason: capability === 'skipped' ? inactiveSkipReason : null,
+    world_signal_digests: worldSignals.length,
+    reflection_runs: reflections.length,
+    ideas: ideas.length,
+    research_tasks: researchTasks.length,
+    delegated_work_sessions: delegated.length,
+    owner_feedback: feedback.length,
+    latest_artifact_at: latestArtifact.value,
+    latest_reflection_at: latestReflection.value,
+    latest_world_signal_at: latestWorldSignal.value,
+    latest_idea_at: latestIdea.value,
+    latest_delegated_at: latestDelegated.value,
+    fresh_24h: latestArtifact.ms > 0 && now - latestArtifact.ms <= 24 * 60 * 60 * 1000,
+    fresh_48h: latestArtifact.ms > 0 && now - latestArtifact.ms <= 48 * 60 * 60 * 1000,
+    usage_reporting_status: usage.reportingStatus,
+    usage_event_count: usage.eventCount,
+    usage_total_tokens: usage.totalTokens,
+    usage_cost_usd: usage.costUsd,
+    usage_present_or_unreported: usage.presentOrExplicit,
+    delegation_pressure: pressure,
+    delegated_build_safe: buildSafety.safe,
+    delegated_build_session_count: buildSafety.total,
+    unsafe_delegated_build_session_count: buildSafety.unsafe,
+  }
+}
+
 export function classifyLoopMode(runs: RunSummary): LoopMode {
   if (runs.count === 0) return 'inactive'
   if (runs.input_tokens === 0 && runs.output_tokens === 0 && runs.transcript_runs === 0) return 'deterministic-fast-tick'
@@ -699,6 +832,7 @@ function buildFlags(input: {
   runs: RunSummary
   trades: TradeSummary
   artifacts: TickArtifactSummary
+  observatory: ObservatorySummary
   observations: BotAudit['observations']
 }): string[] {
   const flags: string[] = []
@@ -727,6 +861,14 @@ function buildFlags(input: {
   if (input.selfImprovementState === 'active' && input.artifacts.usage_telemetry.trace_grounded_events === 0) {
     flags.push('llm-trace-grounding-missing')
   }
+  if (input.observatory.capability === 'error') flags.push('observatory-read-error')
+  if (input.observatory.capability === 'empty') flags.push('observatory-empty')
+  if (!input.observatory.fresh_24h && input.observatory.capability !== 'skipped') flags.push('observatory-not-fresh-24h')
+  if (!input.observatory.fresh_48h && input.observatory.capability !== 'skipped') flags.push('observatory-not-fresh-48h')
+  if (!input.observatory.usage_present_or_unreported && input.observatory.capability !== 'skipped') {
+    flags.push('observatory-usage-accounting-missing')
+  }
+  if (!input.observatory.delegated_build_safe) flags.push('observatory-delegated-build-unsafe')
   return flags
 }
 
@@ -740,6 +882,16 @@ function composeFleetAudit(operatorUrl: string, bots: BotAudit[]): FleetAuditRes
   const botsWithSelfImprovementEvidence = bots.filter((bot) => bot.self_improvement_state === 'active').length
   const botsWithRuntimeReflectionEvidence = bots.filter((bot) => bot.tick_artifacts.reflections > 0).length
   const botsWithImprovementIntents = bots.filter((bot) => bot.tick_artifacts.improvement_intents > 0).length
+  const observatoryCapableBots = bots.filter((bot) => bot.observatory.capability === 'installed').length
+  const observatorySkippedBots = bots.filter((bot) => bot.observatory.capability === 'skipped').length
+  const observatoryErrorBots = bots.filter((bot) => bot.observatory.capability === 'error').length
+  const observatoryEmptyBots = bots.filter((bot) => bot.observatory.capability === 'empty').length
+  const observatoryFresh24hBots = bots.filter((bot) => bot.observatory.fresh_24h || bot.observatory.capability === 'skipped').length
+  const observatoryFresh48hBots = bots.filter((bot) => bot.observatory.fresh_48h || bot.observatory.capability === 'skipped').length
+  const observatoryUsageAccountedBots = bots.filter((bot) => bot.observatory.usage_present_or_unreported || bot.observatory.capability === 'skipped').length
+  const observatoryDelegatedBuildSafeBots = bots.filter((bot) => bot.observatory.delegated_build_safe).length
+  const observatoryFresh24hRatio = bots.length > 0 ? observatoryFresh24hBots / bots.length : 0
+  const observatoryFresh48hRatio = bots.length > 0 ? observatoryFresh48hBots / bots.length : 0
 
   return {
     fetched_at: new Date().toISOString(),
@@ -771,6 +923,17 @@ function composeFleetAudit(operatorUrl: string, bots: BotAudit[]): FleetAuditRes
       bots_with_external_signal_checks: bots.filter((bot) => bot.observations.external_signals_checked).length,
       bots_with_external_signals_unavailable: bots.filter((bot) => bot.observations.external_signals_unavailable).length,
       total_recent_trades: bots.reduce((sum, bot) => sum + bot.trades.count, 0),
+      observatory_capable_bots: observatoryCapableBots,
+      observatory_skipped_bots: observatorySkippedBots,
+      observatory_error_bots: observatoryErrorBots,
+      observatory_empty_bots: observatoryEmptyBots,
+      observatory_fresh_24h_bots: observatoryFresh24hBots,
+      observatory_fresh_48h_bots: observatoryFresh48hBots,
+      observatory_usage_present_or_unreported_bots: observatoryUsageAccountedBots,
+      observatory_delegated_build_safe_bots: observatoryDelegatedBuildSafeBots,
+      observatory_total_reflection_runs: bots.reduce((sum, bot) => sum + bot.observatory.reflection_runs, 0),
+      observatory_total_ideas: bots.reduce((sum, bot) => sum + bot.observatory.ideas, 0),
+      observatory_total_delegated_work_sessions: bots.reduce((sum, bot) => sum + bot.observatory.delegated_work_sessions, 0),
       flag_counts: Array.from(flagCounts.entries())
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
         .map(([flag, count]) => ({ flag, count })),
@@ -780,6 +943,13 @@ function composeFleetAudit(operatorUrl: string, bots: BotAudit[]): FleetAuditRes
       recursive_self_improvement_live: botsWithSelfImprovementEvidence > 0,
       runtime_reflection_live: botsWithRuntimeReflectionEvidence > 0,
       llm_market_reflection_live: bots.some((bot) => bot.tick_artifacts.usage_telemetry.trace_grounded_events > 0 && bot.observations.market),
+      observatory_rollout_gate: {
+        capable_or_skipped: observatoryCapableBots + observatorySkippedBots === bots.length,
+        fresh_24h_ratio: Number(observatoryFresh24hRatio.toFixed(4)),
+        fresh_48h_ratio: Number(observatoryFresh48hRatio.toFixed(4)),
+        usage_accounted: observatoryUsageAccountedBots === bots.length,
+        delegated_build_gated: observatoryDelegatedBuildSafeBots === bots.length,
+      },
       follows_user_mandates: botsWithStrategyMismatch === 0 ? 'yes' : botsWithStrategyMismatch < bots.length ? 'partially' : 'no',
       succinct_wiring_plan: [
         'Make each fast tick emit a compact DecisionContext: mandate, portfolio, open positions, recent fills, market snapshot, external/news signals, and prior decision outcome.',
@@ -809,13 +979,27 @@ export function renderFleetAuditMarkdown(result: FleetAuditResult): string {
   if (result.summary.total_synthetic_usage_events > 0 || result.summary.total_trace_grounded_usage_events > 0) {
     lines.push(`- Usage classification: **${result.summary.total_trace_grounded_usage_events} trace-grounded** events; **${result.summary.total_synthetic_usage_events} synthetic smoke** events excluded from cost totals.`)
   }
+  lines.push(`- Observatory capability: **${result.summary.observatory_capable_bots}+${result.summary.observatory_skipped_bots}/${result.bot_count} capable/skipped**; errors **${result.summary.observatory_error_bots}**, empty **${result.summary.observatory_empty_bots}**.`)
+  lines.push(`- Observatory freshness: **${result.summary.observatory_fresh_24h_bots}/${result.bot_count} within 24h** (${Math.round(result.verdict.observatory_rollout_gate.fresh_24h_ratio * 100)}%), **${result.summary.observatory_fresh_48h_bots}/${result.bot_count} within 48h** (${Math.round(result.verdict.observatory_rollout_gate.fresh_48h_ratio * 100)}%).`)
+  lines.push(`- Observatory usage/gates: **${result.summary.observatory_usage_present_or_unreported_bots}/${result.bot_count} usage accounted**, **${result.summary.observatory_delegated_build_safe_bots}/${result.bot_count} delegated-build gated**.`)
+  lines.push(`- Observatory records: **${result.summary.observatory_total_reflection_runs} reflections**, **${result.summary.observatory_total_ideas} ideas**, **${result.summary.observatory_total_delegated_work_sessions} delegated work sessions**.`)
   lines.push(`- External signal evidence: **${result.summary.bots_with_news_evidence}/${result.bot_count} actual news/event evidence**, **${result.summary.bots_with_external_signal_checks}/${result.bot_count} checked**, **${result.summary.bots_with_external_signals_unavailable}/${result.bot_count} unavailable-source**.`)
   lines.push(`- ${result.summary.bots_with_trades}/${result.bot_count} bots have recent trades; ${result.summary.bots_with_runtime_reflection_evidence}/${result.bot_count} show runtime reflection; ${result.summary.bots_with_improvement_intents}/${result.bot_count} have queued improvement intents; ${result.summary.bots_with_self_improvement_evidence}/${result.bot_count} show promotion/evolution evidence.`)
   lines.push('')
+  lines.push('## Observatory Gate')
+  lines.push('')
+  lines.push('| Gate | Status | Evidence |')
+  lines.push('| --- | --- | --- |')
+  lines.push(`| Capability or skip reason | ${result.verdict.observatory_rollout_gate.capable_or_skipped ? 'pass' : 'fail'} | ${result.summary.observatory_capable_bots}+${result.summary.observatory_skipped_bots}/${result.bot_count} |`)
+  lines.push(`| >=90% fresh within 24h | ${result.verdict.observatory_rollout_gate.fresh_24h_ratio >= 0.9 ? 'pass' : 'fail'} | ${Math.round(result.verdict.observatory_rollout_gate.fresh_24h_ratio * 100)}% |`)
+  lines.push(`| 100% fresh within 48h unless skipped | ${result.verdict.observatory_rollout_gate.fresh_48h_ratio >= 1 ? 'pass' : 'fail'} | ${Math.round(result.verdict.observatory_rollout_gate.fresh_48h_ratio * 100)}% |`)
+  lines.push(`| Usage present/unreported | ${result.verdict.observatory_rollout_gate.usage_accounted ? 'pass' : 'fail'} | ${result.summary.observatory_usage_present_or_unreported_bots}/${result.bot_count} |`)
+  lines.push(`| Delegated build cannot bypass gates | ${result.verdict.observatory_rollout_gate.delegated_build_gated ? 'pass' : 'fail'} | ${result.summary.observatory_delegated_build_safe_bots}/${result.bot_count} |`)
+  lines.push('')
   lines.push('## Fleet Table')
   lines.push('')
-  lines.push('| Bot | Strategy | Loop | Runs | Run tokens | Usage events | Usage cost | Trades | Tick actions | Reflection | Intents | Self-improve | Alignment | Top flags |')
-  lines.push('| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- |')
+  lines.push('| Bot | Strategy | Loop | Runs | Run tokens | Observatory | Fresh | Obs usage | Obs work | Trades | Tick actions | Reflection | Intents | Self-improve | Alignment | Top flags |')
+  lines.push('| --- | --- | --- | ---: | ---: | --- | --- | --- | ---: | ---: | --- | --- | ---: | --- | --- | --- |')
   for (const bot of result.bots) {
     lines.push([
       escapeCell(bot.name),
@@ -823,8 +1007,10 @@ export function renderFleetAuditMarkdown(result: FleetAuditResult): string {
       bot.loop_mode,
       String(bot.runs.count),
       `${bot.runs.input_tokens}/${bot.runs.output_tokens}`,
-      String(bot.tick_artifacts.usage_telemetry.event_count),
-      `$${bot.tick_artifacts.usage_telemetry.cost_usd.toFixed(6)}`,
+      escapeCell(`${bot.observatory.capability}${bot.observatory.skip_reason ? `:${bot.observatory.skip_reason}` : ''}`),
+      bot.observatory.fresh_24h ? '24h' : bot.observatory.fresh_48h ? '48h' : '-',
+      escapeCell(bot.observatory.usage_reporting_status ?? '-'),
+      String(bot.observatory.delegated_work_sessions),
       String(bot.trades.count),
       escapeCell(bot.tick_artifacts.actions.join(', ') || '-'),
       bot.tick_artifacts.latest_reflection?.verdict ?? '-',
@@ -899,6 +1085,47 @@ function emptyUsageTelemetrySummary(): UsageTelemetrySummary {
   }
 }
 
+function emptyObservatorySummary(input: {
+  status: number
+  capability: ObservatoryCapability
+  skipReason: string | null
+  error?: string
+}): ObservatorySummary {
+  return {
+    status: input.status,
+    capability: input.capability,
+    skip_reason: input.skipReason,
+    ...(input.error ? { error: input.error } : {}),
+    world_signal_digests: 0,
+    reflection_runs: 0,
+    ideas: 0,
+    research_tasks: 0,
+    delegated_work_sessions: 0,
+    owner_feedback: 0,
+    latest_artifact_at: null,
+    latest_reflection_at: null,
+    latest_world_signal_at: null,
+    latest_idea_at: null,
+    latest_delegated_at: null,
+    fresh_24h: false,
+    fresh_48h: false,
+    usage_reporting_status: null,
+    usage_event_count: 0,
+    usage_total_tokens: 0,
+    usage_cost_usd: 0,
+    usage_present_or_unreported: false,
+    delegation_pressure: {
+      active_sessions: null,
+      pressure_level: null,
+      allows_new_delegation: null,
+      deny_reasons: [],
+    },
+    delegated_build_safe: true,
+    delegated_build_session_count: 0,
+    unsafe_delegated_build_session_count: 0,
+  }
+}
+
 export function summarizeUsageTelemetry(events: Array<Record<string, unknown>>): UsageTelemetrySummary {
   const realEvents = events.filter((event) => !isSyntheticUsageEvent(event))
   const inputTokens = realEvents.reduce((sum, event) => sum + toNumber(event.input_tokens), 0)
@@ -949,6 +1176,120 @@ function isSyntheticUsageEvent(event: Record<string, unknown>): boolean {
 function isTraceGroundedUsageEvent(event: Record<string, unknown>): boolean {
   const metadata = usageMetadata(event)
   return metadata.trace_grounded === true || isRecord(metadata.trace) || stringValue(event.operation) === 'trace-analyst-loop'
+}
+
+function latestTimestampValue(records: Array<Record<string, unknown>>): { value: string | number | null; ms: number } {
+  let latest: { value: string | number | null; ms: number } = { value: null, ms: 0 }
+  for (const record of records) {
+    const candidate = primitive(record.updated_at)
+      ?? primitive(record.created_at)
+      ?? primitive(record.completed_at)
+      ?? primitive(record.started_at)
+      ?? primitive(record.timestamp)
+      ?? primitive(record.freshness)
+    const ms = timestampToMs(candidate)
+    if (ms > latest.ms) latest = { value: candidate, ms }
+  }
+  return latest
+}
+
+function timestampToMs(value: string | number | null): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value : value * 1000
+  }
+  if (typeof value === 'string' && value.length > 0) {
+    const numeric = Number(value)
+    if (Number.isFinite(numeric) && /^\d+(\.\d+)?$/.test(value)) return timestampToMs(numeric)
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+function observatoryUsageSummary(
+  records: Record<string, unknown>,
+  reflections: Array<Record<string, unknown>>,
+): {
+  reportingStatus: string | null
+  eventCount: number
+  totalTokens: number
+  costUsd: number
+  presentOrExplicit: boolean
+} {
+  const latestReflection = reflections.at(-1)
+  const usage = isRecord(records.usage_summary)
+    ? records.usage_summary
+    : isRecord(latestReflection?.usage_summary)
+      ? latestReflection.usage_summary
+      : null
+  if (!usage) {
+    return {
+      reportingStatus: null,
+      eventCount: 0,
+      totalTokens: 0,
+      costUsd: 0,
+      presentOrExplicit: false,
+    }
+  }
+  const reportingStatus = stringValue(usage.reporting_status)
+    ?? stringValue(usage.token_count_status)
+    ?? (toNumber(usage.event_count) > 0 ? 'unreported' : 'not_applicable')
+  return {
+    reportingStatus,
+    eventCount: toNumber(usage.event_count),
+    totalTokens: toNumber(usage.total_tokens) || toNumber(usage.input_tokens) + toNumber(usage.output_tokens),
+    costUsd: toNumber(usage.cost_usd),
+    presentOrExplicit: ['reported', 'unreported', 'not_applicable'].includes(reportingStatus),
+  }
+}
+
+function observatoryDelegationPressure(records: Record<string, unknown>): ObservatorySummary['delegation_pressure'] {
+  const pressure = isRecord(records.delegation_pressure) ? records.delegation_pressure : {}
+  return {
+    active_sessions: Number.isFinite(Number(pressure.active_sessions)) ? Number(pressure.active_sessions) : null,
+    pressure_level: stringValue(pressure.pressure_level),
+    allows_new_delegation: typeof pressure.allows_new_delegation === 'boolean' ? pressure.allows_new_delegation : null,
+    deny_reasons: arrayFromUnknown(pressure.deny_reasons)
+      .filter((reason): reason is string => typeof reason === 'string')
+      .slice(0, 12),
+  }
+}
+
+function summarizeDelegatedBuildSafety(sessions: Array<Record<string, unknown>>): { safe: boolean; total: number; unsafe: number } {
+  const buildSessions = sessions.filter((session) => isDelegatedBuildSession(session))
+  const unsafe = buildSessions.filter((session) => !isSafeDelegatedBuildSession(session)).length
+  return {
+    safe: unsafe === 0,
+    total: buildSessions.length,
+    unsafe,
+  }
+}
+
+function isDelegatedBuildSession(session: Record<string, unknown>): boolean {
+  const source = `${stringValue(session.source) ?? ''} ${stringValue(session.summary) ?? ''} ${stringValue(session.artifact_ref) ?? ''}`.toLowerCase()
+  return source.includes('delegate_build')
+    || source.includes('delegated build')
+    || source.includes('self-improvement-mcp')
+    || source.includes('runtime-self-improvement')
+    || source.includes('improvement-dispatch')
+}
+
+function isSafeDelegatedBuildSession(session: Record<string, unknown>): boolean {
+  const source = stringValue(session.source)?.toLowerCase() ?? ''
+  const status = stringValue(session.status)?.toLowerCase() ?? ''
+  const artifactRef = stringValue(session.artifact_ref)?.toLowerCase() ?? ''
+  const summary = stringValue(session.summary)?.toLowerCase() ?? ''
+  const routedThroughPaperPath =
+    source.includes('self-improvement-mcp')
+    || source.includes('runtime-self-improvement')
+    || source.includes('improvement-dispatch')
+    || artifactRef.includes('mcp-self-improvement')
+    || artifactRef.includes('memory/decision-contexts')
+    || artifactRef.includes('self-improvement/')
+    || summary.includes('paper')
+  const text = `${source} ${status} ${artifactRef} ${summary}`
+  const liveBypassSignal = /touch_funds|can_trade["']?\s*:\s*true|can_promote["']?\s*:\s*true|promoted_live|promotion_approved|execute_live|live[-_\s]?trade|live[-_\s]?execution[-_\s]?enabled/.test(text)
+  return routedThroughPaperPath && !liveBypassSignal
 }
 
 function decisionAction(decision: Record<string, unknown>): string | null {
