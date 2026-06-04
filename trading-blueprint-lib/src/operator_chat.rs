@@ -15,6 +15,7 @@ use tokio::time::sleep;
 static CHAT_TRANSCRIPTS: LazyLock<Mutex<HashMap<String, Vec<Value>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 const DEFAULT_CHAT_AGENT_RUN_TIMEOUT_MS: u64 = 1_800_000;
+const DEFAULT_TOKEN_ESTIMATE_CHARS_PER_TOKEN: f64 = 4.0;
 
 #[derive(Clone, Debug)]
 pub struct SidecarChatTarget {
@@ -487,6 +488,22 @@ struct DirectAgenticModelResult {
     status: StatusCode,
     text: String,
     payload: Value,
+}
+
+#[derive(Clone, Debug)]
+struct UsagePricing {
+    input_per_million_usd: f64,
+    cached_input_per_million_usd: f64,
+    output_per_million_usd: f64,
+    source: String,
+}
+
+#[derive(Clone, Debug)]
+struct UsageCost {
+    cost_usd: Option<f64>,
+    cost_source: String,
+    cost_estimated: bool,
+    pricing: Option<UsagePricing>,
 }
 
 pub async fn run_agentic_chat_turn(
@@ -987,7 +1004,7 @@ fn build_agent_run_usage_event_for(
     run_id: Option<&str>,
 ) -> Value {
     let usage = agent_run_usage_payload(payload);
-    let input_tokens = usage_int(
+    let reported_input_tokens = usage_int(
         &usage,
         &[
             "input_tokens",
@@ -997,7 +1014,7 @@ fn build_agent_run_usage_event_for(
             "tokensIn",
         ],
     );
-    let output_tokens = usage_int(
+    let reported_output_tokens = usage_int(
         &usage,
         &[
             "output_tokens",
@@ -1007,17 +1024,81 @@ fn build_agent_run_usage_event_for(
             "tokensOut",
         ],
     );
+    let input_chars = input_text.chars().count();
+    let output_chars = output_text.chars().count();
+    let estimated_input_tokens =
+        reported_input_tokens.or_else(|| estimate_token_count_from_chars(input_chars));
+    let estimated_output_tokens =
+        reported_output_tokens.or_else(|| estimate_token_count_from_chars(output_chars));
+    let input_tokens = estimated_input_tokens;
+    let output_tokens = estimated_output_tokens;
     let total_tokens =
         usage_int(&usage, &["total_tokens", "totalTokens", "tokensTotal"]).or_else(|| {
             Some(input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0)).filter(|value| *value > 0)
         });
-    let token_count_status = if input_tokens.is_some() && output_tokens.is_some() {
+    let token_count_status = if reported_input_tokens.is_some() && reported_output_tokens.is_some()
+    {
         "reported"
-    } else if input_tokens.is_some() || output_tokens.is_some() || total_tokens.is_some() {
+    } else if reported_input_tokens.is_some() || reported_output_tokens.is_some() {
+        if input_tokens.is_some() && output_tokens.is_some() {
+            "partial_estimated"
+        } else {
+            "partial"
+        }
+    } else if input_tokens.is_some() || output_tokens.is_some() {
+        if input_tokens.is_some() && output_tokens.is_some() {
+            "estimated"
+        } else {
+            "partial_estimated"
+        }
+    } else if total_tokens.is_some() {
         "partial"
     } else {
         "unreported"
     };
+    let token_count_source = match token_count_status {
+        "reported" => "provider_reported",
+        "partial" => "provider_partial",
+        "estimated" | "partial_estimated" => "char_estimate",
+        _ => "missing",
+    };
+    let input_tokens_source = if reported_input_tokens.is_some() {
+        "reported"
+    } else if input_tokens.is_some() {
+        "estimated"
+    } else {
+        "missing"
+    };
+    let output_tokens_source = if reported_output_tokens.is_some() {
+        "reported"
+    } else if output_tokens.is_some() {
+        "estimated"
+    } else {
+        "missing"
+    };
+    let provider = usage_provider(&usage);
+    let model = usage_model(&usage);
+    let cached_input_tokens = usage_int(&usage, &["cached_input_tokens", "cachedInputTokens"])
+        .or_else(|| {
+            usage_int_at_paths(
+                &usage,
+                &[
+                    "/prompt_tokens_details/cached_tokens",
+                    "/input_token_details/cache_read",
+                ],
+            )
+        });
+    let reasoning_tokens = usage_int(&usage, &["reasoning_tokens", "reasoningTokens"])
+        .or_else(|| usage_int_at_paths(&usage, &["/completion_tokens_details/reasoning_tokens"]));
+    let cost = usage_cost_estimate(
+        &usage,
+        provider.as_deref(),
+        model.as_deref(),
+        input_tokens,
+        output_tokens,
+        cached_input_tokens,
+    );
+    let pricing = cost.pricing.clone();
     let timestamp = chrono::Utc::now().to_rfc3339();
     json!({
         "schema_version": "1.0.0",
@@ -1031,23 +1112,31 @@ fn build_agent_run_usage_event_for(
         "task_id": serde_json::Value::Null,
         "session_id": session_id,
         "trace_id": usage_string(&usage, &["trace_id", "traceId"]),
-        "provider": usage_string(&usage, &["provider"]),
-        "model": usage_string(&usage, &["model"]),
+        "provider": provider,
+        "model": model,
         "model_source": "sidecar_response",
         "command": serde_json::Value::Null,
         "status": if status.is_success() { "completed" } else { "failed" },
         "success": status.is_success(),
         "duration_ms": duration_ms,
-        "input_chars": input_text.chars().count(),
-        "output_chars": output_text.chars().count(),
+        "input_chars": input_chars,
+        "output_chars": output_chars,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
-        "cached_input_tokens": usage_int(&usage, &["cached_input_tokens", "cachedInputTokens"]),
-        "reasoning_tokens": usage_int(&usage, &["reasoning_tokens", "reasoningTokens"]),
+        "cached_input_tokens": cached_input_tokens,
+        "reasoning_tokens": reasoning_tokens,
         "token_count_status": token_count_status,
-        "cost_usd": usage_number(&usage, &["cost_usd", "costUsd", "cost"]),
-        "cost_source": if usage_number(&usage, &["cost_usd", "costUsd", "cost"]).is_some() { "reported" } else { "unknown" },
+        "token_count_source": token_count_source,
+        "input_tokens_source": input_tokens_source,
+        "output_tokens_source": output_tokens_source,
+        "token_estimate_chars_per_token": if token_count_status.contains("estimated") { Some(token_estimate_chars_per_token()) } else { None },
+        "cost_usd": cost.cost_usd,
+        "cost_source": cost.cost_source,
+        "cost_estimated": cost.cost_estimated,
+        "input_price_per_million_usd": pricing.as_ref().map(|pricing| pricing.input_per_million_usd),
+        "cached_input_price_per_million_usd": pricing.as_ref().map(|pricing| pricing.cached_input_per_million_usd),
+        "output_price_per_million_usd": pricing.as_ref().map(|pricing| pricing.output_per_million_usd),
         "raw_usage": usage,
         "metadata": {
             "sandbox_id": target.sandbox_id,
@@ -1075,6 +1164,26 @@ fn agent_run_usage_payload(payload: &Value) -> Value {
     json!({})
 }
 
+fn usage_provider(usage: &Value) -> Option<String> {
+    usage_string(usage, &["provider"]).or_else(|| {
+        usage_string(usage, &["model"]).and_then(|raw_model| {
+            raw_model
+                .split_once('/')
+                .map(|(provider, _)| provider.to_string())
+                .filter(|provider| !provider.trim().is_empty())
+        })
+    })
+}
+
+fn usage_model(usage: &Value) -> Option<String> {
+    usage_string(usage, &["model"]).map(|model| {
+        model
+            .split_once('/')
+            .map(|(_, model)| model.to_string())
+            .unwrap_or(model)
+    })
+}
+
 fn normalize_agent_run_usage(usage: &Value) -> Value {
     let mut normalized = usage.clone();
     if normalized.get("costUsd").is_none()
@@ -1089,6 +1198,19 @@ fn normalize_agent_run_usage(usage: &Value) -> Value {
 
 fn usage_int(usage: &Value, keys: &[&str]) -> Option<u64> {
     usage_number(usage, keys).map(|value| value.max(0.0).round() as u64)
+}
+
+fn usage_int_at_paths(usage: &Value, paths: &[&str]) -> Option<u64> {
+    paths
+        .iter()
+        .filter_map(|path| usage.pointer(path))
+        .find_map(|value| {
+            value
+                .as_f64()
+                .or_else(|| value.as_str()?.parse::<f64>().ok())
+        })
+        .filter(|value| value.is_finite())
+        .map(|value| value.max(0.0).round() as u64)
 }
 
 fn usage_number(usage: &Value, keys: &[&str]) -> Option<f64> {
@@ -1108,6 +1230,175 @@ fn usage_number(usage: &Value, keys: &[&str]) -> Option<f64> {
         }
     }
     None
+}
+
+fn token_estimate_chars_per_token() -> f64 {
+    std::env::var("LLM_TOKEN_ESTIMATE_CHARS_PER_TOKEN")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(DEFAULT_TOKEN_ESTIMATE_CHARS_PER_TOKEN)
+}
+
+fn estimate_token_count_from_chars(chars: usize) -> Option<u64> {
+    if chars == 0 {
+        return None;
+    }
+    Some(
+        ((chars as f64) / token_estimate_chars_per_token())
+            .ceil()
+            .max(1.0) as u64,
+    )
+}
+
+fn usage_cost_estimate(
+    usage: &Value,
+    provider: Option<&str>,
+    model: Option<&str>,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cached_input_tokens: Option<u64>,
+) -> UsageCost {
+    if let Some(cost) = usage_number(usage, &["cost_usd", "costUsd", "cost"]) {
+        return UsageCost {
+            cost_usd: Some(cost),
+            cost_source: "reported".to_string(),
+            cost_estimated: false,
+            pricing: None,
+        };
+    }
+    let Some(pricing) = usage_pricing(provider, model) else {
+        return UsageCost {
+            cost_usd: None,
+            cost_source: "unknown".to_string(),
+            cost_estimated: false,
+            pricing: None,
+        };
+    };
+    let (Some(input_tokens), Some(output_tokens)) = (input_tokens, output_tokens) else {
+        return UsageCost {
+            cost_usd: None,
+            cost_source: "unknown".to_string(),
+            cost_estimated: false,
+            pricing: Some(pricing),
+        };
+    };
+    let cached_input_tokens = cached_input_tokens.unwrap_or(0).min(input_tokens);
+    let uncached_input_tokens = input_tokens.saturating_sub(cached_input_tokens);
+    let cost = ((uncached_input_tokens as f64) * pricing.input_per_million_usd
+        + (cached_input_tokens as f64) * pricing.cached_input_per_million_usd
+        + (output_tokens as f64) * pricing.output_per_million_usd)
+        / 1_000_000.0;
+    UsageCost {
+        cost_usd: Some((cost * 100_000_000.0).round() / 100_000_000.0),
+        cost_source: pricing.source.clone(),
+        cost_estimated: true,
+        pricing: Some(pricing),
+    }
+}
+
+fn usage_pricing(provider: Option<&str>, model: Option<&str>) -> Option<UsagePricing> {
+    if let Some(env_pricing) = usage_pricing_from_env(provider, model) {
+        return Some(env_pricing);
+    }
+    let provider = provider.map(canonical_pricing_key);
+    let model = model.map(canonical_pricing_key)?;
+    let provider_is_zai = provider.as_deref().is_none_or(|provider| {
+        ["zai-coding-plan", "zai", "z.ai", "z-ai", "zhipu"].contains(&provider)
+    });
+    if !provider_is_zai {
+        return None;
+    }
+    let (input, cached, output) = match model.as_str() {
+        "glm-5.1" => (1.4, 0.26, 4.4),
+        "glm-5" => (1.0, 0.2, 3.2),
+        "glm-5-turbo" => (1.2, 0.24, 4.0),
+        "glm-4.7" | "glm-4.6" | "glm-4.5" => (0.6, 0.11, 2.2),
+        "glm-4.7-flashx" => (0.07, 0.01, 0.4),
+        "glm-4.7-flash" | "glm-4.5-flash" => (0.0, 0.0, 0.0),
+        _ => return None,
+    };
+    Some(UsagePricing {
+        input_per_million_usd: input,
+        cached_input_per_million_usd: cached,
+        output_per_million_usd: output,
+        source: "pricing_map:zai-official-2026-06-04".to_string(),
+    })
+}
+
+fn usage_pricing_from_env(provider: Option<&str>, model: Option<&str>) -> Option<UsagePricing> {
+    let input = price_from_env(provider, model, "INPUT")?;
+    let output = price_from_env(provider, model, "OUTPUT")?;
+    let cached = price_from_env(provider, model, "CACHED_INPUT")
+        .map(|(value, _)| value)
+        .unwrap_or(input.0);
+    Some(UsagePricing {
+        input_per_million_usd: input.0,
+        cached_input_per_million_usd: cached,
+        output_per_million_usd: output.0,
+        source: format!("env:{},{}", input.1, output.1),
+    })
+}
+
+fn price_from_env(
+    provider: Option<&str>,
+    model: Option<&str>,
+    side: &str,
+) -> Option<(f64, String)> {
+    let provider_slug = provider.map(env_price_slug);
+    let model_slug = model.map(env_price_slug);
+    let mut keys = Vec::new();
+    if let (Some(provider), Some(model)) = (provider_slug.as_deref(), model_slug.as_deref()) {
+        keys.push(format!(
+            "LLM_PRICE_{provider}_{model}_{side}_PER_MILLION_USD"
+        ));
+    }
+    if let Some(model) = model_slug.as_deref() {
+        keys.push(format!("LLM_PRICE_{model}_{side}_PER_MILLION_USD"));
+    }
+    if let Some(provider) = provider_slug.as_deref() {
+        keys.push(format!("LLM_PRICE_{provider}_{side}_PER_MILLION_USD"));
+    }
+    keys.push(format!("LLM_PRICE_{side}_PER_MILLION_USD"));
+    keys.into_iter().find_map(|key| {
+        std::env::var(&key)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<f64>().ok())
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .map(|value| (value, key))
+    })
+}
+
+fn env_price_slug(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+fn canonical_pricing_key(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '.' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string()
 }
 
 fn usage_string(usage: &Value, keys: &[&str]) -> Option<String> {
@@ -1619,9 +1910,120 @@ mod tests {
         assert_eq!(event["output_tokens"], 345);
         assert_eq!(event["total_tokens"], 1545);
         assert_eq!(event["cost_usd"], 0.017);
+        assert_eq!(event["cost_estimated"], false);
         assert_eq!(event["token_count_status"], "reported");
+        assert_eq!(event["token_count_source"], "provider_reported");
         assert_eq!(event["provider"], "zai-coding-plan");
         assert_eq!(event["model"], "glm-4.7");
+    }
+
+    #[test]
+    fn agent_run_usage_event_estimates_cost_from_reported_zai_tokens() {
+        let target = SidecarChatTarget {
+            sandbox_id: "sandbox-usage-cost".to_string(),
+            sidecar_url: "http://127.0.0.1:1".to_string(),
+            sidecar_token: "test-token".to_string(),
+        };
+        let payload = serde_json::json!({
+            "success": true,
+            "data": {
+                "usage": {
+                    "prompt_tokens": 1000,
+                    "completion_tokens": 500,
+                    "provider": "zai-coding-plan",
+                    "model": "glm-4.7"
+                }
+            }
+        });
+        let event = build_agent_run_usage_event(
+            &target,
+            "manual-usage-cost",
+            "prompt",
+            "answer",
+            StatusCode::OK,
+            &payload,
+            42,
+        );
+
+        assert_eq!(event["token_count_status"], "reported");
+        assert_eq!(event["cost_source"], "pricing_map:zai-official-2026-06-04");
+        assert_eq!(event["cost_estimated"], true);
+        assert_eq!(event["input_price_per_million_usd"], 0.6);
+        assert_eq!(event["cached_input_price_per_million_usd"], 0.11);
+        assert_eq!(event["output_price_per_million_usd"], 2.2);
+        assert_eq!(event["cost_usd"], 0.0017);
+    }
+
+    #[test]
+    fn agent_run_usage_event_estimates_missing_harness_tokens_and_cost() {
+        let target = SidecarChatTarget {
+            sandbox_id: "sandbox-estimated-usage".to_string(),
+            sidecar_url: "http://127.0.0.1:1".to_string(),
+            sidecar_token: "test-token".to_string(),
+        };
+        let payload = serde_json::json!({
+            "success": true,
+            "data": {
+                "usage": {
+                    "provider": "zai-coding-plan",
+                    "model": "glm-4.7"
+                }
+            }
+        });
+        let input = "x".repeat(401);
+        let output = "y".repeat(80);
+        let event = build_agent_run_usage_event(
+            &target,
+            "manual-estimated-usage",
+            &input,
+            &output,
+            StatusCode::OK,
+            &payload,
+            42,
+        );
+
+        assert_eq!(event["input_tokens"], 101);
+        assert_eq!(event["output_tokens"], 20);
+        assert_eq!(event["total_tokens"], 121);
+        assert_eq!(event["token_count_status"], "estimated");
+        assert_eq!(event["token_count_source"], "char_estimate");
+        assert_eq!(event["input_tokens_source"], "estimated");
+        assert_eq!(event["output_tokens_source"], "estimated");
+        assert_eq!(event["cost_source"], "pricing_map:zai-official-2026-06-04");
+        assert_eq!(event["cost_usd"], 0.0001046);
+    }
+
+    #[test]
+    fn agent_run_usage_event_splits_provider_model_refs_for_pricing() {
+        let target = SidecarChatTarget {
+            sandbox_id: "sandbox-provider-model-ref".to_string(),
+            sidecar_url: "http://127.0.0.1:1".to_string(),
+            sidecar_token: "test-token".to_string(),
+        };
+        let payload = serde_json::json!({
+            "success": true,
+            "data": {
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "model": "zai-coding-plan/glm-4.7"
+                }
+            }
+        });
+        let event = build_agent_run_usage_event(
+            &target,
+            "manual-provider-model-ref",
+            "prompt",
+            "answer",
+            StatusCode::OK,
+            &payload,
+            42,
+        );
+
+        assert_eq!(event["provider"], "zai-coding-plan");
+        assert_eq!(event["model"], "glm-4.7");
+        assert_eq!(event["cost_source"], "pricing_map:zai-official-2026-06-04");
+        assert_eq!(event["cost_usd"], 0.00017);
     }
 
     #[test]

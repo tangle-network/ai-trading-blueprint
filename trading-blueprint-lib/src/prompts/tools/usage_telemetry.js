@@ -8,6 +8,57 @@ const MAX_TELEMETRY_BYTES = Math.max(
   256 * 1024,
   Number(process.env.LLM_USAGE_TELEMETRY_MAX_BYTES || 5 * 1024 * 1024),
 );
+const DEFAULT_CHARS_PER_TOKEN = 4;
+const BUILT_IN_PRICING = [
+  {
+    providerMatchers: ['zai-coding-plan', 'zai', 'z.ai', 'z-ai', 'zhipu'],
+    modelMatchers: ['glm-5.1'],
+    input_per_million_usd: 1.4,
+    cached_input_per_million_usd: 0.26,
+    output_per_million_usd: 4.4,
+    source: 'pricing_map:zai-official-2026-06-04',
+  },
+  {
+    providerMatchers: ['zai-coding-plan', 'zai', 'z.ai', 'z-ai', 'zhipu'],
+    modelMatchers: ['glm-5'],
+    input_per_million_usd: 1.0,
+    cached_input_per_million_usd: 0.2,
+    output_per_million_usd: 3.2,
+    source: 'pricing_map:zai-official-2026-06-04',
+  },
+  {
+    providerMatchers: ['zai-coding-plan', 'zai', 'z.ai', 'z-ai', 'zhipu'],
+    modelMatchers: ['glm-5-turbo'],
+    input_per_million_usd: 1.2,
+    cached_input_per_million_usd: 0.24,
+    output_per_million_usd: 4.0,
+    source: 'pricing_map:zai-official-2026-06-04',
+  },
+  {
+    providerMatchers: ['zai-coding-plan', 'zai', 'z.ai', 'z-ai', 'zhipu'],
+    modelMatchers: ['glm-4.7', 'glm-4.6', 'glm-4.5'],
+    input_per_million_usd: 0.6,
+    cached_input_per_million_usd: 0.11,
+    output_per_million_usd: 2.2,
+    source: 'pricing_map:zai-official-2026-06-04',
+  },
+  {
+    providerMatchers: ['zai-coding-plan', 'zai', 'z.ai', 'z-ai', 'zhipu'],
+    modelMatchers: ['glm-4.7-flashx'],
+    input_per_million_usd: 0.07,
+    cached_input_per_million_usd: 0.01,
+    output_per_million_usd: 0.4,
+    source: 'pricing_map:zai-official-2026-06-04',
+  },
+  {
+    providerMatchers: ['zai-coding-plan', 'zai', 'z.ai', 'z-ai', 'zhipu'],
+    modelMatchers: ['glm-4.7-flash', 'glm-4.5-flash'],
+    input_per_million_usd: 0,
+    cached_input_per_million_usd: 0,
+    output_per_million_usd: 0,
+    source: 'pricing_map:zai-official-2026-06-04',
+  },
+];
 
 function nowIso() {
   return new Date().toISOString();
@@ -39,6 +90,11 @@ function intOrNull(value) {
   return parsed == null ? null : Math.max(0, Math.round(parsed));
 }
 
+function positiveNumberOrDefault(value, fallback) {
+  const parsed = numberOrNull(value);
+  return parsed != null && parsed > 0 ? parsed : fallback;
+}
+
 function stringOrNull(value) {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
@@ -67,6 +123,14 @@ function splitProviderModel(value) {
   return { provider: null, model: modelRef };
 }
 
+function canonical(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9.]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 function inferProviderModel(input = {}) {
   const commandRef = commandModel(input.command);
   const commandParts = splitProviderModel(commandRef);
@@ -87,14 +151,28 @@ function inferProviderModel(input = {}) {
   return { provider, model };
 }
 
-function normalizeUsage(raw) {
+function estimateTokenCount(chars) {
+  const charCount = intOrNull(chars);
+  if (charCount == null || charCount <= 0) return null;
+  const charsPerToken = positiveNumberOrDefault(
+    process.env.LLM_TOKEN_ESTIMATE_CHARS_PER_TOKEN,
+    DEFAULT_CHARS_PER_TOKEN,
+  );
+  return Math.max(1, Math.ceil(charCount / charsPerToken));
+}
+
+function normalizeUsage(raw, estimates = {}) {
   const usage = raw && typeof raw === 'object' ? raw : {};
-  const inputTokens = intOrNull(
+  const reportedInputTokens = intOrNull(
     usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens ?? usage.promptTokens ?? usage.tokensIn,
   );
-  const outputTokens = intOrNull(
+  const reportedOutputTokens = intOrNull(
     usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens ?? usage.completionTokens ?? usage.tokensOut,
   );
+  const estimatedInputTokens = reportedInputTokens == null ? estimateTokenCount(estimates.input_chars) : null;
+  const estimatedOutputTokens = reportedOutputTokens == null ? estimateTokenCount(estimates.output_chars) : null;
+  const inputTokens = reportedInputTokens ?? estimatedInputTokens;
+  const outputTokens = reportedOutputTokens ?? estimatedOutputTokens;
   const totalTokens = intOrNull(
     usage.total_tokens ?? usage.totalTokens ?? usage.tokensTotal,
   ) ?? (
@@ -115,8 +193,10 @@ function normalizeUsage(raw) {
   );
 
   let tokenCountStatus = 'unreported';
-  if (inputTokens != null && outputTokens != null) tokenCountStatus = 'reported';
-  else if (inputTokens != null || outputTokens != null || totalTokens != null) tokenCountStatus = 'partial';
+  if (reportedInputTokens != null && reportedOutputTokens != null) tokenCountStatus = 'reported';
+  else if (reportedInputTokens != null || reportedOutputTokens != null) tokenCountStatus = inputTokens != null && outputTokens != null ? 'partial_estimated' : 'partial';
+  else if (estimatedInputTokens != null || estimatedOutputTokens != null) tokenCountStatus = inputTokens != null && outputTokens != null ? 'estimated' : 'partial_estimated';
+  else if (totalTokens != null) tokenCountStatus = 'partial';
 
   return {
     input_tokens: inputTokens,
@@ -125,6 +205,18 @@ function normalizeUsage(raw) {
     cached_input_tokens: cachedInputTokens,
     reasoning_tokens: reasoningTokens,
     token_count_status: tokenCountStatus,
+    token_count_source: tokenCountStatus === 'reported'
+      ? 'provider_reported'
+      : tokenCountStatus.includes('estimated')
+        ? 'char_estimate'
+        : tokenCountStatus === 'partial'
+          ? 'provider_partial'
+          : 'missing',
+    input_tokens_source: reportedInputTokens != null ? 'reported' : estimatedInputTokens != null ? 'estimated' : 'missing',
+    output_tokens_source: reportedOutputTokens != null ? 'reported' : estimatedOutputTokens != null ? 'estimated' : 'missing',
+    token_estimate_chars_per_token: tokenCountStatus.includes('estimated')
+      ? positiveNumberOrDefault(process.env.LLM_TOKEN_ESTIMATE_CHARS_PER_TOKEN, DEFAULT_CHARS_PER_TOKEN)
+      : null,
   };
 }
 
@@ -143,6 +235,32 @@ function priceFromEnv(provider, model, side) {
   return null;
 }
 
+function builtInPricing(provider, model) {
+  const providerKey = canonical(provider);
+  const modelKey = canonical(model);
+  if (!modelKey) return null;
+  return BUILT_IN_PRICING.find((entry) => {
+    const providerMatches = !providerKey || entry.providerMatchers.some((candidate) => canonical(candidate) === providerKey);
+    const modelMatches = entry.modelMatchers.some((candidate) => canonical(candidate) === modelKey);
+    return providerMatches && modelMatches;
+  }) || null;
+}
+
+function pricingFor(provider, model) {
+  const inputPrice = priceFromEnv(provider, model, 'INPUT');
+  const outputPrice = priceFromEnv(provider, model, 'OUTPUT');
+  const cachedInputPrice = priceFromEnv(provider, model, 'CACHED_INPUT');
+  if (inputPrice && outputPrice) {
+    return {
+      input_per_million_usd: inputPrice.value,
+      cached_input_per_million_usd: cachedInputPrice?.value ?? inputPrice.value,
+      output_per_million_usd: outputPrice.value,
+      source: `env:${inputPrice.key},${outputPrice.key}`,
+    };
+  }
+  return builtInPricing(provider, model);
+}
+
 function reportedCost(input, rawUsage) {
   return numberOrNull(
     input.cost_usd
@@ -157,22 +275,33 @@ function estimateCost(input, normalizedUsage, provider, model, rawUsage) {
   const explicit = reportedCost(input, rawUsage);
   if (explicit != null) return { cost_usd: explicit, cost_source: 'reported' };
 
-  const inputPrice = priceFromEnv(provider, model, 'INPUT');
-  const outputPrice = priceFromEnv(provider, model, 'OUTPUT');
+  const pricing = pricingFor(provider, model);
   if (
-    inputPrice
-    && outputPrice
+    pricing
     && normalizedUsage.input_tokens != null
     && normalizedUsage.output_tokens != null
   ) {
-    const cost = (normalizedUsage.input_tokens * inputPrice.value + normalizedUsage.output_tokens * outputPrice.value) / 1_000_000;
+    const cachedInputTokens = Math.min(
+      normalizedUsage.cached_input_tokens || 0,
+      normalizedUsage.input_tokens,
+    );
+    const uncachedInputTokens = Math.max(0, normalizedUsage.input_tokens - cachedInputTokens);
+    const cost = (
+      uncachedInputTokens * pricing.input_per_million_usd
+      + cachedInputTokens * pricing.cached_input_per_million_usd
+      + normalizedUsage.output_tokens * pricing.output_per_million_usd
+    ) / 1_000_000;
     return {
       cost_usd: Number(cost.toFixed(8)),
-      cost_source: `env:${inputPrice.key},${outputPrice.key}`,
+      cost_source: pricing.source,
+      input_price_per_million_usd: pricing.input_per_million_usd,
+      cached_input_price_per_million_usd: pricing.cached_input_per_million_usd,
+      output_price_per_million_usd: pricing.output_per_million_usd,
+      cost_estimated: true,
     };
   }
 
-  return { cost_usd: null, cost_source: 'unknown' };
+  return { cost_usd: null, cost_source: 'unknown', cost_estimated: false };
 }
 
 function stableMetadata(value) {
@@ -201,7 +330,16 @@ function trimTelemetry(path) {
 function recordUsageEvent(input = {}) {
   const config = workspaceConfig();
   const rawUsage = input.usage && typeof input.usage === 'object' ? input.usage : {};
-  const normalizedUsage = normalizeUsage(rawUsage);
+  const inputChars = intOrNull(input.input_chars)
+    ?? stringOrNull(input.input_text)?.length
+    ?? stringOrNull(input.prompt)?.length
+    ?? stringOrNull(input.message)?.length
+    ?? null;
+  const outputChars = intOrNull(input.output_chars)
+    ?? stringOrNull(input.output_text)?.length
+    ?? stringOrNull(input.response)?.length
+    ?? null;
+  const normalizedUsage = normalizeUsage(rawUsage, { input_chars: inputChars, output_chars: outputChars });
   const { provider, model } = inferProviderModel(input);
   const cost = estimateCost(input, normalizedUsage, provider, model, rawUsage);
   const event = {
@@ -229,8 +367,8 @@ function recordUsageEvent(input = {}) {
     status: stringOrNull(input.status) || (input.success === false ? 'failed' : 'completed'),
     success: typeof input.success === 'boolean' ? input.success : null,
     duration_ms: intOrNull(input.duration_ms),
-    input_chars: intOrNull(input.input_chars),
-    output_chars: intOrNull(input.output_chars),
+    input_chars: inputChars,
+    output_chars: outputChars,
     ...normalizedUsage,
     ...cost,
     raw_usage: stableMetadata(rawUsage),
@@ -283,7 +421,10 @@ function summarizeUsageEvents(events, filter = {}) {
 
 module.exports = {
   TELEMETRY_PATH,
+  estimateCost,
+  estimateTokenCount,
   normalizeUsage,
+  pricingFor,
   recordUsageEvent,
   readUsageEvents,
   summarizeUsageEvents,
