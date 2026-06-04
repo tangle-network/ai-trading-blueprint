@@ -150,8 +150,10 @@ fn eligible_observatory_bot(bot: &TradingBotRecord) -> bool {
     bot.trading_active && bot.wind_down_started_at.is_none()
 }
 
-fn observatory_workflow_id(bot: &TradingBotRecord) -> Option<u64> {
-    bot.workflow_id.map(|workflow_id| workflow_id + 1)
+pub fn observatory_workflow_id(bot: &TradingBotRecord) -> u64 {
+    bot.workflow_id
+        .map(|workflow_id| workflow_id + 1)
+        .unwrap_or_else(|| stable_hash_u64(&format!("observatory:{}", bot.id)))
 }
 
 fn utc_day_key(timestamp: i64) -> String {
@@ -352,6 +354,22 @@ fn records_with_agentic_reflection(
     })
 }
 
+fn records_with_queued_agentic_reflection(mut records: Value, session_id: &str) -> Value {
+    let reflection = json!({
+        "enabled": true,
+        "status": "queued",
+        "session_id": session_id,
+    });
+    if let Some(object) = records.as_object_mut() {
+        object.insert("agentic_reflection".to_string(), reflection);
+        return records;
+    }
+    json!({
+        "records": records,
+        "agentic_reflection": reflection,
+    })
+}
+
 fn truncate_result(value: &Value) -> String {
     let mut text = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
     if text.len() > 20_000 {
@@ -459,125 +477,168 @@ pub async fn trigger_observatory_for_bot(
             response.exit_code,
             response.stderr.trim()
         );
-        if let Some(workflow_id) = workflow_id {
-            let _ = crate::workflow_compat::persist_workflow_run_record(WorkflowRunRecord {
-                run_id: fallback_run_id.clone(),
-                workflow_id,
-                status: WorkflowRunStatus::Failed,
-                started_at,
-                completed_at: Some(exec_completed_at),
-                session_id: None,
-                trace_id: None,
-                duration_ms: exec_completed_at
-                    .saturating_sub(started_at)
-                    .saturating_mul(1000),
-                input_tokens: 0,
-                output_tokens: 0,
-                result: None,
-                error: Some(error.clone()),
-            });
-        }
+        let _ = crate::workflow_compat::persist_workflow_run_record(WorkflowRunRecord {
+            run_id: fallback_run_id.clone(),
+            workflow_id,
+            status: WorkflowRunStatus::Failed,
+            started_at,
+            completed_at: Some(exec_completed_at),
+            session_id: None,
+            trace_id: None,
+            duration_ms: exec_completed_at
+                .saturating_sub(started_at)
+                .saturating_mul(1000),
+            input_tokens: 0,
+            output_tokens: 0,
+            result: None,
+            error: Some(error.clone()),
+        });
         return Err(error);
     };
 
     let run_id = run_id_from_records(&records, &fallback_run_id);
-    let (agentic_result, agentic_error) = if observatory_agentic_reflection_enabled() {
+    let agentic_enabled = observatory_agentic_reflection_enabled();
+    let agentic_session_id = observatory_agentic_session_id(bot, started_at);
+    let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
+    let result_records = if agentic_enabled {
+        records_with_queued_agentic_reflection(records.clone(), &agentic_session_id)
+    } else {
+        records_with_agentic_reflection(records.clone(), None, None)
+    };
+    crate::workflow_compat::persist_workflow_run_record(WorkflowRunRecord {
+        run_id: run_id.clone(),
+        workflow_id,
+        status: if agentic_enabled {
+            WorkflowRunStatus::Running
+        } else {
+            WorkflowRunStatus::Completed
+        },
+        started_at,
+        completed_at: (!agentic_enabled).then_some(completed_at),
+        session_id: agentic_enabled.then_some(agentic_session_id.clone()),
+        trace_id: records
+            .get("records_written")
+            .and_then(|written| written.get("reflection_run_id"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        duration_ms: completed_at.saturating_sub(started_at).saturating_mul(1000),
+        input_tokens: 0,
+        output_tokens: 0,
+        result: Some(truncate_result(&result_records)),
+        error: None,
+    })
+    .map_err(|e| format!("persist observatory run history: {e}"))?;
+
+    if agentic_enabled {
         let target = SidecarChatTarget {
             sandbox_id: sandbox.id.clone(),
             sidecar_url: sandbox.sidecar_url.clone(),
             sidecar_token: sandbox.token.clone(),
         };
-        let session_id = observatory_agentic_session_id(bot, started_at);
         let prompt = observatory_agentic_reflection_prompt(bot, &run_id, &records);
-        match crate::operator_chat::run_agentic_chat_turn(
-            target,
-            AgenticChatTurnOptions {
-                session_id,
-                message: prompt,
-                user_metadata: json!({
-                    "transport": "observatory",
-                    "source": trigger.clone(),
-                    "requested_by": requested_by.clone(),
-                    "bot_id": bot.id,
-                    "run_id": run_id,
-                }),
-                assistant_metadata: json!({
-                    "transport": "agents/run",
-                    "surface": "observatory",
-                    "operation": "read-only-reflection",
-                    "bot_id": bot.id,
-                    "run_id": run_id,
-                }),
-                timeout_ms: observatory_agentic_reflection_timeout_ms(),
-                surface: "observatory".to_string(),
-                operation: "read-only-reflection".to_string(),
-                bot_id: Some(bot.id.clone()),
-                run_id: Some(run_id.clone()),
-            },
-        )
-        .await
-        {
-            Ok(result) => (Some(result), None),
-            Err(error) => {
-                tracing::warn!(
-                    bot_id = %bot.id,
-                    run_id = %run_id,
-                    "observatory agentic reflection failed: {error}"
-                );
-                (None, Some(error))
+        let bot_id = bot.id.clone();
+        let run_id_for_task = run_id.clone();
+        let records_for_task = records.clone();
+        let session_id_for_task = agentic_session_id.clone();
+        tokio::spawn(async move {
+            let agentic_result = crate::operator_chat::run_bounded_agentic_exec_turn(
+                target,
+                AgenticChatTurnOptions {
+                    session_id: session_id_for_task.clone(),
+                    message: prompt,
+                    user_metadata: json!({
+                        "transport": "observatory",
+                        "source": trigger.clone(),
+                        "requested_by": requested_by.clone(),
+                        "bot_id": bot_id.clone(),
+                        "run_id": run_id_for_task.clone(),
+                    }),
+                    assistant_metadata: json!({
+                        "transport": "opencode/exec",
+                        "surface": "observatory",
+                        "operation": "read-only-reflection",
+                        "bot_id": bot_id.clone(),
+                        "run_id": run_id_for_task.clone(),
+                    }),
+                    timeout_ms: observatory_agentic_reflection_timeout_ms(),
+                    surface: "observatory".to_string(),
+                    operation: "read-only-reflection".to_string(),
+                    bot_id: Some(bot_id.clone()),
+                    run_id: Some(run_id_for_task.clone()),
+                },
+            )
+            .await;
+            let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
+            let (agentic, error) = match agentic_result {
+                Ok(agentic) => (Some(agentic), None),
+                Err(error) => {
+                    tracing::warn!(
+                        bot_id = %bot_id,
+                        run_id = %run_id_for_task,
+                        "observatory agentic reflection failed: {error}"
+                    );
+                    (None, Some(error))
+                }
+            };
+            let result_records = records_with_agentic_reflection(
+                records_for_task,
+                agentic.as_ref(),
+                error.as_deref(),
+            );
+            if let Some(agentic) = agentic.as_ref() {
+                if let Err(error) = crate::workflow_compat::persist_workflow_run_transcript(
+                    WorkflowRunTranscriptRecord {
+                        run_id: run_id_for_task.clone(),
+                        session_id: agentic.session_id.clone(),
+                        captured_at: completed_at,
+                        messages: agentic.messages.clone(),
+                    },
+                ) {
+                    tracing::warn!(
+                        bot_id = %bot_id,
+                        run_id = %run_id_for_task,
+                        "persist observatory run transcript failed: {error}"
+                    );
+                }
             }
-        }
-    } else {
-        (None, None)
-    };
-    let completed_at = chrono::Utc::now().timestamp().max(0) as u64;
-    let result_records = records_with_agentic_reflection(
-        records.clone(),
-        agentic_result.as_ref(),
-        agentic_error.as_deref(),
-    );
-    if let Some(workflow_id) = workflow_id {
-        if let Some(agentic) = agentic_result.as_ref() {
-            crate::workflow_compat::persist_workflow_run_transcript(WorkflowRunTranscriptRecord {
-                run_id: run_id.clone(),
-                session_id: agentic.session_id.clone(),
-                captured_at: completed_at,
-                messages: agentic.messages.clone(),
-            })
-            .map_err(|e| format!("persist observatory run transcript: {e}"))?;
-        }
-        crate::workflow_compat::persist_workflow_run_record(WorkflowRunRecord {
-            run_id: run_id.clone(),
-            workflow_id,
-            status: WorkflowRunStatus::Completed,
-            started_at,
-            completed_at: Some(completed_at),
-            session_id: agentic_result
-                .as_ref()
-                .map(|agentic| agentic.session_id.clone()),
-            trace_id: agentic_result
-                .as_ref()
-                .and_then(|agentic| agentic.trace_id.clone())
-                .or_else(|| {
-                    records
-                        .get("records_written")
-                        .and_then(|written| written.get("reflection_run_id"))
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                }),
-            duration_ms: completed_at.saturating_sub(started_at).saturating_mul(1000),
-            input_tokens: agentic_result
-                .as_ref()
-                .map(|agentic| agentic.input_tokens)
-                .unwrap_or(0),
-            output_tokens: agentic_result
-                .as_ref()
-                .map(|agentic| agentic.output_tokens)
-                .unwrap_or(0),
-            result: Some(truncate_result(&result_records)),
-            error: None,
-        })
-        .map_err(|e| format!("persist observatory run history: {e}"))?;
+            if let Err(error) =
+                crate::workflow_compat::persist_workflow_run_record(WorkflowRunRecord {
+                    run_id: run_id_for_task.clone(),
+                    workflow_id,
+                    status: WorkflowRunStatus::Completed,
+                    started_at,
+                    completed_at: Some(completed_at),
+                    session_id: Some(session_id_for_task),
+                    trace_id: agentic
+                        .as_ref()
+                        .and_then(|agentic| agentic.trace_id.clone())
+                        .or_else(|| {
+                            result_records
+                                .get("records_written")
+                                .and_then(|written| written.get("reflection_run_id"))
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        }),
+                    duration_ms: completed_at.saturating_sub(started_at).saturating_mul(1000),
+                    input_tokens: agentic
+                        .as_ref()
+                        .map(|agentic| agentic.input_tokens)
+                        .unwrap_or(0),
+                    output_tokens: agentic
+                        .as_ref()
+                        .map(|agentic| agentic.output_tokens)
+                        .unwrap_or(0),
+                    result: Some(truncate_result(&result_records)),
+                    error: None,
+                })
+            {
+                tracing::warn!(
+                    bot_id = %bot_id,
+                    run_id = %run_id_for_task,
+                    "persist observatory completed run history failed: {error}"
+                );
+            }
+        });
     }
 
     Ok(ObservatoryRunResult {
@@ -585,7 +646,7 @@ pub async fn trigger_observatory_for_bot(
         run_id,
         started_at,
         completed_at,
-        workflow_id,
+        workflow_id: Some(workflow_id),
         records: result_records,
     })
 }
@@ -1235,7 +1296,7 @@ mod tests {
             pre_trial_harness_json: None,
         };
 
-        assert_eq!(observatory_workflow_id(&bot), Some(11));
+        assert_eq!(observatory_workflow_id(&bot), 11);
     }
 
     #[test]
@@ -1245,6 +1306,50 @@ mod tests {
         assert_eq!(first, second);
         assert!((0..=900).contains(&first));
         assert_eq!(deterministic_jitter_secs("bot-1", "2026-06-04", 0), 0);
+    }
+
+    #[test]
+    fn observatory_workflow_id_falls_back_for_sandbox_only_bots() {
+        let mut bot = TradingBotRecord {
+            id: "bot_1".to_string(),
+            name: "Bot".to_string(),
+            sandbox_id: "sandbox".to_string(),
+            vault_address: String::new(),
+            share_token: String::new(),
+            strategy_type: "dex".to_string(),
+            strategy_config: Value::Null,
+            risk_params: Value::Null,
+            chain_id: 0,
+            rpc_url: String::new(),
+            trading_api_url: String::new(),
+            trading_api_token: String::new(),
+            workflow_id: None,
+            trading_active: true,
+            created_at: 0,
+            operator_address: String::new(),
+            validator_service_ids: Vec::new(),
+            max_lifetime_days: 0,
+            paper_trade: true,
+            wind_down_started_at: None,
+            submitter_address: String::new(),
+            trading_loop_cron: String::new(),
+            call_id: 0,
+            service_id: 0,
+            harness_json: Value::Null,
+            validation_trust: Default::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
+            active_trial_run_id: None,
+            active_trial_candidate_hash: None,
+            pre_trial_harness_json: None,
+        };
+        let first = observatory_workflow_id(&bot);
+        let second = observatory_workflow_id(&bot);
+        assert_eq!(first, second);
+        assert_ne!(first, 0);
+
+        bot.workflow_id = Some(10);
+        assert_eq!(observatory_workflow_id(&bot), 11);
     }
 
     #[test]
@@ -1396,7 +1501,7 @@ mod tests {
         assert!(source.contains("/home/agent/tools/self-improvement-loop.ts"));
         assert!(source.contains("/home/agent/tools/observatory-pressure.js"));
         assert!(source.contains("observatory_pressure.js"));
-        assert!(source.contains("run_agentic_chat_turn"));
+        assert!(source.contains("run_bounded_agentic_exec_turn"));
         assert!(source.contains("persist_workflow_run_transcript"));
     }
 }

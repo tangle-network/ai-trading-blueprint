@@ -500,6 +500,169 @@ pub async fn run_agentic_chat_turn(
     .await
 }
 
+pub async fn run_bounded_agentic_exec_turn(
+    target: SidecarChatTarget,
+    options: AgenticChatTurnOptions,
+) -> Result<AgenticChatTurnResult, String> {
+    append_transcript_message(
+        &target,
+        &options.session_id,
+        "user",
+        options.message.clone(),
+        options.user_metadata,
+    );
+
+    let timeout_ms = options.timeout_ms.max(1_000);
+    let timeout_secs = (timeout_ms / 1_000).max(1).to_string();
+    let exec_req = ai_agent_sandbox_blueprint_lib::SandboxExecRequest {
+        sidecar_url: target.sidecar_url.clone(),
+        command: r#"node <<'NODE'
+const { spawnSync } = require('node:child_process');
+const timeoutSecs = String(process.env.AGENT_TIMEOUT_SECS || '60');
+const prompt = String(process.env.AGENT_PROMPT || '');
+const result = spawnSync('timeout', [`${timeoutSecs}s`, 'opencode', 'run', prompt], {
+  cwd: '/home/agent',
+  encoding: 'utf8',
+  timeout: (Number(timeoutSecs) + 10) * 1000,
+  maxBuffer: 4 * 1024 * 1024,
+});
+if (result.stdout) process.stdout.write(result.stdout);
+if (result.stderr) process.stderr.write(result.stderr);
+if (result.error) {
+  console.error(result.error.stack || result.error.message || String(result.error));
+  process.exit(1);
+}
+process.exit(result.status ?? 1);
+NODE"#
+            .to_string(),
+        cwd: "/home/agent".to_string(),
+        env_json: json!({
+            "AGENT_PROMPT": options.message.clone(),
+            "AGENT_TIMEOUT_SECS": timeout_secs,
+        })
+        .to_string(),
+        timeout_ms: timeout_ms.saturating_add(15_000),
+    };
+
+    let started_at = Instant::now();
+    let exec_result =
+        ai_agent_sandbox_blueprint_lib::run_exec_request(&exec_req, &target.sidecar_token).await;
+    let (status, payload, text) = match exec_result {
+        Ok(response) => {
+            let status = if response.exit_code == 0 {
+                StatusCode::OK
+            } else if response.exit_code == 124 {
+                StatusCode::GATEWAY_TIMEOUT
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
+            let stdout = response.stdout.trim();
+            let stderr = response.stderr.trim();
+            let text = if !stdout.is_empty() {
+                stdout.to_string()
+            } else if response.exit_code == 124 {
+                format!("Agentic reflection timed out after {timeout_ms}ms.")
+            } else if !stderr.is_empty() {
+                format!("Agentic reflection failed.\n\n{stderr}")
+            } else {
+                format!(
+                    "Agentic reflection exited without text. exit_code={}",
+                    response.exit_code
+                )
+            };
+            (
+                status,
+                json!({
+                    "success": status.is_success(),
+                    "response": text,
+                    "exit_code": response.exit_code,
+                    "stderr": stderr,
+                    "usage": {
+                        "token_count_status": "unreported"
+                    }
+                }),
+                text,
+            )
+        }
+        Err(error) => {
+            let text = format!("Agentic reflection transport failed: {error}");
+            (
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "success": false,
+                    "error": { "message": text },
+                    "usage": {
+                        "token_count_status": "unreported"
+                    }
+                }),
+                text,
+            )
+        }
+    };
+
+    let usage_event = build_agent_run_usage_event_for(
+        &target,
+        &options.session_id,
+        &options.message,
+        &text,
+        status,
+        &payload,
+        started_at.elapsed().as_millis() as u64,
+        &options.surface,
+        &options.operation,
+        options.bot_id.as_deref(),
+        options.run_id.as_deref(),
+    );
+    append_usage_event_to_sidecar(&target, usage_event.clone()).await;
+    let mut assistant_metadata = options.assistant_metadata;
+    merge_metadata_fields(
+        &mut assistant_metadata,
+        json!({
+            "transport": "opencode/exec",
+            "status": status.as_u16(),
+            "usage_telemetry": usage_event.clone(),
+        }),
+    );
+    append_transcript_message(
+        &target,
+        &options.session_id,
+        "assistant",
+        text.clone(),
+        assistant_metadata,
+    );
+
+    let messages = transcript_messages_for_session(&target, &options.session_id);
+    let input_tokens = usage_event
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(u64::from(u32::MAX)) as u32;
+    let output_tokens = usage_event
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(u64::from(u32::MAX)) as u32;
+    let cost_usd = usage_event.get("cost_usd").and_then(Value::as_f64);
+    let trace_id = usage_event
+        .get("trace_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    Ok(AgenticChatTurnResult {
+        session_id: options.session_id,
+        assistant_text: text,
+        status: status.as_u16(),
+        input_tokens,
+        output_tokens,
+        cost_usd,
+        trace_id,
+        usage_event,
+        payload,
+        messages,
+    })
+}
+
 async fn execute_agent_run_turn(
     request: AgentRunTurnRequest,
 ) -> Result<AgenticChatTurnResult, String> {

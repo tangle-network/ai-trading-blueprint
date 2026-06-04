@@ -2055,12 +2055,23 @@ async fn get_bot_tick_artifacts(
 }
 
 fn workflow_ids_for_bot(bot: &TradingBotRecord) -> Vec<u64> {
-    bot.workflow_id
+    let mut ids = bot
+        .workflow_id
         .map(|workflow_id| vec![workflow_id, workflow_id + 1, workflow_id + 2])
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let observatory_workflow_id =
+        trading_blueprint_lib::jobs::observatory_cadence::observatory_workflow_id(bot);
+    if !ids.contains(&observatory_workflow_id) {
+        ids.push(observatory_workflow_id);
+    }
+    ids
 }
 
 fn workflow_kind_for_bot(bot: &TradingBotRecord, workflow_id: u64) -> &'static str {
+    if workflow_id == trading_blueprint_lib::jobs::observatory_cadence::observatory_workflow_id(bot)
+    {
+        return "observatory";
+    }
     match bot.workflow_id {
         Some(base) if workflow_id == base => "trading",
         Some(base) if workflow_id == base + 1 => "research",
