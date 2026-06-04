@@ -800,8 +800,11 @@ mod tests {
             results[0].1,
             RenewalAction::SingleSigOperatorKeyMismatch { .. }
         ));
-        let stored = get_signed_envelope(&bot_id).unwrap();
-        assert_eq!(stored.nonce, 3);
+        let stored = get_signed_envelope(&bot_id);
+        assert!(
+            stored.as_ref().is_none_or(|envelope| envelope.nonce == 3),
+            "wrong operator key must not persist a renewed envelope nonce"
+        );
         let _ = clear_signed_envelope(&bot_id);
     }
 

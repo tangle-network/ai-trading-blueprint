@@ -14,6 +14,7 @@ import { OperatorAccessCard, OperatorSessionBanner } from '~/components/operator
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import {
   type ObservatoryDelegatedWorkSession,
+  type ObservatoryDelegationPressure,
   type ObservatoryFinding,
   type ObservatoryIdea,
   type ObservatoryOverviewBot,
@@ -107,6 +108,61 @@ function latestDigest(bot: ObservatoryOverviewBot): ObservatoryWorldSignalDigest
 
 function countOpenIdeas(bot: ObservatoryOverviewBot): number {
   return bot.records.ideas.filter((idea) => idea.status !== 'rejected' && idea.status !== 'muted').length;
+}
+
+function activeDelegationStatus(status: string): boolean {
+  return /dispatch|queued|running|pending|await|open/i.test(status);
+}
+
+function uniqueDelegatedWorkSessions(sessions: ObservatoryDelegatedWorkSession[]): ObservatoryDelegatedWorkSession[] {
+  const byId = new Map<string, ObservatoryDelegatedWorkSession>();
+  for (const session of sessions) {
+    const existing = byId.get(session.session_id);
+    if (!existing || new Date(session.created_at || 0).getTime() >= new Date(existing.created_at || 0).getTime()) {
+      byId.set(session.session_id, session);
+    }
+  }
+  return [...byId.values()].sort((left, right) =>
+    new Date(right.created_at || 0).getTime() - new Date(left.created_at || 0).getTime(),
+  );
+}
+
+function buildDelegationPressure(sessions: ObservatoryDelegatedWorkSession[]): ObservatoryDelegationPressure {
+  const unique = uniqueDelegatedWorkSessions(sessions);
+  const active = unique.filter((session) => activeDelegationStatus(session.status));
+  const byStatus: Record<string, number> = {};
+  const bySource: Record<string, number> = {};
+  for (const session of unique) {
+    byStatus[session.status] = (byStatus[session.status] ?? 0) + 1;
+    bySource[session.source] = (bySource[session.source] ?? 0) + 1;
+  }
+  const pressureLevel = active.length >= 5 ? 'high' : active.length >= 2 ? 'medium' : 'low';
+  return {
+    unique_sessions: unique.length,
+    active_sessions: active.length,
+    terminal_sessions: unique.length - active.length,
+    duplicate_rows_removed: Math.max(0, sessions.length - unique.length),
+    by_status: byStatus,
+    by_source: bySource,
+    usage_reporting_status: 'not_applicable',
+    usage_event_count: 0,
+    total_tokens: 0,
+    cost_usd: 0,
+    pressure_level: pressureLevel,
+  };
+}
+
+function delegationPressureForBot(bot: ObservatoryOverviewBot): ObservatoryDelegationPressure {
+  return bot.records.delegation_pressure
+    ?? latestReflection(bot)?.delegation_pressure
+    ?? buildDelegationPressure(bot.records.delegated_work_sessions);
+}
+
+function pressureClass(level: string): string {
+  const lower = level.toLowerCase();
+  if (lower === 'high') return 'text-crimson-600 dark:text-crimson-300';
+  if (lower === 'medium') return 'text-amber-700 dark:text-amber-300';
+  return 'text-emerald-700 dark:text-emerald-300';
 }
 
 function useSelectedBot(bots: ObservatoryOverviewBot[]) {
@@ -269,8 +325,16 @@ function IdeaList({
   );
 }
 
-function DelegatedWorkList({ sessions }: { sessions: ObservatoryDelegatedWorkSession[] }) {
-  if (sessions.length === 0) {
+function DelegatedWorkList({
+  sessions,
+  pressure,
+}: {
+  sessions: ObservatoryDelegatedWorkSession[];
+  pressure: ObservatoryDelegationPressure;
+}) {
+  const uniqueSessions = uniqueDelegatedWorkSessions(sessions);
+
+  if (uniqueSessions.length === 0) {
     return (
       <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3 text-sm text-[var(--arena-terminal-text-secondary)]">
         No delegated work sessions yet.
@@ -279,20 +343,40 @@ function DelegatedWorkList({ sessions }: { sessions: ObservatoryDelegatedWorkSes
   }
 
   return (
-    <div className="divide-y divide-[var(--arena-terminal-border)] border border-[var(--arena-terminal-border)]">
-      {sessions.slice(0, 8).map((session) => (
-        <div key={session.session_id} className="grid gap-2 bg-[var(--arena-terminal-bg)] p-3 sm:grid-cols-[9rem_minmax(0,1fr)_7rem]">
-          <span className="truncate font-data text-xs text-[var(--arena-terminal-text-muted)]">
-            {session.source}
-          </span>
-          <span className="min-w-0 text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
-            {session.summary}
-          </span>
-          <span className={`text-right font-data text-xs ${statusClass(session.status)}`}>
-            {session.status}
-          </span>
+    <div className="border border-[var(--arena-terminal-border)]">
+      <div className="grid gap-2 border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] p-3 font-data text-xs sm:grid-cols-4">
+        <div>
+          <div className="text-base font-bold text-[var(--arena-terminal-text)]">{pressure.unique_sessions}</div>
+          <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Unique</div>
         </div>
-      ))}
+        <div>
+          <div className={`text-base font-bold ${pressureClass(pressure.pressure_level)}`}>{pressure.active_sessions}</div>
+          <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Active</div>
+        </div>
+        <div>
+          <div className="text-base font-bold text-[var(--arena-terminal-text)]">{pressure.duplicate_rows_removed}</div>
+          <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Dedupe</div>
+        </div>
+        <div>
+          <div className={`text-base font-bold ${pressureClass(pressure.pressure_level)}`}>{pressure.pressure_level}</div>
+          <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Pressure</div>
+        </div>
+      </div>
+      <div className="divide-y divide-[var(--arena-terminal-border)]">
+        {uniqueSessions.slice(0, 8).map((session) => (
+          <div key={session.session_id} className="grid gap-2 bg-[var(--arena-terminal-bg)] p-3 sm:grid-cols-[9rem_minmax(0,1fr)_7rem]">
+            <span className="truncate font-data text-xs text-[var(--arena-terminal-text-muted)]">
+              {session.source}
+            </span>
+            <span className="min-w-0 text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
+              {session.summary}
+            </span>
+            <span className={`text-right font-data text-xs ${statusClass(session.status)}`}>
+              {session.status}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -356,6 +440,7 @@ function Inspector({
   }
 
   const usage = reflection?.usage_summary;
+  const pressure = delegationPressureForBot(bot);
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--arena-terminal-panel)]">
@@ -419,8 +504,8 @@ function Inspector({
                       <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Ideas</div>
                     </div>
                     <div>
-                      <div className="text-base font-bold text-[var(--arena-terminal-text)]">{reflection.delegated_session_ids.length}</div>
-                      <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Work</div>
+                      <div className={`text-base font-bold ${pressureClass(pressure.pressure_level)}`}>{pressure.active_sessions}</div>
+                      <div className="uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">Active</div>
                     </div>
                   </div>
                 </div>
@@ -454,7 +539,7 @@ function Inspector({
 
           <section>
             <h3 className="mb-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Delegated work</h3>
-            <DelegatedWorkList sessions={bot.records.delegated_work_sessions} />
+            <DelegatedWorkList sessions={bot.records.delegated_work_sessions} pressure={pressure} />
           </section>
         </div>
       </div>
@@ -504,7 +589,14 @@ export default function ObservatoryPage() {
     return Date.now() - new Date(reflection.created_at).getTime() <= 24 * 60 * 60 * 1000;
   }).length;
   const openIdeas = bots.reduce((sum, bot) => sum + countOpenIdeas(bot), 0);
-  const delegated = overview.data?.totals.delegated_work_sessions ?? 0;
+  const delegated = bots.reduce(
+    (sum, bot) => sum + delegationPressureForBot(bot).unique_sessions,
+    0,
+  );
+  const activeDelegated = bots.reduce(
+    (sum, bot) => sum + delegationPressureForBot(bot).active_sessions,
+    0,
+  );
 
   const botListStyle = {
     '--observatory-bot-list-percent': `${layout.botListPercent}%`,
@@ -528,7 +620,7 @@ export default function ObservatoryPage() {
         metrics={[
           { value: `${freshReflections}/${overview.data?.bot_count ?? 0}`, label: 'Fresh' },
           { value: String(openIdeas), label: 'Ideas' },
-          { value: String(delegated), label: 'Work' },
+          { value: `${activeDelegated}/${delegated}`, label: 'Active/Work' },
         ]}
         controls={(
           <>

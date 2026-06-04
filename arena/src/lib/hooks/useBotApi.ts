@@ -275,6 +275,27 @@ export interface ObservatoryUsageSummary {
   models: string[];
 }
 
+export interface ObservatoryDelegationPressure {
+  unique_sessions: number;
+  active_sessions: number;
+  terminal_sessions: number;
+  duplicate_rows_removed: number;
+  by_status: Record<string, number>;
+  by_source: Record<string, number>;
+  usage_reporting_status: string;
+  usage_event_count: number;
+  total_tokens: number;
+  cost_usd: number;
+  system?: {
+    load_1m?: number;
+    cpu_count?: number;
+    cpu_pressure?: number;
+    memory_free_mb?: number;
+    memory_total_mb?: number;
+  };
+  pressure_level: 'low' | 'medium' | 'high' | string;
+}
+
 export interface ObservatoryWorldSignalDigest {
   digest_id: string;
   bot_id: string;
@@ -314,6 +335,7 @@ export interface ObservatoryReflectionRun {
   findings: ObservatoryFinding[];
   idea_ids: string[];
   delegated_session_ids: string[];
+  delegation_pressure?: ObservatoryDelegationPressure;
   usage_summary: ObservatoryUsageSummary;
 }
 
@@ -360,6 +382,7 @@ export interface ObservatoryRecords {
   ideas: ObservatoryIdea[];
   delegated_work_sessions: ObservatoryDelegatedWorkSession[];
   owner_feedback: ObservatoryOwnerFeedback[];
+  delegation_pressure?: ObservatoryDelegationPressure;
 }
 
 export interface BotObservatoryResponse {

@@ -540,6 +540,7 @@ fn uuid_like(value: &Value) -> String {
 fn read_observatory_records_command() -> &'static str {
     r#"node - <<'NODE'
 const fs = require('fs');
+const os = require('os');
 function read(file) {
   try { return fs.readFileSync(file, 'utf8') } catch { return null }
 }
@@ -555,14 +556,82 @@ function parseJsonl(raw, limit = 100) {
     .filter(Boolean)
     .slice(-limit)
 }
+function timestampMs(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+function dedupeBySessionId(sessions, limit = 100) {
+  const byId = new Map();
+  for (const session of sessions) {
+    const sessionId = session && typeof session === 'object' ? session.session_id : null;
+    if (!sessionId) continue;
+    const existing = byId.get(sessionId);
+    if (!existing || timestampMs(session.created_at) >= timestampMs(existing.created_at)) {
+      byId.set(sessionId, session);
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => timestampMs(b.created_at) - timestampMs(a.created_at))
+    .slice(0, limit);
+}
+function activeDelegationStatus(status) {
+  return /dispatch|queued|running|pending|await|open/i.test(String(status || ''));
+}
+function terminalDelegationStatus(status) {
+  return /complete|pass|done|blocked|failed|error|reject|cancel/i.test(String(status || ''));
+}
+function delegationPressure(sessions, usage = {}) {
+  const unique = dedupeBySessionId(sessions, 500);
+  const active = unique.filter((session) => activeDelegationStatus(session.status));
+  const terminal = unique.filter((session) => terminalDelegationStatus(session.status));
+  const byStatus = {};
+  const bySource = {};
+  for (const session of unique) {
+    const status = String(session.status || 'unknown');
+    const source = String(session.source || 'unknown');
+    byStatus[status] = (byStatus[status] || 0) + 1;
+    bySource[source] = (bySource[source] || 0) + 1;
+  }
+  const load1 = os.loadavg()[0] || 0;
+  const cpuCount = os.cpus().length || 1;
+  const cpuPressure = Number((load1 / cpuCount).toFixed(3));
+  return {
+    unique_sessions: unique.length,
+    active_sessions: active.length,
+    terminal_sessions: terminal.length,
+    duplicate_rows_removed: Math.max(0, sessions.length - unique.length),
+    by_status: byStatus,
+    by_source: bySource,
+    usage_reporting_status: usage.reporting_status || 'not_applicable',
+    usage_event_count: Number(usage.event_count || 0),
+    total_tokens: Number(usage.total_tokens || 0),
+    cost_usd: Number(usage.cost_usd || 0),
+    system: {
+      load_1m: Number(load1.toFixed(3)),
+      cpu_count: cpuCount,
+      cpu_pressure: cpuPressure,
+      memory_free_mb: Math.round(os.freemem() / 1024 / 1024),
+      memory_total_mb: Math.round(os.totalmem() / 1024 / 1024),
+    },
+    pressure_level: active.length >= 5 || cpuPressure >= 1 ? 'high' : active.length >= 2 || cpuPressure >= 0.7 ? 'medium' : 'low',
+  };
+}
 const root = '/home/agent/memory/observatory';
+const reflectionRuns = parseJsonl(read(`${root}/reflection-runs.jsonl`), 100);
+const rawDelegatedWorkSessions = parseJsonl(read(`${root}/delegated-work-sessions.jsonl`), 500);
+const delegatedWorkSessions = dedupeBySessionId(rawDelegatedWorkSessions, 100);
+const latestReflection = reflectionRuns
+  .slice()
+  .sort((a, b) => timestampMs(b.created_at) - timestampMs(a.created_at))[0] || null;
+const pressure = latestReflection?.delegation_pressure || delegationPressure(delegatedWorkSessions, latestReflection?.usage_summary);
 const payload = {
   schema_version: 1,
   world_signal_digests: parseJsonl(read(`${root}/world-signal-digests.jsonl`), 100),
-  reflection_runs: parseJsonl(read(`${root}/reflection-runs.jsonl`), 100),
+  reflection_runs: reflectionRuns,
   ideas: parseJsonl(read(`${root}/ideas.jsonl`), 100),
-  delegated_work_sessions: parseJsonl(read(`${root}/delegated-work-sessions.jsonl`), 100),
+  delegated_work_sessions: delegatedWorkSessions,
   owner_feedback: parseJsonl(read(`${root}/owner-feedback.jsonl`), 100),
+  delegation_pressure: pressure,
 };
 const B = 'TANGLE' + '_OBSERVATORY_JSON>';
 const E = '<TANGLE' + '_OBSERVATORY_END';
@@ -581,6 +650,7 @@ const root = '/home/agent/memory/observatory';
 const feedbackFile = `${root}/owner-feedback.jsonl`;
 const ideasFile = `${root}/ideas.jsonl`;
 const delegatedFile = `${root}/delegated-work-sessions.jsonl`;
+const maxActiveDelegations = Number(process.env.OBSERVATORY_MAX_ACTIVE_DELEGATIONS || 3);
 
 function ensure(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -598,6 +668,9 @@ function parseJsonl(file) {
 }
 function sha(value, len = 18) {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, len);
+}
+function activeDelegationStatus(status) {
+  return /dispatch|queued|running|pending|await|open/i.test(String(status || ''));
 }
 function dispatchBuildTask(idea) {
   const spec = `Owner requested a paper-only delegated build from Observatory idea ${entry.idea_id}.
@@ -659,31 +732,63 @@ appendJsonl(feedbackFile, entry);
 
 const action = String(entry.action || '');
 const idea = parseJsonl(ideasFile).reverse().find((item) => item.idea_id === entry.idea_id) || null;
+const existingDelegations = parseJsonl(delegatedFile);
+const activeDelegations = existingDelegations.filter((item) => activeDelegationStatus(item.status));
+const existingActiveForIdea = activeDelegations.find((item) => item.idea_id === entry.idea_id);
 let delegated = null;
 let dispatch = null;
 if (action === 'delegate_research' || action === 'delegate_build') {
-  if (action === 'delegate_build') {
-    dispatch = dispatchBuildTask(idea);
+  if (existingActiveForIdea) {
+    delegated = {
+      ...existingActiveForIdea,
+      status: existingActiveForIdea.status || 'already_active',
+      pressure_guard: 'existing_active_for_idea',
+    };
+    dispatch = {
+      ok: true,
+      status: 'already_active',
+      task_id: existingActiveForIdea.task_id || null,
+    };
+  } else if (activeDelegations.length >= maxActiveDelegations) {
+    delegated = {
+      session_id: `owner_delegate_pressure_${sha({ feedback_id: entry.feedback_id, idea_id: entry.idea_id, action })}`,
+      bot_id: entry.bot_id,
+      source: 'owner-feedback:pressure-guard',
+      status: 'pressure_blocked',
+      created_at: entry.created_at,
+      idea_id: entry.idea_id,
+      task_id: null,
+      summary: `Delegation blocked because ${activeDelegations.length} active delegation(s) already exist for this bot.`,
+      artifact_ref: `artifact://observatory/ideas#${entry.idea_id}`,
+      pressure_guard: 'max_active_delegations',
+      active_delegation_count: activeDelegations.length,
+      max_active_delegations: maxActiveDelegations,
+    };
+    appendJsonl(delegatedFile, delegated);
+  } else {
+    if (action === 'delegate_build') {
+      dispatch = dispatchBuildTask(idea);
+    }
+    delegated = {
+      session_id: `owner_delegate_${sha({ feedback_id: entry.feedback_id, idea_id: entry.idea_id, action })}`,
+      bot_id: entry.bot_id,
+      source: action === 'delegate_build' ? 'owner-feedback:self-improvement-mcp' : 'owner-feedback:research',
+      status: action === 'delegate_build'
+        ? dispatch?.ok ? dispatch.status || 'queued' : 'dispatch_failed'
+        : 'queued_research',
+      created_at: entry.created_at,
+      idea_id: entry.idea_id,
+      task_id: dispatch?.task_id || null,
+      summary: action === 'delegate_build'
+        ? `Owner delegated build work for ${idea?.title || entry.idea_id}.`
+        : `Owner queued research for ${idea?.title || entry.idea_id}.`,
+      artifact_ref: dispatch?.task_id
+        ? `artifact://mcp-self-improvement/tasks/${dispatch.task_id}.json`
+        : `artifact://observatory/ideas#${entry.idea_id}`,
+      dispatch_error: dispatch && !dispatch.ok ? dispatch.error : null,
+    };
+    appendJsonl(delegatedFile, delegated);
   }
-  delegated = {
-    session_id: `owner_delegate_${sha({ feedback_id: entry.feedback_id, idea_id: entry.idea_id, action })}`,
-    bot_id: entry.bot_id,
-    source: action === 'delegate_build' ? 'owner-feedback:self-improvement-mcp' : 'owner-feedback:research',
-    status: action === 'delegate_build'
-      ? dispatch?.ok ? dispatch.status || 'queued' : 'dispatch_failed'
-      : 'queued_research',
-    created_at: entry.created_at,
-    idea_id: entry.idea_id,
-    task_id: dispatch?.task_id || null,
-    summary: action === 'delegate_build'
-      ? `Owner delegated build work for ${idea?.title || entry.idea_id}.`
-      : `Owner queued research for ${idea?.title || entry.idea_id}.`,
-    artifact_ref: dispatch?.task_id
-      ? `artifact://mcp-self-improvement/tasks/${dispatch.task_id}.json`
-      : `artifact://observatory/ideas#${entry.idea_id}`,
-    dispatch_error: dispatch && !dispatch.ok ? dispatch.error : null,
-  };
-  appendJsonl(delegatedFile, delegated);
 }
 
 process.stdout.write(JSON.stringify({
@@ -801,6 +906,8 @@ mod tests {
         assert!(read_observatory_records_command().contains("TANGLE' + '_OBSERVATORY_JSON>"));
         assert!(read_observatory_records_command().contains("reflection-runs.jsonl"));
         assert!(read_observatory_records_command().contains("owner-feedback.jsonl"));
+        assert!(read_observatory_records_command().contains("dedupeBySessionId"));
+        assert!(read_observatory_records_command().contains("delegation_pressure"));
     }
 
     #[test]
@@ -810,5 +917,7 @@ mod tests {
         assert!(script.contains("delegate_build"));
         assert!(script.contains("delegated-work-sessions.jsonl"));
         assert!(script.contains("paper-only delegated build"));
+        assert!(script.contains("OBSERVATORY_MAX_ACTIVE_DELEGATIONS"));
+        assert!(script.contains("pressure_blocked"));
     }
 }

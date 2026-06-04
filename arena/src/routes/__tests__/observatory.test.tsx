@@ -76,6 +76,19 @@ const overviewState = {
               ],
               idea_ids: ['idea-1'],
               delegated_session_ids: ['pending-idea-1'],
+              delegation_pressure: {
+                unique_sessions: 1,
+                active_sessions: 1,
+                terminal_sessions: 0,
+                duplicate_rows_removed: 1,
+                by_status: { awaiting_owner_feedback: 1 },
+                by_source: { 'observatory-idea': 1 },
+                usage_reporting_status: 'not_applicable',
+                usage_event_count: 0,
+                total_tokens: 0,
+                cost_usd: 0,
+                pressure_level: 'low',
+              },
               usage_summary: {
                 event_count: 0,
                 reporting_status: 'not_applicable',
@@ -115,8 +128,32 @@ const overviewState = {
               summary: 'Idea is ready for owner review.',
               artifact_ref: 'artifact://observatory/ideas#idea-1',
             },
+            {
+              session_id: 'pending-idea-1',
+              bot_id: 'bot-1',
+              source: 'observatory-idea',
+              status: 'awaiting_owner_feedback',
+              created_at: '2026-06-04T10:00:00.000Z',
+              idea_id: 'idea-1',
+              task_id: null,
+              summary: 'Duplicate historical row.',
+              artifact_ref: 'artifact://observatory/ideas#idea-1',
+            },
           ],
           owner_feedback: [],
+          delegation_pressure: {
+            unique_sessions: 1,
+            active_sessions: 1,
+            terminal_sessions: 0,
+            duplicate_rows_removed: 1,
+            by_status: { awaiting_owner_feedback: 1 },
+            by_source: { 'observatory-idea': 1 },
+            usage_reporting_status: 'not_applicable',
+            usage_event_count: 0,
+            total_tokens: 0,
+            cost_usd: 0,
+            pressure_level: 'low',
+          },
         },
       },
     ],
@@ -197,6 +234,8 @@ describe('ObservatoryPage', () => {
     expect(screen.getAllByText('ETH Perp Sentinel').length).toBeGreaterThan(0);
     expect(screen.getByText('external-signal-not-checked')).toBeInTheDocument();
     expect(screen.getByText('Research ETH Perp Sentinel signal gap')).toBeInTheDocument();
+    expect(screen.getByText('Active/Work')).toBeInTheDocument();
+    expect(screen.getByText('Dedupe')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /observe now/i }));
     expect(hoisted.triggerMutateMock).toHaveBeenCalledWith('manual');

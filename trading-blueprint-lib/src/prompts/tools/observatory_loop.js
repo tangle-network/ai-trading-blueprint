@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 
 const ROOT = process.env.AGENT_ROOT || '/home/agent';
 const MEMORY_DIR = process.env.AGENT_MEMORY_DIR || path.join(ROOT, 'memory');
@@ -76,6 +77,74 @@ function readJsonFiles(dir, max = 50) {
   } catch {
     return [];
   }
+}
+
+function dedupeBySessionId(sessions, limit = 100) {
+  const byId = new Map();
+  for (const session of sessions) {
+    const sessionId = session && typeof session === 'object' ? session.session_id : null;
+    if (!sessionId) continue;
+    const existing = byId.get(sessionId);
+    if (!existing || timestampMs(session.created_at) >= timestampMs(existing.created_at)) {
+      byId.set(sessionId, session);
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => timestampMs(b.created_at) - timestampMs(a.created_at))
+    .slice(0, limit);
+}
+
+function activeDelegationStatus(status) {
+  return /dispatch|queued|running|pending|await|open/i.test(String(status || ''));
+}
+
+function terminalDelegationStatus(status) {
+  return /complete|pass|done|blocked|failed|error|reject|cancel/i.test(String(status || ''));
+}
+
+function delegationPressure(sessions, usage) {
+  const unique = dedupeBySessionId(sessions, 500);
+  const active = unique.filter((session) => activeDelegationStatus(session.status));
+  const terminal = unique.filter((session) => terminalDelegationStatus(session.status));
+  const byStatus = {};
+  const bySource = {};
+  for (const session of unique) {
+    const status = String(session.status || 'unknown');
+    const source = String(session.source || 'unknown');
+    byStatus[status] = (byStatus[status] || 0) + 1;
+    bySource[source] = (bySource[source] || 0) + 1;
+  }
+  const cpus = os.cpus();
+  const load1 = os.loadavg()[0] || 0;
+  const cpuCount = cpus.length || 1;
+  const memoryTotalMb = Math.round(os.totalmem() / 1024 / 1024);
+  const memoryFreeMb = Math.round(os.freemem() / 1024 / 1024);
+  const cpuPressure = Number((load1 / cpuCount).toFixed(3));
+  const pressureLevel = active.length >= 5 || cpuPressure >= 1
+    ? 'high'
+    : active.length >= 2 || cpuPressure >= 0.7
+      ? 'medium'
+      : 'low';
+  return {
+    unique_sessions: unique.length,
+    active_sessions: active.length,
+    terminal_sessions: terminal.length,
+    duplicate_rows_removed: Math.max(0, sessions.length - unique.length),
+    by_status: byStatus,
+    by_source: bySource,
+    usage_reporting_status: usage.reporting_status,
+    usage_event_count: usage.event_count,
+    total_tokens: usage.total_tokens,
+    cost_usd: usage.cost_usd,
+    system: {
+      load_1m: Number(load1.toFixed(3)),
+      cpu_count: cpuCount,
+      cpu_pressure: cpuPressure,
+      memory_free_mb: memoryFreeMb,
+      memory_total_mb: memoryTotalMb,
+    },
+    pressure_level: pressureLevel,
+  };
 }
 
 function stableStringify(value) {
@@ -331,7 +400,7 @@ function buildDelegatedWorkSessions({ botId, ideas, dispatches, mcpTasks, runtim
     });
   }
 
-  return sessions.sort((a, b) => timestampMs(b.created_at) - timestampMs(a.created_at)).slice(0, 20);
+  return dedupeBySessionId(sessions, 20);
 }
 
 function buildObservatoryRun() {
@@ -412,6 +481,7 @@ function buildObservatoryRun() {
     mcpTasks,
     runtimeRuns,
   });
+  const workPressure = delegationPressure(delegatedWorkSessions, usage);
 
   const reflectionRun = {
     run_id: runId,
@@ -433,7 +503,9 @@ function buildObservatoryRun() {
       reflection_count: reflections.length,
       decision_count: decisions.length,
       open_improvement_intent_count: intents.filter((intent) => !['resolved', 'discarded'].includes(intent.status)).length,
-      delegated_work_count: delegatedWorkSessions.length,
+      delegated_work_count: workPressure.unique_sessions,
+      active_delegated_work_count: workPressure.active_sessions,
+      delegation_pressure: workPressure,
       latest_context: compact(latestContext),
       latest_reflection: compact(latestReflection),
       world_signal_digest_id: worldSignalDigest.digest_id,
@@ -449,13 +521,19 @@ function buildObservatoryRun() {
     findings,
     idea_ids: ideas.map((idea) => idea.idea_id),
     delegated_session_ids: delegatedWorkSessions.map((session) => session.session_id),
+    delegation_pressure: workPressure,
     usage_summary: usage,
   };
 
   appendJsonl(WORLD_SIGNAL_DIGESTS_FILE, worldSignalDigest);
   appendJsonl(REFLECTION_RUNS_FILE, reflectionRun);
   for (const idea of ideas) appendJsonl(IDEAS_FILE, idea);
-  for (const session of delegatedWorkSessions) appendJsonl(DELEGATED_WORK_FILE, session);
+  const existingDelegatedIds = new Set(readJsonl(DELEGATED_WORK_FILE, 1000).map((session) => session.session_id).filter(Boolean));
+  for (const session of delegatedWorkSessions) {
+    if (existingDelegatedIds.has(session.session_id)) continue;
+    appendJsonl(DELEGATED_WORK_FILE, session);
+    existingDelegatedIds.add(session.session_id);
+  }
 
   return {
     schema_version: 1,
@@ -475,6 +553,7 @@ function buildObservatoryRun() {
       delegated_work_sessions: delegatedWorkSessions,
       owner_feedback: feedback.slice(-20),
       usage_summary: usage,
+      delegation_pressure: workPressure,
     },
   };
 }
@@ -500,4 +579,3 @@ module.exports = {
   latestSignalEvidence,
   buildFindings,
 };
-

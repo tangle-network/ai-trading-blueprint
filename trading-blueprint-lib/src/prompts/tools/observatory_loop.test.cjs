@@ -8,6 +8,8 @@ const originalEnv = { ...process.env };
 
 function withTempEnv(fn) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'observatory-loop-'));
+  const modulePath = require.resolve('./observatory_loop.js');
+  delete require.cache[modulePath];
   process.env.AGENT_ROOT = tmp;
   process.env.AGENT_MEMORY_DIR = path.join(tmp, 'memory');
   process.env.AGENT_DECISION_CONTEXTS_FILE = path.join(tmp, 'memory', 'decision-contexts.jsonl');
@@ -19,6 +21,7 @@ function withTempEnv(fn) {
   try {
     return fn(tmp);
   } finally {
+    delete require.cache[modulePath];
     process.env = { ...originalEnv };
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -91,3 +94,28 @@ test('usageSummary marks empty deterministic runs as not applicable', () => {
   });
 });
 
+test('delegated work records are deduped and report active pressure', () => {
+  withTempEnv((tmp) => {
+    const taskDir = path.join(tmp, '.evolve', 'mcp-self-improvement', 'tasks');
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.writeFileSync(path.join(taskDir, 'task-1.json'), JSON.stringify({
+      task_id: 'task-1',
+      status: 'queued',
+      created_at: '2026-06-04T10:00:00.000Z',
+      spec: 'Build a paper-only volatility check.',
+    }));
+
+    const { buildObservatoryRun } = require('./observatory_loop.js');
+    const first = buildObservatoryRun();
+    const second = buildObservatoryRun();
+    const delegatedFile = path.join(tmp, 'memory', 'observatory', 'delegated-work-sessions.jsonl');
+    const persisted = fs.readFileSync(delegatedFile, 'utf8').trim().split('\n').filter(Boolean);
+
+    assert.equal(first.records.delegated_work_sessions.length, 1);
+    assert.equal(second.records.delegated_work_sessions.length, 1);
+    assert.equal(persisted.length, 1);
+    assert.equal(first.records.delegation_pressure.unique_sessions, 1);
+    assert.equal(first.records.delegation_pressure.active_sessions, 1);
+    assert.equal(first.records.delegation_pressure.pressure_level, 'low');
+  });
+});
