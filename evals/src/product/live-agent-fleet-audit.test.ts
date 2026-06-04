@@ -5,12 +5,28 @@ import {
   classifyLoopMode,
   classifySelfImprovement,
   classifyStrategyAlignment,
+  mapWithConcurrency,
   summarizeObservatory,
   summarizeRevisionArena,
   summarizeRuns,
   summarizeTickArtifacts,
   summarizeTrades,
 } from './live-agent-fleet-audit.js'
+
+test('mapWithConcurrency preserves order while bounding active work', async () => {
+  let active = 0
+  let maxActive = 0
+  const results = await mapWithConcurrency([1, 2, 3, 4, 5], 2, async (value) => {
+    active += 1
+    maxActive = Math.max(maxActive, active)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    active -= 1
+    return value * 10
+  })
+
+  assert.deepEqual(results, [10, 20, 30, 40, 50])
+  assert.equal(maxActive, 2)
+})
 
 test('classifies zero-token direct fast ticks separately from agentic LLM runs', () => {
   const deterministic = summarizeRuns({

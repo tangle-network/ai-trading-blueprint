@@ -8,36 +8,179 @@
 
 const t = require('/home/agent/tools/tick-common');
 
+function targetNumber(value, fallback = NaN) {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const pct = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*%$/);
+    const parsed = pct ? Number(pct[1]) / 100 : Number(trimmed);
+    if (!Number.isFinite(parsed)) return fallback;
+    return parsed > 1 ? parsed / 100 : parsed;
+  }
+  const parsed = t.asNumber(value, fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  return parsed > 1 ? parsed / 100 : parsed;
+}
+
+function targetWeight(asset) {
+  for (const key of [
+    'target_weight',
+    'targetWeight',
+    'weight',
+    'target',
+    'allocation',
+    'allocation_weight',
+    'allocation_pct',
+    'target_pct',
+    'percentage',
+    'percent',
+  ]) {
+    if (asset && asset[key] !== undefined) return targetNumber(asset[key]);
+  }
+  return NaN;
+}
+
+function normalizedSymbol(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (raw === 'ETH') return 'WETH';
+  if (['USD COIN', 'STABLECOIN', 'STABLECOINS', 'STABLE', 'STABLES'].includes(raw)) return 'USDC';
+  return raw;
+}
+
+function addressForAsset(asset, pairs) {
+  if (asset && typeof asset.address === 'string' && asset.address.length > 0) return asset.address;
+  const symbol = normalizedSymbol(asset && (asset.symbol || asset.asset || asset.token || asset.name));
+  if (symbol === 'WETH') return pairs.weth;
+  if (symbol === 'USDC') return pairs.usdc;
+  return null;
+}
+
+function configuredPortfolioAssets(config, harness) {
+  const strategy = config.strategy_config || {};
+  const candidates = [
+    harness.portfolio && harness.portfolio.assets,
+    strategy.portfolio && strategy.portfolio.assets,
+    strategy.assets,
+    config.portfolio && config.portfolio.assets,
+    config.assets,
+  ];
+  return candidates.find((candidate) => Array.isArray(candidate) && candidate.length >= 2) || null;
+}
+
+function promptTexts(config) {
+  const strategy = config.strategy_config || {};
+  return [
+    strategy.user_prompt,
+    strategy.prompt,
+    strategy.mandate,
+    strategy.description,
+    config.user_prompt,
+    config.prompt,
+    config.mandate,
+  ].filter((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
+function assetsFromPrompt(config, pairs) {
+  const text = promptTexts(config).join('\n');
+  if (!text) return null;
+  const matches = [];
+  const pctBeforeSymbol = /(\d+(?:\.\d+)?)\s*%\s*(WETH|ETH|USDC|USD COIN|STABLECOINS?|STABLES?)/gi;
+  const symbolBeforePct = /(WETH|ETH|USDC|USD COIN|STABLECOINS?|STABLES?)\s*(?:target|allocation|weight)?\s*(?:of|is|:)?\s*(\d+(?:\.\d+)?)\s*%/gi;
+
+  for (const pattern of [pctBeforeSymbol, symbolBeforePct]) {
+    let match = pattern.exec(text);
+    while (match) {
+      const number = pattern === pctBeforeSymbol ? match[1] : match[2];
+      const symbol = normalizedSymbol(pattern === pctBeforeSymbol ? match[2] : match[1]);
+      if (!matches.some((entry) => entry.symbol === symbol)) {
+        matches.push({ symbol, target: targetNumber(`${number}%`) });
+      }
+      match = pattern.exec(text);
+    }
+  }
+
+  const assets = matches
+    .map((asset) => ({
+      symbol: asset.symbol,
+      address: addressForAsset(asset, pairs),
+      target: asset.target,
+      target_source: 'prompt',
+    }))
+    .filter((asset) => asset.address && Number.isFinite(asset.target) && asset.target > 0);
+  return assets.length >= 2 ? assets : null;
+}
+
+function normalizeTargets(assets) {
+  const valid = assets.filter((asset) => asset.address && Number.isFinite(asset.target) && asset.target > 0);
+  const totalTarget = valid.reduce((sum, asset) => sum + asset.target, 0);
+  if (totalTarget <= 0) return [];
+  for (const asset of valid) asset.target /= totalTarget;
+  return valid;
+}
+
+function hasExplicitPaperTargetCycle(settings) {
+  if (Array.isArray(settings)) return settings.length >= 2;
+  return Array.isArray(settings && settings.values) && settings.values.length >= 2;
+}
+
 function targetAssets(ctx) {
   const { config, harness } = ctx;
-  const { weth, usdc } = t.pairTokens(config);
-  const configured = (harness.portfolio && harness.portfolio.assets)
-    || (config.strategy_config && config.strategy_config.portfolio && config.strategy_config.portfolio.assets);
+  const pairs = t.pairTokens(config);
+  const { weth, usdc } = pairs;
+  const configured = configuredPortfolioAssets(config, harness);
   let assets;
   if (Array.isArray(configured) && configured.length >= 2) {
     assets = configured
-      .filter((a) => a && a.address)
-      .map((a) => ({ symbol: a.symbol || a.address, address: a.address, target: t.asNumber(a.target_weight, 0) }));
+      .map((a) => ({
+        symbol: normalizedSymbol(a.symbol || a.asset || a.token || a.name || a.address),
+        address: addressForAsset(a, pairs),
+        target: targetWeight(a),
+        target_source: 'configured_portfolio',
+      }));
   } else {
+    assets = assetsFromPrompt(config, pairs);
+  }
+  if (!assets || assets.length < 2) {
     assets = [
-      { symbol: 'USDC', address: usdc, target: 0.5 },
-      { symbol: 'WETH', address: weth, target: 0.5 },
+      { symbol: 'USDC', address: usdc, target: 0.5, target_source: 'default_equal_weight' },
+      { symbol: 'WETH', address: weth, target: 0.5, target_source: 'default_equal_weight' },
     ];
   }
-  const totalTarget = assets.reduce((sum, a) => sum + a.target, 0) || 1;
-  for (const a of assets) a.target /= totalTarget;
-  if (assets.length === 2) {
+
+  assets = normalizeTargets(assets);
+  if (assets.length < 2) {
+    assets = [
+      { symbol: 'USDC', address: usdc, target: 0.5, target_source: 'default_equal_weight' },
+      { symbol: 'WETH', address: weth, target: 0.5, target_source: 'default_equal_weight' },
+    ];
+  }
+
+  const explicitCycle = (harness.portfolio || {}).paper_target_cycle || harness.paper_portfolio_target_cycle;
+  if (assets.length === 2 && hasExplicitPaperTargetCycle(explicitCycle) && t.isPaperShowcaseMode(config, harness)) {
     const firstTarget = t.paperCycleWeight(
       ctx,
-      (harness.portfolio || {}).paper_target_cycle || harness.paper_portfolio_target_cycle,
+      explicitCycle,
       assets[0].target,
-      [0.1, 0.9],
+      [],
       'multi-first-asset-target',
     );
     assets[0].target = firstTarget;
     assets[1].target = 1 - firstTarget;
+    assets[0].target_source = 'explicit_paper_target_cycle';
+    assets[1].target_source = 'explicit_paper_target_cycle';
   }
   return assets;
+}
+
+function checkedAsset(asset) {
+  return {
+    symbol: asset.symbol,
+    weight: asset.weight,
+    target: asset.target,
+    target_source: asset.target_source,
+    value_usd: asset.valueUsd,
+    price: asset.price ?? null,
+  };
 }
 
 async function decide(ctx) {
@@ -72,7 +215,7 @@ async function decide(ctx) {
   const checkedState = {
     protocol,
     total_value_usd: total,
-    assets: assets.map((a) => ({ symbol: a.symbol, weight: a.weight, target: a.target, value_usd: a.valueUsd, price: a.price ?? null })),
+    assets: assets.map(checkedAsset),
     aggressive_paper_mode: t.isPaperShowcaseMode(config, harness),
   };
   const metrics = { portfolio_value_usd: t.asNumber(portfolio.total_value_usd, total) };
@@ -125,4 +268,14 @@ async function decide(ctx) {
   return { decision, checkedState, metrics, resultExtra: { trade_action: { attempted: true, ...submission } } };
 }
 
-t.runTick('multi', decide);
+if (require.main === module) {
+  t.runTick('multi', decide);
+}
+
+module.exports = {
+  assetsFromPrompt,
+  targetAssets,
+  targetNumber,
+  targetWeight,
+  decide,
+};

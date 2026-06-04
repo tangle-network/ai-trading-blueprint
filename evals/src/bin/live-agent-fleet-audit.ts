@@ -10,6 +10,7 @@ const token = valueAfter('--token') ?? process.env.TRADING_OPERATOR_SESSION_TOKE
 const privateKey = valueAfter('--private-key') ?? process.env.TRADING_OPERATOR_PRIVATE_KEY ?? process.env.OPERATOR_PRIVATE_KEY
 const outDir = valueAfter('--out-dir') ?? resolve('.evolve', `live-agent-fleet-audit-${stamp()}`)
 const limit = numberAfter('--limit')
+const concurrency = numberAfter('--concurrency')
 
 const result = await runLiveAgentFleetAudit({
   ...(operatorUrl ? { operatorUrl } : {}),
@@ -17,6 +18,7 @@ const result = await runLiveAgentFleetAudit({
   ...(privateKey ? { privateKey } : {}),
   outDir,
   ...(limit ? { limit } : {}),
+  ...(concurrency ? { concurrency } : {}),
 })
 
 if (hasFlag('--json')) {

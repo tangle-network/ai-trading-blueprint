@@ -15,6 +15,7 @@ export interface LiveFleetAuditOptions {
   privateKey?: string
   outDir?: string
   limit?: number
+  concurrency?: number
 }
 
 interface EndpointCapture<T = unknown> {
@@ -363,7 +364,11 @@ export async function runLiveAgentFleetAudit(options: LiveFleetAuditOptions = {}
   }
 
   const bots = botCapture.json.bots.filter((bot): bot is BotRecord & { id: string } => typeof bot.id === 'string' && bot.id.length > 0)
-  const audits = await Promise.all(bots.map((bot) => inspectBot(client, bot)))
+  const audits = await mapWithConcurrency(
+    bots,
+    positiveInteger(options.concurrency, 3),
+    (bot) => inspectBot(client, bot),
+  )
   const result = composeFleetAudit(operatorUrl, audits)
 
   if (options.outDir) {
@@ -371,6 +376,34 @@ export async function runLiveAgentFleetAudit(options: LiveFleetAuditOptions = {}
   }
 
   return result
+}
+
+export async function mapWithConcurrency<T, U>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<U>,
+): Promise<U[]> {
+  if (items.length === 0) return []
+  const workerCount = Math.min(positiveInteger(concurrency, 1), items.length)
+  const results: U[] = new Array(items.length)
+  let nextIndex = 0
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const index = nextIndex
+      nextIndex += 1
+      results[index] = await fn(items[index] as T, index)
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()))
+  return results
+}
+
+function positiveInteger(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed <= 0) return fallback
+  return parsed
 }
 
 async function buildClient(operatorUrl: string, options: LiveFleetAuditOptions): Promise<OperatorClient> {
