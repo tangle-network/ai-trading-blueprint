@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Bot } from '~/lib/types/bot';
 import type { Portfolio, Position } from '~/lib/types/portfolio';
-import { Card, CardHeader, CardTitle, CardContent } from '@tangle-network/blueprint-ui/components';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
 import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
 import {
@@ -27,7 +26,6 @@ import {
 } from '~/lib/tradeDisplay';
 import { TradingPerformanceChart, type TradeChartMarker } from './TradingPerformanceChart';
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
-import { PERFORMANCE_SECTION_COPY } from './metricCopy';
 import { buildDecisionItemsFromTrades } from '~/lib/decisionFeed';
 import { TradeInstrumentDisplay } from './shared/AssetDisplay';
 import {
@@ -763,15 +761,74 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
 
   if (isLoading) {
     return (
-      <div className="flex h-full min-h-0 flex-col gap-3">
-        <Card className="min-h-0 flex-1">
-          <CardHeader>
-            <CardTitle>{PERFORMANCE_SECTION_COPY.title}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Skeleton className="h-[520px] w-full" />
-          </CardContent>
-        </Card>
+      <div className="arena-trace-terminal flex h-full min-h-0 flex-col overflow-hidden">
+        <section
+          className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_8px_minmax(220px,34fr)] gap-0 overflow-hidden"
+          aria-label="Loading performance workspace"
+        >
+          <div className="col-start-1 row-start-1 flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
+            <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[72px] min-[1120px]:flex-row min-[1120px]:items-stretch">
+              <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1120px]:w-[178px] min-[1120px]:border-b-0 min-[1120px]:border-r">
+                <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#123f3a] text-[#50d2c1]">
+                  <span className="i-ph:chart-line-up text-base" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="truncate font-display text-lg font-semibold leading-tight text-[#f6fefd]">
+                    Account
+                  </h2>
+                  <div className="mt-0.5 truncate font-data text-[11px] text-[#949e9c]">
+                    Loading performance
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid min-w-0 flex-1 grid-cols-5 divide-x divide-[#273035] overflow-hidden">
+                {['Equity', 'PnL', 'Return', 'Fills', 'H / L'].map((label) => (
+                  <div key={label} className="min-w-0 px-2.5 py-2 min-[1440px]:px-3">
+                    <div className="truncate font-data text-[11px] text-[#949e9c]">
+                      {label}
+                    </div>
+                    <Skeleton className="mt-2 h-4 w-20" />
+                    <Skeleton className="mt-2 hidden h-3 w-16 min-[1440px]:block" />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 p-3">
+              <Skeleton className="h-full min-h-[260px] w-full" />
+            </div>
+          </div>
+
+          <div
+            className="col-start-1 row-start-2 hidden shrink-0 items-center justify-center bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text-subtle)] lg:flex"
+            aria-hidden="true"
+          >
+            <span className="h-px w-12 bg-current" />
+          </div>
+
+          <aside className="col-start-1 row-start-3 flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] p-2">
+            <div className="mb-2 flex shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-1 pb-2">
+              <h3 className="font-display text-sm font-semibold text-[#f6fefd]">
+                Fills
+              </h3>
+              <span className="font-data text-xs text-[#949e9c]">
+                Loading
+              </span>
+            </div>
+            <div className="grid min-h-0 flex-1 grid-rows-4 gap-2 overflow-hidden">
+              {Array.from({ length: 4 }, (_, index) => (
+                <div
+                  key={index}
+                  className="border border-[#273035] bg-[#0b1418] px-3 py-2"
+                >
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="mt-2 h-3 w-40" />
+                </div>
+              ))}
+            </div>
+          </aside>
+        </section>
       </div>
     );
   }

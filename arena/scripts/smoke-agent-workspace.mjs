@@ -1299,6 +1299,8 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
           title: document.title,
           pathname: location.pathname,
           bodyText: document.body.innerText.slice(0, 20000),
+          performanceSurfaceReady: Boolean(document.querySelector('[data-testid="tradingview-performance-chart"]'))
+            || /No performance snapshots available yet|Live performance unavailable/i.test(document.body.innerText),
           scrollHeight: scrolling.scrollHeight,
           clientHeight: scrolling.clientHeight,
           innerHeight: window.innerHeight,
@@ -1310,8 +1312,12 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
       })()`);
         const expected = getSectionExpectations(section, { fixture, ownerPerformance });
         const hasExpectedText = textIncludes(nextMetrics.bodyText, expected);
-        const isStillLoading = /Loading bot data|Loading workspace|Loading autonomous runs/i.test(nextMetrics.bodyText);
-        return hasExpectedText && !isStillLoading ? nextMetrics : false;
+        const performanceFillsStillLoading = section === 'performance'
+          && /\bFills\s+Loading\b/i.test(nextMetrics.bodyText);
+        const isStillLoading = /Loading bot data|Loading workspace|Loading autonomous runs|Loading performance/i.test(nextMetrics.bodyText)
+          || performanceFillsStillLoading;
+        const performanceSurfaceMissing = section === 'performance' && !nextMetrics.performanceSurfaceReady;
+        return hasExpectedText && !isStillLoading && !performanceSurfaceMissing ? nextMetrics : false;
         }, { timeoutMs: 12_000, intervalMs: 250 });
       } catch {
         const debugMetrics = await evaluate(page, `(() => {
