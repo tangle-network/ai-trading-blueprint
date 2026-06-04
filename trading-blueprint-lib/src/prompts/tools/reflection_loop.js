@@ -107,6 +107,19 @@ function lowerText(value) {
   return String(value || '').toLowerCase();
 }
 
+function normalizedId(value) {
+  return lowerText(value).trim().replace(/[-\s]+/g, '_');
+}
+
+function hasNegatedMandateTerm(text, term) {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(do not|don't|dont|no|without|not)\\s+(use\\s+|trade\\s+|execute\\s+|route\\s+through\\s+)?${escaped}`).test(text);
+}
+
+function hasPositiveMandateTerm(text, term) {
+  return text.includes(term) && !hasNegatedMandateTerm(text, term);
+}
+
 function compactObject(value, maxDepth = 4, maxKeys = 32, maxString = 500) {
   if (maxDepth <= 0) return summarizeValue(value);
   if (value === null || value === undefined) return value ?? null;
@@ -256,6 +269,33 @@ function objectText(value, depth = 4) {
     .join(' ');
 }
 
+function objectHasValueLike(value, pattern, depth = 4) {
+  if (depth < 0 || value === null || value === undefined) return false;
+  if (Array.isArray(value)) return value.some((item) => objectHasValueLike(item, pattern, depth - 1));
+  if (['string', 'number', 'boolean'].includes(typeof value)) return pattern.test(String(value).toLowerCase());
+  if (!isRecord(value)) return false;
+  return Object.values(value).some((nested) => objectHasValueLike(nested, pattern, depth - 1));
+}
+
+function hasPositiveHyperliquidEvidence({ protocols, family, state, decision }) {
+  if (protocols.some((item) => ['hyperliquid', 'hyperliquid_perp'].includes(normalizedId(item)))) return true;
+  if (normalizedId(family).includes('hyperliquid')) return true;
+  const structuredVenue = /(^|[^a-z0-9_])(target_protocol|protocol|venue|exchange|source|strategy_type)[^a-z0-9_]+hyperliquid($|[^a-z0-9_])/i;
+  const positiveStateKey = /^hyperliquid_(account|equity|nav|prices|positions|orders|funding|mode|settlement|margin|perp)/i;
+  return objectHasKeyLike(state, positiveStateKey)
+    || objectHasKeyLike(decision, positiveStateKey)
+    || structuredVenue.test(objectText(state, 3))
+    || structuredVenue.test(objectText(decision, 3));
+}
+
+function hasNegativeHyperliquidEvidence(state, decision) {
+  const text = lowerText(`${objectText(state, 3)} ${objectText(decision, 3)}`);
+  return /hyperliquid[-_\s]*(native[-_\s]*)?(forbidden|disabled|unsupported|unavailable|not[-_\s]*configured)/.test(text)
+    || /hyperliquid[-_\s]*(account|setup|config|mode)?[-_\s]*(error|failed)/.test(text)
+    || objectHasValueLike(state, /hyperliquid[-_\s]*(native[-_\s]*)?(forbidden|disabled|unsupported|unavailable|not[-_\s]*configured)/)
+    || objectHasValueLike(decision, /hyperliquid[-_\s]*(native[-_\s]*)?(forbidden|disabled|unsupported|unavailable|not[-_\s]*configured)/);
+}
+
 function classifyMandateAlignment(mandate, state, decision) {
   const prompt = lowerText(mandate.user_prompt);
   const family = lowerText(mandate.family);
@@ -265,9 +305,13 @@ function classifyMandateAlignment(mandate, state, decision) {
   const observedText = `${stateText} ${decisionText} ${protocols.join(' ')} ${family}`;
   const findings = [];
 
-  const wantsHyperliquid = prompt.includes('hyperliquid') && !/(do not|don't|dont|no|without|not)\s+(use\s+|trade\s+|execute\s+|route\s+through\s+)?hyperliquid/.test(prompt);
-  if (wantsHyperliquid && !observedText.includes('hyperliquid')) {
-    findings.push({ code: 'mandate-hyperliquid-not-observed', severity: 'high', detail: 'Prompt asks for Hyperliquid but tick evidence does not show Hyperliquid venue/config.' });
+  const wantsHyperliquid = hasPositiveMandateTerm(prompt, 'hyperliquid');
+  if (wantsHyperliquid) {
+    const hasPositiveEvidence = hasPositiveHyperliquidEvidence({ protocols, family, state, decision });
+    const hasNegativeEvidence = hasNegativeHyperliquidEvidence(state, decision);
+    if (!hasPositiveEvidence || hasNegativeEvidence) {
+      findings.push({ code: 'mandate-hyperliquid-not-observed', severity: 'high', detail: 'Prompt asks for Hyperliquid but tick evidence does not show positive Hyperliquid venue/config.' });
+    }
   }
 
   if (prompt.includes('vertex') && !protocols.includes('vertex') && !observedText.includes('vertex')) {

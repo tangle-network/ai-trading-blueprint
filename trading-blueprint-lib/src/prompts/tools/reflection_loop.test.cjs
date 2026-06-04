@@ -105,6 +105,43 @@ test('records decision context, reflects, and queues a behavior-grounded improve
   }
 })
 
+test('hyperliquid forbidden evidence does not satisfy a hyperliquid mandate', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reflection-loop-'))
+  const { api, restore } = loadReflectionLoop(tmp)
+  try {
+    const context = api.recordDecisionContext({
+      family: 'perp',
+      run_started_at: '2026-06-04T12:00:00.000Z',
+      config: {
+        bot_id: 'bot-hl-mismatch',
+        strategy_type: 'perp',
+        strategy_config: {
+          user_prompt: 'Trade ETH perps on Hyperliquid only.',
+          available_protocols: ['gmx_v2'],
+          paper_trade: true,
+        },
+      },
+      harness: { version: 1 },
+      checked_state: {
+        total_nav_usdc: 10000,
+        hyperliquid_native_forbidden: true,
+        configured_protocols: ['gmx_v2'],
+      },
+      decision: {
+        action: 'skip',
+        reason: 'perp-config-incomplete',
+        missing_config: ['hyperliquid native execution is not available in the generic perp pack'],
+      },
+      metrics: { portfolio_value_usd: 10000 },
+    })
+
+    assert.equal(context.evidence.mandate_alignment, 'mismatch')
+    assert.ok(context.evidence.mandate_findings.some((finding) => finding.code === 'mandate-hyperliquid-not-observed'))
+  } finally {
+    restore()
+  }
+})
+
 test('cadence selector dispatches each pending improvement intent once per cooldown window', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reflection-loop-'))
   const { api, restore } = loadReflectionLoop(tmp)

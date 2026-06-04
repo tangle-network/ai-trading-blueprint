@@ -55,6 +55,33 @@ test('recipe planner is byte-identical to the imperative reference on every fixt
   }
 });
 
+test('mm paper target cycling is explicit, never implied by showcase mode alone', () => {
+  const base = {
+    runStartedAt: '2026-06-01T09:40:00.000Z',
+    config: { bot_id: 'bot-mm', strategy_config: { paper_trade: true } },
+    harness: { aggressive_paper_mode: true },
+  };
+
+  assert.deepEqual(mm.resolveTargetBaseWeight(base, {}, 0.5), {
+    targetBaseWeight: 0.5,
+    targetSource: 'configured_target_base_weight',
+  });
+
+  const explicit = mm.resolveTargetBaseWeight(
+    {
+      ...base,
+      harness: {
+        aggressive_paper_mode: true,
+        paper_target_cycle: { values: [0.2, 0.8], period_secs: 300 },
+      },
+    },
+    {},
+    0.5,
+  );
+  assert.ok([0.2, 0.8].includes(explicit.targetBaseWeight));
+  assert.equal(explicit.targetSource, 'explicit_paper_target_cycle');
+});
+
 test('recipe core matches imperative core (drift / withinBand / rebalanceUsd)', () => {
   for (const f of FIXTURES) {
     const r = mm.recipeRebalanceCore(f);

@@ -81,6 +81,30 @@ function imperativeRebalancePlan(state) {
   return planFromCore(imperativeRebalanceCore(state), state);
 }
 
+function hasExplicitPaperTargetCycle(settings) {
+  return t.normalizeCycleValues(settings, []).length >= 2;
+}
+
+function resolveTargetBaseWeight(ctx, mm, configuredTargetBaseWeight) {
+  const cycle = mm.paper_target_cycle || ctx.harness.paper_target_cycle;
+  if (t.isPaperShowcaseMode(ctx.config, ctx.harness) && hasExplicitPaperTargetCycle(cycle)) {
+    return {
+      targetBaseWeight: t.paperCycleWeight(
+        ctx,
+        cycle,
+        configuredTargetBaseWeight,
+        [],
+        'mm-target-base-weight',
+      ),
+      targetSource: 'explicit_paper_target_cycle',
+    };
+  }
+  return {
+    targetBaseWeight: configuredTargetBaseWeight,
+    targetSource: 'configured_target_base_weight',
+  };
+}
+
 async function decide(ctx) {
   const { api, config, harness } = ctx;
   const { weth, usdc } = t.pairTokens(config);
@@ -89,13 +113,7 @@ async function decide(ctx) {
     || (config.strategy_config && config.strategy_config.protocol)
     || 'aerodrome';
   const configuredTargetBaseWeight = t.clamp(t.asNumber(mm.target_base_weight, 0.5), 0, 1);
-  const targetBaseWeight = t.paperCycleWeight(
-    ctx,
-    mm.paper_target_cycle || harness.paper_target_cycle,
-    configuredTargetBaseWeight,
-    [0.2, 0.8],
-    'mm-target-base-weight',
-  );
+  const { targetBaseWeight, targetSource } = resolveTargetBaseWeight(ctx, mm, configuredTargetBaseWeight);
   const paperTrade = config.strategy_config && config.strategy_config.paper_trade === true;
   const minBandPct = paperTrade ? 0.0001 : 0.01;
   const bandPct = Math.max(minBandPct, t.asNumber(mm.rebalance_band_pct, 0.1));
@@ -122,6 +140,7 @@ async function decide(ctx) {
   const checkedState = {
     protocol,
     target_base_weight: targetBaseWeight,
+    target_source: targetSource,
     rebalance_band_pct: bandPct,
     base_weight: baseWeight,
     base_value_usd: baseValueUsd,
@@ -188,6 +207,8 @@ module.exports = {
   recipeRebalancePlan,
   imperativeRebalancePlan,
   planFromCore,
+  hasExplicitPaperTargetCycle,
+  resolveTargetBaseWeight,
 };
 
 if (require.main === module) {
