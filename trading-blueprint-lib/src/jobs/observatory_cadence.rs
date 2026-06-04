@@ -629,6 +629,7 @@ const payload = {
   world_signal_digests: parseJsonl(read(`${root}/world-signal-digests.jsonl`), 100),
   reflection_runs: reflectionRuns,
   ideas: parseJsonl(read(`${root}/ideas.jsonl`), 100),
+  research_tasks: parseJsonl(read(`${root}/research-tasks.jsonl`), 100),
   delegated_work_sessions: delegatedWorkSessions,
   owner_feedback: parseJsonl(read(`${root}/owner-feedback.jsonl`), 100),
   delegation_pressure: pressure,
@@ -649,6 +650,7 @@ const entry = JSON.parse(process.env.OBSERVATORY_FEEDBACK || '{}');
 const root = '/home/agent/memory/observatory';
 const feedbackFile = `${root}/owner-feedback.jsonl`;
 const ideasFile = `${root}/ideas.jsonl`;
+const researchTasksFile = `${root}/research-tasks.jsonl`;
 const delegatedFile = `${root}/delegated-work-sessions.jsonl`;
 const maxActiveDelegations = Number(process.env.OBSERVATORY_MAX_ACTIVE_DELEGATIONS || 3);
 
@@ -727,6 +729,69 @@ Acceptance: implement the smallest durable bot-local code/tool/prompt improvemen
     };
   }
 }
+function researchTaskPrompt(idea) {
+  return `Research-only Observatory task for bot ${entry.bot_id}.
+
+Idea: ${idea?.title || entry.idea_id}
+Thesis: ${idea?.thesis || 'No idea thesis recorded.'}
+Expected value: ${idea?.expected_value || 'Improve the bot world model before any behavior change.'}
+
+Answer these questions:
+1. What external market, protocol, venue, news, liquidity, funding, or on-chain signals would change this bot's next decision?
+2. Which sources should be checked, and which are unavailable or stale?
+3. What is the smallest actionable finding the bot should carry into its next reflection or paper-only strategy change?
+
+Constraints:
+- Read-only research. Do not execute trades, mutate live config, promote candidates, or touch funds.
+- Prefer compact source-grounded findings over broad summaries.
+- Return uncertainty explicitly when source coverage is weak.
+- Persist the result under /home/agent/memory/observatory/research-results.jsonl when a worker processes this task.`;
+}
+function createResearchTask(idea) {
+  const taskId = `research_${sha({
+    feedback_id: entry.feedback_id,
+    idea_id: entry.idea_id,
+    bot_id: entry.bot_id,
+    created_at: entry.created_at,
+  }, 20)}`;
+  const task = {
+    task_id: taskId,
+    bot_id: entry.bot_id,
+    idea_id: entry.idea_id,
+    feedback_id: entry.feedback_id || null,
+    owner: entry.owner || null,
+    created_at: entry.created_at,
+    updated_at: entry.created_at,
+    status: 'queued_research',
+    worker: 'observatory-research-queue',
+    worker_launch: 'manual_or_research_tick',
+    title: idea?.title || `Research ${entry.idea_id}`,
+    thesis: idea?.thesis || null,
+    evidence_refs: Array.isArray(idea?.evidence_refs) ? idea.evidence_refs : [],
+    prompt: researchTaskPrompt(idea),
+    acceptance_criteria: [
+      'Source-grounded finding or explicit unavailable-source reason is recorded.',
+      'Result is read-only and does not mutate trading, promotion, or live config.',
+      'Next action is small enough for owner review or paper-only self-improvement.',
+    ],
+    safety_limits: {
+      can_touch_funds: false,
+      can_trade: false,
+      can_promote: false,
+      max_parallel_research_delegations: maxActiveDelegations,
+    },
+    result_ref: null,
+    result_summary: null,
+  };
+  appendJsonl(researchTasksFile, task);
+  return {
+    ok: true,
+    task_id: taskId,
+    status: 'queued_research',
+    artifact_ref: `artifact://observatory/research-tasks#${taskId}`,
+    task,
+  };
+}
 
 appendJsonl(feedbackFile, entry);
 
@@ -768,6 +833,8 @@ if (action === 'delegate_research' || action === 'delegate_build') {
   } else {
     if (action === 'delegate_build') {
       dispatch = dispatchBuildTask(idea);
+    } else {
+      dispatch = createResearchTask(idea);
     }
     delegated = {
       session_id: `owner_delegate_${sha({ feedback_id: entry.feedback_id, idea_id: entry.idea_id, action })}`,
@@ -781,9 +848,11 @@ if (action === 'delegate_research' || action === 'delegate_build') {
       task_id: dispatch?.task_id || null,
       summary: action === 'delegate_build'
         ? `Owner delegated build work for ${idea?.title || entry.idea_id}.`
-        : `Owner queued research for ${idea?.title || entry.idea_id}.`,
+        : `Owner queued read-only research for ${idea?.title || entry.idea_id}.`,
       artifact_ref: dispatch?.task_id
-        ? `artifact://mcp-self-improvement/tasks/${dispatch.task_id}.json`
+        ? action === 'delegate_build'
+          ? `artifact://mcp-self-improvement/tasks/${dispatch.task_id}.json`
+          : dispatch.artifact_ref
         : `artifact://observatory/ideas#${entry.idea_id}`,
       dispatch_error: dispatch && !dispatch.ok ? dispatch.error : null,
     };
@@ -906,15 +975,19 @@ mod tests {
         assert!(read_observatory_records_command().contains("TANGLE' + '_OBSERVATORY_JSON>"));
         assert!(read_observatory_records_command().contains("reflection-runs.jsonl"));
         assert!(read_observatory_records_command().contains("owner-feedback.jsonl"));
+        assert!(read_observatory_records_command().contains("research-tasks.jsonl"));
         assert!(read_observatory_records_command().contains("dedupeBySessionId"));
         assert!(read_observatory_records_command().contains("delegation_pressure"));
     }
 
     #[test]
-    fn feedback_script_dispatches_delegate_build_through_mcp() {
+    fn feedback_script_dispatches_delegate_build_and_records_research_tasks() {
         let script = append_observatory_feedback_command();
         assert!(script.contains("self_improvement.create_task"));
         assert!(script.contains("delegate_build"));
+        assert!(script.contains("research-tasks.jsonl"));
+        assert!(script.contains("createResearchTask"));
+        assert!(script.contains("queued read-only research"));
         assert!(script.contains("delegated-work-sessions.jsonl"));
         assert!(script.contains("paper-only delegated build"));
         assert!(script.contains("OBSERVATORY_MAX_ACTIVE_DELEGATIONS"));

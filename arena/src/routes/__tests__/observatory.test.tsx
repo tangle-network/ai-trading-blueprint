@@ -81,8 +81,8 @@ const overviewState = {
                 active_sessions: 1,
                 terminal_sessions: 0,
                 duplicate_rows_removed: 1,
-                by_status: { awaiting_owner_feedback: 1 },
-                by_source: { 'observatory-idea': 1 },
+                by_status: { queued_research: 1 },
+                by_source: { 'owner-feedback:research': 1 },
                 usage_reporting_status: 'not_applicable',
                 usage_event_count: 0,
                 total_tokens: 0,
@@ -116,24 +116,46 @@ const overviewState = {
               source_run_id: 'obs-1',
             },
           ],
+          research_tasks: [
+            {
+              task_id: 'research-1',
+              bot_id: 'bot-1',
+              idea_id: 'idea-1',
+              feedback_id: 'feedback-1',
+              owner: '0xowner',
+              created_at: '2026-06-04T10:00:00.000Z',
+              updated_at: '2026-06-04T10:00:00.000Z',
+              status: 'queued_research',
+              worker: 'observatory-research-queue',
+              worker_launch: 'manual_or_research_tick',
+              title: 'Research ETH Perp Sentinel signal gap',
+              thesis: 'The mandate needs external signal evidence, but it was not checked.',
+              evidence_refs: ['artifact://memory/decision-contexts.jsonl#ctx-1'],
+              prompt: 'Research-only Observatory task for bot bot-1.',
+              acceptance_criteria: ['Source-grounded finding is recorded.'],
+              safety_limits: { can_touch_funds: false, can_trade: false, can_promote: false },
+              result_ref: null,
+              result_summary: null,
+            },
+          ],
           delegated_work_sessions: [
             {
-              session_id: 'pending-idea-1',
+              session_id: 'research-session-1',
               bot_id: 'bot-1',
-              source: 'observatory-idea',
-              status: 'awaiting_owner_feedback',
+              source: 'owner-feedback:research',
+              status: 'queued_research',
               created_at: '2026-06-04T10:00:00.000Z',
               idea_id: 'idea-1',
-              task_id: null,
-              summary: 'Idea is ready for owner review.',
-              artifact_ref: 'artifact://observatory/ideas#idea-1',
+              task_id: 'research-1',
+              summary: 'Owner queued read-only research.',
+              artifact_ref: 'artifact://observatory/research-tasks#research-1',
             },
             {
-              session_id: 'pending-idea-1',
+              session_id: 'research-session-1',
               bot_id: 'bot-1',
               source: 'observatory-idea',
               status: 'awaiting_owner_feedback',
-              created_at: '2026-06-04T10:00:00.000Z',
+              created_at: '2026-06-04T09:00:00.000Z',
               idea_id: 'idea-1',
               task_id: null,
               summary: 'Duplicate historical row.',
@@ -146,8 +168,8 @@ const overviewState = {
             active_sessions: 1,
             terminal_sessions: 0,
             duplicate_rows_removed: 1,
-            by_status: { awaiting_owner_feedback: 1 },
-            by_source: { 'observatory-idea': 1 },
+            by_status: { queued_research: 1 },
+            by_source: { 'owner-feedback:research': 1 },
             usage_reporting_status: 'not_applicable',
             usage_event_count: 0,
             total_tokens: 0,
@@ -233,9 +255,11 @@ describe('ObservatoryPage', () => {
     expect(screen.getByRole('heading', { name: 'Observatory' })).toBeInTheDocument();
     expect(screen.getAllByText('ETH Perp Sentinel').length).toBeGreaterThan(0);
     expect(screen.getByText('external-signal-not-checked')).toBeInTheDocument();
-    expect(screen.getByText('Research ETH Perp Sentinel signal gap')).toBeInTheDocument();
+    expect(screen.getAllByText('Research ETH Perp Sentinel signal gap').length).toBeGreaterThan(0);
     expect(screen.getByText('Active/Work')).toBeInTheDocument();
     expect(screen.getByText('Dedupe')).toBeInTheDocument();
+    expect(screen.getByText(/manual_or_research_tick/)).toBeInTheDocument();
+    expect(screen.getByText(/research-1/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /observe now/i }));
     expect(hoisted.triggerMutateMock).toHaveBeenCalledWith('manual');

@@ -2678,6 +2678,7 @@ async fn get_observatory_overview(
                         "world_signal_digests": [],
                         "reflection_runs": [],
                         "ideas": [],
+                        "research_tasks": [],
                         "delegated_work_sessions": [],
                         "owner_feedback": [],
                     },

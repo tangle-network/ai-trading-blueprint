@@ -19,6 +19,7 @@ import {
   type ObservatoryIdea,
   type ObservatoryOverviewBot,
   type ObservatoryReflectionRun,
+  type ObservatoryResearchTask,
   type ObservatoryWorldSignalDigest,
   useObservatoryIdeaFeedback,
   useObservatoryOverview,
@@ -163,6 +164,14 @@ function pressureClass(level: string): string {
   if (lower === 'high') return 'text-crimson-600 dark:text-crimson-300';
   if (lower === 'medium') return 'text-amber-700 dark:text-amber-300';
   return 'text-emerald-700 dark:text-emerald-300';
+}
+
+function researchTaskById(tasks: ObservatoryResearchTask[] | undefined): Map<string, ObservatoryResearchTask> {
+  const map = new Map<string, ObservatoryResearchTask>();
+  for (const task of tasks ?? []) {
+    map.set(task.task_id, task);
+  }
+  return map;
 }
 
 function useSelectedBot(bots: ObservatoryOverviewBot[]) {
@@ -328,11 +337,14 @@ function IdeaList({
 function DelegatedWorkList({
   sessions,
   pressure,
+  researchTasks,
 }: {
   sessions: ObservatoryDelegatedWorkSession[];
   pressure: ObservatoryDelegationPressure;
+  researchTasks?: ObservatoryResearchTask[];
 }) {
   const uniqueSessions = uniqueDelegatedWorkSessions(sessions);
+  const taskById = researchTaskById(researchTasks);
 
   if (uniqueSessions.length === 0) {
     return (
@@ -363,19 +375,26 @@ function DelegatedWorkList({
         </div>
       </div>
       <div className="divide-y divide-[var(--arena-terminal-border)]">
-        {uniqueSessions.slice(0, 8).map((session) => (
-          <div key={session.session_id} className="grid gap-2 bg-[var(--arena-terminal-bg)] p-3 sm:grid-cols-[9rem_minmax(0,1fr)_7rem]">
-            <span className="truncate font-data text-xs text-[var(--arena-terminal-text-muted)]">
-              {session.source}
-            </span>
-            <span className="min-w-0 text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
-              {session.summary}
-            </span>
-            <span className={`text-right font-data text-xs ${statusClass(session.status)}`}>
-              {session.status}
-            </span>
-          </div>
-        ))}
+        {uniqueSessions.slice(0, 8).map((session) => {
+          const task = session.task_id ? taskById.get(session.task_id) : null;
+          return (
+            <div key={session.session_id} className="grid gap-2 bg-[var(--arena-terminal-bg)] p-3 sm:grid-cols-[9rem_minmax(0,1fr)_7rem]">
+              <span className="truncate font-data text-xs text-[var(--arena-terminal-text-muted)]">
+                {session.source}
+              </span>
+              <span className="min-w-0 text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
+                {task?.title ?? session.summary}
+                <span className="mt-1 block truncate font-data text-xs text-[var(--arena-terminal-text-muted)]">
+                  {task?.worker_launch ? `${task.worker_launch} · ` : null}
+                  {session.task_id ?? session.artifact_ref ?? 'no task id'}
+                </span>
+              </span>
+              <span className={`text-right font-data text-xs ${statusClass(session.status)}`}>
+                {session.status}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -539,7 +558,11 @@ function Inspector({
 
           <section>
             <h3 className="mb-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Delegated work</h3>
-            <DelegatedWorkList sessions={bot.records.delegated_work_sessions} pressure={pressure} />
+            <DelegatedWorkList
+              sessions={bot.records.delegated_work_sessions}
+              pressure={pressure}
+              researchTasks={bot.records.research_tasks}
+            />
           </section>
         </div>
       </div>

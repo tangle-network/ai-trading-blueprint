@@ -365,6 +365,27 @@ export interface ObservatoryDelegatedWorkSession {
   artifact_ref?: string | null;
 }
 
+export interface ObservatoryResearchTask {
+  task_id: string;
+  bot_id: string;
+  idea_id?: string | null;
+  feedback_id?: string | null;
+  owner?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  status: string;
+  worker?: string | null;
+  worker_launch?: string | null;
+  title: string;
+  thesis?: string | null;
+  evidence_refs?: string[];
+  prompt?: string;
+  acceptance_criteria?: string[];
+  safety_limits?: Record<string, unknown>;
+  result_ref?: string | null;
+  result_summary?: string | null;
+}
+
 export interface ObservatoryOwnerFeedback {
   feedback_id: string;
   bot_id: string;
@@ -380,6 +401,7 @@ export interface ObservatoryRecords {
   world_signal_digests: ObservatoryWorldSignalDigest[];
   reflection_runs: ObservatoryReflectionRun[];
   ideas: ObservatoryIdea[];
+  research_tasks?: ObservatoryResearchTask[];
   delegated_work_sessions: ObservatoryDelegatedWorkSession[];
   owner_feedback: ObservatoryOwnerFeedback[];
   delegation_pressure?: ObservatoryDelegationPressure;

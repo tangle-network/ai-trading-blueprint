@@ -70,6 +70,7 @@ test('buildObservatoryRun writes immediate records from current sandbox evidence
     assert.equal(result.records.reflection_runs.length, 1);
     assert.equal(result.records.world_signal_digests.length, 1);
     assert.equal(result.records.ideas.length, 1);
+    assert.deepEqual(result.records.research_tasks, []);
     assert.equal(
       result.records.reflection_runs[0].findings[0].code,
       'external-signal-not-checked',

@@ -25,6 +25,7 @@ const USAGE_TELEMETRY_FILE = process.env.LLM_USAGE_TELEMETRY_PATH || path.join(R
 const WORLD_SIGNAL_DIGESTS_FILE = path.join(OBSERVATORY_DIR, 'world-signal-digests.jsonl');
 const REFLECTION_RUNS_FILE = path.join(OBSERVATORY_DIR, 'reflection-runs.jsonl');
 const IDEAS_FILE = path.join(OBSERVATORY_DIR, 'ideas.jsonl');
+const RESEARCH_TASKS_FILE = path.join(OBSERVATORY_DIR, 'research-tasks.jsonl');
 const DELEGATED_WORK_FILE = path.join(OBSERVATORY_DIR, 'delegated-work-sessions.jsonl');
 const OWNER_FEEDBACK_FILE = path.join(OBSERVATORY_DIR, 'owner-feedback.jsonl');
 
@@ -415,6 +416,7 @@ function buildObservatoryRun() {
   const decisions = readJsonl(DECISION_LOG_FILE, 80);
   const intents = readJsonl(IMPROVEMENT_INTENTS_FILE, 80);
   const dispatches = readJsonl(IMPROVEMENT_DISPATCHES_FILE, 80);
+  const researchTasks = readJsonl(RESEARCH_TASKS_FILE, 80);
   const feedback = readJsonl(OWNER_FEEDBACK_FILE, 80);
   const usageEvents = readJsonl(USAGE_TELEMETRY_FILE, 300);
   const mcpTasks = readJsonFiles(path.join(ROOT, '.evolve', 'mcp-self-improvement', 'tasks'), 30);
@@ -550,6 +552,7 @@ function buildObservatoryRun() {
       world_signal_digests: [worldSignalDigest],
       reflection_runs: [reflectionRun],
       ideas,
+      research_tasks: researchTasks.slice(-20),
       delegated_work_sessions: delegatedWorkSessions,
       owner_feedback: feedback.slice(-20),
       usage_summary: usage,
