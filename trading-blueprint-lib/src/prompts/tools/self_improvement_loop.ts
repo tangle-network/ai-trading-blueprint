@@ -495,27 +495,45 @@ async function runPackageAnalystLoop(runId, intent, config, packageStatus) {
     }),
   };
 
-  const result = await runAnalystLoop({
-    runId,
-    registry,
-    inputs: { custom: { 'trading-self-improvement': { intent, config } } },
-    findingsStore: new FindingsStore(join(FINDINGS_DIR, 'findings.jsonl')),
-    knowledgeAdapter: {
-      proposeFromFindings,
-      apply: async (proposals) => {
-        const protocol = knowledgeProtocolText(proposals);
-        return protocol.trim() ? applyKnowledgeWriteBlocks(KNOWLEDGE_ROOT, protocol) : { written: [], warnings: [] };
+  try {
+    const result = await runAnalystLoop({
+      runId,
+      registry,
+      inputs: { custom: { 'trading-self-improvement': { intent, config } } },
+      findingsStore: new FindingsStore(join(FINDINGS_DIR, 'findings.jsonl')),
+      knowledgeAdapter: {
+        proposeFromFindings,
+        apply: async (proposals) => {
+          const protocol = knowledgeProtocolText(proposals);
+          return protocol.trim() ? applyKnowledgeWriteBlocks(KNOWLEDGE_ROOT, protocol) : { written: [], warnings: [] };
+        },
       },
-    },
-    autoApply: { knowledge: true, knowledgeConfidenceThreshold: 0.85, improvement: false, improvementConfidenceThreshold: 0.9 },
-  });
+      autoApply: { knowledge: true, knowledgeConfidenceThreshold: 0.85, improvement: false, improvementConfidenceThreshold: 0.9 },
+    });
 
-  return {
-    mode: 'tangle-agent-packages',
-    findings: result.analystResult.findings,
-    applied_knowledge: result.knowledge?.applied || [],
-    diff: result.diff,
-  };
+    return {
+      mode: 'tangle-agent-packages',
+      findings: result.analystResult.findings,
+      applied_knowledge: result.knowledge?.applied || [],
+      diff: result.diff,
+    };
+  } catch (error) {
+    const fallback = {
+      ...finding,
+      run_id: runId,
+      severity: 'medium',
+      area: 'analyst-loop-runtime',
+      claim: `Package analyst loop failed; continuing with deterministic self-improvement evidence. Error: ${String(error.message || error).slice(0, 300)}`,
+      recommended_action: 'Repair the package analyst persistence path, but do not block candle backfill, candidate search, or evolution lineage recording.',
+    };
+    writeFileSync(join(FINDINGS_DIR, 'findings.jsonl'), `${JSON.stringify(fallback)}\n`, { flag: 'a' });
+    return {
+      mode: 'package-error-fallback-jsonl',
+      findings: [fallback],
+      applied_knowledge: [],
+      error: String(error.stack || error.message || error),
+    };
+  }
 }
 
 async function createSnapshot(intent) {
