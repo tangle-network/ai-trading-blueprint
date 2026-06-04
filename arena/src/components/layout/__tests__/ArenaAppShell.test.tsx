@@ -100,8 +100,9 @@ describe('ArenaAppShell', () => {
     expect(within(sidebar!).getByRole('link', { name: /home/i })).toHaveAttribute('href', '/');
     expect(within(sidebar!).getByRole('link', { name: /activity/i })).toHaveAttribute('href', '/activity');
     expect(within(sidebar!).getByRole('link', { name: /my agents/i })).toHaveAttribute('href', '/dashboard');
-    expect(within(sidebar!).getByRole('link', { name: /deploy/i })).toHaveAttribute('href', '/provision');
-    expect(within(sidebar!).getByRole('link', { name: /create/i })).toHaveAttribute('href', '/create');
+    expect(within(sidebar!).getByRole('link', { name: /new agent/i })).toHaveAttribute('href', '/create');
+    expect(within(sidebar!).queryByRole('link', { name: /^deploy$/i })).not.toBeInTheDocument();
+    expect(within(sidebar!).queryByRole('link', { name: /^create$/i })).not.toBeInTheDocument();
     expect(within(sidebar!).queryByText(/commandable/i)).not.toBeInTheDocument();
   });
 

@@ -16,8 +16,7 @@ const primaryNavItems = [
   { label: 'Activity', href: '/activity', icon: 'i-ph:pulse' },
   { label: 'Observatory', href: '/observatory', icon: 'i-ph:brain' },
   { label: 'My Agents', href: '/dashboard', icon: 'i-ph:house' },
-  { label: 'Deploy', href: '/provision', icon: 'i-ph:rocket-launch' },
-  { label: 'Create', href: '/create', icon: 'i-ph:chat-circle-dots' },
+  { label: 'New Agent', href: '/create', icon: 'i-ph:chat-circle-dots' },
 ];
 
 const SIDEBAR_COLLAPSED_KEY = 'arena:sidebar-collapsed';

@@ -11,16 +11,16 @@ interface ConnectWalletPanelProps {
 
 const launchRoutes = [
   {
-    label: 'Create Strategy',
+    label: 'New Agent',
     href: '/create',
     icon: 'i-ph:chat-circle-dots',
-    meta: 'operator api',
+    meta: 'paper first',
   },
   {
-    label: 'Deploy Agent',
+    label: 'Activate Agent',
     href: '/provision',
     icon: 'i-ph:rocket-launch',
-    meta: 'on-chain',
+    meta: 'wallet',
   },
   {
     label: 'Live Activity',
@@ -116,9 +116,9 @@ export function ConnectWalletPanel({
                     <span className="text-right">Surface</span>
                   </div>
                   {[
-                    ['01', 'Compile mandate', 'Create'],
-                    ['02', 'Sign service ownership', 'Deploy'],
-                    ['03', 'Activate operator runtime', 'Agent'],
+                    ['01', 'Create paper agent', 'New Agent'],
+                    ['02', 'Sign service ownership', 'Activation'],
+                    ['03', 'Start operator runtime', 'Agent'],
                     ['04', 'Watch fills and runs', 'Activity'],
                   ].map(([index, action, surface]) => (
                     <div

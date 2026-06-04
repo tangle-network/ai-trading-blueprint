@@ -76,6 +76,8 @@ interface ConfigureStepProps {
   selectedOperators: Set<Address>;
   setShowAdvanced: (v: boolean) => void;
   strategyExecutionNotice?: string | null;
+  capabilityFocusLabels?: string[];
+  availableProtocolCount?: number;
   executionTargetLabel?: string;
   executionTargetDescription?: string;
   assetOptions?: DexAssetSelection[];
@@ -108,6 +110,8 @@ export function ConfigureStep({
   selectedOperators,
   setShowAdvanced,
   strategyExecutionNotice,
+  capabilityFocusLabels,
+  availableProtocolCount,
   executionTargetLabel,
   executionTargetDescription,
   assetOptions = [],
@@ -158,6 +162,12 @@ export function ConfigureStep({
     .sort(compareStrategyPackPriority);
   const predictionPacks = strategyPacks.filter((p) => p.id.startsWith('prediction'));
   const providerLabel = selectedPack.providers.slice(0, 3).join(', ');
+  const inheritedFocusLabel = capabilityFocusLabels?.length
+    ? capabilityFocusLabels.join(', ')
+    : selectedPack.name;
+  const accessLabel = availableProtocolCount && availableProtocolCount > 0
+    ? `${availableProtocolCount} wired protocols`
+    : providerLabel;
   const executionModeLabel = formatExecutionMode(selectedPack.executionMode);
   const selectedAssetLabel =
     isDexStrategy && selectedAssets.length > 0
@@ -221,9 +231,9 @@ export function ConfigureStep({
       <div className="grid gap-px bg-[var(--arena-terminal-border)] lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,0.8fr)]">
         <LaunchHeaderCell
           icon={<Database className="h-4 w-4" />}
-          label="Strategy"
-          value={selectedPack.name}
-          detail={providerLabel}
+          label="Mandate"
+          value={inheritedFocusLabel}
+          detail={accessLabel}
         />
         <LaunchHeaderCell
           icon={<WalletCards className="h-4 w-4" />}
@@ -266,7 +276,7 @@ export function ConfigureStep({
             </label>
           </ProvisionPanel>
 
-          <ProvisionPanel title="Strategy Pack" action={(
+          <ProvisionPanel title="Capability Focus" action={(
             <Button
               type="button"
               variant="outline"
@@ -275,7 +285,7 @@ export function ConfigureStep({
               className="h-8 gap-2 rounded-[5px] border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-3 font-display text-xs text-[var(--arena-terminal-text-secondary)] transition-[background-color,border-color,color] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-accent-soft)] hover:text-[var(--arena-terminal-text)]"
             >
               <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
-              Customize
+              Runtime
             </Button>
           )}>
             <div className="grid auto-rows-[56px] gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
@@ -333,19 +343,19 @@ export function ConfigureStep({
         ) : (
         <aside className="grid content-start gap-2.5 lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:overflow-auto lg:pl-2 lg:[scrollbar-gutter:stable]">
           <ProvisionPanel
-            title="Provision Review"
+            title="Activation Review"
             action={(
               <WorkspaceControlButton
-                label="Minimize deploy summary"
+                label="Minimize activation summary"
                 icon="i-ph:minus-bold"
                 onClick={() => setLayout((current) => ({ ...current, railCollapsed: true }))}
               />
             )}
           >
             <div className="space-y-2.5">
-              <ReadRow label="Pack" value={selectedPack.name} />
+              <ReadRow label="Focus" value={inheritedFocusLabel} />
               <ReadRow label="Mode" value={executionModeLabel} />
-              <ReadRow label="Venue" value={providerLabel} />
+              <ReadRow label="Access" value={accessLabel} />
               {executionTargetLabel && (
                 <ReadRow label="Target" value={executionTargetLabel} />
               )}
@@ -364,7 +374,7 @@ export function ConfigureStep({
             size="lg"
             className="h-11 w-full rounded-[5px] bg-[var(--arena-terminal-accent)] font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] disabled:opacity-45"
           >
-            Review Provision
+            Review Activation
           </Button>
 
           {isHyperliquidStrategy && (

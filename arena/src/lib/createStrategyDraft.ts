@@ -2,6 +2,10 @@ export interface CreateStrategyDraft {
   name: string
   strategyType: string
   provisionStrategyType: string
+  capabilityFocus?: string[]
+  availableProtocols?: string[]
+  preferredProtocols?: string[]
+  protocolChainIds?: Record<string, number>
   market: string
   venue: string
   sizing: string
@@ -34,6 +38,21 @@ export function safeLoadStoredCreateStrategyDraft(): CreateStrategyDraft | null 
       name: readString(parsed.name),
       strategyType: readString(parsed.strategyType),
       provisionStrategyType: readString(parsed.provisionStrategyType),
+      capabilityFocus: Array.isArray(parsed.capabilityFocus)
+        ? parsed.capabilityFocus.map(readString).filter(Boolean)
+        : undefined,
+      availableProtocols: Array.isArray(parsed.availableProtocols)
+        ? parsed.availableProtocols.map(readString).filter(Boolean)
+        : undefined,
+      preferredProtocols: Array.isArray(parsed.preferredProtocols)
+        ? parsed.preferredProtocols.map(readString).filter(Boolean)
+        : undefined,
+      protocolChainIds: isRecord(parsed.protocolChainIds)
+        ? Object.fromEntries(
+            Object.entries(parsed.protocolChainIds)
+              .filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1])),
+          )
+        : undefined,
       market: readString(parsed.market),
       venue: readString(parsed.venue),
       sizing: readString(parsed.sizing),

@@ -15,22 +15,22 @@ describe('ConnectWalletPanel', () => {
     render(
       <MemoryRouter>
         <ConnectWalletPanel
-          title="Deploy Agent"
+          title="Activate Agent"
           description="Wallet signs service ownership, operator quotes, funding, and activation."
-          bullets={['Blueprint', 'Quote', 'Service', 'Activation']}
+          bullets={['Mandate', 'Quote', 'Service', 'Activation']}
         />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('heading', { name: 'Deploy Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Activate Agent' })).toBeInTheDocument();
     expect(screen.getByText('Launch Check')).toBeInTheDocument();
     expect(screen.getByText('Launch Path')).toBeInTheDocument();
     expect(screen.getByText('Owner Wallet')).toBeInTheDocument();
-    expect(screen.getByText('Compile mandate')).toBeInTheDocument();
+    expect(screen.getByText('Create paper agent')).toBeInTheDocument();
     expect(screen.getByText('Watch fills and runs')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /connect wallet/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /create strategy/i })).toHaveAttribute('href', '/create');
-    expect(screen.getByRole('link', { name: /deploy agent/i })).toHaveAttribute('href', '/provision');
+    expect(screen.getByRole('link', { name: /new agent/i })).toHaveAttribute('href', '/create');
+    expect(screen.getByRole('link', { name: /activate agent/i })).toHaveAttribute('href', '/provision');
     expect(screen.getByRole('link', { name: /live activity/i })).toHaveAttribute('href', '/activity');
     expect(screen.getAllByText('Ready')).toHaveLength(4);
   });

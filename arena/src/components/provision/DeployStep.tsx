@@ -89,22 +89,21 @@ export function DeployStep({
     <>
       {/* Instance blueprint: create service -> auto-provision */}
       {isInstance && !latestDeployment && (
-        <Card>
+        <Card className="rounded-none border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] shadow-none">
           <CardContent className="pt-5 pb-5 space-y-4">
             <div>
               <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
-                Create Instance Service
+                Activate Instance
               </span>
               <p className="text-xs text-arena-elements-textTertiary mt-1">
-                This creates a dedicated service for your trading bot. The vault is created on-chain
-                and the sidecar is provisioned automatically.
+                Create the dedicated service, vault route, and sidecar that can run this paper mandate as an operator-managed agent.
               </p>
             </div>
-            <div className="p-3.5 rounded-lg bg-arena-elements-item-backgroundHover/30 border border-arena-elements-borderColor/40">
+            <div className="p-3.5 bg-arena-elements-item-backgroundHover/30 border border-arena-elements-borderColor/40">
               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm font-data">
                 <SummaryRow label="Blueprint" value={selectedBlueprint?.name ?? 'Instance'} />
                 <SummaryRow label="Agent" value={name} />
-                <SummaryRow label="Strategy" value={selectedPack.name} />
+                <SummaryRow label="Focus" value={selectedPack.name} />
                 <SummaryRow label="Frequency" value={`Every ${cronToHuman(effectiveCron)}`} />
                 <SummaryRow
                   label="Operators"
@@ -158,12 +157,12 @@ export function DeployStep({
                       ? 'Waiting for Service Activation...'
                       : instanceProvisioning
                         ? 'Provisioning Instance Bot...'
-                        : `Create Instance Service (${formatCost(totalCost)})`}
+                        : `Activate Instance (${formatCost(totalCost)})`}
               </Button>
             )}
 
             {instanceProvisionError && (
-              <div className="text-sm text-crimson-400 p-3 rounded-lg bg-crimson-500/5 border border-crimson-500/20">
+              <div className="text-sm text-crimson-400 p-3 bg-crimson-500/5 border border-crimson-500/20">
                 {instanceProvisionError}
               </div>
             )}
@@ -173,22 +172,21 @@ export function DeployStep({
 
       {/* Fleet blueprint: standard submitJob flow */}
       {!isInstance && !txHash && (
-        <Card>
+        <Card className="rounded-none border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] shadow-none">
           <CardContent className="pt-5 pb-5 space-y-4">
             <div>
               <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
-                Provision Agent
+                Provision Runtime
               </span>
               <p className="text-xs text-arena-elements-textTertiary mt-1">
-                This submits a job to Service {serviceId}. The operator will spin up a sidecar container
-                running your trading agent with the configuration below.
+                Submit the operator job to Service {serviceId}. The operator spins up the sidecar and runs the agent with this activation config.
               </p>
             </div>
-            <div className="p-3.5 rounded-lg bg-arena-elements-item-backgroundHover/30 border border-arena-elements-borderColor/40">
+            <div className="p-3.5 bg-arena-elements-item-backgroundHover/30 border border-arena-elements-borderColor/40">
               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm font-data">
                 <SummaryRow label="Service" value={`#${serviceId}`} />
                 <SummaryRow label="Agent" value={name} />
-                <SummaryRow label="Strategy" value={selectedPack.name} />
+                <SummaryRow label="Focus" value={selectedPack.name} />
                 <SummaryRow label="Frequency" value={`Every ${cronToHuman(effectiveCron)}`} />
                 <SummaryRow
                   label="On-chain call"
@@ -213,14 +211,14 @@ export function DeployStep({
                       ? 'Not Permitted on Service'
                       : isPending
                         ? 'Confirm in Wallet...'
-                        : 'Provision Agent'}
+                        : 'Provision Runtime'}
             </Button>
           </CardContent>
         </Card>
       )}
 
       {txHash && (
-        <Card className="border-arena-elements-borderColor/60 overflow-hidden">
+        <Card className="overflow-hidden rounded-none border-arena-elements-borderColor/60 bg-[var(--arena-terminal-surface)] shadow-none">
           <CardContent className="pt-5 pb-5 space-y-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -323,13 +321,13 @@ export function DeployStep({
             </div>
 
             {latestDeployment?.phase === 'failed' && latestDeployment.errorMessage && (
-              <div className="text-sm text-crimson-400 p-3 rounded-lg bg-crimson-500/5 border border-crimson-500/20">
+              <div className="text-sm text-crimson-400 p-3 bg-crimson-500/5 border border-crimson-500/20">
                 {latestDeployment.errorMessage}
               </div>
             )}
 
             {latestDeployment?.phase === 'awaiting_secrets' && (
-              <div className="p-3.5 rounded-lg bg-emerald-500/5 border border-emerald-500/30 space-y-2">
+              <div className="p-3.5 bg-emerald-500/5 border border-emerald-500/30 space-y-2">
                 <div className="text-sm font-display font-medium text-emerald-400">
                   Infrastructure Deployed — Ready for Activation
                 </div>
@@ -347,7 +345,7 @@ export function DeployStep({
             )}
 
             {latestDeployment?.phase === 'active' && (
-              <div className="p-3.5 rounded-lg bg-emerald-700/5 border border-emerald-700/30 dark:bg-emerald-500/5 dark:border-emerald-500/30 space-y-2">
+              <div className="p-3.5 bg-emerald-700/5 border border-emerald-700/30 dark:bg-emerald-500/5 dark:border-emerald-500/30 space-y-2">
                 <div className="text-sm font-display font-medium text-arena-elements-icon-success">
                   Agent Provisioned Successfully
                 </div>
@@ -428,7 +426,7 @@ export function DeployStep({
               setStep('configure');
             }}
           >
-            Provision Another Agent
+            Activate Another Agent
           </Button>
         )}
         {latestDeployment?.phase === 'failed' && (

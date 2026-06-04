@@ -145,6 +145,8 @@ interface StrategyConfigOptions {
   paperTrade?: boolean;
   protocolChainId?: number;
   availableProtocols?: string[];
+  preferredProtocols?: string[];
+  protocolChainIds?: Record<string, number>;
   conversationCron?: string;
   researchCron?: string;
   conversationEnabled?: boolean;
@@ -660,6 +662,8 @@ export function buildStrategyConfigForProvision({
   paperTrade,
   protocolChainId,
   availableProtocols,
+  preferredProtocols,
+  protocolChainIds,
   conversationCron,
   researchCron,
   conversationEnabled = true,
@@ -686,6 +690,10 @@ export function buildStrategyConfigForProvision({
   }
   if (availableProtocols?.length)
     config.available_protocols = availableProtocols;
+  if (preferredProtocols?.length)
+    config.preferred_protocols = preferredProtocols;
+  if (protocolChainIds && Object.keys(protocolChainIds).length > 0)
+    config.protocol_chain_ids = protocolChainIds;
   if (assetUniverse) config.asset_universe = assetUniverse;
   if (positionSizePct != null) {
     const parsedPositionSize = parsePositionSizePct(positionSizePct);
@@ -775,9 +783,11 @@ export function buildProvisionStrategyConfig({
     protocolChainId: includeExecutionTarget
       ? executionConfig?.protocolChainId
       : undefined,
-    availableProtocols: includeExecutionTarget
-      ? availableProtocolsForStrategyTarget(strategyType, selectedExecutionTarget)
-      : undefined,
+    availableProtocols:
+      strategyConfigOptions.availableProtocols ??
+      (includeExecutionTarget
+        ? availableProtocolsForStrategyTarget(strategyType, selectedExecutionTarget)
+        : undefined),
   });
 
   if (includeExecutionTarget && executionConfig) {
@@ -1317,7 +1327,7 @@ export function selectLatestInstanceProvision(
 }
 
 export const meta: MetaFunction = () => [
-  { title: 'Deploy Agent - Tangle Trading' },
+  { title: 'Activate Trading Agent - Tangle Trading' },
 ];
 
 // ── Main page ────────────────────────────────────────────────────────────
@@ -1503,6 +1513,12 @@ export default function ProvisionPage() {
   const [customCron, setCustomCron] = useState('');
   const [customConversationCron, setCustomConversationCron] = useState('');
   const [customResearchCron, setCustomResearchCron] = useState('');
+  const [draftProtocolIntent, setDraftProtocolIntent] = useState<{
+    capabilityFocus?: string[];
+    availableProtocols?: string[];
+    preferredProtocols?: string[];
+    protocolChainIds?: Record<string, number>;
+  } | null>(null);
   const [positionSizePct, setPositionSizePct] = useState(String(DEFAULT_POSITION_SIZE_PCT));
   const [conversationEnabled, setConversationEnabled] = useState(true);
   const [researchEnabled, setResearchEnabled] = useState(true);
@@ -1909,6 +1925,12 @@ export default function ProvisionPage() {
       defaultExecutionTargetIdForStrategy(draftStrategy, executionTargets),
     );
     setCustomInstructions(draft.prompt);
+    setDraftProtocolIntent({
+      capabilityFocus: draft.capabilityFocus,
+      availableProtocols: draft.availableProtocols,
+      preferredProtocols: draft.preferredProtocols,
+      protocolChainIds: draft.protocolChainIds,
+    });
     setProvisionPaperTrade(draft.mode.toLowerCase().includes('paper'));
     setStep('configure');
   }, [createDraftRequested, executionTargets]);
@@ -1922,6 +1944,7 @@ export default function ProvisionPage() {
     setCustomCron('');
     setCustomConversationCron('');
     setCustomResearchCron('');
+    setDraftProtocolIntent(null);
     setConversationEnabled(true);
     setResearchEnabled(true);
   }, [strategyType]);
@@ -2268,6 +2291,9 @@ export default function ProvisionPage() {
             customExpertKnowledge,
             customInstructions,
             paperTrade: provisionPaperTrade,
+            availableProtocols: draftProtocolIntent?.availableProtocols,
+            preferredProtocols: draftProtocolIntent?.preferredProtocols,
+            protocolChainIds: draftProtocolIntent?.protocolChainIds,
             selectedExecutionTarget,
             includeExecutionTarget: usesExecutionTarget,
             executionConfig,
@@ -2354,6 +2380,7 @@ export default function ProvisionPage() {
       operatorAuth,
       selectedExecutionTarget,
       provisionPaperTrade,
+      draftProtocolIntent,
       handleInstanceProvisionSuccess,
     ],
   );
@@ -2744,6 +2771,9 @@ export default function ProvisionPage() {
       customExpertKnowledge,
       customInstructions,
       paperTrade: provisionPaperTrade,
+      availableProtocols: draftProtocolIntent?.availableProtocols,
+      preferredProtocols: draftProtocolIntent?.preferredProtocols,
+      protocolChainIds: draftProtocolIntent?.protocolChainIds,
       selectedExecutionTarget,
       includeExecutionTarget: requiresExecutionTarget,
       executionConfig,
@@ -2999,6 +3029,9 @@ export default function ProvisionPage() {
       isTeeBlueprint: !!selectedBlueprint?.isTee,
       customExpertKnowledge,
       customInstructions,
+      availableProtocols: draftProtocolIntent?.availableProtocols,
+      preferredProtocols: draftProtocolIntent?.preferredProtocols,
+      protocolChainIds: draftProtocolIntent?.protocolChainIds,
       conversationCron: effectiveConversationCron,
       researchCron: effectiveResearchCron,
       conversationEnabled,
@@ -3601,13 +3634,13 @@ export default function ProvisionPage() {
   if (!isConnected) {
     return (
       <ConnectWalletPanel
-        title="Deploy Agent"
-        description="Wallet signs service ownership, operator quotes, funding, and activation."
+        title="Activate Agent"
+        description="Connect a wallet to provision the runtime, bind service ownership, fund the route, and flip a paper agent into an active operator-managed instance."
         bullets={[
-          'Blueprint',
-          'Quote',
-          'Service',
-          'Activation',
+          'Agent mandate',
+          'Runtime quote',
+          'Service ownership',
+          'Activation keys',
         ]}
       />
     );
@@ -3617,7 +3650,7 @@ export default function ProvisionPage() {
     <div className="arena-trace-terminal min-h-full bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)]">
       <div className="flex min-h-full w-full flex-col">
         <ArenaPageHeader
-          title="Deploy"
+          title="Activate"
           titleWidthClassName="min-[1180px]:w-[11rem]"
           metrics={[
             { label: 'Network', value: compactHeaderChainName(targetChain.name), title: targetChain.name },
@@ -3631,7 +3664,7 @@ export default function ProvisionPage() {
           controls={(
             <>
               <ArenaHeaderLink to="/" icon="i-ph:chart-line-up">Terminal</ArenaHeaderLink>
-              <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">Create</ArenaHeaderLink>
+              <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">New Agent</ArenaHeaderLink>
             </>
           )}
         />
@@ -3766,6 +3799,8 @@ export default function ProvisionPage() {
             selectedOperators={selectedOperators}
             setShowAdvanced={setShowAdvanced}
             strategyExecutionNotice={strategyExecutionNotice}
+            capabilityFocusLabels={draftProtocolIntent?.capabilityFocus}
+            availableProtocolCount={draftProtocolIntent?.availableProtocols?.length}
             executionTargetLabel={selectedExecutionTarget?.label}
             executionTargetDescription={selectedExecutionTarget?.description}
             assetOptions={assetOptions}

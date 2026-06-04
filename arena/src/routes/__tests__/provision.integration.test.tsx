@@ -179,7 +179,7 @@ describe('provision route dialog wiring', () => {
     render(<ProvisionPage />);
 
     expect(screen.getByTestId('infra-open-state')).toHaveTextContent('false');
-    await user.click(screen.getByRole('button', { name: 'Customize' }));
+    await user.click(screen.getByRole('button', { name: 'Runtime' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Open Infrastructure Settings' })).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: 'Open Infrastructure Settings' }));
 

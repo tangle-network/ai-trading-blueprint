@@ -19,10 +19,11 @@ import {
 } from '~/components/arena/WorkspaceResizeControls'
 
 export const meta: MetaFunction = () => [
-  { title: 'Create Trading Agent - Tangle Trading' },
+  { title: 'New Trading Agent - Tangle Trading' },
 ]
 
 type StrategyType = 'dex' | 'yield' | 'prediction' | 'perp'
+type CapabilityId = 'dex' | 'yield' | 'prediction' | 'evm_perp' | 'hyperliquid'
 type DraftField = 'name' | 'market' | 'venue' | 'sizing' | 'drawdown' | 'mode'
 
 interface CreateWorkspaceLayout {
@@ -36,6 +37,71 @@ const DEFAULT_CREATE_WORKSPACE_LAYOUT: CreateWorkspaceLayout = {
   railCollapsed: false,
 }
 const DEFAULT_PAPER_INITIAL_CAPITAL_USD = '10000'
+
+const PROTOCOL_CHAIN_IDS = {
+  uniswap_v3: 84532,
+  aerodrome: 84532,
+  aave_v3: 84532,
+  morpho_vault: 84532,
+  polymarket_clob: 137,
+  gmx_v2: 42161,
+  vertex: 42161,
+  hyperliquid: 998,
+} as const
+
+const ALL_WIRED_PROTOCOLS = Object.keys(PROTOCOL_CHAIN_IDS)
+
+const CAPABILITY_PROFILES = [
+  {
+    id: 'hyperliquid',
+    label: 'Hyperliquid Perps',
+    icon: 'i-ph:pulse',
+    strategyType: 'perp',
+    protocols: ['hyperliquid'],
+    summary: 'ETH/BTC perps, margin, liquidation buffer',
+  },
+  {
+    id: 'dex',
+    label: 'DEX Spot',
+    icon: 'i-ph:currency-eth',
+    strategyType: 'dex',
+    protocols: ['uniswap_v3', 'aerodrome'],
+    summary: 'Uniswap and Aerodrome spot routes',
+  },
+  {
+    id: 'yield',
+    label: 'DeFi Yield',
+    icon: 'i-ph:chart-line-up',
+    strategyType: 'yield',
+    protocols: ['aave_v3', 'morpho_vault'],
+    summary: 'Aave and Morpho lending opportunities',
+  },
+  {
+    id: 'prediction',
+    label: 'Prediction Markets',
+    icon: 'i-ph:newspaper-clipping',
+    strategyType: 'prediction',
+    protocols: ['polymarket_clob'],
+    summary: 'Polymarket event books and news edge',
+  },
+  {
+    id: 'evm_perp',
+    label: 'EVM Perps',
+    icon: 'i-ph:chart-line-up',
+    strategyType: 'perp',
+    protocols: ['gmx_v2', 'vertex'],
+    summary: 'GMX and Vertex perp venues',
+  },
+] satisfies Array<{
+  id: CapabilityId
+  label: string
+  icon: string
+  strategyType: StrategyType
+  protocols: string[]
+  summary: string
+}>
+
+const DEFAULT_CAPABILITY_IDS: CapabilityId[] = ['hyperliquid', 'dex', 'yield']
 
 function normalizeCreateWorkspaceLayout(value: Partial<CreateWorkspaceLayout>): CreateWorkspaceLayout {
   return {
@@ -53,6 +119,7 @@ const STRATEGY_HINTS = [
     label: 'DEX Momentum',
     icon: 'i-ph:currency-eth',
     strategyType: 'dex',
+    capabilityIds: ['dex'],
     profile: 'DEX spot',
     shorthand: 'ETH/USDC momentum + mean reversion',
     prompt: 'I want an agent that trades ETH/USDC on Uniswap V3, using momentum and mean-reversion signals with strict risk management.',
@@ -61,6 +128,7 @@ const STRATEGY_HINTS = [
     label: 'Hyperliquid Perps',
     icon: 'i-ph:pulse',
     strategyType: 'perp',
+    capabilityIds: ['hyperliquid'],
     profile: 'Perps',
     shorthand: 'ETH-PERP breakout + liquidation buffer',
     prompt: 'I want an agent that trades ETH perps on Hyperliquid, using breakout retests with strict max leverage, liquidation buffer, and drawdown limits.',
@@ -69,6 +137,7 @@ const STRATEGY_HINTS = [
     label: 'Prediction Markets',
     icon: 'i-ph:newspaper-clipping',
     strategyType: 'prediction',
+    capabilityIds: ['prediction'],
     profile: 'Events',
     shorthand: 'Polymarket news edge',
     prompt: 'I want to trade political and news events on Polymarket. Find markets with edge and manage positions.',
@@ -77,22 +146,25 @@ const STRATEGY_HINTS = [
     label: 'Yield Router',
     icon: 'i-ph:chart-line-up',
     strategyType: 'yield',
+    capabilityIds: ['yield'],
     profile: 'Yield',
     shorthand: 'Aave/Morpho rate rotation',
     prompt: 'Build me an agent that maximizes yield across Aave and Morpho lending protocols, auto-rebalancing between the best rates.',
   },
   {
-    label: 'Multi-Book',
+    label: 'Multi-Venue',
     icon: 'i-ph:strategy',
     strategyType: 'dex',
+    capabilityIds: ['hyperliquid', 'dex', 'yield', 'prediction', 'evm_perp'],
     profile: 'Portfolio',
-    shorthand: '60/30/10 diversified mandate',
-    prompt: 'Build a diversified trading agent: 60% DEX spot trading, 30% yield farming, 10% prediction markets.',
+    shorthand: 'Adaptive mandate across wired venues',
+    prompt: 'Build a diversified adaptive trading agent. It can use Hyperliquid perps, DEX spot routes, DeFi yield, prediction markets, GMX, and Vertex when the setup is actually attractive. Start in paper mode with strict risk controls.',
   },
 ] satisfies Array<{
   label: string
   icon: string
   strategyType: StrategyType
+  capabilityIds: CapabilityId[]
   profile: string
   shorthand: string
   prompt: string
@@ -150,6 +222,61 @@ function inferStrategyType(strategyPrompt: string): StrategyType {
     return 'perp'
   }
   return 'dex'
+}
+
+function capabilityById(id: CapabilityId) {
+  return CAPABILITY_PROFILES.find((capability) => capability.id === id) ?? CAPABILITY_PROFILES[0]
+}
+
+function capabilityIdsForPrompt(strategyPrompt: string, strategyType: StrategyType): CapabilityId[] {
+  const promptLower = strategyPrompt.toLowerCase()
+  const ids = new Set<CapabilityId>()
+  if (promptLower.includes('hyperliquid') || promptLower.includes('hype')) ids.add('hyperliquid')
+  if (promptLower.includes('gmx') || promptLower.includes('vertex')) ids.add('evm_perp')
+  if (promptLower.includes('uniswap') || promptLower.includes('aerodrome') || promptLower.includes('dex') || promptLower.includes('spot')) ids.add('dex')
+  if (promptLower.includes('yield') || promptLower.includes('lending') || promptLower.includes('aave') || promptLower.includes('morpho')) ids.add('yield')
+  if (promptLower.includes('polymarket') || promptLower.includes('prediction') || promptLower.includes('event')) ids.add('prediction')
+
+  if (ids.size === 0) {
+    const byType = CAPABILITY_PROFILES.find((capability) => capability.strategyType === strategyType)
+    if (byType) ids.add(byType.id)
+  }
+
+  return ids.size > 0 ? [...ids] : [...DEFAULT_CAPABILITY_IDS]
+}
+
+function normalizeCapabilityIds(ids: CapabilityId[]): CapabilityId[] {
+  const seen = new Set<CapabilityId>()
+  for (const id of ids) {
+    if (CAPABILITY_PROFILES.some((capability) => capability.id === id)) {
+      seen.add(id)
+    }
+  }
+  return seen.size > 0 ? [...seen] : [...DEFAULT_CAPABILITY_IDS]
+}
+
+function preferredProtocolsForCapabilities(capabilityIds: CapabilityId[]): string[] {
+  const protocols = new Set<string>()
+  for (const id of normalizeCapabilityIds(capabilityIds)) {
+    for (const protocol of capabilityById(id).protocols) {
+      protocols.add(protocol)
+    }
+  }
+  return [...protocols]
+}
+
+function capabilityLabels(capabilityIds: CapabilityId[]): string[] {
+  return normalizeCapabilityIds(capabilityIds).map((id) => capabilityById(id).label)
+}
+
+function primaryCapabilityFor(capabilityIds: CapabilityId[], strategyType: StrategyType) {
+  const normalized = normalizeCapabilityIds(capabilityIds)
+  return (
+    normalized
+      .map(capabilityById)
+      .find((capability) => capability.strategyType === strategyType) ??
+    capabilityById(normalized[0])
+  )
 }
 
 function inferProvisionStrategyType(strategyPrompt: string, strategyType: StrategyType): string {
@@ -270,13 +397,17 @@ function buildStrategyDraft({
   }
 }
 
-function buildCreatePrompt(draft: CreateStrategyDraft): string {
+function buildCreatePrompt(draft: CreateStrategyDraft, capabilityIds: CapabilityId[]): string {
+  const preferredProtocols = preferredProtocolsForCapabilities(capabilityIds)
   return [
     draft.prompt.trim(),
     '',
     'Launch draft:',
     `Agent name: ${draft.name}`,
-    `Strategy pack: ${draft.provisionStrategyType}`,
+    `Primary capability: ${primaryCapabilityFor(capabilityIds, draft.strategyType as StrategyType).label}`,
+    `Capability focus: ${capabilityLabels(capabilityIds).join(', ')}`,
+    `Venue access: all wired protocols (${ALL_WIRED_PROTOCOLS.join(', ')})`,
+    `Preferred protocols: ${preferredProtocols.join(', ')}`,
     `Market: ${draft.market}`,
     `Venue: ${draft.venue}`,
     `Sizing: ${draft.sizing}`,
@@ -285,14 +416,20 @@ function buildCreatePrompt(draft: CreateStrategyDraft): string {
   ].filter(Boolean).join('\n')
 }
 
-function buildCreateStrategyConfig(draft: CreateStrategyDraft): Record<string, unknown> {
+function buildCreateStrategyConfig(draft: CreateStrategyDraft, capabilityIds: CapabilityId[]): Record<string, unknown> {
+  const normalizedCapabilityIds = normalizeCapabilityIds(capabilityIds)
   return {
     paper_trade: true,
     paper_safe: true,
     initial_capital_usd: DEFAULT_PAPER_INITIAL_CAPITAL_USD,
+    available_protocols: ALL_WIRED_PROTOCOLS,
+    preferred_protocols: preferredProtocolsForCapabilities(normalizedCapabilityIds),
+    protocol_chain_ids: PROTOCOL_CHAIN_IDS,
+    capability_focus: normalizedCapabilityIds,
     launch_ticket: {
       market: draft.market,
       venue: draft.venue,
+      capabilities: capabilityLabels(normalizedCapabilityIds),
       sizing: draft.sizing,
       risk: draft.drawdown,
       mode: draft.mode,
@@ -300,16 +437,19 @@ function buildCreateStrategyConfig(draft: CreateStrategyDraft): Record<string, u
   }
 }
 
-function clampDraftValue(value: string, maxLength = 80): string {
-  return value.replace(/\s+/g, ' ').trim().slice(0, maxLength)
+function attachCapabilityFields(draft: CreateStrategyDraft, capabilityIds: CapabilityId[]): CreateStrategyDraft {
+  const normalizedCapabilityIds = normalizeCapabilityIds(capabilityIds)
+  return {
+    ...draft,
+    capabilityFocus: capabilityLabels(normalizedCapabilityIds),
+    availableProtocols: ALL_WIRED_PROTOCOLS,
+    preferredProtocols: preferredProtocolsForCapabilities(normalizedCapabilityIds),
+    protocolChainIds: PROTOCOL_CHAIN_IDS,
+  }
 }
 
-function compactCreateHeaderVenue(venue: string): string {
-  if (/hyperliquid/i.test(venue)) return 'Hyper'
-  if (/uniswap/i.test(venue)) return 'UniV3'
-  if (/polymarket/i.test(venue)) return 'Poly'
-  if (/aave/i.test(venue) && /morpho/i.test(venue)) return 'Aave/Morpho'
-  return venue.split('/')[0]?.trim() || venue
+function clampDraftValue(value: string, maxLength = 80): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, maxLength)
 }
 
 function formatOperatorLabel(operatorUrl: string | undefined) {
@@ -322,6 +462,14 @@ function formatOperatorLabel(operatorUrl: string | undefined) {
   }
 }
 
+function compactCapabilityLabel(label: string): string {
+  if (/hyperliquid/i.test(label)) return 'Hyper'
+  if (/prediction/i.test(label)) return 'Events'
+  if (/defi/i.test(label)) return 'Yield'
+  if (/evm/i.test(label)) return 'EVM Perps'
+  return label
+}
+
 interface CreateBotResponse {
   bot_id?: unknown
   id?: unknown
@@ -331,6 +479,7 @@ interface CreateBotResponse {
 
 export default function CreateAgent() {
   const [prompt, setPrompt] = useState(DEFAULT_STRATEGY_HINT.prompt)
+  const [selectedCapabilityIds, setSelectedCapabilityIds] = useState<CapabilityId[]>(DEFAULT_STRATEGY_HINT.capabilityIds)
   const [draftOverrides, setDraftOverrides] = useState<Partial<Record<DraftField, string>>>({})
   const [isCreating, setIsCreating] = useState(false)
   const [status, setStatus] = useState('')
@@ -346,17 +495,30 @@ export default function CreateAgent() {
   const navigate = useNavigate()
   const { getToken } = useOperatorAuth(ALL_TRADING_OPERATOR_API_URLS[0])
   const detectedStrategyType = useMemo(() => inferStrategyType(prompt), [prompt])
-  const detectedProfile = STRATEGY_PROFILES[detectedStrategyType]
+  const primaryCapability = useMemo(
+    () => primaryCapabilityFor(selectedCapabilityIds, detectedStrategyType),
+    [detectedStrategyType, selectedCapabilityIds],
+  )
+  const draftStrategyType = primaryCapability.strategyType
+  const detectedProfile = STRATEGY_PROFILES[draftStrategyType]
   const launchSteps = useMemo(() => detectedProfile.route.split(' -> '), [detectedProfile.route])
   const operatorLabel = formatOperatorLabel(ALL_TRADING_OPERATOR_API_URLS[0])
   const exactHint = STRATEGY_HINTS.find((hint) => prompt.trim() === hint.prompt)
-  const selectedHint = exactHint ?? STRATEGY_HINTS.find((hint) => hint.strategyType === detectedStrategyType) ?? STRATEGY_HINTS[0]
+  const selectedHint = exactHint ?? STRATEGY_HINTS.find((hint) => hint.capabilityIds.some((id) => selectedCapabilityIds.includes(id))) ?? STRATEGY_HINTS[0]
+  const selectedCapabilityLabels = useMemo(
+    () => capabilityLabels(selectedCapabilityIds),
+    [selectedCapabilityIds],
+  )
+  const preferredProtocols = useMemo(
+    () => preferredProtocolsForCapabilities(selectedCapabilityIds),
+    [selectedCapabilityIds],
+  )
   const draft = useMemo(() => buildStrategyDraft({
     prompt,
-    strategyType: detectedStrategyType,
+    strategyType: draftStrategyType,
     profile: detectedProfile,
     overrides: draftOverrides,
-  }), [detectedProfile, detectedStrategyType, draftOverrides, prompt])
+  }), [detectedProfile, draftOverrides, draftStrategyType, prompt])
   const compilerRows = useMemo(() => [
     {
       icon: 'i-ph:clock-countdown',
@@ -390,10 +552,10 @@ export default function CreateAgent() {
   ], [draft.drawdown, draft.name, selectedHint.label])
   const readinessRows = useMemo(() => [
     ['Operator', operatorLabel],
-    ['Pack', draft.provisionStrategyType],
+    ['Focus', selectedCapabilityLabels.join(', ')],
     ['Mode', draft.mode],
-    ['Risk', draft.drawdown],
-  ], [draft.drawdown, draft.mode, draft.provisionStrategyType, operatorLabel])
+    ['Access', `${ALL_WIRED_PROTOCOLS.length} protocols`],
+  ], [draft.mode, operatorLabel, selectedCapabilityLabels])
   const routeStatus = error ? error : status || `${draft.name} / ${draft.venue} / ${draft.drawdown}`
   const setDraftField = useCallback((field: DraftField, value: string) => {
     setDraftOverrides((current) => ({
@@ -402,12 +564,12 @@ export default function CreateAgent() {
     }))
   }, [])
   const persistDraft = useCallback(() => {
-    const promptWithDraft = buildCreatePrompt(draft)
+    const promptWithDraft = buildCreatePrompt(draft, selectedCapabilityIds)
     saveCreateStrategyDraft({
-      ...draft,
+      ...attachCapabilityFields(draft, selectedCapabilityIds),
       prompt: promptWithDraft,
     })
-  }, [draft])
+  }, [draft, selectedCapabilityIds])
   const workspaceStyle = {
     '--create-rail-width': `${layout.railWidth}px`,
   } as CSSProperties
@@ -447,15 +609,15 @@ export default function CreateAgent() {
     if (!prompt.trim() || isCreating) return
     const cleanDraft: CreateStrategyDraft = {
       ...draft,
-      name: clampDraftValue(draft.name, 64) || draftNameFor(detectedStrategyType, draft.market),
+      name: clampDraftValue(draft.name, 64) || draftNameFor(draftStrategyType, draft.market),
       market: clampDraftValue(draft.market),
       venue: clampDraftValue(draft.venue),
       sizing: clampDraftValue(draft.sizing),
       drawdown: clampDraftValue(draft.drawdown),
       mode: clampDraftValue(draft.mode, 32) || 'Paper start',
     }
-    const createPrompt = buildCreatePrompt(cleanDraft)
-    const strategyConfig = buildCreateStrategyConfig(cleanDraft)
+    const createPrompt = buildCreatePrompt(cleanDraft, selectedCapabilityIds)
+    const strategyConfig = buildCreateStrategyConfig(cleanDraft, selectedCapabilityIds)
     setIsCreating(true)
     setStatus('Parsing mandate…')
     setError('')
@@ -523,7 +685,7 @@ export default function CreateAgent() {
       const activationError = typeof data.activation_error === 'string' ? data.activation_error : ''
       setStatus(activationError ? 'Agent created. Activation needs attention…' : 'Agent created. Opening workspace…')
       saveCreateStrategyDraft({
-        ...cleanDraft,
+        ...attachCapabilityFields(cleanDraft, selectedCapabilityIds),
         prompt: createPrompt,
       })
 
@@ -536,7 +698,7 @@ export default function CreateAgent() {
       setError(message)
       setIsCreating(false)
     }
-  }, [detectedStrategyType, draft, prompt, isCreating, getToken, navigate])
+  }, [draft, draftStrategyType, prompt, isCreating, getToken, navigate, selectedCapabilityIds])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -549,12 +711,12 @@ export default function CreateAgent() {
     <div className="arena-trace-terminal flex min-h-full w-full overflow-y-auto bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)] lg:h-full lg:min-h-0 lg:overflow-hidden">
       <section className="flex w-full flex-1 flex-col lg:h-full lg:min-h-0">
         <ArenaPageHeader
-          title="Create"
+          title="New Agent"
           titleWidthClassName="min-[1180px]:w-[11rem]"
           metrics={[
-            { label: 'Draft', value: selectedHint.profile },
-            { label: 'Venue', value: compactCreateHeaderVenue(draft.venue), title: draft.venue },
-            { label: 'Route', value: 'Paper' },
+            { label: 'Focus', value: compactCapabilityLabel(primaryCapability.label), title: selectedCapabilityLabels.join(', ') },
+            { label: 'Access', value: `${ALL_WIRED_PROTOCOLS.length} venues`, title: ALL_WIRED_PROTOCOLS.join(', ') },
+            { label: 'Mode', value: 'Paper' },
           ]}
           controls={(
             <>
@@ -572,7 +734,7 @@ export default function CreateAgent() {
                 onClick={() => setLayout(DEFAULT_CREATE_WORKSPACE_LAYOUT)}
               />
               <ArenaHeaderLink to="/leaderboard" icon="i-ph:table">Agents</ArenaHeaderLink>
-              <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch" variant="primary">Deploy</ArenaHeaderLink>
+              <ArenaHeaderLink to="/provision?draft=create" icon="i-ph:rocket-launch" variant="primary" onClick={persistDraft}>Activate</ArenaHeaderLink>
             </>
           )}
         />
@@ -608,7 +770,11 @@ export default function CreateAgent() {
                 id="agent-strategy-prompt"
                 ref={textareaRef}
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                onChange={(e) => {
+                  const nextPrompt = e.target.value
+                  setPrompt(nextPrompt)
+                  setSelectedCapabilityIds(capabilityIdsForPrompt(nextPrompt, inferStrategyType(nextPrompt)))
+                }}
                 onKeyDown={handleKeyDown}
                 placeholder="Trade ETH-PERP momentum with 3x max leverage, 5% max drawdown, and a liquidation buffer…"
                 disabled={isCreating}
@@ -632,7 +798,7 @@ export default function CreateAgent() {
                     </p>
                   </div>
                   <span className="rounded-[4px] border border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-accent)]">
-                    Draft
+                    Paper
                   </span>
                 </div>
                 <div className="grid grid-cols-1 min-[1440px]:grid-cols-2">
@@ -679,14 +845,35 @@ export default function CreateAgent() {
               <section className="grid overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
                 <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2">
                   <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
-                    Risk Envelope
+                    Capabilities
                   </h2>
                   <p className="truncate font-mono text-[11px] text-[var(--arena-terminal-text-muted)]">
-                    Pre-trade checks
+                    Focus does not limit venue access
                   </p>
                 </div>
+                <div className="grid gap-1.5 border-b border-[var(--arena-terminal-border)] p-2 sm:grid-cols-2 min-[1440px]:grid-cols-3">
+                  {CAPABILITY_PROFILES.map((capability) => (
+                    <CapabilityToggle
+                      key={capability.id}
+                      capability={capability}
+                      active={selectedCapabilityIds.includes(capability.id)}
+                      disabled={isCreating}
+                      onToggle={() => {
+                        setSelectedCapabilityIds((current) => {
+                          const normalized = normalizeCapabilityIds(current)
+                          if (normalized.includes(capability.id)) {
+                            return normalized.length > 1
+                              ? normalized.filter((id) => id !== capability.id)
+                              : normalized
+                          }
+                          return normalizeCapabilityIds([...normalized, capability.id])
+                        })
+                      }}
+                    />
+                  ))}
+                </div>
                 <div className="grid gap-2 border-b border-[var(--arena-terminal-border)] p-2">
-                  {envelopeChecks.map((check) => (
+                  {envelopeChecks.slice(0, 4).map((check) => (
                     <RiskCheck key={check} label={check} />
                   ))}
                 </div>
@@ -694,6 +881,7 @@ export default function CreateAgent() {
                   {compilerRows.map((row) => (
                     <RouteChip key={row.label} icon={row.icon} label={row.label} value={row.value} />
                   ))}
+                  <RouteChip icon="i-ph:plug-charging" label="Access" value={`${ALL_WIRED_PROTOCOLS.length} wired protocols / focus ${preferredProtocols.join(', ')}`} />
                 </div>
               </section>
             </div>
@@ -723,7 +911,7 @@ export default function CreateAgent() {
                   <span className={`${detectedProfile.icon} text-lg`} aria-hidden="true" />
                 </span>
                 <div className="min-w-0">
-                  <h2 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">Strategy Presets</h2>
+                  <h2 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">Mandate Seeds</h2>
                   <p className="truncate font-mono text-xs text-[var(--arena-terminal-text-muted)]">{detectedProfile.label} / {detectedProfile.venue}</p>
                 </div>
               </div>
@@ -739,6 +927,7 @@ export default function CreateAgent() {
                       disabled={isCreating}
                       onSelect={() => {
                         setPrompt(hint.prompt)
+                        setSelectedCapabilityIds(hint.capabilityIds)
                         setDraftOverrides({})
                         setError('')
                         setStatus('')
@@ -808,7 +997,7 @@ export default function CreateAgent() {
                 className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 font-display text-xs font-semibold text-[var(--arena-terminal-text-secondary)] transition-[background-color,border-color,color,transform] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
               >
                 <span className="i-ph:rocket-launch text-base text-[var(--arena-terminal-accent)]" aria-hidden="true" />
-                Review in Deploy
+                Prepare Live Activation
               </Link>
             </section>
           </aside>
@@ -892,6 +1081,45 @@ function RiskCheck({ label }: { label: string }) {
         {label}
       </span>
     </div>
+  )
+}
+
+function CapabilityToggle({
+  capability,
+  active,
+  disabled,
+  onToggle,
+}: {
+  capability: typeof CAPABILITY_PROFILES[number]
+  active: boolean
+  disabled: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={disabled}
+      aria-pressed={active}
+      title={capability.summary}
+      className={`grid min-h-[54px] grid-cols-[24px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2 py-1.5 text-left transition-[background-color,border-color,box-shadow,opacity,transform] duration-150 active:scale-[0.99] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
+        active
+          ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_var(--arena-terminal-accent)]'
+          : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)]'
+      }`}
+    >
+      <span className="flex h-6 w-6 items-center justify-center rounded-[5px] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-accent)]">
+        <span className={`${capability.icon} text-sm`} aria-hidden="true" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate font-display text-[12px] font-semibold text-[var(--arena-terminal-text)]">
+          {capability.label}
+        </span>
+        <span className="block truncate font-mono text-[10px] text-[var(--arena-terminal-text-muted)]">
+          {capability.protocols.join(', ')}
+        </span>
+      </span>
+    </button>
   )
 }
 

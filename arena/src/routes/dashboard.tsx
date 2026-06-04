@@ -407,16 +407,16 @@ export default function HomePage() {
               No services or agents yet
             </h2>
             <p className="mt-1 text-sm text-[var(--arena-terminal-text-muted)]">
-              Start with a risk-gated operator deployment, then open the agent workspace once the service is live.
+              Start with a paper agent, then activate the runtime once the mandate is ready for operator-managed execution.
             </p>
           </div>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch" variant="primary">
-            Deploy Agent
+            Activate Agent
           </ArenaHeaderLink>
           <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">
-            Draft Strategy
+            New Agent
           </ArenaHeaderLink>
         </div>
       </div>
@@ -546,10 +546,10 @@ function DashboardHeaderControls() {
   return (
     <>
       <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">
-        Create
+        New Agent
       </ArenaHeaderLink>
       <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch" variant="primary">
-        Deploy
+        Activate
       </ArenaHeaderLink>
     </>
   );

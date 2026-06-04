@@ -120,8 +120,9 @@ describe('ConfigureStep', () => {
     expect(screen.getByPlaceholderText('e.g. Base USDC/WETH swing bot…')).toBeInTheDocument();
   });
 
-  it('renders strategy packs grid', () => {
+  it('renders capability focus grid', () => {
     render(<ConfigureStep {...defaultProps()} />);
+    expect(screen.getByText('Capability Focus')).toBeInTheDocument();
     expect(screen.getAllByText('DEX Swing').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('DeFi Yield')).toBeInTheDocument();
   });
@@ -136,13 +137,13 @@ describe('ConfigureStep', () => {
 
   it('disables next button when canNext is false', () => {
     render(<ConfigureStep {...defaultProps({ canNext: false })} />);
-    const nextBtn = screen.getByText('Review Provision');
+    const nextBtn = screen.getByText('Review Activation');
     expect(nextBtn).toBeDisabled();
   });
 
   it('enables next button when canNext is true', () => {
     render(<ConfigureStep {...defaultProps({ canNext: true })} />);
-    const nextBtn = screen.getByText('Review Provision');
+    const nextBtn = screen.getByText('Review Activation');
     expect(nextBtn).not.toBeDisabled();
   });
 
@@ -150,7 +151,7 @@ describe('ConfigureStep', () => {
     const goNext = vi.fn();
     const user = userEvent.setup();
     render(<ConfigureStep {...defaultProps({ canNext: true, goNext })} />);
-    await user.click(screen.getByText('Review Provision'));
+    await user.click(screen.getByText('Review Activation'));
     expect(goNext).toHaveBeenCalledOnce();
   });
 
@@ -163,11 +164,11 @@ describe('ConfigureStep', () => {
     expect(setName).toHaveBeenCalled();
   });
 
-  it('opens advanced settings on Customize click', async () => {
+  it('opens advanced settings on Runtime click', async () => {
     const setShowAdvanced = vi.fn();
     const user = userEvent.setup();
     render(<ConfigureStep {...defaultProps({ setShowAdvanced })} />);
-    await user.click(screen.getByText('Customize'));
+    await user.click(screen.getByText('Runtime'));
     expect(setShowAdvanced).toHaveBeenCalledWith(true);
   });
 
@@ -211,7 +212,7 @@ describe('ConfigureStep', () => {
 
   it('keeps runtime controls behind advanced settings', () => {
     render(<ConfigureStep {...defaultProps()} />);
-    expect(screen.getByText('Customize')).toBeInTheDocument();
+    expect(screen.getByText('Runtime')).toBeInTheDocument();
     expect(screen.queryByLabelText('Runtime Backend')).not.toBeInTheDocument();
     expect(screen.queryByText('Open Infrastructure Settings')).not.toBeInTheDocument();
   });

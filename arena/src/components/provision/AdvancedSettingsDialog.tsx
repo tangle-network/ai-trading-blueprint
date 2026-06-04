@@ -157,10 +157,10 @@ export function AdvancedSettingsDialog({
       <DialogContent className="arena-trace-terminal flex max-h-[85vh] flex-col overflow-hidden rounded-[7px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text)] shadow-[var(--arena-terminal-shadow-lg)] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="font-display text-lg">
-            Advanced Configuration: {selectedPack.name}
+            Runtime Settings: {selectedPack.name}
           </DialogTitle>
           <DialogDescription className="text-sm">
-            Configure runtime, infrastructure, scheduling, and agent instruction overlays.
+            Set runtime, venue target, cadence, validators, and instruction overlays for activation.
           </DialogDescription>
         </DialogHeader>
 

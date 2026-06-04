@@ -9,7 +9,7 @@ const navItems = [
   { label: 'Home', href: '/' },
   { label: 'Leaderboard', href: '/leaderboard' },
   { label: 'My Agents', href: '/dashboard' },
-  { label: 'Deploy', href: '/provision' },
+  { label: 'New Agent', href: '/create' },
 ];
 
 export function Header() {

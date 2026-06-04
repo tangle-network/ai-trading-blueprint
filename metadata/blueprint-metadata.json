@@ -10,7 +10,7 @@
   "integrity": null,
   "blueprintUi": {
     "displayName": "AI Trading Desk",
-    "description": "Operate sandboxed trading bots with strategy packs, validator status, vault controls, and execution history rendered by the secure shared host.",
+    "description": "Operate sandboxed trading agents with paper-first mandates, venue capability focus, validator status, vault controls, and execution history rendered by the secure shared host.",
     "slug": "ai-trading",
     "requestedSlug": "ai-trading",
     "publisher": {
@@ -51,9 +51,9 @@
         "tone": "success"
       },
       {
-        "id": "strategy-packs",
+        "id": "capability-focus",
         "kind": "checklist",
-        "title": "Strategy packs",
+        "title": "Venue capabilities",
         "items": [
           "Prediction markets",
           "DEX execution",
@@ -75,10 +75,10 @@
     "actions": [
       {
         "id": "provision-bot",
-        "label": "Provision bot",
-        "description": "Create a sandboxed trading bot with explicit strategy and runtime backend.",
+        "label": "Activate bot",
+        "description": "Create a sandboxed trading agent with explicit mandate, capability focus, and runtime backend.",
         "target": "service",
-        "submitLabel": "Provision bot",
+        "submitLabel": "Activate bot",
         "fields": [
           {
             "key": "bot_name",
@@ -89,7 +89,7 @@
           },
           {
             "key": "strategy_pack",
-            "label": "Strategy pack",
+            "label": "Capability focus",
             "input": "select",
             "required": true,
             "options": [

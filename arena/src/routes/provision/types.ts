@@ -8,9 +8,9 @@ export type WizardStep = 'blueprint' | 'configure' | 'deploy' | 'secrets';
 export const STEP_ORDER: WizardStep[] = ['blueprint', 'configure', 'deploy', 'secrets'];
 export const STEP_LABELS: Record<WizardStep, string> = {
   blueprint: 'Blueprint',
-  configure: 'Configure',
+  configure: 'Agent',
   deploy: 'Provision',
-  secrets: 'Activate',
+  secrets: 'Run',
 };
 
 /** Maps Rust provision progress phases to human-readable labels */
