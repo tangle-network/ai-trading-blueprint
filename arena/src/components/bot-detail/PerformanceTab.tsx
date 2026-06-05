@@ -869,7 +869,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           aria-label="Loading performance workspace"
         >
           <div className="col-start-1 row-start-1 flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
-            <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[72px] min-[1120px]:flex-row min-[1120px]:items-stretch">
+            <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[78px] min-[1120px]:flex-row min-[1120px]:items-stretch">
               <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1120px]:w-[178px] min-[1120px]:border-b-0 min-[1120px]:border-r">
                 <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--arena-terminal-success-soft)] text-[var(--arena-terminal-success)]">
                   <span className="i-ph:chart-line-up text-base" />
@@ -961,17 +961,17 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         style={workspaceStyle}
       >
         <div className="col-start-1 row-start-1 flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
-          <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[72px] min-[1120px]:flex-row min-[1120px]:items-stretch">
+          <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[78px] min-[1120px]:flex-row min-[1120px]:items-stretch">
             <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1120px]:w-[178px] min-[1120px]:border-b-0 min-[1120px]:border-r">
               <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--arena-terminal-success-soft)] text-[var(--arena-terminal-success)]">
                 <span className="i-ph:chart-line-up text-base" />
               </div>
               <div className="min-w-0">
-                <h2 className="truncate font-display text-lg font-semibold leading-tight text-[#f6fefd]">
+                <h2 className="truncate font-display text-lg font-semibold leading-tight text-[#f6fefd] min-[1440px]:text-xl">
                   {chartHeading}
                 </h2>
                 {(lastCheckpointLabel || liveNavLabel) && (
-                  <div className="mt-0.5 truncate font-data text-[11px] text-[#949e9c]">
+                  <div className="mt-0.5 truncate font-data text-[11px] text-[#949e9c] min-[1440px]:text-xs">
                     {lastCheckpointLabel ?? 'checkpoint unavailable'}
                     {liveNavLabel ? ` · live ${liveNavLabel}` : ''}
                   </div>
@@ -982,14 +982,14 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             <div className="grid min-w-0 flex-1 grid-cols-5 divide-x divide-[#273035] overflow-hidden">
               {chartStats.map((stat) => (
                 <div key={stat.label} className="min-w-0 px-2.5 py-2 min-[1440px]:px-3">
-                  <div className="truncate font-data text-[11px] text-[#949e9c]">
+                  <div className="truncate font-data text-[11px] text-[#949e9c] min-[1440px]:text-xs">
                     {stat.shortLabel}
                   </div>
-                  <div className={`mt-1 truncate font-data text-[15px] font-semibold leading-none tabular-nums ${terminalStatValueClass(stat.tone)}`}>
+                  <div className={`mt-1 truncate font-data text-lg font-semibold leading-none tabular-nums min-[1440px]:text-xl ${terminalStatValueClass(stat.tone)}`}>
                     {stat.value}
                   </div>
                   {'subvalue' in stat && stat.subvalue && (
-                    <div className="mt-1 hidden truncate font-data text-[11px] text-[#949e9c] min-[1440px]:block">
+                    <div className="mt-1 hidden truncate font-data text-xs text-[#949e9c] min-[1440px]:block">
                       {stat.subvaluePrefix ? `${stat.subvaluePrefix} ` : ''}{stat.subvalue}
                     </div>
                   )}
@@ -1017,7 +1017,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   <button
                     key={mode}
                     type="button"
-                    className={`h-7 rounded-[4px] px-2.5 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] disabled:cursor-not-allowed disabled:opacity-45 ${
+                    className={`h-8 rounded-[4px] px-3 font-data text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] disabled:cursor-not-allowed disabled:opacity-45 min-[1440px]:text-sm ${
                       effectiveChartMode === mode
                         ? 'bg-[var(--arena-terminal-accent)] text-[var(--arena-terminal-accent-text)]'
                         : 'text-[#d2dad7] hover:bg-[#344148] hover:text-[#f6fefd]'
@@ -1039,7 +1039,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   <button
                     key={item.value}
                     type="button"
-                    className={`h-7 rounded-[4px] px-2 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
+                    className={`h-8 rounded-[4px] px-2.5 font-data text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] min-[1440px]:text-sm ${
                       range === item.value
                         ? 'bg-[var(--arena-terminal-text)] text-[var(--arena-terminal-bg)]'
                         : 'text-[#949e9c] hover:bg-[#344148] hover:text-[#f6fefd]'
@@ -1060,10 +1060,10 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
               className="grid shrink-0 gap-px border-b border-[#273035] bg-[#273035] min-[900px]:grid-cols-[minmax(0,1.08fr)_repeat(5,minmax(0,1fr))]"
             >
               <div className="min-w-0 bg-[#0b1418] px-3 py-2">
-                <div className="font-data text-[10px] uppercase tracking-[0.12em] text-[#697371]">
+                <div className="font-data text-[11px] uppercase tracking-[0.12em] text-[#697371] min-[1440px]:text-xs">
                   Perp Risk
                 </div>
-                <div className="mt-1 truncate font-display text-sm font-semibold text-[#f6fefd]">
+                <div className="mt-1 truncate font-display text-base font-semibold text-[#f6fefd] min-[1440px]:text-lg">
                   {hyperliquidRiskSnapshot == null
                     ? 'Risk feed pending'
                     : hyperliquidRiskSnapshot.positions.length === 0
@@ -1118,13 +1118,13 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                 },
               ].map((item) => (
                 <div key={item.label} className="min-w-0 bg-[#0f1a1f] px-3 py-2">
-                  <div className="truncate font-data text-[10px] uppercase tracking-[0.12em] text-[#697371]">
+                  <div className="truncate font-data text-[11px] uppercase tracking-[0.12em] text-[#697371] min-[1440px]:text-xs">
                     {item.label}
                   </div>
-                  <div className={`mt-1 truncate font-data text-sm font-semibold tabular-nums ${item.tone}`}>
+                  <div className={`mt-1 truncate font-data text-base font-semibold tabular-nums min-[1440px]:text-lg ${item.tone}`}>
                     {item.value}
                   </div>
-                  <div className="mt-0.5 truncate font-data text-[10px] text-[#949e9c]">
+                  <div className="mt-0.5 truncate font-data text-[11px] text-[#949e9c] min-[1440px]:text-xs">
                     {item.subvalue}
                   </div>
                 </div>
@@ -1254,7 +1254,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   aria-label="Recent fills"
                   tabIndex={0}
                 >
-                  <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_128px] border-b border-[#273035] bg-[#0b1418]/95 px-2 py-1 font-data text-[11px] uppercase text-[#697371] backdrop-blur min-[1440px]:grid-cols-[minmax(0,1fr)_136px]">
+                  <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_128px] border-b border-[#273035] bg-[#0b1418]/95 px-2 py-1 font-data text-xs uppercase text-[#697371] backdrop-blur min-[1440px]:grid-cols-[minmax(0,1fr)_144px]">
                     <span>Fill</span>
                     <span className="text-right">Notional</span>
                   </div>
@@ -1269,7 +1269,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                         <button
                           key={trade.id}
                           type="button"
-                          className={`grid min-h-[52px] w-full grid-cols-[minmax(0,1fr)_128px] items-center gap-2 px-2 py-1 text-left transition-colors min-[1440px]:grid-cols-[minmax(0,1fr)_136px] ${
+                          className={`grid min-h-[54px] w-full grid-cols-[minmax(0,1fr)_128px] items-center gap-2 px-2 py-1 text-left transition-colors min-[1440px]:grid-cols-[minmax(0,1fr)_144px] ${
                             selected
                               ? 'bg-[#132329] shadow-[inset_3px_0_0_rgba(80,210,193,0.82)]'
                               : 'hover:bg-[#101f25]'
@@ -1280,10 +1280,10 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                         >
                           <div className="min-w-0">
                             <div className="flex min-w-0 items-center gap-2">
-                              <span className={`min-w-0 truncate font-data text-[13px] font-bold uppercase leading-4 ${getTradeActionToneClass(trade.action)}`}>
+                              <span className={`min-w-0 truncate font-data text-sm font-bold uppercase leading-4 ${getTradeActionToneClass(trade.action)}`}>
                                 {formatTradeActionLabel(trade.action)}
                               </span>
-                              <span className="shrink-0 font-data text-[11px] leading-3 text-[#697371]">
+                              <span className="shrink-0 font-data text-xs leading-3 text-[#697371]">
                                 {formatFillTapeTime(trade.timestamp)}
                               </span>
                             </div>
@@ -1293,15 +1293,15 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                               size="sm"
                               showVenue={false}
                               showSecondary={false}
-                              labelClassName="max-w-full !truncate text-[14px] !leading-4 !text-[var(--arena-terminal-text)]"
+                              labelClassName="max-w-full !truncate text-[15px] !leading-4 !text-[var(--arena-terminal-text)]"
                             />
                           </div>
                           <div className="min-w-0 text-right">
-                            <div className="font-data text-[15px] font-semibold tabular-nums leading-5 text-[#f6fefd]">
+                            <div className="font-data text-base font-semibold tabular-nums leading-5 text-[#f6fefd] min-[1440px]:text-[17px]">
                               {formatTradeUsd(trade.notionalUsd)}
                             </div>
                             {showFillDetail && (
-                              <div className="truncate font-data text-[11px] leading-3 text-[#697371]">
+                              <div className="truncate font-data text-xs leading-3 text-[#697371]">
                                 {showFillDetail}
                               </div>
                             )}
@@ -1318,14 +1318,14 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   {selectedDecision ? (
                     <div className="min-w-0">
                       <div className="flex min-w-0 items-center justify-between gap-3">
-                        <div className="truncate font-data text-xs font-semibold uppercase text-[var(--arena-terminal-accent)]">
+                        <div className="truncate font-data text-sm font-semibold uppercase text-[var(--arena-terminal-accent)]">
                           {selectedDecision.actionLabel}
                         </div>
-                        <div className="shrink-0 font-data text-[11px] text-[#949e9c]">
+                        <div className="shrink-0 font-data text-xs text-[#949e9c]">
                           {selectedDecision.statusLabel}
                         </div>
                       </div>
-                      <p className="mt-0.5 line-clamp-1 text-[13px] leading-4 text-[#d2dad7]">
+                      <p className="mt-0.5 line-clamp-1 text-sm leading-5 text-[#d2dad7]">
                         {selectedDecision.reason}
                       </p>
                     </div>

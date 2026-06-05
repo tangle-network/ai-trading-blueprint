@@ -291,11 +291,11 @@ export function LatestAgentTrades({
                 <Link
                   key={`${botId}:${trade.id}`}
                   to={href}
-                  className="group grid w-full grid-cols-[3rem_minmax(0,1fr)_5.75rem] items-center gap-2 px-2.5 py-2.5 text-left transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                  className="group grid w-full grid-cols-[3.25rem_minmax(0,1fr)_6.25rem] items-center gap-2 px-2.5 py-2.5 text-left transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
                   aria-label={`Open ${agentName} performance for ${formatTradeActionLabel(trade.action)} ${getTradeMarketLabel(trade)} fill ${formatTradeUsd(trade.notionalUsd)} ${formatTradeAge(trade.timestamp)}`}
                 >
                   <span
-                    className="font-data text-[13px] text-[var(--arena-terminal-text-subtle)]"
+                    className="font-data text-sm text-[var(--arena-terminal-text-subtle)]"
                     title={formatTradeTimestamp(trade.timestamp)}
                   >
                     {formatTradeAge(trade.timestamp)}
@@ -307,7 +307,7 @@ export function LatestAgentTrades({
                       ) : (
                         <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
                       )}
-                      <span className="truncate font-display text-[15px] font-semibold text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
+                      <span className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
                         {agentName}
                       </span>
                     </span>
@@ -316,16 +316,16 @@ export function LatestAgentTrades({
                         trade={trade}
                         size="sm"
                         showVenue={false}
-                        labelClassName="max-w-full text-[14px]"
+                        labelClassName="max-w-full text-[15px]"
                         terminal
                       />
                     </span>
                   </span>
                   <span className="flex min-w-0 flex-col items-end gap-1">
-                    <span className="truncate text-right font-data text-[14px] font-semibold text-[var(--arena-terminal-text)]">
+                    <span className="truncate text-right font-data text-base font-semibold text-[var(--arena-terminal-text)]">
                       {formatTradeUsd(trade.notionalUsd)}
                     </span>
-                    <span className={`inline-flex h-6 max-w-full items-center justify-center truncate rounded-[4px] px-1.5 font-data text-[10px] font-bold ${getTerminalTradeActionPillClass(trade.action)}`}>
+                    <span className={`inline-flex h-6 max-w-full items-center justify-center truncate rounded-[4px] px-1.5 font-data text-[11px] font-bold ${getTerminalTradeActionPillClass(trade.action)}`}>
                       {formatTradeActionLabel(trade.action)}
                     </span>
                   </span>
@@ -392,7 +392,7 @@ export function LatestAgentTrades({
                         onKeyDown={(event) => handleExplorerRowKeyDown(event, trade.id)}
                       >
                         <td
-                          className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle font-data text-xs text-[var(--arena-terminal-text-muted)]"
+                          className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle font-data text-[13px] text-[var(--arena-terminal-text-muted)]"
                           title={formatTradeTimestamp(trade.timestamp)}
                         >
                           {formatTradeAge(trade.timestamp)}
@@ -404,14 +404,14 @@ export function LatestAgentTrades({
                             ) : (
                               <span className="i-ph:robot inline-block size-5 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
                             )}
-                            <span className="truncate font-display text-[13px] font-semibold text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
+                            <span className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
                               {agentName}
                             </span>
                           </span>
                         </td>
                         <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 align-middle">
                           <span
-                            className={`inline-flex h-6 min-w-[4.75rem] items-center justify-start rounded-none bg-transparent px-0 font-data text-[11px] font-bold transition-[color,opacity] duration-150 ${getTradeActionToneClass(trade.action)}`}
+                            className={`inline-flex h-6 min-w-[4.75rem] items-center justify-start rounded-none bg-transparent px-0 font-data text-xs font-bold transition-[color,opacity] duration-150 ${getTradeActionToneClass(trade.action)}`}
                           >
                             {formatTradeActionLabel(trade.action)}
                           </span>
@@ -425,7 +425,7 @@ export function LatestAgentTrades({
                             terminal
                           />
                         </td>
-                        <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right align-middle font-data text-sm font-semibold text-[var(--arena-terminal-text)]">
+                        <td className="border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right align-middle font-data text-[15px] font-semibold text-[var(--arena-terminal-text)]">
                           {formatTradeUsd(trade.notionalUsd)}
                         </td>
                         <td className="hidden border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right align-middle font-data text-xs text-[var(--arena-terminal-text-muted)] 2xl:table-cell">
@@ -438,7 +438,7 @@ export function LatestAgentTrades({
               </table>
             </div>
             <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-t border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3">
-              <span className="font-data text-xs tabular-nums text-[var(--arena-terminal-text-muted)]">
+              <span className="font-data text-[13px] tabular-nums text-[var(--arena-terminal-text-muted)]">
                 {visibleTrades.length > 0 ? `${formatNumber(explorerPageStart + 1, { maximumFractionDigits: 0 })}-${formatNumber(explorerPageEnd, { maximumFractionDigits: 0 })}` : '0'} / {formatNumber(visibleTrades.length, { maximumFractionDigits: 0 })}
               </span>
               <div className="flex shrink-0 items-center gap-1.5">
@@ -451,7 +451,7 @@ export function LatestAgentTrades({
                 >
                   <span className="i-ph:caret-left-bold text-xs" aria-hidden="true" />
                 </button>
-                <span className="min-w-12 text-center font-data text-xs tabular-nums text-[var(--arena-terminal-text-secondary)]">
+                <span className="min-w-12 text-center font-data text-[13px] tabular-nums text-[var(--arena-terminal-text-secondary)]">
                   {formatNumber(explorerPage, { maximumFractionDigits: 0 })} / {formatNumber(explorerPageCount, { maximumFractionDigits: 0 })}
                 </span>
                 <button
@@ -626,12 +626,12 @@ function FillInspector({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="mb-2 flex items-center gap-2">
-              <span className={`inline-flex h-7 items-center justify-center rounded-[4px] px-2 font-data text-[11px] font-bold ${getTerminalTradeActionPillClass(trade.action)}`}>
+              <span className={`inline-flex h-7 items-center justify-center rounded-[4px] px-2 font-data text-xs font-bold ${getTerminalTradeActionPillClass(trade.action)}`}>
                 {formatTradeActionLabel(trade.action)}
               </span>
               <span className="font-mono text-xs text-[var(--arena-terminal-text-muted)]">{formatTradeTimestamp(trade.timestamp)}</span>
             </div>
-            <h3 className="truncate font-display text-lg font-semibold text-[var(--arena-terminal-text)]">
+            <h3 className="truncate font-display text-xl font-semibold text-[var(--arena-terminal-text)]">
               {formatTradeUsd(trade.notionalUsd)}
             </h3>
             <p className="mt-1 truncate font-mono text-xs text-[var(--arena-terminal-text-muted)]">
@@ -640,7 +640,7 @@ function FillInspector({
           </div>
           <Link
             to={`/arena/bot/${encodeURIComponent(botId)}/performance`}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2.5 font-display text-xs font-semibold text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2.5 font-display text-sm font-semibold text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
           >
             <span className="i-ph:arrow-square-out text-sm" aria-hidden="true" />
             Agent
@@ -657,7 +657,7 @@ function FillInspector({
               <span className="i-ph:robot inline-block size-6 shrink-0 rounded-full bg-arena-elements-item-backgroundActive text-arena-elements-textTertiary" />
             )}
             <div className="min-w-0">
-              <div className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">{agentName}</div>
+              <div className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">{agentName}</div>
               <div className="truncate font-mono text-xs text-[var(--arena-terminal-text-muted)]">{bot?.strategyType ?? 'strategy'}</div>
             </div>
           </div>
@@ -716,8 +716,8 @@ function FillInspector({
 function InspectorRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2 last:border-b-0">
-      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">{label}</span>
-      <span className="min-w-0 truncate text-right font-mono text-xs text-[var(--arena-terminal-text-secondary)]">{value || '—'}</span>
+      <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">{label}</span>
+      <span className="min-w-0 truncate text-right font-mono text-sm text-[var(--arena-terminal-text-secondary)]">{value || '—'}</span>
     </div>
   );
 }

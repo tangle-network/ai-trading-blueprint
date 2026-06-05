@@ -30,7 +30,7 @@ interface LeaderboardTableProps {
 
 function RankCell({ rank }: { rank: number }) {
   return (
-    <span className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] font-data text-xs font-semibold text-[var(--arena-terminal-text-muted)]">
+    <span className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] font-data text-sm font-semibold text-[var(--arena-terminal-text-muted)]">
       {formatNumber(rank, { maximumFractionDigits: 0 })}
     </span>
   );
@@ -174,25 +174,25 @@ export function LeaderboardTable({
               <dl className="col-span-3 grid min-w-0 grid-cols-4 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
                 <div className="min-w-0 border-r border-[var(--arena-terminal-border)] px-2 py-2">
                   <dt className="truncate font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">Vol</dt>
-                  <dd className="mt-1 truncate font-data text-sm font-semibold tabular-nums text-[var(--arena-terminal-text)]">
+                  <dd className="mt-1 truncate font-data text-base font-semibold tabular-nums text-[var(--arena-terminal-text)]">
                     {formatFlowUsd(stats?.recentNotionalUsd ?? 0)}
                   </dd>
                 </div>
                 <div className="min-w-0 border-r border-[var(--arena-terminal-border)] px-2 py-2">
                   <dt className="truncate font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">Fills</dt>
-                  <dd className="mt-1 truncate font-data text-sm font-semibold tabular-nums text-[var(--arena-terminal-text)]">
+                  <dd className="mt-1 truncate font-data text-base font-semibold tabular-nums text-[var(--arena-terminal-text)]">
                     {formatNumber(stats?.recentFills ?? 0, { maximumFractionDigits: 0 })}
                   </dd>
                 </div>
                 <div className="min-w-0 border-r border-[var(--arena-terminal-border)] px-2 py-2">
                   <dt className="truncate font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">Last</dt>
-                  <dd className="mt-1 truncate font-data text-sm tabular-nums text-[var(--arena-terminal-text-secondary)]">
+                  <dd className="mt-1 truncate font-data text-base tabular-nums text-[var(--arena-terminal-text-secondary)]">
                     {lastTradeAt != null ? formatTradeAge(lastTradeAt) : 'No fills'}
                   </dd>
                 </div>
                 <div className="min-w-0 px-2 py-2 text-right">
                   <dt className="truncate font-data text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">PnL</dt>
-                  <dd className="mt-1 truncate font-data text-sm font-semibold tabular-nums">
+                  <dd className="mt-1 truncate font-data text-base font-semibold tabular-nums">
                     {bot.pnlPercent === 0 ? (
                       <span className="text-[var(--arena-terminal-text-subtle)]">{returnValue}</span>
                     ) : bot.pnlPercent > 0 ? (
@@ -264,7 +264,7 @@ export function LeaderboardTable({
           return (
           <TableRow
             key={bot.id}
-            className={`group cursor-pointer border-b border-[var(--arena-terminal-border)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] [content-visibility:auto] [contain-intrinsic-size:54px] ${
+            className={`group cursor-pointer border-b border-[var(--arena-terminal-border)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] [content-visibility:auto] [contain-intrinsic-size:58px] ${
               selected ? 'bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_var(--arena-terminal-accent)]' : 'bg-[var(--arena-terminal-panel)]'
             }`}
             role="button"
@@ -311,27 +311,27 @@ export function LeaderboardTable({
                 <span className="truncate">{truncateAddress(bot.operatorAddress)}</span>
               </div>
             </TableCell>
-            <TableCell className="py-2 text-right align-middle font-data text-sm text-[var(--arena-terminal-text)]">
+            <TableCell className="py-2 text-right align-middle font-data text-base text-[var(--arena-terminal-text)]">
               {formatFlowUsd(stats?.recentNotionalUsd ?? 0)}
             </TableCell>
-            <TableCell className="py-2 text-right align-middle font-data text-sm font-bold text-[var(--arena-terminal-text)]">
+            <TableCell className="py-2 text-right align-middle font-data text-base font-bold text-[var(--arena-terminal-text)]">
               {formatNumber(stats?.recentFills ?? 0, { maximumFractionDigits: 0 })}
             </TableCell>
             <TableCell
-              className="py-2 text-right align-middle font-data text-sm text-[var(--arena-terminal-text)]"
+              className="py-2 text-right align-middle font-data text-base text-[var(--arena-terminal-text)]"
               title={fillCountEvidenceTitle(totalFillEvidence)}
             >
               {totalFillEvidence.value > 0
                 ? formatNumber(totalFillEvidence.value, { maximumFractionDigits: 0 })
                 : '—'}
             </TableCell>
-            <TableCell className="py-2 text-right align-middle font-data text-sm text-[var(--arena-terminal-text-secondary)]">
+            <TableCell className="py-2 text-right align-middle font-data text-base text-[var(--arena-terminal-text-secondary)]">
               {lastTradeAt != null ? formatTradeAge(lastTradeAt) : 'No fills'}
             </TableCell>
-            <TableCell className="hidden py-2 text-right align-middle font-data text-sm text-[var(--arena-terminal-text-secondary)] min-[1320px]:table-cell">
+            <TableCell className="hidden py-2 text-right align-middle font-data text-base text-[var(--arena-terminal-text-secondary)] min-[1320px]:table-cell">
               {modeLabel(bot)}
             </TableCell>
-            <TableCell className="py-2 text-right align-middle font-data text-sm font-bold">
+            <TableCell className="py-2 text-right align-middle font-data text-base font-bold">
               {bot.pnlPercent === 0 ? (
                 <span className="text-[var(--arena-terminal-text-subtle)]">{returnValue}</span>
               ) : bot.pnlPercent > 0 ? (

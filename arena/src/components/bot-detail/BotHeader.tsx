@@ -280,13 +280,13 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
           </div>
 
           <Tooltip.Provider delayDuration={150}>
-            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6 xl:min-w-[560px]">
+            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6 xl:min-w-[590px]">
               {metrics.map((stat) => (
                 <div
                   key={stat.label}
-                  className="min-h-[48px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]"
+                  className="min-h-[54px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] md:min-h-[60px]"
                 >
-                  <div className="mb-0.5 flex min-h-[16px] items-start gap-1 text-[9px] font-data font-medium uppercase leading-tight tracking-wider text-arena-elements-textTertiary">
+                  <div className="mb-1 flex min-h-[16px] items-start gap-1 text-[10px] font-data font-medium uppercase leading-tight tracking-wider text-arena-elements-textTertiary md:text-[11px]">
                     <span className="break-words">{stat.label}</span>
                     {stat.title && (
                       <Tooltip.Root>
@@ -313,7 +313,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                       </Tooltip.Root>
                     )}
                   </div>
-                  <div className={`truncate font-data text-base font-bold leading-tight ${stat.color}`}>
+                  <div className={`truncate font-data text-lg font-bold leading-tight md:text-xl xl:text-[1.35rem] ${stat.color}`}>
                     {stat.value}
                   </div>
                 </div>
@@ -344,7 +344,7 @@ export function BotHeader({ bot, activeTab, navItems = [], onTabChange }: BotHea
                         type="button"
                         onClick={() => onTabChange(item.value)}
                         aria-current={selected ? 'page' : undefined}
-                        className={`group inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 ${
+                        className={`group inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 lg:h-10 lg:px-3 lg:text-[15px] ${
                           selected
                             ? 'border-violet-500/35 bg-violet-500/14 text-arena-elements-textPrimary shadow-[0_0_0_1px_rgba(142,89,255,0.08)]'
                             : 'border-transparent text-arena-elements-textSecondary hover:border-arena-elements-dividerColor/70 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'

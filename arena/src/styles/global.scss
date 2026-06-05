@@ -130,6 +130,18 @@
   }
 }
 
+.arena-command-link-primary,
+.arena-command-link-secondary {
+  font-size: 0.875rem;
+}
+
+@media (min-width: 1024px) {
+  .arena-command-link-primary,
+  .arena-command-link-secondary {
+    font-size: 0.9375rem;
+  }
+}
+
 .arena-trade-pill-buy,
 .arena-trade-pill-sell,
 .arena-trade-pill-neutral {
@@ -309,12 +321,19 @@
   gap: 0.35rem;
   border-radius: 3px;
   font-family: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 0.075em;
   line-height: 1;
   text-transform: uppercase;
   color: color-mix(in srgb, var(--arena-terminal-text) 72%, var(--arena-terminal-text-muted));
+}
+
+@media (min-width: 1024px) {
+  .arena-sort-header-button,
+  .arena-table-header-label {
+    font-size: 0.8125rem;
+  }
 }
 
 .arena-sort-header-button {

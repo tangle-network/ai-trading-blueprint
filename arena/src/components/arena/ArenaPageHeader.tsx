@@ -23,10 +23,10 @@ export const ArenaHeaderUtilitiesContext = createContext<ReactNode>(null);
 export function ArenaHeaderMetric({ value, label, title }: ArenaPageMetric) {
   return (
     <div className="min-w-0" title={title}>
-      <div className="truncate font-data text-sm font-bold leading-none text-[var(--arena-terminal-text)]">
+      <div className="truncate font-data text-base font-bold leading-none text-[var(--arena-terminal-text)] md:text-lg">
         {value}
       </div>
-      <div className="mt-0.5 truncate font-data text-[10px] uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
+      <div className="mt-0.5 truncate font-data text-[11px] uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)] md:text-xs">
         {label}
       </div>
     </div>
@@ -54,7 +54,7 @@ export function ArenaHeaderLink({
     <Link
       to={to}
       onClick={onClick}
-      className={`inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border px-3 text-sm font-display font-medium transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${variantClassName}`}
+      className={`inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border px-3 text-sm font-display font-medium transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] lg:h-10 lg:px-3.5 lg:text-[15px] ${variantClassName}`}
     >
       <span className={`${icon} text-sm`} aria-hidden="true" />
       {children}

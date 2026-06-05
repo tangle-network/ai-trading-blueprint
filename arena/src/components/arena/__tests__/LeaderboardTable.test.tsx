@@ -68,7 +68,7 @@ describe('LeaderboardTable', () => {
     const table = screen.getByRole('table');
     expect(table).toHaveClass('rounded-none');
     expect(table.parentElement).toHaveClass('rounded-none');
-    expect(container.querySelector('tr[role="button"]')).toHaveClass('[contain-intrinsic-size:54px]');
+    expect(container.querySelector('tr[role="button"]')).toHaveClass('[contain-intrinsic-size:58px]');
     expect(within(table).getByText('24H')).toBeInTheDocument();
     expect(within(table).getByText('Total')).toBeInTheDocument();
     expect(within(table).getByTitle('Visible fills from the latest fetched trade ledger.')).toHaveTextContent('12');

@@ -1904,14 +1904,14 @@ export function TradingPerformanceChart({
             boxShadow: chartTheme.tooltipShadow,
           }}
         >
-          <div className="font-data text-[11px]" style={{ color: chartTheme.tooltipTitleColor }}>
+          <div className="font-data text-xs" style={{ color: chartTheme.tooltipTitleColor }}>
             {readout.label}
           </div>
-          <div className="mt-0.5 font-data text-xl font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
+          <div className="mt-0.5 font-data text-2xl font-semibold tabular-nums md:text-[1.7rem]" style={{ color: chartTheme.tooltipBodyColor }}>
             {formatAxisCurrency(readout.value)}
           </div>
           {readout.detail && (
-            <div className="mt-1 font-data text-[11px]" style={{ color: chartTheme.tooltipTitleColor }}>
+            <div className="mt-1 font-data text-xs" style={{ color: chartTheme.tooltipTitleColor }}>
               {readout.detail}
             </div>
           )}
@@ -1933,7 +1933,7 @@ export function TradingPerformanceChart({
               <button
                 key={control.id}
                 type="button"
-                className="h-7 rounded-sm border px-2 font-data text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+                className="h-8 rounded-sm border px-2.5 font-data text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45 md:text-[13px]"
                 style={{
                   background: pressed
                     ? chartTheme.tooltipBodyColor
@@ -1961,7 +1961,7 @@ export function TradingPerformanceChart({
           })}
           {agentStudyLines.length > 0 && (
             <span
-              className="inline-flex h-7 max-w-[220px] items-center truncate rounded-sm border px-2 font-data text-[11px] font-semibold"
+              className="inline-flex h-8 max-w-[240px] items-center truncate rounded-sm border px-2.5 font-data text-xs font-semibold md:text-[13px]"
               style={{
                 background: chartTheme.tooltipBg,
                 borderColor: STUDY_LINE_COLORS.vwap,
@@ -1977,7 +1977,7 @@ export function TradingPerformanceChart({
       )}
       {activeMode === 'market' && navSeriesData.length > 0 && (
         <div
-          className="pointer-events-none absolute bottom-2 left-3 rounded-sm border px-2 py-0.5 font-data text-[10px] font-semibold"
+          className="pointer-events-none absolute bottom-2 left-3 rounded-sm border px-2.5 py-1 font-data text-xs font-semibold"
           style={{
             background: chartTheme.tooltipBg,
             borderColor: chartTheme.tooltipBorder,
@@ -2003,16 +2003,16 @@ export function TradingPerformanceChart({
               style={{ backgroundColor: featuredExecution.color }}
               aria-hidden="true"
             />
-            <span className="truncate font-data text-xs font-semibold" style={{ color: chartTheme.tooltipBodyColor }}>
+            <span className="truncate font-data text-sm font-semibold" style={{ color: chartTheme.tooltipBodyColor }}>
               {featuredExecution.count > 1
                 ? `${featuredExecution.marker.text} x${formatNumber(featuredExecution.count, { maximumFractionDigits: 0 })}`
                 : featuredExecution.marker.text}
             </span>
-            <span className="font-data text-xs font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
+            <span className="font-data text-sm font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
               {formatAxisCurrency(featuredExecution.value)}
             </span>
           </div>
-          <div className="mt-1 truncate font-data text-[11px]" style={{ color: chartTheme.tooltipTitleColor }}>
+          <div className="mt-1 truncate font-data text-xs" style={{ color: chartTheme.tooltipTitleColor }}>
             {formatExecutionDetail(featuredExecution)}
           </div>
         </div>
@@ -2030,10 +2030,10 @@ export function TradingPerformanceChart({
               title={marketCoverage.title}
               data-testid="chart-market-coverage"
             >
-              <div className="text-right text-xs font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
+              <div className="text-right text-sm font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
                 {marketCoverage.label}
               </div>
-              <div className="mt-0.5 max-w-[290px] truncate text-right text-[10px] font-medium" style={{ color: chartTheme.tooltipTitleColor }}>
+              <div className="mt-0.5 max-w-[290px] truncate text-right text-xs font-medium" style={{ color: chartTheme.tooltipTitleColor }}>
                 {marketCoverage.detail}
               </div>
             </div>
@@ -2049,11 +2049,11 @@ export function TradingPerformanceChart({
               title={executionCoverage.title}
               data-testid="chart-execution-coverage"
             >
-              <div className="text-right text-xs font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
+              <div className="text-right text-sm font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
                 {formatNumber(executionCoverage.shown, { maximumFractionDigits: 0 })}
                 /{formatNumber(executionCoverage.total, { maximumFractionDigits: 0 })} fills
               </div>
-              <div className="mt-0.5 max-w-[260px] truncate text-right text-[10px] font-medium" style={{ color: chartTheme.tooltipTitleColor }}>
+              <div className="mt-0.5 max-w-[260px] truncate text-right text-xs font-medium" style={{ color: chartTheme.tooltipTitleColor }}>
                 {executionCoverage.detail}
               </div>
             </div>

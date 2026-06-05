@@ -77,7 +77,7 @@ export function ArenaTopAgentsPanel({
           {headerControls}
           <Link
             to="/leaderboard"
-            className="inline-flex h-7 items-center rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2 font-display text-xs font-semibold text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+            className="inline-flex h-8 items-center rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2.5 font-display text-sm font-semibold text-[var(--arena-terminal-text-secondary)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
           >
             All
           </Link>
@@ -85,7 +85,7 @@ export function ArenaTopAgentsPanel({
       </div>
 
       {!isRail && (
-        <div className="grid grid-cols-[2.25rem_minmax(15rem,1fr)_5.5rem_4.25rem_5.25rem] border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 py-2 font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)]">
+        <div className="grid grid-cols-[2.25rem_minmax(15rem,1fr)_5.5rem_4.25rem_5.25rem] border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 py-2 font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)] lg:text-xs">
           <span>#</span>
           <span>Agent</span>
           <span className="text-right">{showActivity ? '24H Vol' : '30D'}</span>
@@ -122,7 +122,7 @@ export function ArenaTopAgentsPanel({
                   </span>
                   <Identicon address={bot.operatorAddress as Address} size={26} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-display text-sm font-semibold leading-tight text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
+                    <span className="block truncate font-display text-[15px] font-semibold leading-tight text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
                       {bot.name}
                     </span>
                     <span className="mt-1 flex min-w-0 items-center gap-1.5 font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
@@ -136,7 +136,7 @@ export function ArenaTopAgentsPanel({
                   {hasRailReturn || hasRailTrades ? (
                     <span className="shrink-0 text-right">
                       {hasRailReturn && (
-                        <span className={`block font-data text-sm font-bold leading-tight ${valueTone(bot.pnlPercent)}`}>
+                        <span className={`block font-data text-base font-bold leading-tight ${valueTone(bot.pnlPercent)}`}>
                           {formatSignedPercent(bot.pnlPercent)}
                         </span>
                       )}
@@ -184,14 +184,14 @@ export function ArenaTopAgentsPanel({
                   </span>
                   {showActivity ? (
                     <>
-                      <span className="text-right font-data text-base font-bold text-[var(--arena-terminal-text)]">
+                      <span className="text-right font-data text-lg font-bold text-[var(--arena-terminal-text)]">
                         {formatFlowUsd(activityStatsByBotId?.get(bot.id)?.recentNotionalUsd ?? 0)}
                       </span>
-                      <span className="text-right font-data text-base text-[var(--arena-terminal-text)]">
+                      <span className="text-right font-data text-lg text-[var(--arena-terminal-text)]">
                         {formatNumber(activityStats?.recentFills ?? 0, { maximumFractionDigits: 0 })}
                       </span>
                       <span
-                        className="text-right font-data text-base text-[var(--arena-terminal-text-secondary)]"
+                        className="text-right font-data text-lg text-[var(--arena-terminal-text-secondary)]"
                         title={fillCountEvidenceTitle(totalFillEvidence)}
                       >
                         {totalFillEvidence.value > 0
@@ -201,13 +201,13 @@ export function ArenaTopAgentsPanel({
                     </>
                   ) : (
                     <>
-                      <span className={`text-right font-data text-base font-bold ${valueTone(bot.pnlPercent)}`}>
+                      <span className={`text-right font-data text-lg font-bold ${valueTone(bot.pnlPercent)}`}>
                         {formatSignedPercent(bot.pnlPercent)}
                       </span>
-                      <span className="text-right font-data text-base text-[var(--arena-terminal-text)]">
+                      <span className="text-right font-data text-lg text-[var(--arena-terminal-text)]">
                         {bot.sharpeRatio !== 0 ? formatNumber(bot.sharpeRatio, { maximumFractionDigits: 1 }) : '—'}
                       </span>
-                      <span className="text-right font-data text-base text-[var(--arena-terminal-text)]">
+                      <span className="text-right font-data text-lg text-[var(--arena-terminal-text)]">
                         {bot.totalTrades > 0 ? formatNumber(bot.totalTrades, { maximumFractionDigits: 0 }) : '—'}
                       </span>
                     </>

@@ -48,7 +48,7 @@ export function WorkspaceNavStrip<Value extends string>({
       {items.map((item) => {
         const selected = item.value === activeValue;
         const itemClass = cx(
-          'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60',
+          'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-display font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 lg:h-9 lg:px-3 lg:text-[15px]',
           selected
             ? 'bg-violet-500/14 text-arena-elements-textPrimary'
             : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary',
@@ -120,14 +120,14 @@ export function WorkspaceMetric({
   return (
     <div
       className={cx(
-        'min-w-[78px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/62 px-2 py-1.5 md:min-w-[86px]',
+        'min-w-[86px] rounded-lg border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-2/62 px-2.5 py-2 md:min-w-[96px]',
         className,
       )}
     >
-      <div className="truncate font-data text-[10px] font-semibold uppercase text-arena-elements-textTertiary">
+      <div className="truncate font-data text-[11px] font-semibold uppercase text-arena-elements-textTertiary md:text-xs">
         {label}
       </div>
-      <div className={cx('mt-0.5 truncate font-data text-sm font-bold text-arena-elements-textPrimary', valueClassName)}>
+      <div className={cx('mt-0.5 truncate font-data text-base font-bold text-arena-elements-textPrimary md:text-lg', valueClassName)}>
         {value}
       </div>
     </div>
