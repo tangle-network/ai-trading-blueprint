@@ -20,8 +20,70 @@ env:
   RUST_TOOLCHAIN: "1.91"
 
 jobs:
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      contracts: ${{ steps.decide.outputs.contracts }}
+      rust: ${{ steps.decide.outputs.rust }}
+      full: ${{ steps.decide.outputs.full }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            contracts:
+              - 'contracts/**'
+              - 'deployments/**'
+              - 'foundry.toml'
+              - 'slither.config.json'
+            rust:
+              - '.cargo/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'deny.toml'
+              - 'patches/**'
+              - 'scripts/**'
+              - 'trading-*/**'
+            static:
+              - '.cargo/audit.toml'
+              - '.github/workflows/static-analysis.yml'
+              - 'deny.toml'
+              - 'slither.config.json'
+
+      - name: Decide static lanes
+        id: decide
+        env:
+          CONTRACTS_CHANGED: ${{ steps.filter.outputs.contracts }}
+          RUST_CHANGED: ${{ steps.filter.outputs.rust }}
+          STATIC_CHANGED: ${{ steps.filter.outputs.static }}
+        run: |
+          set -euo pipefail
+          full=false
+          contracts="$CONTRACTS_CHANGED"
+          rust="$RUST_CHANGED"
+
+          if [ "$STATIC_CHANGED" = "true" ]; then
+            full=true
+            contracts=true
+            rust=true
+          fi
+
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "contracts=$contracts" >> "$GITHUB_OUTPUT"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+
   cargo-deny:
     name: Cargo Deny (advisories + licences + sources + bans)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -43,6 +105,8 @@ jobs:
 
   cargo-audit:
     name: Cargo Audit (RustSec advisory DB)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -66,6 +130,8 @@ jobs:
 
   slither:
     name: Slither (Solidity static analysis)
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -103,3 +169,48 @@ jobs:
             echo "=== slither contracts/src/$f.sol ==="
             slither contracts/src/$f.sol --config-file slither.config.json
           done
+
+  static-analysis-gate:
+    name: Static Analysis Gate
+    needs: [changes, cargo-deny, cargo-audit, slither]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required static lanes
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CONTRACTS_NEEDED: ${{ needs.changes.outputs.contracts }}
+          RUST_NEEDED: ${{ needs.changes.outputs.rust }}
+          CARGO_DENY_RESULT: ${{ needs.cargo-deny.result }}
+          CARGO_AUDIT_RESULT: ${{ needs.cargo-audit.result }}
+          SLITHER_RESULT: ${{ needs.slither.result }}
+        run: |
+          set -euo pipefail
+          failed=false
+
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "::error::Change classification failed with result '$CHANGES_RESULT'"
+            exit 1
+          fi
+
+          require_success() {
+            local label="$1"
+            local needed="$2"
+            local result="$3"
+            if [ "$needed" = "true" ] && [ "$result" != "success" ]; then
+              echo "::error::$label required but finished with result '$result'"
+              failed=true
+            fi
+          }
+
+          require_success "Cargo Deny" "$RUST_NEEDED" "$CARGO_DENY_RESULT"
+          require_success "Cargo Audit" "$RUST_NEEDED" "$CARGO_AUDIT_RESULT"
+          require_success "Slither" "$CONTRACTS_NEEDED" "$SLITHER_RESULT"
+
+          if [ "$CONTRACTS_NEEDED" != "true" ] && [ "$RUST_NEEDED" != "true" ]; then
+            echo "No Rust or Solidity surfaces changed; static analysis gate is green."
+          fi
+
+          if [ "$failed" = "true" ]; then
+            exit 1
+          fi

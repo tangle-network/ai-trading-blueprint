@@ -19,9 +19,118 @@ env:
   FOUNDRY_PROFILE: default
 
 jobs:
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      arena: ${{ steps.decide.outputs.arena }}
+      contracts: ${{ steps.decide.outputs.contracts }}
+      rust: ${{ steps.decide.outputs.rust }}
+      full: ${{ steps.decide.outputs.full }}
+    steps:
+      - uses: actions/checkout@v6
+        if: github.event_name != 'workflow_call'
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v3
+        if: github.event_name != 'workflow_call'
+        id: filter
+        with:
+          filters: |
+            arena:
+              - 'arena/**'
+              - '.github/workflows/deploy-arena.yml'
+            contracts:
+              - 'contracts/**'
+              - 'deployments/**'
+              - 'foundry.toml'
+              - 'slither.config.json'
+            rust:
+              - '.cargo/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'patches/**'
+              - 'scripts/**'
+              - 'trading-*/**'
+            ci:
+              - '.github/workflows/ci.yml'
+
+      - name: Decide CI lanes
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ARENA_CHANGED: ${{ steps.filter.outputs.arena || 'false' }}
+          CONTRACTS_CHANGED: ${{ steps.filter.outputs.contracts || 'false' }}
+          RUST_CHANGED: ${{ steps.filter.outputs.rust || 'false' }}
+          CI_CHANGED: ${{ steps.filter.outputs.ci || 'false' }}
+        run: |
+          set -euo pipefail
+          full=false
+          arena="$ARENA_CHANGED"
+          contracts="$CONTRACTS_CHANGED"
+          rust="$RUST_CHANGED"
+
+          # Reusable deploy gates must remain conservative: contract deployment
+          # calls this workflow before broadcasting, so it gets the full suite.
+          if [ "$EVENT_NAME" = "workflow_call" ] || [ "$CI_CHANGED" = "true" ]; then
+            full=true
+            arena=true
+            contracts=true
+            rust=true
+          fi
+
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "arena=$arena" >> "$GITHUB_OUTPUT"
+          echo "contracts=$contracts" >> "$GITHUB_OUTPUT"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+
+  arena:
+    name: Arena UI
+    needs: changes
+    if: needs.changes.outputs.arena == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: arena/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: arena
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: arena
+        run: pnpm run typecheck
+
+      - name: Test
+        working-directory: arena
+        run: pnpm run test
+
+      - name: Build
+        working-directory: arena
+        run: pnpm run build
+
+      - name: Fixture smoke
+        working-directory: arena
+        run: pnpm run smoke:agent-workspace -- --fixture
+
   # ── Solidity ──────────────────────────────────────────────────────────────
   forge:
     name: Forge build + test
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -47,6 +156,8 @@ jobs:
   # ── Rust ──────────────────────────────────────────────────────────────────
   rust:
     name: Rust check + test
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -95,6 +206,8 @@ jobs:
 
   clippy:
     name: Clippy
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -121,6 +234,8 @@ jobs:
 
   fmt:
     name: Rustfmt
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -136,6 +251,8 @@ jobs:
   # ── Security audit ────────────────────────────────────────────────────────
   audit:
     name: Security audit
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -179,3 +296,55 @@ jobs:
             --ignore RUSTSEC-2026-0104 \
             --ignore RUSTSEC-2026-0118 \
             --ignore RUSTSEC-2026-0119
+
+  ci-gate:
+    name: CI Gate
+    needs: [changes, arena, forge, rust, clippy, fmt, audit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required lanes
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          ARENA_NEEDED: ${{ needs.changes.outputs.arena }}
+          CONTRACTS_NEEDED: ${{ needs.changes.outputs.contracts }}
+          RUST_NEEDED: ${{ needs.changes.outputs.rust }}
+          ARENA_RESULT: ${{ needs.arena.result }}
+          FORGE_RESULT: ${{ needs.forge.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          CLIPPY_RESULT: ${{ needs.clippy.result }}
+          FMT_RESULT: ${{ needs.fmt.result }}
+          AUDIT_RESULT: ${{ needs.audit.result }}
+        run: |
+          set -euo pipefail
+          failed=false
+
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "::error::Change classification failed with result '$CHANGES_RESULT'"
+            exit 1
+          fi
+
+          require_success() {
+            local label="$1"
+            local needed="$2"
+            local result="$3"
+            if [ "$needed" = "true" ] && [ "$result" != "success" ]; then
+              echo "::error::$label required but finished with result '$result'"
+              failed=true
+            fi
+          }
+
+          require_success "Arena UI" "$ARENA_NEEDED" "$ARENA_RESULT"
+          require_success "Forge build + test" "$CONTRACTS_NEEDED" "$FORGE_RESULT"
+          require_success "Rust check + test" "$RUST_NEEDED" "$RUST_RESULT"
+          require_success "Clippy" "$RUST_NEEDED" "$CLIPPY_RESULT"
+          require_success "Rustfmt" "$RUST_NEEDED" "$FMT_RESULT"
+          require_success "Security audit" "$RUST_NEEDED" "$AUDIT_RESULT"
+
+          if [ "$ARENA_NEEDED" != "true" ] && [ "$CONTRACTS_NEEDED" != "true" ] && [ "$RUST_NEEDED" != "true" ]; then
+            echo "No code lanes changed; CI gate is green."
+          fi
+
+          if [ "$failed" = "true" ]; then
+            exit 1
+          fi
