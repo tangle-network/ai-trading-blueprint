@@ -75,6 +75,15 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// When false, vault is created per-bot in onJobResult(PROVISION) (fleet mode).
     bool public instanceMode;
 
+    enum RequestAccessMode {
+        Allowlist,
+        Public
+    }
+
+    /// @notice Requester policy for service creation. Defaults to allowlist.
+    RequestAccessMode public requesterAccessMode;
+    mapping(address requester => bool allowed) public allowedRequesters;
+
     /// @notice Default valuation adapters applied to each newly created bot vault.
     address[] public defaultValuationTokens;
     mapping(address token => address adapter) public defaultValuationAdapters;
@@ -141,6 +150,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     error BaseRateTooLarge(uint256 baseRate, uint256 maxBaseRate);
     error NotProvisioned(uint64 serviceId);
     error InstanceLifecycleIsNotAJob(uint8 jobId);
+    error RequesterNotAllowed(address requester);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -155,6 +165,8 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     event BotExtended(uint64 indexed serviceId, uint64 jobCallId, uint64 additionalDays);
     event BotVaultSkipped(uint64 indexed serviceId, uint64 indexed callId, string reason);
     event DefaultValuationAdapterUpdated(address indexed token, address indexed adapter);
+    event RequestAccessModeUpdated(RequestAccessMode mode);
+    event RequesterAccessUpdated(address indexed requester, bool allowed);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONFIGURATION
@@ -169,6 +181,32 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
     /// @dev Set to true for instance/TEE BSMs after deployment.
     function setInstanceMode(bool _mode) external onlyFromTangle {
         instanceMode = _mode;
+    }
+
+    /// @notice Set whether any requester can create services, or only allowed wallets.
+    function setRequesterAccessMode(RequestAccessMode mode) external onlyBlueprintOwner {
+        requesterAccessMode = mode;
+        emit RequestAccessModeUpdated(mode);
+    }
+
+    /// @notice Add or remove one requester from the service-creation allowlist.
+    function setRequesterAllowed(address requester, bool allowed) external onlyBlueprintOwner {
+        allowedRequesters[requester] = allowed;
+        emit RequesterAccessUpdated(requester, allowed);
+    }
+
+    /// @notice Add or remove multiple requesters from the service-creation allowlist.
+    function setRequestersAllowed(address[] calldata requesters, bool allowed) external onlyBlueprintOwner {
+        for (uint256 i = 0; i < requesters.length; i++) {
+            allowedRequesters[requesters[i]] = allowed;
+            emit RequesterAccessUpdated(requesters[i], allowed);
+        }
+    }
+
+    /// @notice Returns whether a wallet can request a service from this blueprint manager.
+    function isRequesterAllowed(address requester) public view returns (bool) {
+        return requesterAccessMode == RequestAccessMode.Public || requester == blueprintOwner
+            || allowedRequesters[requester];
     }
 
     /// @notice Configure a token valuation adapter to install on new vaults.
@@ -201,6 +239,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         address,
         uint256
     ) external payable override onlyFromTangle {
+        if (!isRequesterAllowed(requester)) revert RequesterNotAllowed(requester);
         if (requestInputs.length > 0) {
             // Handle tuple wrapping: viem encodes structs with 0x20 offset prefix
             bytes calldata inner = requestInputs;
@@ -213,10 +252,21 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
 
             // Decode TradingProvisionRequest — same layout as _storeProvisionInputs
             (
-                string memory name_,,,,,
+                string memory name_,
+                ,
+                ,
+                ,
+                ,
                 address assetToken,
                 address[] memory signers,
-                uint256 requiredSigs,,,,,,,,
+                uint256 requiredSigs,
+                ,
+                ,
+                ,
+                ,
+                ,
+                ,
+                ,
                 uint256 maxCollateralBps_
             ) = abi.decode(
                 inner,
@@ -332,20 +382,19 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         string memory name_ = bytes(cfg.name).length > 0 ? cfg.name : "Instance Vault";
         string memory symbol_ = bytes(cfg.symbol).length > 0 ? cfg.symbol : "iVAULT";
 
-        (address vault, address shareToken) = IVaultFactory(vaultFactory)
-            .createBotVault(
-                serviceId,
-                assetToken,
-                address(this), // admin = this BSM
-                address(0), // no initial operator — granted below
-                signers,
-                requiredSigs,
-                name_,
-                symbol_,
-                salt,
-                cfg.policyConfig,
-                cfg.feeConfig
-            );
+        (address vault, address shareToken) = IVaultFactory(vaultFactory).createBotVault(
+            serviceId,
+            assetToken,
+            address(this), // admin = this BSM
+            address(0), // no initial operator — granted below
+            signers,
+            requiredSigs,
+            name_,
+            symbol_,
+            salt,
+            cfg.policyConfig,
+            cfg.feeConfig
+        );
 
         // Store in both instance-level and per-bot (callId=0) mappings
         instanceVault[serviceId] = vault;
@@ -571,10 +620,21 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         //          factory_address, asset_token, signers, required_signatures, ...,
         //          max_collateral_bps)
         (
-            string memory botName,,,,,
+            string memory botName,
+            ,
+            ,
+            ,
+            ,
             address assetToken,
             address[] memory signers,
-            uint256 requiredSigs,,,,,,,,
+            uint256 requiredSigs,
+            ,
+            ,
+            ,
+            ,
+            ,
+            ,
+            ,
             uint256 maxCollBps
         ) = abi.decode(
             inner,
@@ -619,9 +679,7 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         uint64 serviceId,
         uint64 jobCallId,
         bytes calldata /* inputs — unreliable, use _pendingProvisions instead */
-    )
-        internal
-    {
+    ) internal {
         if (vaultFactory == address(0)) return;
 
         // Read stored provision config (set in onJobCall)
@@ -683,20 +741,19 @@ contract TradingBlueprint is BlueprintServiceManagerBase {
         bytes32 salt = keccak256(abi.encodePacked(serviceId, jobCallId));
         string memory symbol = string(abi.encodePacked("bot", _uint64ToString(jobCallId)));
 
-        (address vault, address shareToken) = IVaultFactory(vaultFactory)
-            .createBotVault(
-                serviceId,
-                assetToken,
-                address(this), // admin = this BSM contract
-                address(0), // no initial operator — granted below
-                signers,
-                requiredSigs,
-                botName,
-                symbol,
-                salt,
-                pp.policyConfig,
-                pp.feeConfig
-            );
+        (address vault, address shareToken) = IVaultFactory(vaultFactory).createBotVault(
+            serviceId,
+            assetToken,
+            address(this), // admin = this BSM contract
+            address(0), // no initial operator — granted below
+            signers,
+            requiredSigs,
+            botName,
+            symbol,
+            salt,
+            pp.policyConfig,
+            pp.feeConfig
+        );
 
         botVaults[serviceId][jobCallId] = vault;
         botShares[serviceId][jobCallId] = shareToken;

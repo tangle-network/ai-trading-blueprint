@@ -8,6 +8,7 @@ import { WalletButton } from './WalletButton';
 const navItems = [
   { label: 'Home', href: '/' },
   { label: 'Leaderboard', href: '/leaderboard' },
+  { label: 'Operators', href: '/operators' },
   { label: 'My Agents', href: '/dashboard' },
   { label: 'New Agent', href: '/create' },
 ];

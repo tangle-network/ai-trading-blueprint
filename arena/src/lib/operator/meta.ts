@@ -63,10 +63,17 @@ export interface OperatorFeatures {
   terminal: boolean;
 }
 
+export interface OperatorRequestAccess {
+  mode: 'allowlist' | 'public';
+  allowed_requester_count: number;
+  operator_address?: string | null;
+}
+
 export interface OperatorMeta {
   api_version: string;
   deployment_kind: OperatorDeploymentKind;
   features: OperatorFeatures;
+  request_access?: OperatorRequestAccess;
 }
 
 const DEFAULT_META: OperatorMeta = {
@@ -75,6 +82,11 @@ const DEFAULT_META: OperatorMeta = {
   features: {
     chat: false,
     terminal: false,
+  },
+  request_access: {
+    mode: 'allowlist',
+    allowed_requester_count: 0,
+    operator_address: null,
   },
 };
 

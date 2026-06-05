@@ -17,6 +17,7 @@ pub mod polymarket_ws;
 pub mod prompts;
 pub mod providers;
 pub mod registration;
+pub mod request_access;
 pub mod session_auth;
 pub mod state;
 pub mod tangle_compat;

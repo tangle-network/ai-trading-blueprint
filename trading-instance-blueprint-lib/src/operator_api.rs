@@ -16,6 +16,7 @@ use crate::{get_instance_bot_id, require_instance_bot, set_instance_bot_id};
 use trading_blueprint_lib::asset_preflight::{
     DexAssetPreflightRequest, DexAssetPreflightResponse, preflight_dex_asset,
 };
+use trading_blueprint_lib::request_access::{self, RequestAccessSummary, RequestAccessUpdate};
 use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
 
 // ── Terminal relay types (local, sandbox-runtime keeps these private) ────
@@ -155,6 +156,7 @@ struct OperatorMetaResponse {
     api_version: String,
     deployment_kind: String,
     features: OperatorFeatureFlags,
+    request_access: RequestAccessSummary,
 }
 
 #[derive(Serialize)]
@@ -501,6 +503,7 @@ struct PricingQuoteRequest {
     challenge_timestamp: Option<String>,
     #[allow(dead_code)]
     resource_requirements: Option<serde_json::Value>,
+    requester: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -527,6 +530,10 @@ struct JobQuoteRequest {
 pub fn build_instance_router() -> Router {
     Router::new()
         .route("/api/meta", get(get_operator_meta))
+        .route(
+            "/api/request-access",
+            get(get_request_access).patch(update_request_access),
+        )
         // Session auth
         .route("/api/auth/challenge", post(create_challenge))
         .route("/api/auth/session", post(create_session))
@@ -605,6 +612,7 @@ pub fn build_instance_router() -> Router {
 }
 
 async fn get_operator_meta() -> Json<OperatorMetaResponse> {
+    let access = request_access::load_request_access_policy();
     Json(OperatorMetaResponse {
         api_version: "1".to_string(),
         deployment_kind: "instance".to_string(),
@@ -612,7 +620,27 @@ async fn get_operator_meta() -> Json<OperatorMetaResponse> {
             chat: true,
             terminal: true,
         },
+        request_access: access.summary(),
     })
+}
+
+async fn get_request_access() -> Json<RequestAccessSummary> {
+    Json(request_access::load_request_access_policy().summary())
+}
+
+async fn update_request_access(
+    SessionAuth(caller): SessionAuth,
+    Json(body): Json<RequestAccessUpdate>,
+) -> ApiResult<RequestAccessSummary> {
+    if !request_access::caller_is_operator_admin(&caller) {
+        return Err(ApiError::message(
+            StatusCode::FORBIDDEN,
+            "operator admin session required",
+        ));
+    }
+    let policy = request_access::save_request_access_policy(body)
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(policy.summary()))
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -1374,17 +1402,54 @@ fn fallback_trade_history(bot: &TradingBotRecord) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Verify caller is the bot's submitter.
-fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusCode, String)> {
-    if !bot.submitter_address.is_empty()
-        && caller.to_lowercase() != bot.submitter_address.to_lowercase()
-    {
-        return Err((
-            StatusCode::FORBIDDEN,
-            format!("Caller {caller} is not the bot submitter"),
-        ));
+fn strategy_config_has_permitted_caller(config: &serde_json::Value, caller: &str) -> bool {
+    let caller = caller.trim();
+    if caller.is_empty() {
+        return false;
     }
-    Ok(())
+
+    for key in [
+        "permitted_callers",
+        "permittedCallers",
+        "allowed_callers",
+        "authorized_callers",
+    ] {
+        let Some(values) = config.get(key).and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        if values
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|address| address.trim().eq_ignore_ascii_case(caller))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn caller_has_bot_command_access(bot: &TradingBotRecord, caller: &str) -> bool {
+    let caller = caller.trim();
+    if caller.is_empty() {
+        return false;
+    }
+
+    let submitter = bot.submitter_address.trim();
+    (!submitter.is_empty() && submitter.eq_ignore_ascii_case(caller))
+        || strategy_config_has_permitted_caller(&bot.strategy_config, caller)
+}
+
+/// Verify the caller can mutate/control the singleton bot.
+fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusCode, String)> {
+    if caller_has_bot_command_access(bot, caller) {
+        return Ok(());
+    }
+
+    Err((
+        StatusCode::FORBIDDEN,
+        format!("Caller {caller} is not permitted to command bot {}", bot.id),
+    ))
 }
 
 fn resolve_live_chat_target(
@@ -1895,6 +1960,9 @@ async fn provision_bot(
     SessionAuth(caller): SessionAuth,
     Json(body): Json<InstanceProvisionRequest>,
 ) -> Result<Json<InstanceProvisionResponse>, (StatusCode, String)> {
+    request_access::ensure_requester_allowed(&caller)
+        .map_err(|message| (StatusCode::FORBIDDEN, message))?;
+
     // Singleton check — reject if already provisioned
     if get_instance_bot_id()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
@@ -2062,9 +2130,10 @@ async fn provision_bot(
 // ── Bot handlers (singleton — no bot_id path param) ─────────────────────
 
 async fn get_bot(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
 ) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
     Ok(Json(BotDetailResponse::from_record(bot)))
 }
 
@@ -2367,10 +2436,11 @@ fn synthesize_run_transcript_messages(run: &WorkflowRunRecord) -> serde_json::Va
 }
 
 async fn list_bot_runs(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Query(params): Query<RunListQuery>,
 ) -> Result<Json<BotRunListResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
     let workflow_ids = workflow_ids_for_bot(&bot);
     if workflow_ids.is_empty() {
         return Ok(Json(BotRunListResponse {
@@ -2415,10 +2485,11 @@ async fn list_bot_runs(
 }
 
 async fn get_bot_run(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Path(run_id): Path<String>,
 ) -> Result<Json<BotRunResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
     let workflow_ids = workflow_ids_for_bot(&bot)
         .into_iter()
         .collect::<HashSet<_>>();
@@ -2823,9 +2894,10 @@ fn synthesize_metrics(
 // ── Metrics / trades handlers ───────────────────────────────────────────
 
 async fn get_bot_metrics(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
 ) -> Result<Json<BotMetricsResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
     let metrics_history = match fetch_trading_api_json(&bot, "/metrics/history", &[]).await {
         Ok(Some(payload)) => extract_json_array(payload, "snapshots")
             .and_then(parse_metrics_snapshots)
@@ -2903,9 +2975,10 @@ async fn get_bot_metrics(
 }
 
 async fn get_bot_metrics_history(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
     match fetch_trading_api_json(&bot, "/metrics/history", &[]).await {
         Ok(Some(payload)) => match extract_json_array(payload, "snapshots") {
             Ok(mut snapshots) if !snapshots.is_empty() => {
@@ -2929,10 +3002,11 @@ async fn get_bot_metrics_history(
 }
 
 async fn get_bot_trades(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Query(query): Query<TradeListQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
     let mut remote_query = Vec::new();
     if let Some(limit) = query.limit {
         remote_query.push(("limit", limit.to_string()));
@@ -2967,10 +3041,11 @@ async fn get_bot_trades(
 }
 
 async fn get_bot_market_candles(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Query(query): Query<CandleListQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
     let mut remote_query = Vec::new();
     if let Some(token) = query.token {
         remote_query.push(("token", token));
@@ -3005,10 +3080,11 @@ async fn get_bot_market_candles(
 }
 
 async fn get_bot_chart_studies(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Query(query): Query<ChartStudyListQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
     let mut remote_query = Vec::new();
     if let Some(token) = query.token {
         remote_query.push(("token", token));
@@ -3044,9 +3120,10 @@ async fn get_platform_volume(
 }
 
 async fn get_bot_portfolio(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
 ) -> Result<Json<PortfolioStateResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
     let runtime_status = state::bot_runtime_status(&bot);
     if !matches!(
         runtime_status.lifecycle_status,
@@ -3082,9 +3159,10 @@ async fn get_bot_portfolio(
 // ── Activation progress handler ─────────────────────────────────────────
 
 async fn get_activation_progress(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
 ) -> Result<Json<ActivationProgressResponse>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
     let progress = state::get_activation(&bot.id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "No activation progress".to_string()))?;
@@ -3125,10 +3203,20 @@ async fn get_provision(
 
 // ── Pricing handlers ────────────────────────────────────────────────────
 
-async fn pricing_quote(Json(body): Json<PricingQuoteRequest>) -> Json<serde_json::Value> {
+async fn pricing_quote(
+    Json(body): Json<PricingQuoteRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let blueprint_id = body.blueprint_id.as_deref().unwrap_or("0");
     let ttl_blocks = body.ttl_blocks.as_deref().unwrap_or("100");
     let timestamp = body.challenge_timestamp.as_deref().unwrap_or("0");
+    let requester = body
+        .requester
+        .as_deref()
+        .unwrap_or("0x0000000000000000000000000000000000000000");
+    if requester != "0x0000000000000000000000000000000000000000" {
+        request_access::ensure_requester_allowed(requester)
+            .map_err(|message| (StatusCode::FORBIDDEN, message))?;
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -3136,12 +3224,14 @@ async fn pricing_quote(Json(body): Json<PricingQuoteRequest>) -> Json<serde_json
     let expiry = now + 3600;
     let operator_address = std::env::var("OPERATOR_ADDRESS").unwrap_or_default();
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "operator": operator_address,
         "total_cost": "0",
         "signature": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
         "cost_rate": 0.0,
+        "request_access": request_access::load_request_access_policy().summary(),
         "details": {
+            "requester": requester,
             "blueprint_id": blueprint_id,
             "ttl_blocks": ttl_blocks,
             "total_cost": "0",
@@ -3149,10 +3239,12 @@ async fn pricing_quote(Json(body): Json<PricingQuoteRequest>) -> Json<serde_json
             "expiry": expiry.to_string(),
             "security_commitments": [],
         },
-    }))
+    })))
 }
 
-async fn pricing_job_quote(Json(body): Json<JobQuoteRequest>) -> Json<serde_json::Value> {
+async fn pricing_job_quote(
+    Json(body): Json<JobQuoteRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let service_id = body.service_id.as_deref().unwrap_or("0");
     let job_index = body.job_index.unwrap_or(0);
     let now = std::time::SystemTime::now()
@@ -3174,12 +3266,17 @@ async fn pricing_job_quote(Json(body): Json<JobQuoteRequest>) -> Json<serde_json
         );
         "0x0000000000000000000000000000000000000000"
     });
+    if requester != "0x0000000000000000000000000000000000000000" {
+        request_access::ensure_requester_allowed(requester)
+            .map_err(|message| (StatusCode::FORBIDDEN, message))?;
+    }
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "operator": operator_address,
         "total_cost": "0",
         "signature": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
         "cost_rate": 0.0,
+        "request_access": request_access::load_request_access_policy().summary(),
         "details": {
             "requester": requester,
             "service_id": service_id,
@@ -3188,7 +3285,7 @@ async fn pricing_job_quote(Json(body): Json<JobQuoteRequest>) -> Json<serde_json
             "timestamp": timestamp,
             "expiry": expiry.to_string(),
         },
-    }))
+    })))
 }
 
 // ── Debug handlers ──────────────────────────────────────────────────────
@@ -3259,9 +3356,10 @@ async fn debug_workflows(SessionAuth(_caller): SessionAuth) -> Json<serde_json::
 }
 
 async fn debug_run_now(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_singleton()?;
+    verify_submitter(&bot, &caller)?;
 
     let workflow_id = bot
         .workflow_id

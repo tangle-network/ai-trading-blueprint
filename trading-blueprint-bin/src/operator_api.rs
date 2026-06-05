@@ -49,6 +49,7 @@ struct LiveTerminalSessionSummary {
 use trading_blueprint_lib::asset_preflight::{
     DexAssetPreflightRequest, DexAssetPreflightResponse, preflight_dex_asset,
 };
+use trading_blueprint_lib::request_access::{self, RequestAccessSummary, RequestAccessUpdate};
 use trading_blueprint_lib::state::{self, ActivationProgress, TradingBotRecord};
 
 #[derive(Deserialize)]
@@ -254,6 +255,7 @@ struct OperatorMetaResponse {
     api_version: String,
     deployment_kind: String,
     features: OperatorFeatureFlags,
+    request_access: RequestAccessSummary,
 }
 
 #[derive(Serialize)]
@@ -642,6 +644,10 @@ struct SessionRequest {
 pub fn build_operator_router() -> Router {
     Router::new()
         .route("/api/meta", get(get_operator_meta))
+        .route(
+            "/api/request-access",
+            get(get_request_access).patch(update_request_access),
+        )
         // Session auth (delegates to sandbox-runtime's session_auth)
         .route("/api/auth/challenge", post(create_challenge))
         .route("/api/auth/session", post(create_session))
@@ -798,6 +804,7 @@ pub fn build_operator_router() -> Router {
 }
 
 async fn get_operator_meta() -> Json<OperatorMetaResponse> {
+    let access = request_access::load_request_access_policy();
     Json(OperatorMetaResponse {
         api_version: "1".to_string(),
         deployment_kind: "fleet".to_string(),
@@ -805,7 +812,27 @@ async fn get_operator_meta() -> Json<OperatorMetaResponse> {
             chat: true,
             terminal: true,
         },
+        request_access: access.summary(),
     })
+}
+
+async fn get_request_access() -> Json<RequestAccessSummary> {
+    Json(request_access::load_request_access_policy().summary())
+}
+
+async fn update_request_access(
+    SessionAuth(caller): SessionAuth,
+    Json(body): Json<RequestAccessUpdate>,
+) -> ApiResult<RequestAccessSummary> {
+    if !request_access::caller_is_operator_admin(&caller) {
+        return Err(ApiError::message(
+            StatusCode::FORBIDDEN,
+            "operator admin session required",
+        ));
+    }
+    let policy = request_access::save_request_access_policy(body)
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(policy.summary()))
 }
 
 // ── Auth handlers ────────────────────────────────────────────────────────
@@ -884,8 +911,34 @@ fn classify_preflight_error(err: &str) -> StatusCode {
 
 // ── Bot handlers ─────────────────────────────────────────────────────────
 
-/// Create a bot from a free-form prompt — provisions + activates in one call.
-/// This is the chat-first GTM endpoint: user describes a strategy, gets a live bot.
+const DIRECT_BOT_CREATE_ENV: &str = "TRADING_ENABLE_DIRECT_BOT_CREATE";
+
+fn direct_bot_create_enabled() -> bool {
+    std::env::var(DIRECT_BOT_CREATE_ENV)
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "enabled" | "allow" | "on"
+            )
+        })
+}
+
+fn ensure_direct_bot_create_enabled() -> Result<(), ApiError> {
+    if direct_bot_create_enabled() {
+        return Ok(());
+    }
+
+    Err(ApiError::message(
+        StatusCode::FORBIDDEN,
+        format!(
+            "Direct bot creation is disabled. Create a Tangle service instance through /provision; set {DIRECT_BOT_CREATE_ENV}=true only for local/dev bypasses."
+        ),
+    ))
+}
+
+/// Legacy direct bot creation request. Disabled by default; production creation
+/// must enter through the Tangle service lifecycle.
 #[derive(Deserialize)]
 struct CreateBotRequest {
     /// Free-form strategy description from the user
@@ -2152,6 +2205,7 @@ async fn repair_bot_strategy(
 }
 
 async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value> {
+    ensure_direct_bot_create_enabled()?;
     let caller = req
         .headers()
         .get("authorization")
@@ -2168,6 +2222,8 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
                 "Authentication required".to_string(),
             )
         })?;
+    request_access::ensure_requester_allowed(&caller)
+        .map_err(|message| ApiError::message(StatusCode::FORBIDDEN, message))?;
     let bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024)
         .await
         .map_err(|e| ApiError::message(StatusCode::BAD_REQUEST, format!("Bad body: {e}")))?;
@@ -2511,21 +2567,13 @@ async fn list_bots(
 }
 
 async fn get_bot(
-    headers: axum::http::HeaderMap,
+    _headers: axum::http::HeaderMap,
     Path(bot_id): Path<String>,
 ) -> Result<Json<BotDetailResponse>, (StatusCode, String)> {
-    // Public bot detail (discovery/leaderboard). The owner or operator-admin
-    // gets the full record; everyone else gets the same view with the per-bot
-    // trading API token redacted (it authenticates control over the bot).
-    let record = resolve_bot(&bot_id)?;
-    let submitter = record.submitter_address.clone();
-    let privileged = optional_session_caller(&headers)
-        .as_deref()
-        .is_some_and(|a| is_operator_admin(a) || a.eq_ignore_ascii_case(&submitter));
-    let mut resp = BotDetailResponse::from_record(record);
-    if !privileged {
-        resp.trading_api_token = String::new();
-    }
+    // Public bot detail (discovery/leaderboard). The per-bot trading API token
+    // authenticates control over the bot and must never leave this endpoint.
+    let mut resp = BotDetailResponse::from_record(resolve_bot(&bot_id)?);
+    resp.trading_api_token = String::new();
     Ok(Json(resp))
 }
 
@@ -2534,10 +2582,11 @@ async fn get_bot(
 /// analyst can adjudicate real execution vs fabricated prose claims. Bad gateway
 /// when the sandbox is unreachable — never fabricates a "captured" payload.
 async fn get_bot_tick_artifacts(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
     let artifacts = trading_blueprint_lib::jobs::tick_artifacts::read_bot_tick_artifacts(&bot)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
@@ -3145,11 +3194,7 @@ async fn get_observatory_overview(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let visible_bots: Vec<_> = all_bots
         .into_iter()
-        .filter(|bot| {
-            is_operator_admin(&caller)
-                || (!bot.submitter_address.is_empty()
-                    && bot.submitter_address.eq_ignore_ascii_case(&caller))
-        })
+        .filter(|bot| caller_has_bot_command_access(bot, &caller))
         .filter(|bot| !state::bot_runtime_status(bot).archived)
         .collect();
 
@@ -3353,10 +3398,11 @@ async fn record_observatory_idea_feedback(
 }
 
 async fn get_bot_run(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Path((bot_id, run_id)): Path<(String, String)>,
 ) -> Result<Json<BotRunResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
     let run = resolve_bot_workflow_run(&bot, &run_id)?;
 
     Ok(Json(map_bot_run(&bot, run)))
@@ -3419,16 +3465,7 @@ async fn configure_secrets(
     Json(body): Json<ConfigureSecretsRequest>,
 ) -> ApiResult<SecretsResponse> {
     let bot = resolve_live_bot(&bot_id)?;
-
-    // Verify caller is the bot's submitter
-    if !bot.submitter_address.is_empty()
-        && caller.to_lowercase() != bot.submitter_address.to_lowercase()
-    {
-        return Err(ApiError::message(
-            StatusCode::FORBIDDEN,
-            format!("Caller {caller} is not the bot submitter"),
-        ));
-    }
+    verify_submitter(&bot, &caller)?;
 
     // When env_json is empty, use operator-provided AI keys from the binary's environment.
     // This supports the "use operator provided keys" frontend option.
@@ -3485,15 +3522,7 @@ async fn wipe_secrets(
     Path(bot_id): Path<String>,
 ) -> Result<Json<SecretsResponse>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-
-    if !bot.submitter_address.is_empty()
-        && caller.to_lowercase() != bot.submitter_address.to_lowercase()
-    {
-        return Err((
-            StatusCode::FORBIDDEN,
-            format!("Caller {caller} is not the bot submitter"),
-        ));
-    }
+    verify_submitter(&bot, &caller)?;
 
     trading_blueprint_lib::jobs::wipe_bot_secrets(&bot_id, None)
         .await
@@ -3543,19 +3572,53 @@ fn optional_session_caller(headers: &axum::http::HeaderMap) -> Option<String> {
         .map(|claims| claims.address)
 }
 
+fn strategy_config_has_permitted_caller(config: &serde_json::Value, caller: &str) -> bool {
+    let caller = caller.trim();
+    if caller.is_empty() {
+        return false;
+    }
+
+    for key in [
+        "permitted_callers",
+        "permittedCallers",
+        "allowed_callers",
+        "authorized_callers",
+    ] {
+        let Some(values) = config.get(key).and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        if values
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|address| address.trim().eq_ignore_ascii_case(caller))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn caller_has_bot_command_access(bot: &TradingBotRecord, caller: &str) -> bool {
+    let caller = caller.trim();
+    if caller.is_empty() {
+        return false;
+    }
+
+    let submitter = bot.submitter_address.trim();
+    (!submitter.is_empty() && submitter.eq_ignore_ascii_case(caller))
+        || strategy_config_has_permitted_caller(&bot.strategy_config, caller)
+}
+
 fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusCode, String)> {
-    if is_operator_admin(caller) {
+    if caller_has_bot_command_access(bot, caller) {
         return Ok(());
     }
-    if !bot.submitter_address.is_empty()
-        && caller.to_lowercase() != bot.submitter_address.to_lowercase()
-    {
-        return Err((
-            StatusCode::FORBIDDEN,
-            format!("Caller {caller} is not the bot submitter"),
-        ));
-    }
-    Ok(())
+
+    Err((
+        StatusCode::FORBIDDEN,
+        format!("Caller {caller} is not permitted to command bot {}", bot.id),
+    ))
 }
 
 async fn start_bot(
@@ -6792,10 +6855,11 @@ async fn get_platform_trades(
 }
 
 async fn get_bot_baseline_backtest(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<Option<trading_runtime::backtest::BacktestSummary>>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
     Ok(Json(bot.baseline_backtest))
 }
 
@@ -6921,9 +6985,11 @@ async fn proxy_hyperliquid_nav(
 // ── Activation progress handler ──────────────────────────────────────────
 
 async fn get_activation_progress(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<ActivationProgressResponse>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
     let progress = state::get_activation(&bot_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
         .ok_or_else(|| {
@@ -7095,10 +7161,11 @@ async fn debug_workflows(SessionAuth(_caller): SessionAuth) -> Json<serde_json::
 }
 
 async fn debug_run_now(
-    SessionAuth(_caller): SessionAuth,
+    SessionAuth(caller): SessionAuth,
     Path(bot_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
 
     let workflow_id = bot
         .workflow_id
@@ -7245,6 +7312,7 @@ struct PricingQuoteRequest {
     challenge_timestamp: Option<String>,
     #[allow(dead_code)]
     resource_requirements: Option<serde_json::Value>,
+    requester: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -7267,13 +7335,25 @@ struct JobQuoteRequest {
 /// Service creation quotes are signed by the pricing engine gRPC server
 /// (separate process). This REST endpoint returns informational pricing
 /// config for integrations that don't use gRPC.
-async fn pricing_quote(Json(_body): Json<PricingQuoteRequest>) -> Json<serde_json::Value> {
+async fn pricing_quote(
+    Json(body): Json<PricingQuoteRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let pricing_engine_endpoint = std::env::var("PRICING_ENGINE_ENDPOINT").unwrap_or_default();
     let operator_address = std::env::var("OPERATOR_ADDRESS").unwrap_or_default();
+    let requester = body
+        .requester
+        .as_deref()
+        .unwrap_or("0x0000000000000000000000000000000000000000");
+    if requester != "0x0000000000000000000000000000000000000000" {
+        request_access::ensure_requester_allowed(requester)
+            .map_err(|message| (StatusCode::FORBIDDEN, message))?;
+    }
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "pricing_model": "subscription",
         "operator": operator_address,
+        "requester": requester,
+        "request_access": request_access::load_request_access_policy().summary(),
         "note": "Service creation quotes are served by the pricing engine gRPC endpoint. Use the gRPC GetPrice RPC for signed EIP-712 quotes.",
         "pricing_engine_grpc": pricing_engine_endpoint,
         "job_multipliers": {
@@ -7285,14 +7365,16 @@ async fn pricing_quote(Json(_body): Json<PricingQuoteRequest>) -> Json<serde_jso
             "deprovision": 1,
             "extend": 10,
         },
-    }))
+    })))
 }
 
 /// Returns per-job pricing info.
 ///
 /// Under subscription pricing, all jobs are covered by the service subscription.
 /// No per-job payment is required.
-async fn pricing_job_quote(Json(body): Json<JobQuoteRequest>) -> Json<serde_json::Value> {
+async fn pricing_job_quote(
+    Json(body): Json<JobQuoteRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let job_index = body.job_index.unwrap_or(0);
     let multipliers = [50, 2, 1, 1, 0, 1, 10]; // PRICE_MULT_* from contract
     let multiplier = multipliers.get(job_index as usize).copied().unwrap_or(0);
@@ -7307,15 +7389,20 @@ async fn pricing_job_quote(Json(body): Json<JobQuoteRequest>) -> Json<serde_json
         );
         "0x0000000000000000000000000000000000000000"
     });
+    if requester != "0x0000000000000000000000000000000000000000" {
+        request_access::ensure_requester_allowed(requester)
+            .map_err(|message| (StatusCode::FORBIDDEN, message))?;
+    }
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "pricing_model": "subscription",
         "job_index": job_index,
         "per_job_cost": "0",
         "multiplier": multiplier,
         "requester": requester,
+        "request_access": request_access::load_request_access_policy().summary(),
         "note": "All jobs are covered by the service subscription. No per-job payment required.",
-    }))
+    })))
 }
 
 /// Returns the operator's pricing configuration.
@@ -8263,6 +8350,111 @@ mod tests {
         unsafe {
             std::env::set_var("OPERATOR_ADDRESS", TEST_AUTH_ADDRESS);
         }
+    }
+
+    fn reset_request_access_policy(_guard: &tokio::sync::MutexGuard<'_, ()>) {
+        // SAFETY: serialized by ENV_LOCK for tests that mutate operator policy env.
+        unsafe {
+            std::env::remove_var("TRADING_REQUESTER_ACCESS_MODE");
+            std::env::remove_var("TRADING_REQUESTER_ALLOWLIST");
+            std::env::remove_var("TRADING_BOT_REQUESTER_ALLOWLIST");
+            std::env::remove_var(DIRECT_BOT_CREATE_ENV);
+        }
+        let _ = std::fs::remove_file(
+            sandbox_runtime::store::state_dir().join("request-access-policy.json"),
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_operator_meta_reports_request_access_policy() {
+        ensure_state_dir();
+        let _guard = ENV_LOCK.lock().await;
+        set_test_admin_env(&_guard);
+        reset_request_access_policy(&_guard);
+
+        let response = build_operator_router()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/meta")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["deployment_kind"], "fleet");
+        assert_eq!(json["request_access"]["mode"], "allowlist");
+        assert_eq!(
+            json["request_access"]["operator_address"],
+            TEST_AUTH_ADDRESS
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_pricing_quote_rejects_disallowed_requester() {
+        ensure_state_dir();
+        let _guard = ENV_LOCK.lock().await;
+        set_test_admin_env(&_guard);
+        reset_request_access_policy(&_guard);
+
+        let response = build_operator_router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/pricing/quote")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "blueprint_id": "1",
+                            "ttl_blocks": "100",
+                            "requester": "0x9999999999999999999999999999999999999999"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("not allowed"), "{text}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_direct_bot_create_disabled_by_default() {
+        ensure_state_dir();
+        let _guard = ENV_LOCK.lock().await;
+        set_test_admin_env(&_guard);
+        reset_request_access_policy(&_guard);
+
+        let response = build_operator_router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/bots")
+                    .header("content-type", "application/json")
+                    .header("authorization", test_auth_header())
+                    .body(Body::from(
+                        serde_json::json!({
+                            "prompt": "Create a paper ETH strategy"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("Direct bot creation is disabled"), "{text}");
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -39,6 +39,7 @@ contract TradingBlueprintMultiOpTest is Setup {
 
         // Initialize blueprint
         blueprint.onBlueprintCreated(42, address(this), tangleCore);
+        blueprint.setRequesterAccessMode(TradingBlueprint.RequestAccessMode.Public);
 
         // Set vault factory
         vm.prank(tangleCore);
@@ -188,10 +189,31 @@ contract TradingBlueprintMultiOpTest is Setup {
         assertEq(blueprint.botVaults(99, 1), address(0), "Should not deploy without config");
     }
 
+    function test_onRequest_rejects_unallowedRequester() public {
+        address requester = makeAddr("blockedRequester");
+        blueprint.setRequesterAccessMode(TradingBlueprint.RequestAccessMode.Allowlist);
+
+        vm.prank(tangleCore);
+        vm.expectRevert(abi.encodeWithSelector(TradingBlueprint.RequesterNotAllowed.selector, requester));
+        blueprint.onRequest(requestId, requester, new address[](0), _buildRequestInputs(), 0, address(0), 0);
+    }
+
+    function test_onRequest_allows_allowlistedRequester() public {
+        address requester = makeAddr("allowedRequester");
+        blueprint.setRequesterAccessMode(TradingBlueprint.RequestAccessMode.Allowlist);
+        blueprint.setRequesterAllowed(requester, true);
+
+        vm.prank(tangleCore);
+        blueprint.onRequest(requestId, requester, new address[](0), _buildRequestInputs(), 0, address(0), 0);
+
+        assertTrue(blueprint.isRequesterAllowed(requester));
+    }
+
     function test_onServiceInitialized_skipsWithoutFactory() public {
         // Deploy a fresh blueprint without factory set
         TradingBlueprint freshBlueprint = new TradingBlueprint();
         freshBlueprint.onBlueprintCreated(42, address(this), tangleCore);
+        freshBlueprint.setRequesterAccessMode(TradingBlueprint.RequestAccessMode.Public);
         // Don't set factory
 
         vm.prank(tangleCore);

@@ -79,7 +79,7 @@ const FIXTURE_OBSERVATORY_EXPECTATIONS = [
   'Source-grounded finding is recorded.',
   'CAP 3',
 ];
-const FIXTURE_CREATE_EXPECTATIONS = ['New Agent', 'Mandate', 'Agent Profile', 'Prediction Markets', 'Prepare Live Activation'];
+const FIXTURE_CREATE_EXPECTATIONS = ['New Agent', 'Mandate', 'Agent Profile', 'Prediction Markets', 'Review Activation'];
 const FIXTURE_PROVISION_EXPECTATIONS = [
   'Activate Agent',
   'Connect a wallet to provision the runtime',

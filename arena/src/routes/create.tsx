@@ -8,11 +8,7 @@ import {
   buildTradingAgentProfile,
   type TradingAgentProfile,
 } from '~/lib/agentProfile'
-import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth'
-import {
-  ALL_TRADING_OPERATOR_API_URLS,
-  HAS_TRADING_OPERATOR_API,
-} from '~/lib/operator/meta'
+import { ALL_TRADING_OPERATOR_API_URLS } from '~/lib/operator/meta'
 import {
   WorkspaceCollapsedPane,
   WorkspaceControlButton,
@@ -446,32 +442,6 @@ function buildCreateAgentProfile(
   })
 }
 
-function buildCreateStrategyConfig(
-  draft: CreateStrategyDraft,
-  capabilityIds: CapabilityId[],
-  agentProfile: TradingAgentProfile,
-): Record<string, unknown> {
-  const normalizedCapabilityIds = normalizeCapabilityIds(capabilityIds)
-  return {
-    paper_trade: true,
-    paper_safe: true,
-    initial_capital_usd: DEFAULT_PAPER_INITIAL_CAPITAL_USD,
-    agent_profile: agentProfile,
-    available_protocols: ALL_WIRED_PROTOCOLS,
-    preferred_protocols: preferredProtocolsForCapabilities(normalizedCapabilityIds),
-    protocol_chain_ids: PROTOCOL_CHAIN_IDS,
-    capability_focus: normalizedCapabilityIds,
-    agent_profile_summary: {
-      market: draft.market,
-      venue: draft.venue,
-      capabilities: capabilityLabels(normalizedCapabilityIds),
-      sizing: draft.sizing,
-      risk: draft.drawdown,
-      mode: draft.mode,
-    },
-  }
-}
-
 function attachCapabilityFields(
   draft: CreateStrategyDraft,
   capabilityIds: CapabilityId[],
@@ -510,13 +480,6 @@ function compactCapabilityLabel(label: string): string {
   return label
 }
 
-interface CreateBotResponse {
-  bot_id?: unknown
-  id?: unknown
-  status?: unknown
-  activation_error?: unknown
-}
-
 export default function CreateAgent() {
   const [prompt, setPrompt] = useState(DEFAULT_STRATEGY_HINT.prompt)
   const [selectedCapabilityIds, setSelectedCapabilityIds] = useState<CapabilityId[]>(DEFAULT_STRATEGY_HINT.capabilityIds)
@@ -524,6 +487,7 @@ export default function CreateAgent() {
   const [isCreating, setIsCreating] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+  const isCreatingRef = useRef(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const errorRef = useRef<HTMLParagraphElement>(null)
@@ -533,7 +497,6 @@ export default function CreateAgent() {
     normalizeCreateWorkspaceLayout,
   )
   const navigate = useNavigate()
-  const { getToken } = useOperatorAuth(ALL_TRADING_OPERATOR_API_URLS[0])
   const detectedStrategyType = useMemo(() => inferStrategyType(prompt), [prompt])
   const primaryCapability = useMemo(
     () => primaryCapabilityFor(selectedCapabilityIds, detectedStrategyType),
@@ -654,8 +617,9 @@ export default function CreateAgent() {
     if (error) errorRef.current?.focus()
   }, [error])
 
-  const handleCreate = useCallback(async () => {
-    if (!prompt.trim() || isCreating) return
+  const handleCreate = useCallback(() => {
+    if (!prompt.trim() || isCreatingRef.current) return
+    isCreatingRef.current = true
     const cleanDraft: CreateStrategyDraft = {
       ...draft,
       name: clampDraftValue(draft.name, 64) || draftNameFor(draftStrategyType, draft.market),
@@ -667,90 +631,15 @@ export default function CreateAgent() {
     }
     const createPrompt = buildCreatePrompt(cleanDraft, selectedCapabilityIds)
     const agentProfile = buildCreateAgentProfile(cleanDraft, selectedCapabilityIds, selectedHint.label)
-    const strategyConfig = buildCreateStrategyConfig(cleanDraft, selectedCapabilityIds, agentProfile)
     setIsCreating(true)
-    setStatus('Parsing mandate…')
+    setStatus('Opening activation quote…')
     setError('')
-
-    try {
-      setStatus('Creating paper agent…')
-
-      if (!HAS_TRADING_OPERATOR_API || !ALL_TRADING_OPERATOR_API_URLS[0]) {
-        throw new Error('Trading operator API is not configured')
-      }
-      const operatorUrl = ALL_TRADING_OPERATOR_API_URLS[0]
-      let token = await getToken()
-      if (!token) {
-        throw new Error('Wallet authentication is required before creating a bot')
-      }
-
-      let res = await fetch(`${operatorUrl}/api/bots`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          prompt: createPrompt,
-          name: cleanDraft.name,
-          agent_profile: agentProfile,
-          strategy_type: cleanDraft.provisionStrategyType,
-          strategy_config: strategyConfig,
-        }),
-      })
-
-      if (res.status === 401) {
-        token = await getToken(true)
-        if (!token) {
-          throw new Error('Authentication expired and refresh failed')
-        }
-        res = await fetch(`${operatorUrl}/api/bots`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            prompt: createPrompt,
-            name: cleanDraft.name,
-            agent_profile: agentProfile,
-            strategy_type: cleanDraft.provisionStrategyType,
-            strategy_config: strategyConfig,
-          }),
-        })
-      }
-
-      if (!res.ok) {
-        const err = await res.text()
-        throw new Error(err || `Create failed: ${res.status}`)
-      }
-
-      const data = await res.json() as CreateBotResponse
-      const botId = typeof data.bot_id === 'string'
-        ? data.bot_id
-        : typeof data.id === 'string'
-          ? data.id
-          : ''
-      if (!botId) {
-        throw new Error('Operator created a bot but did not return a bot id')
-      }
-      const activationError = typeof data.activation_error === 'string' ? data.activation_error : ''
-      setStatus(activationError ? 'Agent created. Activation needs attention…' : 'Agent created. Opening workspace…')
-      saveCreateStrategyDraft({
-        ...attachCapabilityFields(cleanDraft, selectedCapabilityIds, agentProfile),
-        prompt: createPrompt,
-      })
-
-      setTimeout(() => {
-        navigate(`/arena/bot/${encodeURIComponent(botId)}/performance`)
-      }, 500)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error'
-      setStatus('Create failed')
-      setError(message)
-      setIsCreating(false)
-    }
-  }, [draft, draftStrategyType, prompt, isCreating, getToken, navigate, selectedCapabilityIds, selectedHint.label])
+    saveCreateStrategyDraft({
+      ...attachCapabilityFields(cleanDraft, selectedCapabilityIds, agentProfile),
+      prompt: createPrompt,
+    })
+    navigate('/provision?draft=create')
+  }, [draft, draftStrategyType, prompt, navigate, selectedCapabilityIds, selectedHint.label])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1041,7 +930,7 @@ export default function CreateAgent() {
                 disabled={!prompt.trim() || isCreating}
                 className="h-10 w-full rounded-[5px] bg-[var(--arena-terminal-accent)] px-5 font-display text-sm font-semibold text-[var(--arena-terminal-accent-text)] transition-[background-color,opacity,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] active:scale-[0.98] disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
               >
-                {isCreating ? 'Creating…' : 'Create Paper Agent'}
+                {isCreating ? 'Opening…' : 'Activate Paper Agent'}
               </Button>
               <Link
                 to="/provision?draft=create"
@@ -1049,7 +938,7 @@ export default function CreateAgent() {
                 className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 font-display text-xs font-semibold text-[var(--arena-terminal-text-secondary)] transition-[background-color,border-color,color,transform] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
               >
                 <span className="i-ph:rocket-launch text-base text-[var(--arena-terminal-accent)]" aria-hidden="true" />
-                Prepare Live Activation
+                Review Activation
               </Link>
             </section>
           </aside>

@@ -1364,11 +1364,62 @@ async fn test_get_bot_detail() {
     assert_eq!(json["paper_trade"], true);
     assert_eq!(json["chain_id"], 31337);
     assert_eq!(json["max_lifetime_days"], 30);
-    // trading_api_token should be excluded from serialization
-    assert!(
-        json["trading_api_token"].is_null(),
-        "token should not be serialized"
-    );
+    assert!(json["trading_api_token"].is_null());
+}
+
+#[tokio::test]
+async fn test_get_bot_detail_redacts_token_for_unpermitted_caller() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("detail-redacted-bot-1", "perp", false);
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/bots/{}", bot.id))
+                .header(
+                    "authorization",
+                    test_auth_header("0xbbbb000000000000000000000000000000000002"),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["trading_api_token"].is_null());
+}
+
+#[tokio::test]
+async fn test_private_bot_reads_reject_wrong_submitter_before_resource_lookup() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("private-read-forbidden-1", "dex", false);
+    let wrong_auth = test_auth_header("0xbbbb000000000000000000000000000000000002");
+    let routes = [
+        format!("/api/bots/{}/tick-artifacts", bot.id),
+        format!("/api/bots/{}/baseline-backtest", bot.id),
+        format!("/api/bots/{}/activation-progress", bot.id),
+        format!("/api/bots/{}/runs/missing-run-id", bot.id),
+    ];
+
+    for route in routes {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri(route)
+                    .header("authorization", &wrong_auth)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
 }
 
 #[tokio::test]
@@ -2871,6 +2922,72 @@ async fn test_start_bot_auth_resolves_bot() {
 }
 
 #[tokio::test]
+async fn test_start_bot_rejects_unattributed_bot_without_permitted_callers() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("start-unattributed-1", "dex", false);
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |b| {
+            b.submitter_address.clear();
+            b.strategy_config = json!({"max_slippage": 0.5});
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/bots/{}/start", bot.id))
+                .header(
+                    "authorization",
+                    test_auth_header("0xbbbb000000000000000000000000000000000002"),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_start_bot_allows_strategy_config_permitted_caller() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("start-permitted-1", "dex", false);
+    let permitted = "0xbbbb000000000000000000000000000000000002";
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |b| {
+            b.submitter_address.clear();
+            b.strategy_config = json!({
+                "max_slippage": 0.5,
+                "permitted_callers": [permitted]
+            });
+        })
+        .expect("update bot");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/bots/{}/start", bot.id))
+                .header("authorization", test_auth_header(permitted))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    assert_ne!(status, StatusCode::UNAUTHORIZED);
+    assert_ne!(status, StatusCode::FORBIDDEN);
+    assert_ne!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn test_stop_bot_auth_resolves_bot() {
     let _dir = init_test_env();
 
@@ -4205,6 +4322,31 @@ async fn test_run_now_inactive_bot_returns_conflict() {
         .unwrap();
 
     assert_eq!(response.status(), 409);
+}
+
+#[tokio::test]
+async fn test_debug_run_now_rejects_wrong_submitter() {
+    let _dir = init_test_env();
+
+    let workflow_id = 9_100_042;
+    let bot = seed_bot_with_workflow("debug-run-forbidden-1", "dex", true, Some(workflow_id));
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/debug/run-now/{}", bot.id))
+                .header(
+                    "authorization",
+                    test_auth_header("0xbbbb000000000000000000000000000000000002"),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

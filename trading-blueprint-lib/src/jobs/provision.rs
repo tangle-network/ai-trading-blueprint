@@ -64,6 +64,56 @@ fn parse_strategy_config_object(
     Ok(Some(obj.clone()))
 }
 
+fn normalized_permitted_caller(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn strategy_config_permitted_callers(config: &Map<String, Value>) -> Vec<String> {
+    let mut callers = Vec::new();
+    for key in [
+        "permitted_callers",
+        "permittedCallers",
+        "allowed_callers",
+        "authorized_callers",
+    ] {
+        let Some(values) = config.get(key).and_then(Value::as_array) else {
+            continue;
+        };
+        for value in values.iter().filter_map(Value::as_str) {
+            let Some(caller) = normalized_permitted_caller(value) else {
+                continue;
+            };
+            if !callers
+                .iter()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(&caller))
+            {
+                callers.push(caller);
+            }
+        }
+    }
+    callers
+}
+
+fn ensure_strategy_config_permitted_caller(config: &mut Map<String, Value>, caller: &str) {
+    let Some(caller) = normalized_permitted_caller(caller) else {
+        return;
+    };
+
+    let mut callers = strategy_config_permitted_callers(config);
+    if !callers
+        .iter()
+        .any(|existing| existing.eq_ignore_ascii_case(&caller))
+    {
+        callers.push(caller);
+    }
+
+    config.insert(
+        "permitted_callers".to_string(),
+        Value::Array(callers.into_iter().map(Value::String).collect()),
+    );
+}
+
 fn parse_runtime_backend_from_strategy_config(
     strategy_config: Option<&Map<String, Value>>,
 ) -> Result<Option<String>, String> {
@@ -1438,6 +1488,7 @@ pub async fn provision_core(
         .inspect_err(|e| mark_provision_failed(call_id, e))?
         .unwrap_or_else(|| default_paper_trade_for_request(&request));
     let strategy_config_obj = parsed_strategy_config.get_or_insert_with(Default::default);
+    ensure_strategy_config_permitted_caller(strategy_config_obj, &caller);
     let vault_binding = parse_vault_binding(strategy_config_obj, &request)
         .inspect_err(|e| mark_provision_failed(call_id, e))?;
     apply_strategy_defaults(strategy_config_obj, &request, paper_trade, &bot_id)
@@ -1942,6 +1993,63 @@ mod tests {
     const HYPEREVM_TESTNET_USDC: &str = "0x2B3370eE501B4a559b57D449569354196457D8Ab";
     const HYPERLIQUID_VAULT: &str = "0x0000000000000000000000000000000000000998";
     const HYPERLIQUID_API_WALLET: &str = "0x0000000000000000000000000000000000000a91";
+
+    #[test]
+    fn ensure_strategy_config_permitted_caller_preserves_existing_callers() {
+        let mut config = serde_json::json!({
+            "permittedCallers": ["0xaaaa000000000000000000000000000000000001"],
+            "max_slippage": 0.5
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        ensure_strategy_config_permitted_caller(
+            &mut config,
+            "0xbbbb000000000000000000000000000000000002",
+        );
+
+        let callers = config
+            .get("permitted_callers")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert_eq!(callers.len(), 2);
+        assert!(
+            callers.iter().any(|value| {
+                value.as_str() == Some("0xaaaa000000000000000000000000000000000001")
+            })
+        );
+        assert!(
+            callers.iter().any(|value| {
+                value.as_str() == Some("0xbbbb000000000000000000000000000000000002")
+            })
+        );
+    }
+
+    #[test]
+    fn ensure_strategy_config_permitted_caller_dedupes_case_insensitively() {
+        let mut config = serde_json::json!({
+            "permitted_callers": ["0xAAAA000000000000000000000000000000000001"]
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        ensure_strategy_config_permitted_caller(
+            &mut config,
+            "0xaaaa000000000000000000000000000000000001",
+        );
+
+        let callers = config
+            .get("permitted_callers")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert_eq!(callers.len(), 1);
+        assert_eq!(
+            callers[0].as_str(),
+            Some("0xAAAA000000000000000000000000000000000001")
+        );
+    }
 
     fn set_env(unlock: &std::sync::MutexGuard<'_, ()>, vars: &[(&str, Option<&str>)]) {
         let _ = unlock; // tie env mutation to the lock guard's lifetime

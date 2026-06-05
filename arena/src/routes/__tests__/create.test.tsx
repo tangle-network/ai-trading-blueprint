@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const DRAFT_STORAGE_KEY = 'arena:create-strategy-draft:v1'
 
 const hoisted = vi.hoisted(() => ({
   navigateMock: vi.fn(),
@@ -21,14 +23,24 @@ vi.mock('~/lib/hooks/useOperatorAuth', () => ({
 
 vi.mock('~/lib/operator/meta', () => ({
   ALL_TRADING_OPERATOR_API_URLS: ['http://operator.test'],
-  HAS_TRADING_OPERATOR_API: true,
 }))
 
 describe('create agent route', () => {
   beforeEach(() => {
     hoisted.navigateMock.mockReset()
     hoisted.getTokenMock.mockReset().mockResolvedValue('token')
+    window.localStorage.clear()
   })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function readStoredDraft() {
+    const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY)
+    expect(raw).toBeTruthy()
+    return JSON.parse(raw!)
+  }
 
   it('opens on a Hyperliquid perp mandate so the compiler matches the visible default prompt', async () => {
     const { default: CreateAgent } = await import('../create')
@@ -44,11 +56,8 @@ describe('create agent route', () => {
     expect(screen.getAllByText(/liquidation buffer/i).length).toBeGreaterThanOrEqual(1)
   })
 
-  it('does not double-submit when create is triggered twice before the request resolves', async () => {
-    let resolveFetch: (response: Response) => void = () => {}
-    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => {
-      resolveFetch = resolve
-    })))
+  it('does not double-submit when create is triggered twice before navigation completes', async () => {
+    vi.stubGlobal('fetch', vi.fn())
     const { default: CreateAgent } = await import('../create')
     render(<CreateAgent />)
 
@@ -56,23 +65,13 @@ describe('create agent route', () => {
     fireEvent.change(textbox, { target: { value: 'Create a paper ETH strategy' } })
     fireEvent.keyDown(textbox, { key: 'Enter' })
     fireEvent.keyDown(textbox, { key: 'Enter' })
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
 
-    resolveFetch(new Response(JSON.stringify({ bot_id: 'bot-1', status: 'active' }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }))
-    await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledWith('/arena/bot/bot-1/performance'))
+    await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledTimes(1))
+    expect(hoisted.navigateMock).toHaveBeenCalledWith('/provision?draft=create')
+    expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('uses the selected strategy module to submit the inferred strategy type', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({
-      bot_id: 'prediction-bot',
-      status: 'active',
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }))))
+  it('uses the selected strategy module to persist the activation draft', async () => {
     const { default: CreateAgent } = await import('../create')
     render(<CreateAgent />)
 
@@ -81,17 +80,16 @@ describe('create agent route', () => {
       'I want to trade political and news events on Polymarket. Find markets with edge and manage positions.',
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /create paper agent/i }))
+    fireEvent.click(screen.getByRole('button', { name: /activate paper agent/i }))
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
-    const [, request] = vi.mocked(fetch).mock.calls[0]
-    const body = JSON.parse(String((request as RequestInit).body))
-    expect(body.strategy_type).toBe('prediction')
-    expect(body.name).toBe('Polymarket Event Scout')
-    expect(body.prompt).toContain('Polymarket')
-    expect(body.prompt).toContain('Agent profile:')
-    expect(body.prompt).toContain('Venue access: all wired protocols')
-    expect(body.agent_profile).toMatchObject({
+    await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledWith('/provision?draft=create'))
+    const draft = readStoredDraft()
+    expect(draft.provisionStrategyType).toBe('prediction')
+    expect(draft.name).toBe('Polymarket Event Scout')
+    expect(draft.prompt).toContain('Polymarket')
+    expect(draft.prompt).toContain('Agent profile:')
+    expect(draft.prompt).toContain('Venue access: all wired protocols')
+    expect(draft.agentProfile).toMatchObject({
       schema: 'tangle.trading.agent-profile.v1',
       name: 'Polymarket Event Scout',
       objective: {
@@ -119,34 +117,15 @@ describe('create agent route', () => {
         projectedStrategyType: 'prediction',
       },
     })
-    expect(body.strategy_config).toMatchObject({
-      paper_trade: true,
-      paper_safe: true,
-      initial_capital_usd: '10000',
-      agent_profile: body.agent_profile,
-      available_protocols: expect.arrayContaining(['hyperliquid', 'uniswap_v3', 'polymarket_clob']),
-      preferred_protocols: ['polymarket_clob'],
-      protocol_chain_ids: expect.objectContaining({
-        hyperliquid: 998,
-        polymarket_clob: 137,
-      }),
-      agent_profile_summary: {
-        market: 'Political events',
-        venue: 'Polymarket',
-        capabilities: ['Prediction Markets'],
-        mode: 'Paper start',
-      },
+    expect(draft.availableProtocols).toEqual(expect.arrayContaining(['hyperliquid', 'uniswap_v3', 'polymarket_clob']))
+    expect(draft.preferredProtocols).toEqual(['polymarket_clob'])
+    expect(draft.protocolChainIds).toMatchObject({
+      hyperliquid: 998,
+      polymarket_clob: 137,
     })
   })
 
   it('supports launching a Hyperliquid perp tactic from a mandate template', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({
-      bot_id: 'perp-bot',
-      status: 'active',
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }))))
     const { default: CreateAgent } = await import('../create')
     render(<CreateAgent />)
 
@@ -160,15 +139,14 @@ describe('create agent route', () => {
       'I want an agent that trades ETH perps on Hyperliquid, using breakout retests with strict max leverage, liquidation buffer, and drawdown limits.',
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /create paper agent/i }))
+    fireEvent.click(screen.getByRole('button', { name: /activate paper agent/i }))
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
-    const [, request] = vi.mocked(fetch).mock.calls[0]
-    const body = JSON.parse(String((request as RequestInit).body))
-    expect(body.strategy_type).toBe('hyperliquid_perp')
-    expect(body.name).toBe('ETH Perp Breakout')
-    expect(body.prompt).toContain('Hyperliquid')
-    expect(body.agent_profile).toMatchObject({
+    await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledWith('/provision?draft=create'))
+    const draft = readStoredDraft()
+    expect(draft.provisionStrategyType).toBe('hyperliquid_perp')
+    expect(draft.name).toBe('ETH Perp Breakout')
+    expect(draft.prompt).toContain('Hyperliquid')
+    expect(draft.agentProfile).toMatchObject({
       schema: 'tangle.trading.agent-profile.v1',
       name: 'ETH Perp Breakout',
       capabilities: {
@@ -179,18 +157,8 @@ describe('create agent route', () => {
         projectedStrategyType: 'hyperliquid_perp',
       },
     })
-    expect(body.strategy_config).toMatchObject({
-      paper_trade: true,
-      initial_capital_usd: '10000',
-      agent_profile: body.agent_profile,
-      available_protocols: expect.arrayContaining(['hyperliquid', 'uniswap_v3', 'gmx_v2', 'vertex']),
-      preferred_protocols: ['hyperliquid'],
-      agent_profile_summary: {
-        market: 'ETH-PERP',
-        venue: 'Hyperliquid',
-        capabilities: ['Hyperliquid Perps'],
-      },
-    })
+    expect(draft.availableProtocols).toEqual(expect.arrayContaining(['hyperliquid', 'uniswap_v3', 'gmx_v2', 'vertex']))
+    expect(draft.preferredProtocols).toEqual(['hyperliquid'])
   })
 
   it('keeps the blueprint path rail as a contiguous stack without spacer gutters', async () => {

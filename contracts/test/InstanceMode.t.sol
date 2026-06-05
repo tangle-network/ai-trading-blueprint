@@ -30,6 +30,7 @@ contract InstanceModeTest is Setup {
 
         // Initialize blueprint
         blueprint.onBlueprintCreated(42, address(this), tangleCore);
+        blueprint.setRequesterAccessMode(TradingBlueprint.RequestAccessMode.Public);
 
         // Set vault factory
         vm.prank(tangleCore);
@@ -327,6 +328,7 @@ contract InstanceModeTest is Setup {
         // Deploy fresh blueprint WITHOUT setting vault factory
         TradingBlueprint fresh = new TradingBlueprint();
         fresh.onBlueprintCreated(99, address(this), tangleCore);
+        fresh.setRequesterAccessMode(TradingBlueprint.RequestAccessMode.Public);
 
         // Don't call setVaultFactory — vaultFactory is address(0)
         vm.prank(tangleCore);

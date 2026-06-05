@@ -453,6 +453,71 @@ async fn test_get_bot_when_provisioned() {
 }
 
 #[tokio::test]
+async fn test_get_bot_rejects_wrong_submitter() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (_bot_id, _sandbox_id) = seed_singleton("dex");
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/bot")
+                .header(
+                    "authorization",
+                    test_auth_header("0xbbbb000000000000000000000000000000000002"),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_singleton_private_reads_reject_wrong_submitter() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (_bot_id, _sandbox_id) = seed_singleton("dex");
+    let wrong_auth = test_auth_header("0xbbbb000000000000000000000000000000000002");
+    let routes = [
+        "/api/bot/metrics",
+        "/api/bot/metrics/history",
+        "/api/bot/trades",
+        "/api/bot/portfolio/state",
+        "/api/bot/runs",
+        "/api/bot/runs/missing-run-id",
+        "/api/bot/market-data/candles",
+        "/api/bot/chart/studies",
+        "/api/bot/activation-progress",
+    ];
+
+    for route in routes {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri(route)
+                    .header("authorization", &wrong_auth)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
 async fn test_get_bot_when_not_provisioned() {
     let _dir = common::init_test_env();
     let _lock = common::HARNESS_LOCK.lock().await;
@@ -611,6 +676,80 @@ async fn test_start_stop_singleton() {
         status == 200 || status == 500,
         "Expected 200 or 500 from Docker layer, got {status}"
     );
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_start_singleton_rejects_unattributed_bot_without_permitted_callers() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, _sandbox_id) = seed_singleton("dex");
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.submitter_address.clear();
+            b.strategy_config = json!({"max_slippage": 0.5});
+        })
+        .unwrap();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/bot/start")
+                .header(
+                    "authorization",
+                    test_auth_header("0xbbbb000000000000000000000000000000000002"),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_start_singleton_allows_strategy_config_permitted_caller() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, _sandbox_id) = seed_singleton("dex");
+    let permitted = "0xbbbb000000000000000000000000000000000002";
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.submitter_address.clear();
+            b.strategy_config = json!({
+                "max_slippage": 0.5,
+                "permitted_callers": [permitted]
+            });
+        })
+        .unwrap();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/bot/start")
+                .header("authorization", test_auth_header(permitted))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    assert_ne!(status, StatusCode::UNAUTHORIZED);
+    assert_ne!(status, StatusCode::FORBIDDEN);
+    assert_ne!(status, StatusCode::NOT_FOUND);
 
     let _ = clear_instance_bot_id();
 }
@@ -1354,6 +1493,42 @@ async fn test_run_now_requires_active_bot() {
         .unwrap();
 
     assert_eq!(response.status(), 409);
+
+    let _ = clear_instance_bot_id();
+}
+
+#[tokio::test]
+async fn test_debug_run_now_rejects_wrong_submitter() {
+    let _dir = common::init_test_env();
+    let _lock = common::HARNESS_LOCK.lock().await;
+    let _ = clear_instance_bot_id();
+
+    let (bot_id, _sandbox_id) = seed_singleton("dex");
+    let wf_id = chrono::Utc::now().timestamp_millis() as u64 + 3_400;
+    fixtures::seed_workflow(wf_id, "http://127.0.0.1:19999", "tok", "0 */5 * * * *");
+    state::bots()
+        .unwrap()
+        .update(&state::bot_key(&bot_id), |b| {
+            b.workflow_id = Some(wf_id);
+        })
+        .unwrap();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/debug/run-now")
+                .header(
+                    "authorization",
+                    test_auth_header("0xbbbb000000000000000000000000000000000002"),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     let _ = clear_instance_bot_id();
 }
