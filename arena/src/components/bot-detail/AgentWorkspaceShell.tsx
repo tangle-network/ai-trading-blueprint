@@ -18,9 +18,11 @@ import {
   resolveFillCountEvidence,
 } from '~/lib/tradeEvidence';
 import {
+  WorkspaceCollapsedPane,
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePaneSize,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
 
@@ -42,11 +44,13 @@ interface AgentWorkspaceShellProps {
 
 interface AgentWorkspaceShellLayout {
   railWidth: number;
+  railCollapsed: boolean;
 }
 
 const AGENT_WORKSPACE_SHELL_LAYOUT_KEY = 'arena:agent-workspace-shell-layout';
 const DEFAULT_AGENT_WORKSPACE_SHELL_LAYOUT: AgentWorkspaceShellLayout = {
   railWidth: 264,
+  railCollapsed: false,
 };
 
 function normalizeAgentWorkspaceShellLayout(value: Partial<AgentWorkspaceShellLayout>): AgentWorkspaceShellLayout {
@@ -56,6 +60,7 @@ function normalizeAgentWorkspaceShellLayout(value: Partial<AgentWorkspaceShellLa
       224,
       360,
     ),
+    railCollapsed: value.railCollapsed === true,
   };
 }
 
@@ -202,8 +207,16 @@ export function AgentWorkspaceShell({
       cursor: 'col-resize',
       onMove: (moveEvent) => {
         const maxWidth = Math.min(360, Math.max(264, rect.width * 0.32));
-        const nextWidth = clampNumber(moveEvent.clientX - rect.left, 224, maxWidth);
-        setLayout({ railWidth: nextWidth });
+        const rawWidth = moveEvent.clientX - rect.left;
+        if (shouldCollapsePaneSize(rawWidth)) {
+          setLayout((current) => ({
+            ...current,
+            railCollapsed: true,
+          }));
+          return;
+        }
+        const nextWidth = clampNumber(rawWidth, 224, maxWidth);
+        setLayout({ railWidth: nextWidth, railCollapsed: false });
       },
     });
   };
@@ -425,7 +438,15 @@ export function AgentWorkspaceShell({
         </section>
       ) : (
         <>
-          {agentRail}
+          {layout.railCollapsed ? (
+            <WorkspaceCollapsedPane
+              label="Agent"
+              icon="i-ph:robot"
+              orientation="vertical"
+              className="hidden w-11 shrink-0 border-r border-[#273035] bg-[#0b1418] lg:flex"
+              onClick={() => setLayout((current) => ({ ...current, railCollapsed: false }))}
+            />
+          ) : agentRail}
           <WorkspaceResizeHandle
             orientation="vertical"
             className="hidden w-2 lg:flex"

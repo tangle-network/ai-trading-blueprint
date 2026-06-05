@@ -25,6 +25,7 @@ import {
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePaneSize,
   usePersistentWorkspaceLayout,
 } from "~/components/arena/WorkspaceResizeControls";
 
@@ -810,7 +811,13 @@ export function ChatTab({
       cursor: "col-resize",
       onMove: (moveEvent) => {
         const maxWidth = Math.min(380, Math.max(280, rect.width * 0.34));
-        const nextWidth = clampNumber(moveEvent.clientX - rect.left, 220, maxWidth);
+        const rawWidth = moveEvent.clientX - rect.left;
+        if (shouldCollapsePaneSize(rawWidth)) {
+          setSessionSidebarCollapsed(true);
+          return;
+        }
+        const nextWidth = clampNumber(rawWidth, 220, maxWidth);
+        setSessionSidebarCollapsed(false);
         setLayout((current) => ({ ...current, sidebarWidth: nextWidth }));
       },
     });
@@ -913,7 +920,7 @@ export function ChatTab({
             canWrite={canWrite}
           />
         )}
-        {showSessionSidebar && !isStackedLayout && !sessionSidebarCollapsed && (
+        {showSessionSidebar && !isStackedLayout && (
           <WorkspaceResizeHandle
             orientation="vertical"
             className="w-2"

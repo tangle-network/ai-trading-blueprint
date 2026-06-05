@@ -21,6 +21,7 @@ import {
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePanePercent,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
 
@@ -169,7 +170,15 @@ export default function VaultPage() {
     beginWorkspaceResize(event, {
       cursor: 'row-resize',
       onMove: (moveEvent) => {
-        const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 34, 68);
+        const rawPercent = ((moveEvent.clientY - rect.top) / rect.height) * 100;
+        if (shouldCollapsePanePercent(100 - rawPercent)) {
+          setLayout((current) => ({
+            ...current,
+            activityCollapsed: true,
+          }));
+          return;
+        }
+        const nextPercent = clampNumber(rawPercent, 34, 68);
         setLayout((current) => ({
           ...current,
           formsPercent: nextPercent,

@@ -33,6 +33,8 @@ import {
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePanePercent,
+  shouldCollapsePaneSize,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
 
@@ -275,7 +277,12 @@ function HomeWorkspacePanels({
       cursor: 'col-resize',
       onMove: (moveEvent) => {
         const maxWidth = Math.min(560, Math.max(340, rect.width * 0.48));
-        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 320, maxWidth);
+        const rawWidth = rect.right - moveEvent.clientX;
+        if (shouldCollapsePaneSize(rawWidth)) {
+          setLayout((current) => ({ ...current, fillsCollapsed: true }));
+          return;
+        }
+        const nextWidth = clampNumber(rawWidth, 320, maxWidth);
         setLayout((current) => ({ ...current, fillsWidth: nextWidth, fillsCollapsed: false }));
       },
     });
@@ -289,7 +296,12 @@ function HomeWorkspacePanels({
     beginWorkspaceResize(event, {
       cursor: 'row-resize',
       onMove: (moveEvent) => {
-        const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 46, 78);
+        const rawPercent = ((moveEvent.clientY - rect.top) / rect.height) * 100;
+        if (shouldCollapsePanePercent(100 - rawPercent)) {
+          setLayout((current) => ({ ...current, agentsCollapsed: true }));
+          return;
+        }
+        const nextPercent = clampNumber(rawPercent, 46, 78);
         setLayout((current) => ({ ...current, volumePercent: nextPercent, agentsCollapsed: false }));
       },
     });

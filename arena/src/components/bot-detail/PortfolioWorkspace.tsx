@@ -10,6 +10,7 @@ import {
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePanePercent,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
 
@@ -218,7 +219,15 @@ export function PortfolioWorkspace({
     beginWorkspaceResize(event, {
       cursor: 'row-resize',
       onMove: (moveEvent) => {
-        const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 44, 78);
+        const rawPercent = ((moveEvent.clientY - rect.top) / rect.height) * 100;
+        if (shouldCollapsePanePercent(100 - rawPercent)) {
+          setLayout((current) => ({
+            ...current,
+            executionsCollapsed: true,
+          }));
+          return;
+        }
+        const nextPercent = clampNumber(rawPercent, 44, 78);
         setLayout((current) => ({
           ...current,
           positionsPercent: nextPercent,

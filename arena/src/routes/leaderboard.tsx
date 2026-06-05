@@ -30,6 +30,8 @@ import {
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePanePercent,
+  shouldCollapsePaneSize,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
 
@@ -503,7 +505,15 @@ export default function LeaderboardPage() {
       cursor: 'col-resize',
       onMove: (moveEvent) => {
         const maxWidth = Math.min(500, Math.max(360, rect.width * 0.42));
-        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 320, maxWidth);
+        const rawWidth = rect.right - moveEvent.clientX;
+        if (shouldCollapsePaneSize(rawWidth)) {
+          setLayout((current) => ({
+            ...current,
+            cockpitCollapsed: true,
+          }));
+          return;
+        }
+        const nextWidth = clampNumber(rawWidth, 320, maxWidth);
         setLayout((current) => ({
           ...current,
           cockpitWidth: nextWidth,
@@ -520,7 +530,15 @@ export default function LeaderboardPage() {
     beginWorkspaceResize(event, {
       cursor: 'row-resize',
       onMove: (moveEvent) => {
-        const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 42, 76);
+        const rawPercent = ((moveEvent.clientY - rect.top) / rect.height) * 100;
+        if (shouldCollapsePanePercent(100 - rawPercent)) {
+          setLayout((current) => ({
+            ...current,
+            dossierCollapsed: true,
+          }));
+          return;
+        }
+        const nextPercent = clampNumber(rawPercent, 42, 76);
         setLayout((current) => ({
           ...current,
           tablePercent: nextPercent,

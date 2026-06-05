@@ -43,6 +43,8 @@ import {
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePanePercent,
+  shouldCollapsePaneSize,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
 import { PerformanceCopilotPanel } from './PerformanceCopilotPanel';
@@ -816,7 +818,15 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
       onMove: (moveEvent) => {
         if (usesFillsRail) {
           const maxWidth = Math.min(520, Math.max(340, rect.width * 0.42));
-          const nextWidth = clampNumber(rect.right - moveEvent.clientX, 300, maxWidth);
+          const rawWidth = rect.right - moveEvent.clientX;
+          if (shouldCollapsePaneSize(rawWidth)) {
+            setLayout((current) => ({
+              ...current,
+              fillsCollapsed: true,
+            }));
+            return;
+          }
+          const nextWidth = clampNumber(rawWidth, 300, maxWidth);
           setLayout((current) => ({
             ...current,
             fillsWidth: nextWidth,
@@ -825,7 +835,15 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           return;
         }
 
-        const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 48, 78);
+        const rawPercent = ((moveEvent.clientY - rect.top) / rect.height) * 100;
+        if (shouldCollapsePanePercent(100 - rawPercent)) {
+          setLayout((current) => ({
+            ...current,
+            fillsCollapsed: true,
+          }));
+          return;
+        }
+        const nextPercent = clampNumber(rawPercent, 48, 78);
         setLayout((current) => ({
           ...current,
           chartPercent: nextPercent,

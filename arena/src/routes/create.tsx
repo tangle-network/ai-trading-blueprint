@@ -19,6 +19,7 @@ import {
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePaneSize,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls'
 
@@ -625,7 +626,15 @@ export default function CreateAgent() {
       cursor: 'col-resize',
       onMove: (moveEvent) => {
         const maxWidth = Math.min(480, Math.max(360, rect.width * 0.4))
-        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 300, maxWidth)
+        const rawWidth = rect.right - moveEvent.clientX
+        if (shouldCollapsePaneSize(rawWidth)) {
+          setLayout((current) => ({
+            ...current,
+            railCollapsed: true,
+          }))
+          return
+        }
+        const nextWidth = clampNumber(rawWidth, 300, maxWidth)
         setLayout((current) => ({
           ...current,
           railWidth: nextWidth,

@@ -300,6 +300,54 @@
   --chat-send-ring: color-mix(in srgb, var(--arena-terminal-accent) 34%, transparent);
 }
 
+.arena-sort-header-button,
+.arena-table-header-label {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 3px;
+  font-family: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.075em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--arena-terminal-text) 72%, var(--arena-terminal-text-muted));
+}
+
+.arena-sort-header-button {
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease;
+}
+
+.arena-sort-header-button:hover,
+.arena-sort-header-button:focus-visible,
+.arena-sort-header-button[aria-pressed='true'] {
+  color: var(--arena-terminal-text);
+}
+
+.arena-sort-header-button:hover {
+  background: color-mix(in srgb, var(--arena-terminal-accent-soft) 52%, transparent);
+}
+
+.arena-sort-header-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--arena-terminal-accent) 64%, transparent);
+  outline-offset: 2px;
+}
+
+.arena-sort-header-button[aria-pressed='true'] {
+  text-shadow: 0 0 18px color-mix(in srgb, var(--arena-terminal-accent) 16%, transparent);
+}
+
+:root[data-theme='dark'] .arena-sort-header-button,
+:root[data-theme='dark'] .arena-table-header-label {
+  color: color-mix(in srgb, var(--arena-terminal-text) 80%, var(--arena-terminal-text-muted));
+}
+
 .arena-sandbox-transcript {
   --background: var(--arena-elements-bg-depth-1);
   --foreground: var(--arena-elements-textPrimary);

@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from 'react-router';
-import { useRef, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { isAddress, type Address } from 'viem';
 import { Identicon, Skeleton } from '@tangle-network/blueprint-ui/components';
 import { TradeInstrumentDisplay } from '~/components/bot-detail/shared/AssetDisplay';
@@ -23,8 +23,17 @@ import {
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePaneSize,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
+import {
+  applySortDirection,
+  compareNumberValue,
+  compareStringValue,
+  nextSortState,
+  SortableHeaderButton,
+  type SortState,
+} from '~/components/arena/SortableTableHeader';
 
 interface LatestAgentTradesProps {
   bots: Bot[];
@@ -50,6 +59,13 @@ const tradeTimestampFormatter = new Intl.DateTimeFormat('en-US', {
 
 const EXPLORER_PAGE_SIZE = 25;
 const LATEST_TRADES_EXPLORER_LAYOUT_KEY = 'arena:latest-trades-explorer-layout';
+type LatestTradesSortKey = 'time' | 'agent' | 'action' | 'market' | 'notional' | 'mode' | 'status' | 'ref';
+type LatestTradeItem = {
+  trade: Trade;
+  bot?: Bot;
+  botId: string;
+  botName: string;
+};
 
 interface LatestTradesExplorerLayout {
   inspectorWidth: number;
@@ -82,6 +98,38 @@ function parsePositiveInteger(value: string | null): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
+function sortLatestTradeItems(
+  items: LatestTradeItem[],
+  sort: SortState<LatestTradesSortKey>,
+): LatestTradeItem[] {
+  return [...items].sort((left, right) => {
+    const compare = (() => {
+      switch (sort.key) {
+        case 'time':
+          return compareNumberValue(left.trade.timestamp, right.trade.timestamp);
+        case 'agent':
+          return compareStringValue(left.bot?.name ?? left.botName, right.bot?.name ?? right.botName);
+        case 'action':
+          return compareStringValue(formatTradeActionLabel(left.trade.action), formatTradeActionLabel(right.trade.action));
+        case 'market':
+          return compareStringValue(getTradeMarketLabel(left.trade), getTradeMarketLabel(right.trade));
+        case 'notional':
+          return compareNumberValue(left.trade.notionalUsd, right.trade.notionalUsd);
+        case 'mode':
+          return compareStringValue(formatTradeModeLabel(left.trade), formatTradeModeLabel(right.trade));
+        case 'status':
+          return compareStringValue(left.trade.status, right.trade.status);
+        case 'ref':
+          return compareStringValue(formatReference(left.trade), formatReference(right.trade));
+        default:
+          return 0;
+      }
+    })();
+    if (compare !== 0) return applySortDirection(compare, sort.direction);
+    return compareNumberValue(right.trade.timestamp, left.trade.timestamp);
+  });
+}
+
 export function LatestAgentTrades({
   bots,
   className = '',
@@ -103,8 +151,10 @@ export function LatestAgentTrades({
     DEFAULT_LATEST_TRADES_EXPLORER_LAYOUT,
     normalizeLatestTradesExplorerLayout,
   );
+  const [sort, setSort] = useState<SortState<LatestTradesSortKey>>({ key: 'time', direction: 'desc' });
   const isBounded = isPanel || isExplorer;
-  const visibleTrades = limit ? trades.slice(0, limit) : trades;
+  const sortedTrades = useMemo(() => sortLatestTradeItems(trades, sort), [sort, trades]);
+  const visibleTrades = limit ? sortedTrades.slice(0, limit) : sortedTrades;
   const explorerPageCount = isExplorer
     ? Math.max(1, Math.ceil(visibleTrades.length / EXPLORER_PAGE_SIZE))
     : 1;
@@ -119,6 +169,15 @@ export function LatestAgentTrades({
   const selectedFill = isExplorer
     ? explorerTrades.find(({ trade }) => trade.id === selectedFillId) ?? explorerTrades[0]
     : undefined;
+
+  function handleSort(key: LatestTradesSortKey, defaultDirection: 'asc' | 'desc' = 'desc') {
+    setSort((current) => nextSortState(current, key, defaultDirection));
+    if (!isExplorer) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('fillsPage', '1');
+    nextParams.delete('fill');
+    setSearchParams(nextParams, { replace: true });
+  }
 
   function selectFill(fillId: string) {
     const nextParams = new URLSearchParams(searchParams);
@@ -149,7 +208,15 @@ export function LatestAgentTrades({
       cursor: 'col-resize',
       onMove: (moveEvent) => {
         const maxWidth = Math.min(500, Math.max(320, rect.width * 0.46));
-        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 280, maxWidth);
+        const rawWidth = rect.right - moveEvent.clientX;
+        if (shouldCollapsePaneSize(rawWidth)) {
+          setExplorerLayout((current) => ({
+            ...current,
+            inspectorCollapsed: true,
+          }));
+          return;
+        }
+        const nextWidth = clampNumber(rawWidth, 280, maxWidth);
         setExplorerLayout((current) => ({
           ...current,
           inspectorWidth: nextWidth,
@@ -285,12 +352,24 @@ export function LatestAgentTrades({
               <table className="w-full min-w-[640px] border-separate border-spacing-0 rounded-none">
                 <thead className="sticky top-0 z-10 rounded-none bg-[var(--arena-terminal-surface)] backdrop-blur">
                   <tr>
-                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)]">Time</th>
-                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)]">Agent</th>
-                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)]">Fill</th>
-                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)]">Market</th>
-                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)]">USD</th>
-                    <th className="hidden rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right font-data text-[11px] font-medium text-[var(--arena-terminal-text-subtle)] 2xl:table-cell">Ref</th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left">
+                      <SortableHeaderButton sortKey="time" sort={sort} onSort={handleSort}>Time</SortableHeaderButton>
+                    </th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left">
+                      <SortableHeaderButton sortKey="agent" sort={sort} onSort={handleSort} defaultDirection="asc">Agent</SortableHeaderButton>
+                    </th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left">
+                      <SortableHeaderButton sortKey="action" sort={sort} onSort={handleSort} defaultDirection="asc">Fill</SortableHeaderButton>
+                    </th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-left">
+                      <SortableHeaderButton sortKey="market" sort={sort} onSort={handleSort} defaultDirection="asc">Market</SortableHeaderButton>
+                    </th>
+                    <th className="rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right">
+                      <SortableHeaderButton sortKey="notional" sort={sort} onSort={handleSort} align="right">USD</SortableHeaderButton>
+                    </th>
+                    <th className="hidden rounded-none border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right 2xl:table-cell">
+                      <SortableHeaderButton sortKey="ref" sort={sort} onSort={handleSort} align="right" defaultDirection="asc">Ref</SortableHeaderButton>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -417,14 +496,30 @@ export function LatestAgentTrades({
           <table className="w-full min-w-[760px] border-separate border-spacing-0">
             <thead className="sticky top-0 z-10 bg-arena-elements-background-depth-2/96 backdrop-blur">
               <tr className="border-b border-arena-elements-dividerColor/60">
-                <th className="px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Age</th>
-                <th className="px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Agent</th>
-                <th className="px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Action</th>
-                <th className="px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Market</th>
-                <th className="px-4 py-2 text-right font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Notional</th>
-                <th className="px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Mode</th>
-                <th className="px-4 py-2 text-left font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Status</th>
-                <th className="px-4 py-2 text-right font-data text-[10px] font-semibold uppercase tracking-wider text-arena-elements-textTertiary">Ref</th>
+                <th className="px-4 py-2 text-left">
+                  <SortableHeaderButton sortKey="time" sort={sort} onSort={handleSort}>Age</SortableHeaderButton>
+                </th>
+                <th className="px-4 py-2 text-left">
+                  <SortableHeaderButton sortKey="agent" sort={sort} onSort={handleSort} defaultDirection="asc">Agent</SortableHeaderButton>
+                </th>
+                <th className="px-4 py-2 text-left">
+                  <SortableHeaderButton sortKey="action" sort={sort} onSort={handleSort} defaultDirection="asc">Action</SortableHeaderButton>
+                </th>
+                <th className="px-4 py-2 text-left">
+                  <SortableHeaderButton sortKey="market" sort={sort} onSort={handleSort} defaultDirection="asc">Market</SortableHeaderButton>
+                </th>
+                <th className="px-4 py-2 text-right">
+                  <SortableHeaderButton sortKey="notional" sort={sort} onSort={handleSort} align="right">Notional</SortableHeaderButton>
+                </th>
+                <th className="px-4 py-2 text-left">
+                  <SortableHeaderButton sortKey="mode" sort={sort} onSort={handleSort} defaultDirection="asc">Mode</SortableHeaderButton>
+                </th>
+                <th className="px-4 py-2 text-left">
+                  <SortableHeaderButton sortKey="status" sort={sort} onSort={handleSort} defaultDirection="asc">Status</SortableHeaderButton>
+                </th>
+                <th className="px-4 py-2 text-right">
+                  <SortableHeaderButton sortKey="ref" sort={sort} onSort={handleSort} align="right" defaultDirection="asc">Ref</SortableHeaderButton>
+                </th>
               </tr>
             </thead>
             <tbody>

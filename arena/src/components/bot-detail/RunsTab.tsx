@@ -46,9 +46,11 @@ import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
 import { DecisionInspector } from "./shared/DecisionInspector";
 import { TerminalEmptyState } from "./shared/WorkspacePrimitives";
 import {
+  WorkspaceCollapsedPane,
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePaneSize,
   usePersistentWorkspaceLayout,
 } from "~/components/arena/WorkspaceResizeControls";
 
@@ -775,6 +777,7 @@ export function RunsTab({
       : window.innerWidth < (immersive ? 860 : 1100),
   );
   const [runsSidebarCollapsed, setRunsSidebarCollapsed] = useState(false);
+  const [decisionInspectorCollapsed, setDecisionInspectorCollapsed] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const traceSurfaceRef = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = usePersistentWorkspaceLayout(
@@ -801,6 +804,10 @@ export function RunsTab({
       mediaQuery.removeEventListener("change", syncLayout);
     };
   }, [immersive]);
+
+  useEffect(() => {
+    if (isStackedLayout) setDecisionInspectorCollapsed(false);
+  }, [isStackedLayout]);
 
   const runsQuery = useInfiniteQuery({
     queryKey: ["bot-runs", apiUrl, authKey, botId],
@@ -971,7 +978,13 @@ export function RunsTab({
       cursor: "col-resize",
       onMove: (moveEvent) => {
         const maxWidth = Math.min(360, Math.max(260, rect.width * 0.32));
-        const nextWidth = clampNumber(moveEvent.clientX - rect.left, 220, maxWidth);
+        const rawWidth = moveEvent.clientX - rect.left;
+        if (shouldCollapsePaneSize(rawWidth)) {
+          setRunsSidebarCollapsed(true);
+          return;
+        }
+        const nextWidth = clampNumber(rawWidth, 220, maxWidth);
+        setRunsSidebarCollapsed(false);
         setLayout((current) => ({ ...current, sidebarWidth: nextWidth }));
       },
     });
@@ -984,7 +997,13 @@ export function RunsTab({
       cursor: "col-resize",
       onMove: (moveEvent) => {
         const maxWidth = Math.min(540, Math.max(360, rect.width * 0.45));
-        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 300, maxWidth);
+        const rawWidth = rect.right - moveEvent.clientX;
+        if (shouldCollapsePaneSize(rawWidth)) {
+          setDecisionInspectorCollapsed(true);
+          return;
+        }
+        const nextWidth = clampNumber(rawWidth, 300, maxWidth);
+        setDecisionInspectorCollapsed(false);
         setLayout((current) => ({ ...current, inspectorWidth: nextWidth }));
       },
     });
@@ -1096,7 +1115,7 @@ export function RunsTab({
               onToggleCollapsed={() => setRunsSidebarCollapsed((collapsed) => !collapsed)}
             />
           )}
-          {showRunsSidebar && !isStackedLayout && !runsSidebarCollapsed && (
+          {showRunsSidebar && !isStackedLayout && (
             <WorkspaceResizeHandle
               orientation="vertical"
               className="w-2"
@@ -1173,11 +1192,13 @@ export function RunsTab({
               }`}
               style={!isStackedLayout && showDecisionInspector
                 ? {
-                    gridTemplateColumns: `minmax(0,1fr) 8px minmax(300px, ${layout.inspectorWidth}px)`,
+                    gridTemplateColumns: decisionInspectorCollapsed
+                      ? "minmax(0,1fr) 8px 44px"
+                      : `minmax(0,1fr) 8px minmax(300px, ${layout.inspectorWidth}px)`,
                   }
                 : undefined}
             >
-              {showDecisionInspector && isStackedLayout && (
+              {showDecisionInspector && isStackedLayout && !decisionInspectorCollapsed && (
                 <DecisionInspector
                   item={selectedDecisionItem}
                   variant="terminal"
@@ -1209,11 +1230,21 @@ export function RunsTab({
                   title="Drag to resize run evidence inspector"
                   onPointerDown={startInspectorResize}
                 />
-                <DecisionInspector
-                  item={selectedDecisionItem}
-                  variant="terminal"
-                  className="col-start-3 row-start-1 border-l border-[#273035]"
-                />
+                {decisionInspectorCollapsed ? (
+                  <WorkspaceCollapsedPane
+                    label="Evidence"
+                    icon="i-ph:stack-simple"
+                    orientation="vertical"
+                    className="col-start-3 row-start-1 border-l border-[#273035]"
+                    onClick={() => setDecisionInspectorCollapsed(false)}
+                  />
+                ) : (
+                  <DecisionInspector
+                    item={selectedDecisionItem}
+                    variant="terminal"
+                    className="col-start-3 row-start-1 border-l border-[#273035]"
+                  />
+                )}
                 </>
               )}
             </div>

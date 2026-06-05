@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { useBotTradePage, type TradePage } from '~/lib/hooks/useBotApi';
 import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
@@ -12,6 +12,14 @@ import { countUsableValidatorSignatures, getTradeValidationDisplay } from '~/lib
 import { formatNumber } from '~/lib/format';
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 import { formatTradeModeLabel, getTerminalTradeActionPillClass } from '~/lib/tradeDisplay';
+import {
+  applySortDirection,
+  compareNumberValue,
+  compareStringValue,
+  nextSortState,
+  SortableHeaderButton,
+  type SortState,
+} from '~/components/arena/SortableTableHeader';
 
 interface TradeHistoryTabProps {
   botId: string;
@@ -44,34 +52,44 @@ const tradeTimestampFormatter = new Intl.DateTimeFormat('en-US', {
   minute: '2-digit',
 });
 
+type TradeHistorySortKey = 'time' | 'trade' | 'market' | 'size' | 'usd' | 'risk' | 'ref' | 'status';
+
 function explorerUrl(txHash: string, chainId?: number): string | null {
   if (!chainId || chainId === 31337) return null;
   const explorer = EXPLORER_URLS[chainId];
   return explorer ? `${explorer.base}${txHash}` : null;
 }
 
-function TradeTableHead({ compact = false }: { compact?: boolean }) {
+function TradeTableHead({
+  compact = false,
+  sort,
+  onSort,
+}: {
+  compact?: boolean;
+  sort: SortState<TradeHistorySortKey>;
+  onSort: (key: TradeHistorySortKey, defaultDirection?: 'asc' | 'desc') => void;
+}) {
   if (compact) {
     return (
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className="w-[7.6rem] py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
-            Time
+          <TableHead className="w-[7.6rem] py-1">
+            <SortableHeaderButton sortKey="time" sort={sort} onSort={onSort}>Time</SortableHeaderButton>
           </TableHead>
-          <TableHead className="w-[7.25rem] py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
-            Trade
+          <TableHead className="w-[7.25rem] py-1">
+            <SortableHeaderButton sortKey="trade" sort={sort} onSort={onSort} defaultDirection="asc">Trade</SortableHeaderButton>
           </TableHead>
-          <TableHead className="py-1 font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
-            Market
+          <TableHead className="py-1">
+            <SortableHeaderButton sortKey="market" sort={sort} onSort={onSort} defaultDirection="asc">Market</SortableHeaderButton>
           </TableHead>
-          <TableHead className="w-[7rem] py-1 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
-            Size
+          <TableHead className="w-[7rem] py-1 text-right">
+            <SortableHeaderButton sortKey="size" sort={sort} onSort={onSort} align="right">Size</SortableHeaderButton>
           </TableHead>
-          <TableHead className="w-[7.35rem] py-1 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
-            USD
+          <TableHead className="w-[7.35rem] py-1 text-right">
+            <SortableHeaderButton sortKey="usd" sort={sort} onSort={onSort} align="right">USD</SortableHeaderButton>
           </TableHead>
-          <TableHead className="hidden w-[7rem] py-1 text-right font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)] min-[1500px]:table-cell">
-            Ref
+          <TableHead className="hidden w-[7rem] py-1 text-right min-[1500px]:table-cell">
+            <SortableHeaderButton sortKey="ref" sort={sort} onSort={onSort} align="right" defaultDirection="asc">Ref</SortableHeaderButton>
           </TableHead>
         </TableRow>
       </TableHeader>
@@ -81,12 +99,24 @@ function TradeTableHead({ compact = false }: { compact?: boolean }) {
   return (
     <TableHeader>
       <TableRow className="hover:bg-transparent">
-        <TableHead className="w-44 py-2.5 text-[13px] uppercase">Time</TableHead>
-        <TableHead className="w-44 py-2.5 text-[13px] uppercase">Decision</TableHead>
-        <TableHead className="min-w-[420px] py-2.5 text-[13px] uppercase">Market</TableHead>
-        <TableHead className="hidden py-2.5 text-right text-[13px] uppercase sm:table-cell">Risk</TableHead>
-        <TableHead className="py-2.5 text-[13px] uppercase">Reference</TableHead>
-        <TableHead className="py-2.5 text-[13px] uppercase">Status</TableHead>
+        <TableHead className="w-44 py-2.5">
+          <SortableHeaderButton sortKey="time" sort={sort} onSort={onSort}>Time</SortableHeaderButton>
+        </TableHead>
+        <TableHead className="w-44 py-2.5">
+          <SortableHeaderButton sortKey="trade" sort={sort} onSort={onSort} defaultDirection="asc">Decision</SortableHeaderButton>
+        </TableHead>
+        <TableHead className="min-w-[420px] py-2.5">
+          <SortableHeaderButton sortKey="market" sort={sort} onSort={onSort} defaultDirection="asc">Market</SortableHeaderButton>
+        </TableHead>
+        <TableHead className="hidden py-2.5 text-right sm:table-cell">
+          <SortableHeaderButton sortKey="risk" sort={sort} onSort={onSort} align="right">Risk</SortableHeaderButton>
+        </TableHead>
+        <TableHead className="py-2.5">
+          <SortableHeaderButton sortKey="ref" sort={sort} onSort={onSort} defaultDirection="asc">Reference</SortableHeaderButton>
+        </TableHead>
+        <TableHead className="py-2.5">
+          <SortableHeaderButton sortKey="status" sort={sort} onSort={onSort} defaultDirection="asc">Status</SortableHeaderButton>
+        </TableHead>
       </TableRow>
     </TableHeader>
   );
@@ -325,6 +355,42 @@ function getTradeSizeLabel(trade: Trade): string {
   return hyperliquidSizeLabel(trade) ?? `${formatTradeAmount(trade.amountIn)} ${trade.tokenIn}`;
 }
 
+function getTradeReferenceValue(trade: Trade): string {
+  return trade.txHash ?? trade.execution?.clobOrderId ?? trade.id;
+}
+
+function sortTradeHistory(trades: Trade[], sort: SortState<TradeHistorySortKey>): Trade[] {
+  return [...trades].sort((left, right) => {
+    const compare = (() => {
+      switch (sort.key) {
+        case 'time':
+          return compareNumberValue(left.timestamp, right.timestamp);
+        case 'trade':
+          return compareStringValue(getActionLabel(left.action), getActionLabel(right.action));
+        case 'market':
+          return compareStringValue(
+            hyperliquidMarketLabel(left) ?? `${left.tokenIn}/${left.tokenOut}`,
+            hyperliquidMarketLabel(right) ?? `${right.tokenIn}/${right.tokenOut}`,
+          );
+        case 'size':
+          return compareNumberValue(Math.abs(left.amountIn), Math.abs(right.amountIn));
+        case 'usd':
+          return compareNumberValue(left.notionalUsd, right.notionalUsd);
+        case 'risk':
+          return compareNumberValue(left.validatorScore, right.validatorScore);
+        case 'ref':
+          return compareStringValue(getTradeReferenceValue(left), getTradeReferenceValue(right));
+        case 'status':
+          return compareStringValue(left.status, right.status);
+        default:
+          return 0;
+      }
+    })();
+    if (compare !== 0) return applySortDirection(compare, sort.direction);
+    return compareNumberValue(right.timestamp, left.timestamp);
+  });
+}
+
 function getModeToneClass(trade: Trade): string {
   if (trade.status === 'failed' || trade.status === 'rejected') return 'text-crimson-600 dark:text-crimson-300';
   if (trade.paperTrade || trade.status === 'paper') return 'text-arena-elements-textSecondary';
@@ -442,7 +508,16 @@ export function TradeHistoryTab({
   });
   const trades = tradePage?.trades;
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [sort, setSort] = useState<SortState<TradeHistorySortKey>>({ key: 'time', direction: 'desc' });
+  const sortedTrades = useMemo(
+    () => trades ? sortTradeHistory(trades, sort) : undefined,
+    [sort, trades],
+  );
   const columnCount = compact ? 6 : 6;
+  const handleSort = (key: TradeHistorySortKey, defaultDirection: 'asc' | 'desc' = 'desc') => {
+    setExpandedId(null);
+    setSort((current) => nextSortState(current, key, defaultDirection));
+  };
   const previousPage = () => {
     setExpandedId(null);
     setPageIndex((page) => Math.max(0, page - 1));
@@ -480,7 +555,7 @@ export function TradeHistoryTab({
       <div className={compact ? 'flex h-full min-h-0 flex-col gap-2' : 'space-y-3'}>
         <div className={`${compact ? 'min-h-0 flex-1' : ''} overflow-x-auto rounded-none border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36 ${SQUARE_TABLE_CLASS}`}>
           <Table className={`${compact ? 'w-full table-fixed' : 'min-w-[1120px]'} ${SQUARE_TABLE_CLASS}`}>
-            <TradeTableHead compact={compact} />
+            <TradeTableHead compact={compact} sort={sort} onSort={handleSort} />
             <TableBody>
               {Array.from({ length: 5 }).map((_, i) => (
                 <SkeletonTableRow key={i} cols={columnCount} />
@@ -534,9 +609,9 @@ export function TradeHistoryTab({
 
       <div className={`${compact ? 'min-h-0 flex-1 overflow-auto border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]' : 'overflow-x-auto border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/36'} rounded-none border ${SQUARE_TABLE_CLASS}`}>
         <Table className={`${compact ? 'w-full table-fixed' : 'min-w-[1120px]'} ${SQUARE_TABLE_CLASS}`}>
-          <TradeTableHead compact={compact} />
+          <TradeTableHead compact={compact} sort={sort} onSort={handleSort} />
           <TableBody>
-            {trades.map((trade) => {
+            {(sortedTrades ?? trades).map((trade) => {
             const responses = trade.validation?.responses ?? [];
             const signedCount = countUsableValidatorSignatures(responses);
             const validationDisplay = getTradeValidationDisplay(trade);

@@ -40,6 +40,7 @@ import {
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePanePercent,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
 
@@ -452,7 +453,15 @@ export default function HomePage() {
     beginWorkspaceResize(event, {
       cursor: 'row-resize',
       onMove: (moveEvent) => {
-        const nextPercent = clampNumber(((moveEvent.clientY - rect.top) / rect.height) * 100, 22, 58);
+        const rawPercent = ((moveEvent.clientY - rect.top) / rect.height) * 100;
+        if (shouldCollapsePanePercent(rawPercent)) {
+          setDashboardLayout((current) => ({
+            ...current,
+            servicesCollapsed: true,
+          }));
+          return;
+        }
+        const nextPercent = clampNumber(rawPercent, 22, 58);
         setDashboardLayout((current) => ({
           ...current,
           servicesPercent: nextPercent,

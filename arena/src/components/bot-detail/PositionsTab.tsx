@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useBotPortfolio } from '~/lib/hooks/useBotApi';
 import type { BotStatus } from '~/lib/types/bot';
 import { Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
@@ -7,6 +8,14 @@ import { AssetDisplay } from './shared/AssetDisplay';
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import type { Position } from '~/lib/types/portfolio';
+import {
+  applySortDirection,
+  compareNumberValue,
+  compareStringValue,
+  nextSortState,
+  SortableHeaderButton,
+  type SortState,
+} from '~/components/arena/SortableTableHeader';
 
 interface PositionsTabProps {
   botId: string;
@@ -21,11 +30,15 @@ interface PositionsTabProps {
 }
 
 const SQUARE_TABLE_CLASS = 'rounded-none [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_.relative.overflow-auto]:!rounded-none [&_table]:!rounded-none [&_thead]:!rounded-none [&_tbody]:!rounded-none [&_tr]:!rounded-none [&_th]:!rounded-none [&_td]:!rounded-none';
+type StandardPositionSortKey = 'asset' | 'amount' | 'value' | 'price' | 'weight';
+type PerpPositionSortKey = 'market' | 'side' | 'size' | 'notional' | 'margin' | 'usage' | 'lev' | 'pnl' | 'liq';
 
 export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorKind, verificationState, assetMetadata, workspace = false, workspaceLayout = 'wide' }: PositionsTabProps) {
   const isLive = isLiveBotStatus(status);
   const compactRail = workspace && workspaceLayout === 'rail';
   const ledger = workspace && workspaceLayout === 'ledger';
+  const [standardSort, setStandardSort] = useState<SortState<StandardPositionSortKey>>({ key: 'value', direction: 'desc' });
+  const [perpSort, setPerpSort] = useState<SortState<PerpPositionSortKey>>({ key: 'notional', direction: 'desc' });
   const { data: portfolio, isLoading } = useBotPortfolio(botId, {
     chainId,
     operatorApiUrl,
@@ -137,6 +150,64 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
     })}x`;
   };
 
+  const handleStandardSort = (key: StandardPositionSortKey, defaultDirection: 'asc' | 'desc' = 'desc') => {
+    setStandardSort((current) => nextSortState(current, key, defaultDirection));
+  };
+
+  const handlePerpSort = (key: PerpPositionSortKey, defaultDirection: 'asc' | 'desc' = 'desc') => {
+    setPerpSort((current) => nextSortState(current, key, defaultDirection));
+  };
+
+  const sortStandardPositions = (positions: Position[]) => [...positions].sort((left, right) => {
+    const compare = (() => {
+      switch (standardSort.key) {
+        case 'asset':
+          return compareStringValue(left.token || left.symbol, right.token || right.symbol);
+        case 'amount':
+          return compareNumberValue(left.amount, right.amount);
+        case 'value':
+          return compareNumberValue(left.displayValueUsd, right.displayValueUsd);
+        case 'price':
+          return compareNumberValue(left.currentPrice, right.currentPrice);
+        case 'weight':
+          return compareNumberValue(left.displayWeight, right.displayWeight);
+        default:
+          return 0;
+      }
+    })();
+    if (compare !== 0) return applySortDirection(compare, standardSort.direction);
+    return compareStringValue(left.token || left.symbol, right.token || right.symbol);
+  });
+
+  const sortPerpPositions = (positions: Position[]) => [...positions].sort((left, right) => {
+    const compare = (() => {
+      switch (perpSort.key) {
+        case 'market':
+          return compareStringValue(perpAssetLabel(left), perpAssetLabel(right));
+        case 'side':
+          return compareStringValue(perpDirection(left), perpDirection(right));
+        case 'size':
+          return compareNumberValue(Math.abs(left.amount), Math.abs(right.amount));
+        case 'notional':
+          return compareNumberValue(left.notionalUsd, right.notionalUsd);
+        case 'margin':
+          return compareNumberValue(marginUsedUsd(left), marginUsedUsd(right));
+        case 'usage':
+          return compareNumberValue(marginUsage(left), marginUsage(right));
+        case 'lev':
+          return compareNumberValue(left.leverage, right.leverage);
+        case 'pnl':
+          return compareNumberValue(left.unrealizedPnlUsd, right.unrealizedPnlUsd);
+        case 'liq':
+          return compareNumberValue(left.liquidationPrice, right.liquidationPrice);
+        default:
+          return 0;
+      }
+    })();
+    if (compare !== 0) return applySortDirection(compare, perpSort.direction);
+    return compareStringValue(perpAssetLabel(left), perpAssetLabel(right));
+  });
+
   const warningTitle = portfolio.hasUnpricedPositions
     ? 'Portfolio valuation unavailable'
     : 'Portfolio warnings';
@@ -208,7 +279,7 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
         valueClassName: 'text-[var(--arena-terminal-text)]',
       },
     ];
-  const positionHeadClass = (dense: boolean) => dense ? 'py-1.5 text-[11px]' : 'py-4 text-base';
+  const positionHeadClass = (dense: boolean) => dense ? 'py-1.5' : 'py-4';
   const positionCellClass = (dense: boolean) => dense ? 'py-1.5 text-[15px]' : 'py-4 text-base';
   const positionPrimaryCellClass = (dense: boolean) => dense ? 'py-1.5 text-[15px]' : 'py-4';
 
@@ -217,15 +288,25 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
       <Table className={`${dense ? 'min-w-[620px]' : 'min-w-[780px]'} ${SQUARE_TABLE_CLASS}`}>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className={positionHeadClass(dense)}>Asset</TableHead>
-          <TableHead className={`${positionHeadClass(dense)} text-right`}>Amount</TableHead>
-          <TableHead className={`${positionHeadClass(dense)} text-right`}>Value</TableHead>
-          <TableHead className={`${positionHeadClass(dense)} text-right`}>Price</TableHead>
-          <TableHead className={`${positionHeadClass(dense)} text-right`}>Weight</TableHead>
+          <TableHead className={positionHeadClass(dense)}>
+            <SortableHeaderButton sortKey="asset" sort={standardSort} onSort={handleStandardSort} defaultDirection="asc">Asset</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={`${positionHeadClass(dense)} text-right`}>
+            <SortableHeaderButton sortKey="amount" sort={standardSort} onSort={handleStandardSort} align="right">Amount</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={`${positionHeadClass(dense)} text-right`}>
+            <SortableHeaderButton sortKey="value" sort={standardSort} onSort={handleStandardSort} align="right">Value</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={`${positionHeadClass(dense)} text-right`}>
+            <SortableHeaderButton sortKey="price" sort={standardSort} onSort={handleStandardSort} align="right">Price</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={`${positionHeadClass(dense)} text-right`}>
+            <SortableHeaderButton sortKey="weight" sort={standardSort} onSort={handleStandardSort} align="right">Weight</SortableHeaderButton>
+          </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {positions.map((pos) => (
+        {sortStandardPositions(positions).map((pos) => (
           <TableRow key={pos.token}>
             <TableCell className={`${positionPrimaryCellClass(dense)} font-display font-semibold`}>
               <div className="flex items-center justify-between gap-2">
@@ -263,19 +344,37 @@ export function PositionsTab({ botId, status, chainId, operatorApiUrl, operatorK
       <Table className={`${dense ? 'min-w-[920px]' : 'min-w-[1120px]'} ${SQUARE_TABLE_CLASS}`}>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
-          <TableHead className={positionHeadClass(dense)}>Market</TableHead>
-          <TableHead className={positionHeadClass(dense)}>Side</TableHead>
-          <TableHead className={`${positionHeadClass(dense)} text-right`}>Size</TableHead>
-          <TableHead className={`${positionHeadClass(dense)} text-right`}>Notional</TableHead>
-          <TableHead className={`${positionHeadClass(dense)} text-right`}>Margin</TableHead>
-          <TableHead className={`${positionHeadClass(dense)} text-right`}>Usage</TableHead>
-          <TableHead className={`${positionHeadClass(dense)} text-right`}>Lev</TableHead>
-          <TableHead className={`${positionHeadClass(dense)} text-right`}>PnL</TableHead>
-          <TableHead className={`${positionHeadClass(dense)} text-right`}>Liq</TableHead>
+          <TableHead className={positionHeadClass(dense)}>
+            <SortableHeaderButton sortKey="market" sort={perpSort} onSort={handlePerpSort} defaultDirection="asc">Market</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={positionHeadClass(dense)}>
+            <SortableHeaderButton sortKey="side" sort={perpSort} onSort={handlePerpSort} defaultDirection="asc">Side</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={`${positionHeadClass(dense)} text-right`}>
+            <SortableHeaderButton sortKey="size" sort={perpSort} onSort={handlePerpSort} align="right">Size</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={`${positionHeadClass(dense)} text-right`}>
+            <SortableHeaderButton sortKey="notional" sort={perpSort} onSort={handlePerpSort} align="right">Notional</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={`${positionHeadClass(dense)} text-right`}>
+            <SortableHeaderButton sortKey="margin" sort={perpSort} onSort={handlePerpSort} align="right">Margin</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={`${positionHeadClass(dense)} text-right`}>
+            <SortableHeaderButton sortKey="usage" sort={perpSort} onSort={handlePerpSort} align="right">Usage</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={`${positionHeadClass(dense)} text-right`}>
+            <SortableHeaderButton sortKey="lev" sort={perpSort} onSort={handlePerpSort} align="right">Lev</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={`${positionHeadClass(dense)} text-right`}>
+            <SortableHeaderButton sortKey="pnl" sort={perpSort} onSort={handlePerpSort} align="right">PnL</SortableHeaderButton>
+          </TableHead>
+          <TableHead className={`${positionHeadClass(dense)} text-right`}>
+            <SortableHeaderButton sortKey="liq" sort={perpSort} onSort={handlePerpSort} align="right">Liq</SortableHeaderButton>
+          </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {positions.map((pos) => {
+        {sortPerpPositions(positions).map((pos) => {
           const direction = perpDirection(pos);
           const pnl = pos.unrealizedPnlUsd ?? null;
           const directionClass = direction === 'Short'

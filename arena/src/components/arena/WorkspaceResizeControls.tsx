@@ -14,6 +14,23 @@ export function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+export const WORKSPACE_DRAG_COLLAPSE_PX = 104;
+export const WORKSPACE_DRAG_COLLAPSE_PERCENT = 12;
+
+export function shouldCollapsePaneSize(
+  sizePx: number,
+  thresholdPx = WORKSPACE_DRAG_COLLAPSE_PX,
+): boolean {
+  return Number.isFinite(sizePx) && sizePx <= thresholdPx;
+}
+
+export function shouldCollapsePanePercent(
+  sizePercent: number,
+  thresholdPercent = WORKSPACE_DRAG_COLLAPSE_PERCENT,
+): boolean {
+  return Number.isFinite(sizePercent) && sizePercent <= thresholdPercent;
+}
+
 export function usePersistentWorkspaceLayout<T extends object>(
   storageKey: string,
   defaultLayout: T,

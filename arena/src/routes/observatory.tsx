@@ -5,9 +5,11 @@ import { ChatMessage } from '@tangle-network/sandbox-ui/chat';
 import { useAccount } from 'wagmi';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import {
+  WorkspaceCollapsedPane,
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePanePercent,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
@@ -32,11 +34,13 @@ import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/o
 
 interface ObservatoryWorkspaceLayout {
   botListPercent: number;
+  botListCollapsed: boolean;
 }
 
 const OBSERVATORY_WORKSPACE_LAYOUT_KEY = 'arena:observatory-workspace-layout';
 const DEFAULT_OBSERVATORY_WORKSPACE_LAYOUT: ObservatoryWorkspaceLayout = {
   botListPercent: 34,
+  botListCollapsed: false,
 };
 
 function normalizeObservatoryLayout(value: Partial<ObservatoryWorkspaceLayout>): ObservatoryWorkspaceLayout {
@@ -46,6 +50,7 @@ function normalizeObservatoryLayout(value: Partial<ObservatoryWorkspaceLayout>):
       24,
       52,
     ),
+    botListCollapsed: value.botListCollapsed === true,
   };
 }
 
@@ -885,37 +890,48 @@ export default function ObservatoryPage() {
           className="min-h-0 flex-1 overflow-hidden lg:flex"
           aria-label="Agent Observatory"
         >
-          <aside
-            style={botListStyle as CSSProperties}
-            className="flex max-h-[40vh] min-h-0 w-full shrink-0 flex-col overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] lg:max-h-none lg:w-[var(--observatory-bot-list-percent)] lg:basis-[var(--observatory-bot-list-percent)] lg:border-b-0 lg:border-r"
-          >
-            <div className="shrink-0 border-b border-[var(--arena-terminal-border)] px-3 py-2">
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
-                  Bots
-                </span>
-                <span className="font-data text-xs text-[var(--arena-terminal-text-muted)]">
-                  {bots.length}
-                </span>
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {bots.length > 0 ? (
-                bots.map((bot) => (
-                  <BotRow
-                    key={bot.bot_id}
-                    bot={bot}
-                    selected={bot.bot_id === selectedBot?.bot_id}
-                    onSelect={() => setSelectedBotId(bot.bot_id)}
-                  />
-                ))
-              ) : (
-                <div className="p-4 text-sm text-[var(--arena-terminal-text-secondary)]">
-                  No bots available for this authenticated operator.
+          {layout.botListCollapsed && (
+            <WorkspaceCollapsedPane
+              label="Bots"
+              icon="i-ph:robot"
+              orientation="vertical"
+              className="hidden w-11 shrink-0 border-r border-[var(--arena-terminal-border)] lg:flex"
+              onClick={() => setLayout((current) => ({ ...current, botListCollapsed: false }))}
+            />
+          )}
+            <aside
+              style={botListStyle as CSSProperties}
+              className={`max-h-[40vh] min-h-0 w-full shrink-0 flex-col overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] lg:max-h-none lg:w-[var(--observatory-bot-list-percent)] lg:basis-[var(--observatory-bot-list-percent)] lg:border-b-0 lg:border-r ${
+                layout.botListCollapsed ? 'flex lg:hidden' : 'flex'
+              }`}
+            >
+              <div className="shrink-0 border-b border-[var(--arena-terminal-border)] px-3 py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+                    Bots
+                  </span>
+                  <span className="font-data text-xs text-[var(--arena-terminal-text-muted)]">
+                    {bots.length}
+                  </span>
                 </div>
-              )}
-            </div>
-          </aside>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {bots.length > 0 ? (
+                  bots.map((bot) => (
+                    <BotRow
+                      key={bot.bot_id}
+                      bot={bot}
+                      selected={bot.bot_id === selectedBot?.bot_id}
+                      onSelect={() => setSelectedBotId(bot.bot_id)}
+                    />
+                  ))
+                ) : (
+                  <div className="p-4 text-sm text-[var(--arena-terminal-text-secondary)]">
+                    No bots available for this authenticated operator.
+                  </div>
+                )}
+              </div>
+            </aside>
 
           <WorkspaceResizeHandle
             orientation="vertical"
@@ -927,9 +943,17 @@ export default function ObservatoryPage() {
                 cursor: 'col-resize',
                 onMove: (moveEvent) => {
                   const next = ((moveEvent.clientX - bounds.left) / bounds.width) * 100;
+                  if (shouldCollapsePanePercent(next)) {
+                    setLayout((current) => ({
+                      ...current,
+                      botListCollapsed: true,
+                    }));
+                    return;
+                  }
                   setLayout((current) => ({
                     ...current,
                     botListPercent: clampNumber(next, 24, 52),
+                    botListCollapsed: false,
                   }));
                 },
               });

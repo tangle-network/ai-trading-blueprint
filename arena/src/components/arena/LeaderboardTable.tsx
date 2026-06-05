@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
@@ -10,6 +11,15 @@ import {
   fillCountEvidenceTitle,
   resolveFillCountEvidence,
 } from '~/lib/tradeEvidence';
+import {
+  applySortDirection,
+  compareNumberValue,
+  compareStringValue,
+  nextSortState,
+  SortableHeaderButton,
+  StaticTableHeaderLabel,
+  type SortState,
+} from '~/components/arena/SortableTableHeader';
 
 interface LeaderboardTableProps {
   bots: Bot[];
@@ -36,6 +46,8 @@ function modeLabel(bot: Bot): string {
   return botStatusLabel(bot.status);
 }
 
+type LeaderboardSortKey = 'rank' | 'agent' | 'operator' | 'volume24h' | 'fills24h' | 'total' | 'last' | 'mode' | 'return';
+
 export function LeaderboardTable({
   bots,
   selectedBotId,
@@ -43,7 +55,58 @@ export function LeaderboardTable({
   activityStatsByBotId,
 }: LeaderboardTableProps) {
   const navigate = useNavigate();
-  const sorted = rankLeaderboardBots(bots);
+  const [sort, setSort] = useState<SortState<LeaderboardSortKey>>({ key: 'rank', direction: 'asc' });
+  const ranked = useMemo(() => rankLeaderboardBots(bots), [bots]);
+  const rankByBotId = useMemo(
+    () => new Map(ranked.map((bot, index) => [bot.id, index + 1])),
+    [ranked],
+  );
+  const handleSort = (key: LeaderboardSortKey, defaultDirection: 'asc' | 'desc' = 'desc') => {
+    setSort((current) => nextSortState(current, key, defaultDirection));
+  };
+  const sorted = useMemo(() => {
+    const compareBots = (left: Bot, right: Bot): number => {
+      const leftStats = activityStatsByBotId?.get(left.id);
+      const rightStats = activityStatsByBotId?.get(right.id);
+      const leftTotal = resolveFillCountEvidence({
+        visibleTradeCount: leftStats?.totalVisibleFills,
+        rosterTradeCount: left.totalTrades,
+      }).value;
+      const rightTotal = resolveFillCountEvidence({
+        visibleTradeCount: rightStats?.totalVisibleFills,
+        rosterTradeCount: right.totalTrades,
+      }).value;
+
+      switch (sort.key) {
+        case 'rank':
+          return compareNumberValue(rankByBotId.get(left.id), rankByBotId.get(right.id));
+        case 'agent':
+          return compareStringValue(left.name, right.name);
+        case 'operator':
+          return compareStringValue(left.operatorAddress, right.operatorAddress);
+        case 'volume24h':
+          return compareNumberValue(leftStats?.recentNotionalUsd, rightStats?.recentNotionalUsd);
+        case 'fills24h':
+          return compareNumberValue(leftStats?.recentFills, rightStats?.recentFills);
+        case 'total':
+          return compareNumberValue(leftTotal, rightTotal);
+        case 'last':
+          return compareNumberValue(leftStats?.lastTradeAt, rightStats?.lastTradeAt);
+        case 'mode':
+          return compareStringValue(modeLabel(left), modeLabel(right));
+        case 'return':
+          return compareNumberValue(left.pnlPercent, right.pnlPercent);
+        default:
+          return 0;
+      }
+    };
+
+    return [...ranked].sort((left, right) => {
+      const primary = applySortDirection(compareBots(left, right), sort.direction);
+      if (primary !== 0) return primary;
+      return compareNumberValue(rankByBotId.get(left.id), rankByBotId.get(right.id));
+    });
+  }, [activityStatsByBotId, rankByBotId, ranked, sort]);
 
   return (
     <>
@@ -148,16 +211,36 @@ export function LeaderboardTable({
     <Table className="w-full min-w-[760px] table-fixed rounded-none bg-[var(--arena-terminal-panel)] [&_td]:rounded-none [&_th]:rounded-none [&_thead]:rounded-none [&_tr]:rounded-none">
       <TableHeader>
         <TableRow className="rounded-none border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] hover:bg-[var(--arena-terminal-surface)]">
-          <TableHead className="w-12 rounded-none py-2 font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)]">#</TableHead>
-          <TableHead className="w-[29%] rounded-none py-2 font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)]">Agent</TableHead>
-          <TableHead className="hidden w-[13%] rounded-none py-2 font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)] min-[1460px]:table-cell">Operator</TableHead>
-          <TableHead className="w-[11%] rounded-none py-2 text-right font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)]">24H Vol</TableHead>
-          <TableHead className="w-[7%] rounded-none py-2 text-right font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)]">24H</TableHead>
-          <TableHead className="w-[8%] rounded-none py-2 text-right font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)]">Total</TableHead>
-          <TableHead className="w-[10%] rounded-none py-2 text-right font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)]">Last</TableHead>
-          <TableHead className="hidden w-[8%] rounded-none py-2 text-right font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)] min-[1320px]:table-cell">Mode</TableHead>
-          <TableHead className="w-[10%] rounded-none py-2 text-right font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)]">Return</TableHead>
-          <TableHead className="w-[6%] rounded-none py-2 text-right font-data text-[10px] uppercase text-[var(--arena-terminal-text-subtle)]">Open</TableHead>
+          <TableHead className="w-12 rounded-none py-2">
+            <SortableHeaderButton sortKey="rank" sort={sort} onSort={handleSort} defaultDirection="asc">#</SortableHeaderButton>
+          </TableHead>
+          <TableHead className="w-[29%] rounded-none py-2">
+            <SortableHeaderButton sortKey="agent" sort={sort} onSort={handleSort} defaultDirection="asc">Agent</SortableHeaderButton>
+          </TableHead>
+          <TableHead className="hidden w-[13%] rounded-none py-2 min-[1460px]:table-cell">
+            <SortableHeaderButton sortKey="operator" sort={sort} onSort={handleSort} defaultDirection="asc">Operator</SortableHeaderButton>
+          </TableHead>
+          <TableHead className="w-[11%] rounded-none py-2">
+            <SortableHeaderButton sortKey="volume24h" sort={sort} onSort={handleSort} align="right">24H Vol</SortableHeaderButton>
+          </TableHead>
+          <TableHead className="w-[7%] rounded-none py-2">
+            <SortableHeaderButton sortKey="fills24h" sort={sort} onSort={handleSort} align="right">24H</SortableHeaderButton>
+          </TableHead>
+          <TableHead className="w-[8%] rounded-none py-2">
+            <SortableHeaderButton sortKey="total" sort={sort} onSort={handleSort} align="right">Total</SortableHeaderButton>
+          </TableHead>
+          <TableHead className="w-[10%] rounded-none py-2">
+            <SortableHeaderButton sortKey="last" sort={sort} onSort={handleSort} align="right">Last</SortableHeaderButton>
+          </TableHead>
+          <TableHead className="hidden w-[8%] rounded-none py-2 min-[1320px]:table-cell">
+            <SortableHeaderButton sortKey="mode" sort={sort} onSort={handleSort} align="right" defaultDirection="asc">Mode</SortableHeaderButton>
+          </TableHead>
+          <TableHead className="w-[10%] rounded-none py-2">
+            <SortableHeaderButton sortKey="return" sort={sort} onSort={handleSort} align="right">Return</SortableHeaderButton>
+          </TableHead>
+          <TableHead className="w-[6%] rounded-none py-2">
+            <StaticTableHeaderLabel align="right">Open</StaticTableHeaderLabel>
+          </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -197,7 +280,7 @@ export function LeaderboardTable({
             }}
           >
             <TableCell className="py-2 align-middle">
-              <RankCell rank={index + 1} />
+              <RankCell rank={rankByBotId.get(bot.id) ?? index + 1} />
             </TableCell>
             <TableCell className="min-w-0 py-2 align-middle">
               <div className="flex min-w-0 items-center gap-2.5">

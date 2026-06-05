@@ -10,6 +10,7 @@ import {
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
+  shouldCollapsePaneSize,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
 
@@ -570,7 +571,15 @@ function OperationsOverview({
       cursor: 'col-resize',
       onMove: (moveEvent) => {
         const maxWidth = Math.min(520, Math.max(340, rect.width * 0.44));
-        const nextWidth = clampNumber(rect.right - moveEvent.clientX, 300, maxWidth);
+        const rawWidth = rect.right - moveEvent.clientX;
+        if (shouldCollapsePaneSize(rawWidth)) {
+          setLayout((current) => ({
+            ...current,
+            recordCollapsed: true,
+          }));
+          return;
+        }
+        const nextWidth = clampNumber(rawWidth, 300, maxWidth);
         setLayout((current) => ({
           ...current,
           recordWidth: nextWidth,
