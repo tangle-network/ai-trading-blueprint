@@ -2,6 +2,7 @@ pub mod adapters;
 pub mod backtest;
 pub mod candles;
 pub mod cex;
+pub mod chart_studies;
 pub mod circuit;
 pub mod clob;
 pub mod collateral;

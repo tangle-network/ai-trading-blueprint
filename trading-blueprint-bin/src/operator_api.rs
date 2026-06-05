@@ -572,6 +572,14 @@ struct CandleListQuery {
 }
 
 #[derive(Deserialize)]
+struct ChartStudyListQuery {
+    token: Option<String>,
+    from: Option<i64>,
+    to: Option<i64>,
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
 struct RunListQuery {
     limit: Option<usize>,
     cursor: Option<String>,
@@ -693,6 +701,10 @@ pub fn build_operator_router() -> Router {
         .route(
             "/api/bots/{bot_id}/market-data/candles",
             get(get_bot_market_candles),
+        )
+        .route(
+            "/api/bots/{bot_id}/chart/studies",
+            get(get_bot_chart_studies),
         )
         .route("/api/bots/{bot_id}/trades", get(get_bot_trades))
         .route(
@@ -6718,6 +6730,39 @@ async fn get_bot_market_candles(
         Err(err) => {
             tracing::warn!(bot_id = %bot.id, "trading api candle request failed: {err}");
             Ok(Json(serde_json::json!({ "candles": [], "total": 0 })))
+        }
+    }
+}
+
+async fn get_bot_chart_studies(
+    Path(bot_id): Path<String>,
+    Query(query): Query<ChartStudyListQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    let mut remote_query = Vec::new();
+    if let Some(token) = query.token {
+        remote_query.push(("token", token));
+    }
+    if let Some(from) = query.from {
+        remote_query.push(("from", from.to_string()));
+    }
+    if let Some(to) = query.to {
+        remote_query.push(("to", to.to_string()));
+    }
+    if let Some(limit) = query.limit {
+        remote_query.push(("limit", limit.to_string()));
+    }
+
+    match fetch_trading_api_json(&bot, "/chart/studies", &remote_query).await {
+        Ok(Some(payload)) => Ok(Json(payload)),
+        Ok(None) => Ok(Json(
+            serde_json::json!({ "studies": [], "total": 0, "limit": query.limit.unwrap_or(12) }),
+        )),
+        Err(err) => {
+            tracing::warn!(bot_id = %bot.id, "trading api chart studies request failed: {err}");
+            Ok(Json(
+                serde_json::json!({ "studies": [], "total": 0, "limit": query.limit.unwrap_or(12) }),
+            ))
         }
     }
 }

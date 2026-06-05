@@ -168,6 +168,48 @@ interface ApiCandleListResponse {
   total: number;
 }
 
+interface ApiChartStudyPoint {
+  timestamp_ms: number | string;
+  value: number | string;
+}
+
+type ApiChartOverlayKind = 'line' | 'level';
+
+interface ApiChartOverlay {
+  overlay_id: string;
+  kind: ApiChartOverlayKind;
+  label: string;
+  color?: string | null;
+  confidence?: string | null;
+  value?: number | string | null;
+  points?: ApiChartStudyPoint[];
+}
+
+interface ApiChartStudy {
+  schema_version: number;
+  study_id: string;
+  bot_id: string;
+  token: string;
+  venue?: string | null;
+  interval?: string | null;
+  title: string;
+  summary?: string | null;
+  author: string;
+  created_at_ms: number | string;
+  valid_from_ms?: number | string | null;
+  valid_to_ms?: number | string | null;
+  run_id?: string | null;
+  decision_id?: string | null;
+  trace_id?: string | null;
+  overlays?: ApiChartOverlay[];
+}
+
+interface ApiChartStudyListResponse {
+  studies: ApiChartStudy[];
+  total: number;
+  limit: number;
+}
+
 interface ApiPlatformVolumeResponse {
   from: string;
   to: string;
@@ -478,6 +520,42 @@ export interface MarketCandle {
   low: number;
   close: number;
   volume: number;
+}
+
+export interface ChartStudyPoint {
+  timestampMs: number;
+  value: number;
+}
+
+export type ChartOverlayKind = 'line' | 'level';
+
+export interface ChartOverlay {
+  id: string;
+  kind: ChartOverlayKind;
+  label: string;
+  color?: string | null;
+  confidence?: string | null;
+  value?: number | null;
+  points: ChartStudyPoint[];
+}
+
+export interface ChartStudy {
+  id: string;
+  schemaVersion: number;
+  botId: string;
+  token: string;
+  venue?: string | null;
+  interval?: string | null;
+  title: string;
+  summary?: string | null;
+  author: string;
+  createdAtMs: number;
+  validFromMs?: number | null;
+  validToMs?: number | null;
+  runId?: string | null;
+  decisionId?: string | null;
+  traceId?: string | null;
+  overlays: ChartOverlay[];
 }
 
 type FetchOperatorBotApiOptions = {
@@ -893,6 +971,86 @@ export function normalizeCandles(
       && (window?.toMs == null || candle.timestamp <= window.toMs),
     )
     .sort((left, right) => left.timestamp - right.timestamp);
+}
+
+function normalizeChartStudies(
+  data: ApiChartStudy[] | ApiChartStudyListResponse,
+  token?: string | null,
+  window?: { fromMs?: number; toMs?: number },
+): ChartStudy[] {
+  const studies = Array.isArray(data) ? data : data.studies;
+  const normalizedToken = token?.trim();
+
+  return studies
+    .map((study) => {
+      const createdAtMs = Number(study.created_at_ms);
+      const validFromMs = study.valid_from_ms == null ? null : Number(study.valid_from_ms);
+      const validToMs = study.valid_to_ms == null ? null : Number(study.valid_to_ms);
+      const overlays = (study.overlays ?? [])
+        .map((overlay): ChartOverlay => {
+          const value = overlay.value == null ? null : Number(overlay.value);
+          const points = (overlay.points ?? [])
+            .map((point) => ({
+              timestampMs: Number(point.timestamp_ms),
+              value: Number(point.value),
+            }))
+            .filter((point) =>
+              Number.isFinite(point.timestampMs)
+              && point.timestampMs > 0
+              && Number.isFinite(point.value),
+            )
+            .sort((left, right) => left.timestampMs - right.timestampMs);
+
+          return {
+            id: overlay.overlay_id,
+            kind: overlay.kind,
+            label: overlay.label,
+            color: overlay.color ?? null,
+            confidence: overlay.confidence ?? null,
+            value: value != null && Number.isFinite(value) ? value : null,
+            points,
+          };
+        })
+        .filter((overlay) =>
+          Boolean(overlay.id)
+          && Boolean(overlay.label)
+          && (overlay.kind === 'line' || overlay.kind === 'level')
+          && (
+            (overlay.kind === 'line' && overlay.points.length >= 2)
+            || (overlay.kind === 'level' && overlay.value != null)
+          ),
+        );
+
+      return {
+        id: study.study_id,
+        schemaVersion: Number(study.schema_version) || 1,
+        botId: study.bot_id,
+        token: study.token,
+        venue: study.venue ?? null,
+        interval: study.interval ?? null,
+        title: study.title,
+        summary: study.summary ?? null,
+        author: study.author,
+        createdAtMs,
+        validFromMs: validFromMs != null && Number.isFinite(validFromMs) ? validFromMs : null,
+        validToMs: validToMs != null && Number.isFinite(validToMs) ? validToMs : null,
+        runId: study.run_id ?? null,
+        decisionId: study.decision_id ?? null,
+        traceId: study.trace_id ?? null,
+        overlays,
+      };
+    })
+    .filter((study) =>
+      Boolean(study.id)
+      && Boolean(study.botId)
+      && Boolean(study.token)
+      && Boolean(study.title)
+      && Number.isFinite(study.createdAtMs)
+      && study.overlays.length > 0
+      && (normalizedToken == null || study.token.toLowerCase() === normalizedToken.toLowerCase())
+      && (window?.fromMs == null || (study.validToMs ?? study.createdAtMs) >= window.fromMs)
+      && (window?.toMs == null || (study.validFromMs ?? study.createdAtMs) <= window.toMs),
+    );
 }
 
 function normalizePlatformVolumeBuckets(data: ApiPlatformVolumeResponse): PlatformVolumeBucketInput[] {
@@ -1638,6 +1796,61 @@ export function useBotMarketCandles(
         { auth: needsAuth },
       );
       return normalizeCandles(data, { fromMs: from * 1000, toMs: to * 1000 });
+    },
+    staleTime: 30_000,
+    refetchOnMount: false,
+    refetchInterval: options.refetchInterval,
+    enabled: enabled && !!apiUrl && !!normalizedToken && (!needsAuth || !!auth.getCachedToken()),
+  });
+}
+
+export function useBotChartStudies(
+  botId: string,
+  token: string | null | undefined,
+  window: { fromMs: number; toMs: number },
+  options: BotApiQueryOptions & { limit?: number } = {},
+) {
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
+  const enabled = options.enabled ?? true;
+  const needsAuth = fleetReadRequiresAuth(deploymentKind);
+  const authKey = needsAuth ? auth.authCacheKey : 'public';
+  const normalizedToken = token?.trim();
+  const limit = options.limit ?? 12;
+
+  return useQuery<ChartStudy[]>({
+    queryKey: [
+      'bot-chart-studies',
+      apiUrl,
+      botId,
+      normalizedToken,
+      window.fromMs,
+      window.toMs,
+      limit,
+      deploymentKind,
+      authKey,
+    ],
+    queryFn: async () => {
+      if (!normalizedToken) return [];
+      const params = new URLSearchParams({
+        token: normalizedToken,
+        from: String(Math.floor(window.fromMs)),
+        to: String(Math.floor(window.toMs)),
+        limit: String(limit),
+      });
+      const path = `${buildBotScopedPathForDeploymentKind(
+        deploymentKind,
+        botId,
+        '/chart/studies',
+      )}?${params}`;
+      const data = await fetchOperatorBotApi<ApiChartStudy[] | ApiChartStudyListResponse>(
+        apiUrl,
+        auth,
+        path,
+        { auth: needsAuth },
+      );
+      return normalizeChartStudies(data, normalizedToken, window);
     },
     staleTime: 30_000,
     refetchOnMount: false,

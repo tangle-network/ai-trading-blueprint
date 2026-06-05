@@ -477,6 +477,66 @@ function buildFixtureCandles() {
   });
 }
 
+function buildFixtureChartStudies(candles) {
+  const first = candles[18];
+  const middle = candles[44];
+  const last = candles.at(-1);
+  if (!first || !middle || !last) return [];
+
+  const support = Number(first.close) - 18;
+  const resistance = Number(last.close) + 24;
+  return [
+    {
+      schema_version: 1,
+      study_id: 'study-smoke-breakout-map',
+      bot_id: FIXTURE_BOT_ID,
+      token: 'ETH',
+      venue: 'hyperliquid',
+      interval: '1m',
+      title: 'Breakout guard',
+      summary: 'Agent-authored chart context for the current ETH perp thesis.',
+      author: 'agent',
+      created_at_ms: Date.now() - 9 * 60_000,
+      valid_from_ms: first.timestamp * 1000,
+      valid_to_ms: last.timestamp * 1000,
+      run_id: 'run-smoke-1',
+      trace_id: 'trace-smoke-1',
+      overlays: [
+        {
+          overlay_id: 'agent-support',
+          kind: 'level',
+          label: 'Invalidation',
+          color: '#F2B84B',
+          confidence: 'medium',
+          value: support,
+          points: [],
+        },
+        {
+          overlay_id: 'agent-resistance',
+          kind: 'level',
+          label: 'Take-profit watch',
+          color: '#B788FF',
+          confidence: 'medium',
+          value: resistance,
+          points: [],
+        },
+        {
+          overlay_id: 'vwap-reclaim-path',
+          kind: 'line',
+          label: 'VWAP reclaim path',
+          color: '#50D2C1',
+          confidence: 'medium',
+          points: [
+            { timestamp_ms: first.timestamp * 1000, value: Number(first.close) - 6 },
+            { timestamp_ms: middle.timestamp * 1000, value: Number(middle.close) + 4 },
+            { timestamp_ms: last.timestamp * 1000, value: Number(last.close) + 8 },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
 function buildFixtureMetrics() {
   return Array.from({ length: 32 }).map((_, index) => {
     const value = 25_000 + index * 42 + Math.sin(index / 3) * 220;
@@ -700,6 +760,7 @@ function startFixtureOperatorServer({ emptyRunTranscript = false } = {}) {
   const bot = buildFixtureBotRecord();
   const trades = buildFixtureTrades();
   const candles = buildFixtureCandles();
+  const chartStudies = buildFixtureChartStudies(candles);
   const metrics = buildFixtureMetrics();
   const messages = buildFixtureMessages();
   const observatoryOverview = buildFixtureObservatoryOverview(bot);
@@ -856,6 +917,15 @@ function startFixtureOperatorServer({ emptyRunTranscript = false } = {}) {
     }
     if (pathname === `/api/bots/${FIXTURE_BOT_ID}/market-data/candles`) {
       json(res, 200, { candles, total: candles.length });
+      return;
+    }
+    if (pathname === `/api/bots/${FIXTURE_BOT_ID}/chart/studies`) {
+      const limit = Number(url.searchParams.get('limit') ?? chartStudies.length);
+      json(res, 200, {
+        studies: chartStudies.slice(0, limit),
+        total: chartStudies.length,
+        limit,
+      });
       return;
     }
     if (pathname === `/api/bots/${FIXTURE_BOT_ID}/runs`) {

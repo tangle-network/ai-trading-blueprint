@@ -16,7 +16,7 @@ import type {
 } from 'lightweight-charts';
 import { formatNumber } from '~/lib/format';
 import type { useChartTheme } from '~/lib/hooks/useChartTheme';
-import type { MarketCandle } from '~/lib/hooks/useBotApi';
+import type { ChartStudy, MarketCandle } from '~/lib/hooks/useBotApi';
 import type { FillCountEvidence } from '~/lib/tradeEvidence';
 import { loadLightweightCharts } from './lightweightChartRuntime';
 import type { PerformanceChartPoint } from './performanceChart';
@@ -42,6 +42,7 @@ interface TradingPerformanceChartProps {
   marketCandles?: MarketCandle[];
   marketLabel?: string | null;
   marketDataCoverage?: MarketDataCoverage | null;
+  chartStudies?: ChartStudy[];
   fillCountEvidence?: FillCountEvidence | null;
 }
 
@@ -80,6 +81,7 @@ interface ChartRuntime {
   candleSeries?: CandleSeriesApi;
   volumeSeries?: VolumeSeriesApi;
   studySeries?: Partial<Record<StudyLineId, LineSeriesApi>>;
+  agentStudySeries?: LineSeriesApi[];
   markerApi?: MarkerApi;
   startPriceLine?: IPriceLine;
   navPaneStartPriceLine?: IPriceLine;
@@ -106,6 +108,7 @@ const MARKET_STUDY_CONTROLS: Array<{ id: MarketStudyId; label: string; lineIds: 
   { id: 'sma50', label: 'SMA 50', lineIds: ['sma50'] },
   { id: 'bb20', label: 'BB 20', lineIds: ['bbUpper', 'bbLower'] },
 ];
+const AGENT_STUDY_SERIES_CAP = 8;
 const STUDY_LINE_COLORS: Record<StudyLineId, string> = {
   vwap: '#B788FF',
   sma20: '#F2B84B',
@@ -113,6 +116,7 @@ const STUDY_LINE_COLORS: Record<StudyLineId, string> = {
   bbUpper: '#8C96A3',
   bbLower: '#8C96A3',
 };
+const AGENT_STUDY_COLORS = ['#B788FF', '#F2B84B', '#6EA8FF', '#50D2C1', '#ED7088', '#9CA3AF'];
 const markerTimeFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
@@ -405,6 +409,100 @@ function enabledStudyHasData(
   control: { lineIds: StudyLineId[] },
 ): boolean {
   return control.lineIds.some((lineId) => studyData[lineId].length > 0);
+}
+
+interface AgentStudyLine {
+  label: string;
+  detail: string;
+  color: string;
+  data: LineData<Time>[];
+}
+
+function sanitizedStudyColor(color: string | null | undefined, index: number): string {
+  const fallback = AGENT_STUDY_COLORS[index % AGENT_STUDY_COLORS.length];
+  if (!color) return fallback;
+  const trimmed = color.trim();
+  return /^#[0-9a-f]{3,8}$/i.test(trimmed) ? trimmed : fallback;
+}
+
+function toLineDataPoint(point: { timestampMs: number; value: number }): LineData<Time> {
+  return {
+    time: Math.floor(point.timestampMs / 1000) as UTCTimestamp,
+    value: point.value,
+  };
+}
+
+function buildAgentStudyLines(
+  studies: ChartStudy[],
+  marketCandles: MarketCandle[],
+): AgentStudyLine[] {
+  if (studies.length === 0 || marketCandles.length === 0) return [];
+
+  const firstCandle = marketCandles[0];
+  const lastCandle = marketCandles[marketCandles.length - 1];
+  if (!firstCandle || !lastCandle) return [];
+
+  const lines: AgentStudyLine[] = [];
+  for (const study of studies) {
+    for (const overlay of study.overlays) {
+      if (lines.length >= AGENT_STUDY_SERIES_CAP) return lines;
+      const color = sanitizedStudyColor(overlay.color, lines.length);
+      if (overlay.kind === 'line') {
+        const data = overlay.points
+          .map(toLineDataPoint)
+          .sort((left, right) => Number(left.time) - Number(right.time));
+        if (data.length >= 2) {
+          lines.push({
+            label: overlay.label,
+            detail: `${study.title}: ${overlay.label}`,
+            color,
+            data,
+          });
+        }
+        continue;
+      }
+
+      if (overlay.kind === 'level' && overlay.value != null) {
+        const fromMs = study.validFromMs ?? firstCandle.timestamp;
+        const toMs = study.validToMs ?? lastCandle.timestamp;
+        if (fromMs <= toMs) {
+          lines.push({
+            label: overlay.label,
+            detail: `${study.title}: ${overlay.label}`,
+            color,
+            data: [
+              { time: Math.floor(fromMs / 1000) as UTCTimestamp, value: overlay.value },
+              { time: Math.floor(toMs / 1000) as UTCTimestamp, value: overlay.value },
+            ],
+          });
+        }
+      }
+    }
+  }
+
+  return lines;
+}
+
+function applyAgentStudyLines(
+  series: LineSeriesApi[] | undefined,
+  lines: AgentStudyLine[],
+): void {
+  if (!series) return;
+  series.forEach((item, index) => {
+    const line = lines[index];
+    if (!line) {
+      item.setData([]);
+      return;
+    }
+    item.applyOptions({
+      color: line.color,
+      lineWidth: 2,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      title: line.label,
+    });
+    item.setData(line.data);
+  });
 }
 
 function estimateMarketMarkerToleranceSeconds(marketTimes: UTCTimestamp[]): number {
@@ -1042,6 +1140,7 @@ export function TradingPerformanceChart({
   marketCandles = [],
   marketLabel,
   marketDataCoverage,
+  chartStudies = [],
   fillCountEvidence,
 }: TradingPerformanceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1084,6 +1183,10 @@ export function TradingPerformanceChart({
     () => buildMarketStudyData(marketCandles),
     [marketCandles],
   );
+  const agentStudyLines = useMemo(
+    () => buildAgentStudyLines(chartStudies, marketCandles),
+    [chartStudies, marketCandles],
+  );
   const marketMarkerPlacementResult = useMemo(
     () => toMarketMarkerPlacements(tradeMarkers, marketCandles),
     [marketCandles, tradeMarkers],
@@ -1111,12 +1214,14 @@ export function TradingPerformanceChart({
   const lastNavTimeRef = useRef<Time | undefined>(undefined);
   const tradeMarkersRef = useRef(tradeMarkers);
   const marketCandlesRef = useRef(marketCandles);
+  const agentStudyLinesRef = useRef(agentStudyLines);
 
   useEffect(() => {
     activeModeRef.current = activeMode;
     marketLabelRef.current = marketLabel;
     tradeMarkersRef.current = tradeMarkers;
     marketCandlesRef.current = marketCandles;
+    agentStudyLinesRef.current = agentStudyLines;
     pointByTimeRef.current = new Map(preparedPoints.map((preparedPoint) => [
       String(preparedPoint.time),
       preparedPoint.point,
@@ -1130,7 +1235,7 @@ export function TradingPerformanceChart({
     lastMarketTimeRef.current = marketSeriesData[marketSeriesData.length - 1]?.time;
     firstNavTimeRef.current = preparedPoints[0]?.time;
     lastNavTimeRef.current = preparedPoints[preparedPoints.length - 1]?.time;
-  }, [activeMode, marketCandles, marketLabel, markerReadoutsById, marketSeriesData, preparedPoints, tradeMarkers]);
+  }, [activeMode, agentStudyLines, marketCandles, marketLabel, markerReadoutsById, marketSeriesData, preparedPoints, tradeMarkers]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -1304,6 +1409,15 @@ export function TradingPerformanceChart({
             crosshairMarkerVisible: false,
           }),
         };
+        const agentStudySeries = Array.from({ length: AGENT_STUDY_SERIES_CAP }, (_, index) =>
+          chart.addSeries(charts.LineSeries, {
+            color: AGENT_STUDY_COLORS[index % AGENT_STUDY_COLORS.length],
+            lineWidth: 2,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          }),
+        );
         const navPaneSeries = navPane
           ? chart.addSeries(charts.AreaSeries, {
               lineColor,
@@ -1327,6 +1441,7 @@ export function TradingPerformanceChart({
           candleSeries,
           volumeSeries,
           studySeries,
+          agentStudySeries,
           navPaneSeries,
           markerApi,
         };
@@ -1381,6 +1496,7 @@ export function TradingPerformanceChart({
         runtime.candleSeries.setData(marketSeriesData);
         runtime.volumeSeries.setData(volumeSeriesData);
         applyMarketStudyData(runtime.studySeries, marketStudyData, enabledStudies);
+        applyAgentStudyLines(runtime.agentStudySeries, agentStudyLinesRef.current);
         if (runtime.navPaneSeries) {
           runtime.navPaneSeries.setData(navSeriesData);
           if (navSeriesData.length > 1) {
@@ -1584,6 +1700,7 @@ export function TradingPerformanceChart({
     runtime.candleSeries.setData(marketSeriesData);
     runtime.volumeSeries.setData(volumeSeriesData);
     applyMarketStudyData(runtime.studySeries, marketStudyData, enabledStudies);
+    applyAgentStudyLines(runtime.agentStudySeries, agentStudyLines);
     if (runtime.navPaneSeries) {
       runtime.navPaneSeries.applyOptions({
         lineColor,
@@ -1625,6 +1742,7 @@ export function TradingPerformanceChart({
     setExactMarketOverlay((current) => exactOverlayEquals(current, nextOverlay) ? current : nextOverlay);
   }, [
     activeMode,
+    agentStudyLines,
     chartTheme.gradientEnd,
     chartTheme.hoverBorderColor,
     chartTheme.negative,
@@ -1841,6 +1959,20 @@ export function TradingPerformanceChart({
               </button>
             );
           })}
+          {agentStudyLines.length > 0 && (
+            <span
+              className="inline-flex h-7 max-w-[220px] items-center truncate rounded-sm border px-2 font-data text-[11px] font-semibold"
+              style={{
+                background: chartTheme.tooltipBg,
+                borderColor: STUDY_LINE_COLORS.vwap,
+                color: chartTheme.tooltipBodyColor,
+              }}
+              title={agentStudyLines.map((line) => line.detail).join(' · ')}
+              data-testid="chart-agent-studies-chip"
+            >
+              Agent {formatNumber(agentStudyLines.length, { maximumFractionDigits: 0 })}
+            </span>
+          )}
         </div>
       )}
       {activeMode === 'market' && navSeriesData.length > 0 && (

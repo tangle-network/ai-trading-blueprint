@@ -4,6 +4,7 @@ import type { Portfolio, Position } from '~/lib/types/portfolio';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
 import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
 import {
+  useBotChartStudies,
   useBotMarketCandles,
   useBotMetrics,
   useBotMetricsSummary,
@@ -495,6 +496,18 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     refetchInterval: isLive ? 60_000 : false,
     limit: marketCandleLimitForRange(selectedRange.value),
   });
+  const { data: chartStudies = [] } = useBotChartStudies(
+    bot.id,
+    marketCandleToken,
+    { fromMs: selectedRangeStartMs, toMs: selectedRangeEndMs },
+    {
+      operatorApiUrl: bot.operatorApiUrl,
+      operatorKind: bot.operatorKind,
+      refetchInterval: isLive ? 60_000 : false,
+      limit: 12,
+      enabled: isLive && marketCandleToken != null,
+    },
+  );
   const { data: metricsSummary } = useBotMetricsSummary(bot.id, {
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
@@ -1060,6 +1073,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   marketCandles={marketCandles}
                   marketLabel={marketCandleToken}
                   marketDataCoverage={marketDataCoverage}
+                  chartStudies={chartStudies}
                   fillCountEvidence={fillCountEvidence}
                 />
               </div>

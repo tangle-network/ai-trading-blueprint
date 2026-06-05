@@ -37,6 +37,7 @@ const lightweightChartMock = vi.hoisted(() => {
     setData: vi.fn(),
   };
   const lineSeries = {
+    applyOptions: vi.fn(),
     setData: vi.fn(),
   };
   const navPaneSeries = {
@@ -140,6 +141,7 @@ let mockTradeEvidence: FillCountEvidence | null = null;
 let mockTradePageLoading = false;
 let mockLatestTradePageLoading = false;
 let mockMarkerTradePageLoading = false;
+let mockChartStudies: Array<Record<string, unknown>> = [];
 let mockMarketCandles: Array<{
   timestamp: number;
   token: string;
@@ -188,6 +190,9 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
   },
   useBotMarketCandles: () => ({
     data: mockMarketCandles,
+  }),
+  useBotChartStudies: () => ({
+    data: mockChartStudies,
   }),
   useBotPortfolio: () => ({
     data: mockPortfolio,
@@ -316,6 +321,7 @@ describe('PerformanceTab', () => {
     mockTradePageLoading = false;
     mockLatestTradePageLoading = false;
     mockMarkerTradePageLoading = false;
+    mockChartStudies = [];
     mockMarketCandles = [];
     operatorAuthMock.isAuthenticated = false;
     operatorAuthMock.token = null;
@@ -787,6 +793,42 @@ describe('PerformanceTab', () => {
         volume: 1650.25,
       },
     ];
+    mockChartStudies = [
+      {
+        id: 'study-breakout',
+        schemaVersion: 1,
+        botId: 'bot-1',
+        token: 'ETH',
+        venue: 'hyperliquid',
+        interval: '1m',
+        title: 'Breakout guard',
+        summary: 'Agent is tracking the invalidation level and VWAP reclaim.',
+        author: 'agent',
+        createdAtMs: Date.parse('2026-04-23T10:01:30.000Z'),
+        validFromMs: Date.parse('2026-04-23T10:00:00.000Z'),
+        validToMs: Date.parse('2026-04-23T10:01:00.000Z'),
+        overlays: [
+          {
+            id: 'invalidation',
+            kind: 'level',
+            label: 'Invalidation',
+            color: '#B788FF',
+            value: 3308,
+            points: [],
+          },
+          {
+            id: 'reclaim',
+            kind: 'line',
+            label: 'VWAP reclaim',
+            color: '#F2B84B',
+            points: [
+              { timestampMs: Date.parse('2026-04-23T10:00:00.000Z'), value: 3310 },
+              { timestampMs: Date.parse('2026-04-23T10:01:00.000Z'), value: 3320 },
+            ],
+          },
+        ],
+      },
+    ];
 
     render(
       <PerformanceTab
@@ -834,6 +876,21 @@ describe('PerformanceTab', () => {
     expect(lightweightChartMock.lineSeries.setData).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ value: expect.any(Number) }),
+      ]),
+    );
+    expect(screen.getByTestId('chart-agent-studies-chip')).toHaveTextContent('Agent 2');
+    expect(screen.getByTestId('chart-agent-studies-chip')).toHaveAttribute(
+      'title',
+      expect.stringContaining('Breakout guard: Invalidation'),
+    );
+    expect(lightweightChartMock.lineSeries.setData).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ value: 3308 }),
+      ]),
+    );
+    expect(lightweightChartMock.lineSeries.setData).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ value: 3320 }),
       ]),
     );
     await waitFor(() => expect(lightweightChartMock.candleSeries.priceToCoordinate).toHaveBeenCalled());

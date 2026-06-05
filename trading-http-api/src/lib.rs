@@ -2,6 +2,7 @@ pub mod alerts;
 pub mod amounts;
 pub mod auth;
 pub mod candle_store;
+pub mod chart_study_store;
 pub mod envelope_renewal;
 pub mod envelope_watcher;
 pub mod evolution_store;
@@ -89,6 +90,7 @@ pub fn build_router(state: Arc<TradingApiState>) -> Router {
         .merge(routes::trades::router())
         .merge(routes::backtest::router())
         .merge(routes::candles::router())
+        .merge(routes::chart_studies::router())
         .merge(routes::evolution::router())
         .merge(routes::session::router())
         .merge(routes::supported_assets::router())
@@ -557,6 +559,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::trades::multi_bot_router())
         .merge(routes::backtest::multi_bot_router())
         .merge(routes::candles::multi_bot_router())
+        .merge(routes::chart_studies::multi_bot_router())
         .merge(routes::cex::multi_bot_router())
         .merge(routes::evolution::multi_bot_router())
         .merge(routes::hyperliquid::multi_bot_router())

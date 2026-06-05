@@ -8254,6 +8254,126 @@ async fn test_candle_store_rejects_empty_batch() {
     assert_eq!(response.status(), 400);
 }
 
+#[tokio::test]
+async fn test_chart_study_record_and_query() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let bot_id = state.bot_id.clone();
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "study_id": "study-breakout-1",
+        "token": "ETH",
+        "venue": "hyperliquid",
+        "interval": "1m",
+        "title": "Breakout guard",
+        "summary": "Keep the ETH long valid only while price holds VWAP and the invalidation level.",
+        "author": "agent",
+        "valid_from_ms": 1_000_000,
+        "valid_to_ms": 1_060_000,
+        "run_id": "run-1",
+        "overlays": [
+            {
+                "overlay_id": "vwap-reclaim",
+                "kind": "line",
+                "label": "VWAP reclaim",
+                "color": "#B788FF",
+                "points": [
+                    {"timestamp_ms": 1_000_000, "value": 3300.0},
+                    {"timestamp_ms": 1_060_000, "value": 3318.5}
+                ]
+            },
+            {
+                "overlay_id": "invalidation",
+                "kind": "level",
+                "label": "Invalidation",
+                "color": "#F2B84B",
+                "value": 3288.0
+            }
+        ]
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/chart/studies")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["recorded"], true);
+    assert_eq!(json["study"]["bot_id"], bot_id);
+    assert_eq!(json["study"]["study_id"], "study-breakout-1");
+    assert_eq!(json["study"]["overlays"].as_array().unwrap().len(), 2);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/chart/studies?token=ETH&from=999000&to=1061000&limit=5")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let studies = json["studies"].as_array().unwrap();
+    assert_eq!(studies.len(), 1);
+    assert_eq!(studies[0]["bot_id"], bot_id);
+    assert_eq!(studies[0]["study_id"], "study-breakout-1");
+    assert_eq!(json["total"], 1);
+}
+
+#[tokio::test]
+async fn test_chart_study_rejects_invalid_line_overlay() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "token": "ETH",
+        "title": "Invalid single-point line",
+        "overlays": [
+            {
+                "overlay_id": "bad-line",
+                "kind": "line",
+                "label": "Bad line",
+                "points": [
+                    {"timestamp_ms": 1_000_000, "value": 3300.0}
+                ]
+            }
+        ]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/chart/studies")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
 // ── Evolution integration tests ────────────────────────────────────────
 
 #[tokio::test]
