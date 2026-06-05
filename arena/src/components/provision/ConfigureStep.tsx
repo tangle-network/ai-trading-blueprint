@@ -50,6 +50,17 @@ function normalizeConfigureStepLayout(value: Partial<ConfigureStepLayout>): Conf
   };
 }
 
+function showsPredictionMarketChoices(
+  strategyType: string,
+  selectedPack: Pick<StrategyPackDef, 'providers'>,
+): boolean {
+  if (strategyType.startsWith('prediction')) return true;
+  return selectedPack.providers.some((provider) => {
+    const normalized = provider.trim().toLowerCase();
+    return normalized === 'polymarket' || normalized === 'all protocols';
+  });
+}
+
 export function strategySupportsClobCollateral(
   strategyType: string,
   selectedPack: Pick<StrategyPackDef, 'providers'>,
@@ -165,6 +176,9 @@ export function ConfigureStep({
     .filter((p) => !p.id.startsWith('prediction'))
     .sort(compareStrategyPackPriority);
   const predictionPacks = strategyPacks.filter((p) => p.id.startsWith('prediction'));
+  const showPredictionPacks =
+    predictionPacks.length > 0 &&
+    showsPredictionMarketChoices(strategyType, selectedPack);
   const providerLabel = selectedPack.providers.slice(0, 3).join(', ');
   const inheritedFocusLabel = capabilityFocusLabels?.length
     ? capabilityFocusLabels.join(', ')
@@ -303,7 +317,7 @@ export function ConfigureStep({
                 />
               ))}
             </div>
-            {predictionPacks.length > 0 && (
+            {showPredictionPacks && (
               <div className="mt-2.5">
                 <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-accent)]">
                   <span className="i-ph:newspaper-clipping text-sm" aria-hidden="true" />
@@ -332,8 +346,8 @@ export function ConfigureStep({
         <WorkspaceResizeHandle
           orientation="vertical"
           className="hidden lg:col-start-2 lg:row-start-1 lg:flex"
-          ariaLabel="Resize deploy summary"
-          title="Drag to resize deploy summary"
+          ariaLabel="Resize activation summary"
+          title="Drag to resize activation summary"
           onPointerDown={startRailResize}
         />
 

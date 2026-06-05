@@ -188,18 +188,54 @@ function ChatRunBanner({
   );
 }
 
-function ChatEmptyState() {
+function ChatEmptyState({
+  botId,
+  canCommand,
+  isAuthenticating,
+  onAuthenticate,
+}: {
+  botId: string;
+  canCommand: boolean;
+  isAuthenticating: boolean;
+  onAuthenticate: () => void;
+}) {
   return (
     <div className="flex h-full min-h-[320px] items-center justify-center px-6 text-center">
-      <div className="max-w-md">
-        <div className="i-ph:chat-circle-dots mx-auto mb-4 text-3xl text-[var(--arena-terminal-text-subtle)]" />
-        <h3 className="font-display text-xl font-semibold text-[var(--arena-terminal-text)]">
+      <section
+        className="w-full max-w-[640px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-6 py-8 shadow-[var(--arena-terminal-shadow-lg)]"
+        aria-label="No chat sessions yet"
+      >
+        <span
+          className="i-ph:chat-circle-dots mx-auto flex h-10 w-10 items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-xl text-[var(--arena-terminal-accent)]"
+          aria-hidden="true"
+        />
+        <h3 className="mt-4 font-display text-xl font-semibold text-[var(--arena-terminal-text)]">
           No chat sessions yet
         </h3>
-        <p className="mt-2 text-sm leading-6 text-[var(--arena-terminal-text-muted)]">
-          Autonomous execution traces live in Runs. Chat will show conversation history when this agent has one.
+        <p className="mx-auto mt-2 max-w-md text-pretty font-data text-sm leading-6 text-[var(--arena-terminal-text-muted)]">
+          Autonomous execution traces live in Runs. Chat will show owner-directed conversation history when this agent has one.
         </p>
-      </div>
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+          {canCommand && (
+            <button
+              type="button"
+              onClick={onAuthenticate}
+              disabled={isAuthenticating}
+              className="inline-flex h-9 items-center justify-center gap-2 bg-[var(--arena-terminal-accent)] px-3 font-display text-sm font-semibold text-[#06100e] transition-colors hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] disabled:opacity-60"
+            >
+              <span className="i-ph:wallet text-base" aria-hidden="true" />
+              {isAuthenticating ? "Connecting…" : "Owner Sign In"}
+            </button>
+          )}
+          <a
+            href={`/arena/bot/${encodeURIComponent(botId)}/runs`}
+            className="inline-flex h-9 items-center justify-center gap-2 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-3 font-display text-sm font-semibold text-[var(--arena-terminal-text-secondary)] transition-colors hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
+          >
+            <span className="i-ph:list-checks text-base" aria-hidden="true" />
+            Open Runs
+          </a>
+        </div>
+      </section>
     </div>
   );
 }
@@ -308,7 +344,7 @@ function SessionWorkspaceSidebar({
         {!collapsed && (
           <div className="min-w-0">
             <span className="block truncate text-sm font-display font-semibold text-arena-elements-textPrimary">
-              History
+              Conversations
             </span>
             <span className="block truncate font-data text-xs text-arena-elements-textTertiary">
               {sessions.length.toLocaleString()} {sessions.length === 1 ? "session" : "sessions"}
@@ -927,7 +963,12 @@ export function ChatTab({
 
           <div className="arena-chat-surface min-h-0 flex-1 bg-[#081013]">
             {showEmptyChatState ? (
-              <ChatEmptyState />
+              <ChatEmptyState
+                botId={botId}
+                canCommand={canCommand}
+                isAuthenticating={isAuthenticating}
+                onAuthenticate={authenticate}
+              />
             ) : (
             <div className="h-full min-h-0 min-w-0">
               <ChatTranscript
@@ -947,7 +988,7 @@ export function ChatTab({
             )}
           </div>
 
-          {(canWrite || canCommand) && (
+          {(canWrite || (canCommand && !showEmptyChatState)) && (
           <div className="flex items-center gap-3 border-t border-[#273035] bg-[#0b1418] px-4 py-3">
             {canWrite ? (
               <AgentStatus

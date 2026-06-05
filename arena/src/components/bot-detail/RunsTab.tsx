@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { useInfiniteQuery } from "@tanstack/react-query";
 import type { AgentBranding, SessionPart } from "@tangle-network/sandbox-ui/types";
 import { ChatTranscript } from "~/components/bot-detail/chat/ChatTranscript";
-import { useBotSessionStream } from "~/lib/hooks/useBotSessionStream";
+import {
+  useBotSessionStream,
+  type AppSessionMessage,
+} from "~/lib/hooks/useBotSessionStream";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
 import {
   buildBotScopedPathForDeploymentKind,
@@ -430,19 +433,6 @@ function RunsSidebar({
   );
 }
 
-function RunMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 p-3">
-      <div className="text-sm font-data font-medium text-arena-elements-textSecondary">
-        {label}
-      </div>
-      <div className="mt-1 break-words text-base font-data text-arena-elements-textPrimary">
-        {value}
-      </div>
-    </div>
-  );
-}
-
 function RunMetricPill({ label, value }: { label: string; value: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-arena-elements-dividerColor/55 bg-arena-elements-background-depth-2/45 px-2.5 py-1 font-data text-xs text-arena-elements-textSecondary">
@@ -463,6 +453,23 @@ function countToolParts(partMap: Record<string, SessionPart[]>): number {
     }
   }
   return toolIds.size;
+}
+
+function hasRenderableTranscriptContent(
+  messages: AppSessionMessage[],
+  partMap: Record<string, SessionPart[]>,
+): boolean {
+  return messages.some((message) => {
+    const parts = partMap[message.id] ?? [];
+    if (parts.length === 0) return false;
+
+    return parts.some((part) => {
+      if (part.type === "tool") return true;
+      if (part.type === "text") return typeof part.text === "string" && part.text.trim().length > 0;
+      if (part.type === "reasoning") return typeof part.text === "string" && part.text.trim().length > 0;
+      return false;
+    });
+  });
 }
 
 function TraceCockpitMetric({ label, value }: { label: string; value: string }) {
@@ -592,113 +599,138 @@ function RunResultSummary({ result }: { result: string }) {
   );
 }
 
-function getNoTranscriptRunTitle(run: BotRun): string {
-  if (run.error) {
-    return run.status === "interrupted"
-      ? "Run interrupted"
-      : "Run failed before details were captured";
-  }
-
-  if (run.result) {
-    switch (run.workflowKind) {
-      case "trading":
-        return "Trading run details";
-      case "research":
-        return "Research run details";
-      case "conversation":
-        return "Conversation run details";
-      default:
-        return "Run details";
-    }
-  }
-
-  return "Run details unavailable";
-}
-
-function RunDetailPanel({ run }: { run: BotRun }) {
-  const title = getNoTranscriptRunTitle(run);
+function RunDetailPanel({
+  run,
+  decisionItem,
+}: {
+  run: BotRun;
+  decisionItem?: DecisionFeedItem;
+}) {
+  const sections = decisionItem?.sections?.filter((section) => section.items.length > 0) ?? [];
+  const capturedStages = decisionItem?.stages.filter((stage) => (
+    stage.value !== "Not captured" || Boolean(stage.detail)
+  )) ?? [];
+  const transcriptLabel = run.transcriptAvailable
+    ? "No visible messages"
+    : run.result || run.error
+      ? "Structured evidence"
+      : "Not captured";
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-arena-elements-dividerColor/50 px-4 py-4">
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 rounded-lg bg-amber-500/10 p-2 text-amber-700 dark:text-amber-300">
-            <span className="i-ph:robot text-lg" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-base font-display font-semibold text-arena-elements-textPrimary">
-                {title}
-              </h3>
-              <span
-                className={`rounded-full border px-2 py-0.5 text-[11px] font-data ${getStatusBadgeClass(run.status)}`}
-              >
-                {getStatusLabel(run.status)}
-              </span>
-            </div>
-            <p className="mt-1 text-sm text-arena-elements-textSecondary">
-              {getWorkflowKindDescription(run.workflowKind)} started{" "}
-              {formatRunTimestamp(run.startedAt)}.
-            </p>
-          </div>
-        </div>
-      </div>
-
+    <div className="flex h-full min-h-0 flex-col bg-[var(--arena-terminal-bg)]">
       <div
         className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
         tabIndex={0}
         aria-label="Run details"
       >
-        {(run.error || run.result) && (
-          <div className="mb-4 rounded-xl border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/20 p-4">
-            <div className="text-[12px] font-data font-medium text-arena-elements-textSecondary">
-              {run.error ? "Error" : "Result"}
-            </div>
-            {run.error ? (
-              <pre className="mt-2 whitespace-pre-wrap break-words text-sm text-arena-elements-textPrimary">
-                {run.error}
-              </pre>
-            ) : run.result ? (
-              <RunResultSummary result={run.result} />
-            ) : null}
-          </div>
-        )}
+        <div className="grid min-h-full gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.44fr)]">
+          <div className="min-w-0 space-y-4">
+            {capturedStages.length > 0 && (
+              <section className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+                <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-text-muted)]">
+                  Decision Path
+                </div>
+                <div className="grid gap-2 p-3 [grid-template-columns:repeat(auto-fit,minmax(12rem,1fr))]">
+                  {capturedStages.map((stage) => (
+                    <div key={stage.key} className="min-w-0 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className={`${stage.iconClass} shrink-0 text-base text-[var(--arena-terminal-accent)]`} aria-hidden="true" />
+                        <span className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+                          {stage.label}
+                        </span>
+                      </div>
+                      <div className="mt-2 truncate font-data text-sm font-bold text-[var(--arena-terminal-text)]" title={stage.value}>
+                        {stage.value}
+                      </div>
+                      {stage.detail && (
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--arena-terminal-text-muted)]" title={stage.detail}>
+                          {stage.detail}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          <RunMetric
-            label="Workflow"
-            value={getWorkflowKindLabel(run.workflowKind)}
-          />
-          <RunMetric
-            label="Started"
-            value={formatRunTimestamp(run.startedAt)}
-          />
-          <RunMetric
-            label="Completed"
-            value={
-              run.completedAt
-                ? formatRunTimestamp(run.completedAt)
-                : "Still running"
-            }
-          />
-          <RunMetric label="Duration" value={formatDuration(run.durationMs)} />
-          <RunMetric label="Input Tokens" value={run.inputTokens.toString()} />
-          <RunMetric
-            label="Output Tokens"
-            value={run.outputTokens.toString()}
-          />
-          <RunMetric label="Trace ID" value={run.traceId ?? "n/a"} />
-          <RunMetric label="Run ID" value={run.runId} />
-          <RunMetric
-            label="Transcript"
-            value={
-              run.transcriptAvailable
-                ? "Full transcript"
-                : run.result || run.error
-                  ? "Structured replay"
-                  : "Not captured"
-            }
-          />
+            {(run.error || run.result) && (
+              <section className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+                <div className="flex items-center justify-between border-b border-[var(--arena-terminal-border)] px-3 py-2">
+                  <div className="font-data text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-text-muted)]">
+                    {run.error ? "Error" : sections.length > 0 ? "Parsed Output" : "Result"}
+                  </div>
+                  <div className="truncate font-data text-[11px] text-[var(--arena-terminal-text-subtle)]">
+                    {run.runId}
+                  </div>
+                </div>
+                <div className="p-3">
+                  {run.error ? (
+                    <pre className="whitespace-pre-wrap break-words font-data text-sm leading-6 text-[var(--arena-terminal-danger)]">
+                      {run.error}
+                    </pre>
+                  ) : run.result && sections.length === 0 ? (
+                    <pre className="whitespace-pre-wrap break-words font-data text-sm leading-6 text-[var(--arena-terminal-text-secondary)]">
+                      {run.result}
+                    </pre>
+                  ) : run.result ? (
+                    <RunResultSummary result={run.result} />
+                  ) : null}
+                </div>
+              </section>
+            )}
+          </div>
+
+          <aside className="min-w-0 space-y-4">
+            <section className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+              <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-text-muted)]">
+                Evidence Record
+              </div>
+              <div className="divide-y divide-[var(--arena-terminal-border)]">
+                {[
+                  ["Run ID", run.runId],
+                  ["Workflow", getWorkflowKindLabel(run.workflowKind)],
+                  ["Transcript", transcriptLabel],
+                  ["Trace", run.traceId ?? "n/a"],
+                  ["Session", run.sessionId ?? "n/a"],
+                  ["Started", formatRunTimestamp(run.startedAt)],
+                  ["Completed", run.completedAt ? formatRunTimestamp(run.completedAt) : "Still running"],
+                  ["Input tok", run.inputTokens.toString()],
+                  ["Output tok", run.outputTokens.toString()],
+                ].map(([label, value]) => (
+                  <div key={label} className="grid min-w-0 grid-cols-[7.25rem_minmax(0,1fr)] gap-3 px-3 py-2 font-data text-xs">
+                    <span className="truncate uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
+                      {label}
+                    </span>
+                    <span className="min-w-0 truncate text-right text-[var(--arena-terminal-text-secondary)]" title={value}>
+                      {value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {sections.length > 0 && (
+              <section className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
+                <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-text-muted)]">
+                  Quick Read
+                </div>
+                <div className="divide-y divide-[var(--arena-terminal-border)]">
+                  {sections.slice(0, 4).flatMap((section) =>
+                    section.items.slice(0, 3).map((item) => (
+                      <div key={`${section.title}-${item.label}`} className="grid min-w-0 grid-cols-[7.25rem_minmax(0,1fr)] gap-3 px-3 py-2 font-data text-xs">
+                        <span className="truncate uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
+                          {item.label}
+                        </span>
+                        <span className="min-w-0 truncate text-right text-[var(--arena-terminal-text)]" title={item.value}>
+                          {item.value}
+                        </span>
+                      </div>
+                    )),
+                  )}
+                </div>
+              </section>
+            )}
+          </aside>
         </div>
       </div>
     </div>
@@ -881,7 +913,6 @@ export function RunsTab({
   const showRunsSidebar =
     immersive || runs.length > 1 || Boolean(runsQuery.hasNextPage);
   const showDecisionActivityStrip = decisionItems.length > 0 && !showRunsSidebar;
-  const showDecisionInspector = decisionItems.length > 0;
   const surfaceCopy = surface === "chat"
     ? {
         label: "Chat",
@@ -902,12 +933,12 @@ export function RunsTab({
     ? extractRunsErrorMessage(stream.error)
     : null;
   const traceReplayFailed = canReplayRunTrace && !canStreamTranscript && Boolean(stream.error);
-  const hasVisibleReplayMessages = stream.isStreaming || stream.messages.length > 0;
+  const hasVisibleReplayMessages = hasRenderableTranscriptContent(stream.messages, stream.partMap);
   const shouldShowTraceReplay =
-    (canStreamTranscript || canReplayRunTrace) &&
-    (canStreamTranscript || activeRun?.transcriptAvailable || hasVisibleReplayMessages) &&
+    (stream.isStreaming || hasVisibleReplayMessages) &&
     !traceReplayFailed &&
     !streamErrorMessage;
+  const showDecisionInspector = decisionItems.length > 0 && shouldShowTraceReplay;
   const selectedDecisionId = activeRun ? `run:${activeRun.runId}` : undefined;
   const selectedDecisionItem =
     decisionItems.find((item) => item.id === selectedDecisionId) ?? decisionItems[0];
@@ -1152,9 +1183,11 @@ export function RunsTab({
                     branding={runsBranding}
                     placeholder="This run is read only"
                     variant="terminal"
+                    emptyTitle="Waiting for live trace"
+                    emptyDescription="Reasoning, tool calls, and run output will stream here as soon as the operator publishes them."
                   />
                 ) : activeRun ? (
-                  <RunDetailPanel run={activeRun} />
+                  <RunDetailPanel run={activeRun} decisionItem={selectedDecisionItem} />
                 ) : null}
               </div>
               {showDecisionInspector && !isStackedLayout && (

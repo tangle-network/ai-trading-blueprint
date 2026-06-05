@@ -87,6 +87,7 @@ function parseArgs(argv) {
     allowEmpty: false,
     chrome: process.env.CHROME_BIN ?? '',
     fixture: false,
+    fixtureEmptyRunTranscript: false,
     ownerPerformance: false,
     serveFixture: false,
     themeMatrix: false,
@@ -108,6 +109,9 @@ function parseArgs(argv) {
       args.allowEmpty = true;
     } else if (arg === '--fixture') {
       args.fixture = true;
+    } else if (arg === '--fixture-empty-run-transcript') {
+      args.fixture = true;
+      args.fixtureEmptyRunTranscript = true;
     } else if (arg === '--serve-fixture') {
       args.fixture = true;
       args.serveFixture = true;
@@ -147,6 +151,8 @@ Options:
   --url <url>       App base URL. Defaults to ARENA_SMOKE_URL or http://127.0.0.1:1337/
   --chrome <path>   Chromium/Chrome binary. Defaults to CHROME_BIN or common system names.
   --fixture         Start a deterministic mock operator + local app server, then smoke a fixture agent.
+  --fixture-empty-run-transcript
+                    Fixture run reports transcript_available but returns no visible messages.
   --serve-fixture   Start the deterministic mock operator + local app server and keep them alive until SIGTERM.
   --ready-file <path>
                     With --serve-fixture, write the app URL to a file after the server is ready.
@@ -476,7 +482,7 @@ function buildFixtureMessages() {
   ];
 }
 
-function startFixtureOperatorServer() {
+function startFixtureOperatorServer({ emptyRunTranscript = false } = {}) {
   const bot = buildFixtureBotRecord();
   const trades = buildFixtureTrades();
   const candles = buildFixtureCandles();
@@ -658,7 +664,7 @@ function startFixtureOperatorServer() {
       return;
     }
     if (pathname === `/api/bots/${FIXTURE_BOT_ID}/runs/run-smoke-1/messages`) {
-      json(res, 200, { messages });
+      json(res, 200, { messages: emptyRunTranscript ? [] : messages });
       return;
     }
     if (pathname === `/api/bots/${FIXTURE_BOT_ID}/session/sessions`) {
@@ -1249,18 +1255,26 @@ async function captureScreenshot(page, screenshotDir, viewport, section, suffix 
   await writeFile(path.join(screenshotDir, filename), Buffer.from(result.data, 'base64'));
 }
 
-function getSectionExpectations(section, { fixture = false, ownerPerformance = false } = {}) {
+function getSectionExpectations(section, {
+  fixture = false,
+  fixtureEmptyRunTranscript = false,
+  ownerPerformance = false,
+} = {}) {
   if (ownerPerformance && section === 'performance') {
     return ['Price', 'ETH', 'Fills'];
   }
   if (!fixture) {
     return LIVE_SECTION_EXPECTATIONS[section] ?? [];
   }
+  if (fixtureEmptyRunTranscript && section === 'runs') {
+    return ['Decision Path', 'Evidence Record', 'No visible messages'];
+  }
   return SECTION_EXPECTATIONS[section] ?? [];
 }
 
 async function assertWorkspaceFits(page, baseUrl, botId, {
   fixture = false,
+  fixtureEmptyRunTranscript = false,
   ownerPerformance = false,
   screenshotDir = '',
   theme = '',
@@ -1310,7 +1324,11 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
           transformedWorkspaceAncestor,
         };
       })()`);
-        const expected = getSectionExpectations(section, { fixture, ownerPerformance });
+        const expected = getSectionExpectations(section, {
+          fixture,
+          fixtureEmptyRunTranscript,
+          ownerPerformance,
+        });
         const hasExpectedText = textIncludes(nextMetrics.bodyText, expected);
         const performanceFillsStillLoading = section === 'performance'
           && /\bFills\s+Loading\b/i.test(nextMetrics.bodyText);
@@ -1329,7 +1347,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
             innerHeight: window.innerHeight,
           };
         })()`);
-        failures.push(`${viewport.width}x${viewport.height} ${section}: timed out waiting for ${JSON.stringify(getSectionExpectations(section, { fixture, ownerPerformance }))}; body="${debugMetrics.bodyText}"`);
+        failures.push(`${viewport.width}x${viewport.height} ${section}: timed out waiting for ${JSON.stringify(getSectionExpectations(section, { fixture, fixtureEmptyRunTranscript, ownerPerformance }))}; body="${debugMetrics.bodyText}"`);
         continue;
       }
 
@@ -1348,7 +1366,11 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
       if (metrics.transformedWorkspaceAncestor) {
         failures.push(`${viewport.width}x${viewport.height} ${section}: workspace ancestor still transformed ${JSON.stringify(metrics.transformedWorkspaceAncestor)}`);
       }
-      for (const text of getSectionExpectations(section, { fixture, ownerPerformance })) {
+      for (const text of getSectionExpectations(section, {
+        fixture,
+        fixtureEmptyRunTranscript,
+        ownerPerformance,
+      })) {
         if (!textIncludes(metrics.bodyText, [text])) {
           failures.push(`${viewport.width}x${viewport.height} ${section}: missing expected text "${text}"`);
         }
@@ -1800,7 +1822,9 @@ async function main() {
   let fixtureApp = null;
 
   if (args.fixture) {
-    fixtureOperator = await startFixtureOperatorServer();
+    fixtureOperator = await startFixtureOperatorServer({
+      emptyRunTranscript: args.fixtureEmptyRunTranscript,
+    });
     fixtureApp = await startFixtureAppServer(fixtureOperator.url, {
       ownerPerformance: args.ownerPerformance,
     });
@@ -1874,6 +1898,7 @@ async function main() {
     for (const theme of themes) {
       await assertWorkspaceFits(page, args.url, botId, {
         fixture: args.fixture,
+        fixtureEmptyRunTranscript: args.fixtureEmptyRunTranscript,
         ownerPerformance: args.ownerPerformance,
         screenshotDir: args.screenshotDir,
         theme,

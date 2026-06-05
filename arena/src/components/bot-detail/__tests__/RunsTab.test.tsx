@@ -382,7 +382,7 @@ describe("RunsTab", () => {
     );
   });
 
-  it("replays saved trading run JSON through the chat transcript when no full transcript was captured", async () => {
+  it("shows saved trading run JSON as structured evidence when no full transcript was captured", async () => {
     const { RunsTab } = await import("../RunsTab");
     const result = JSON.stringify({
       result_schema_version: 1,
@@ -465,7 +465,9 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect(await screen.findByText("Decision Path")).toBeInTheDocument();
+    expect(screen.getAllByText("Parsed Output").length).toBeGreaterThan(0);
+    expect(screen.getByText("Evidence Record")).toBeInTheDocument();
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -473,8 +475,8 @@ describe("RunsTab", () => {
         }),
       );
     });
-    expect(screen.queryByText("Trading run details")).not.toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: /decision inspector/i })).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: /decision inspector/i })).not.toBeInTheDocument();
     expect(screen.getAllByText("Decision").length).toBeGreaterThan(0);
     expect(screen.getAllByText("api-wallet-approval-not-verified").length).toBeGreaterThan(0);
     expect(screen.queryByText(/result_schema_version/)).not.toBeInTheDocument();
@@ -648,7 +650,7 @@ describe("RunsTab", () => {
     expect(shell).not.toHaveClass("rounded-xl");
     expect(screen.getByLabelText("Autonomous runs")).toBeInTheDocument();
     expect(screen.queryByTestId("decision-activity-strip")).not.toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: /decision inspector/i })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: /decision inspector/i })).not.toBeInTheDocument();
     expect(screen.getAllByText("Decision").length).toBeGreaterThan(0);
   });
 

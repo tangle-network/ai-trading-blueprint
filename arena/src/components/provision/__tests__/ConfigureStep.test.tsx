@@ -147,10 +147,34 @@ describe('ConfigureStep', () => {
     expect(screen.getByText('Autonomously trade and improve the mandate.')).toBeInTheDocument();
   });
 
-  it('renders prediction market section separately', () => {
+  it('hides prediction market subtypes when the selected adapter does not use them', () => {
     render(<ConfigureStep {...defaultProps()} />);
+    expect(screen.queryByText('Prediction Markets')).not.toBeInTheDocument();
+    expect(screen.queryByText('Polymarket')).not.toBeInTheDocument();
+  });
+
+  it('shows prediction market subtypes for prediction-capable adapters', () => {
+    render(
+      <ConfigureStep
+        {...defaultProps({
+          strategyType: 'volatility',
+          selectedPack: {
+            id: 'volatility',
+            name: 'Volatility',
+            description: 'Volatility strategies',
+            providers: ['Polymarket', 'Uniswap V3'],
+            executionMode: 'paper-only' as const,
+            supportedChainIds: [],
+            cron: '0 */10 * * *',
+            maxTurns: 40,
+            timeoutMs: 120000,
+            expertKnowledge: 'Volatility and prediction market setup.',
+          },
+        })}
+      />,
+    );
+
     expect(screen.getByText('Prediction Markets')).toBeInTheDocument();
-    // "Polymarket" appears twice: as the pack name and in the providers list
     const polymarketElements = screen.getAllByText('Polymarket');
     expect(polymarketElements.length).toBeGreaterThanOrEqual(1);
   });
