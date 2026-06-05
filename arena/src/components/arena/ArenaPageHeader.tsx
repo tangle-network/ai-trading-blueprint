@@ -9,6 +9,7 @@ export interface ArenaPageMetric {
 
 interface ArenaPageHeaderProps {
   title: string;
+  showTitle?: boolean;
   badge?: ReactNode;
   metrics: ArenaPageMetric[];
   children?: ReactNode;
@@ -63,6 +64,7 @@ export function ArenaHeaderLink({
 
 export function ArenaPageHeader({
   title,
+  showTitle = true,
   badge,
   metrics,
   children,
@@ -75,17 +77,21 @@ export function ArenaPageHeader({
   return (
     <section className="shrink-0 overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
       <div className="flex min-h-14 flex-col gap-2 px-3 py-1.5 min-[1180px]:flex-row min-[1180px]:items-center">
-        <div className={`flex min-w-0 items-center gap-3 ${titleWidthClassName}`}>
-        <span
-          className="h-2 w-2 shrink-0 rounded-full bg-[var(--arena-terminal-accent)]"
-          style={{ boxShadow: '0 0 16px color-mix(in srgb, var(--arena-terminal-accent) 48%, transparent)' }}
-          aria-hidden="true"
-        />
-          <h1 className="truncate font-display text-xl font-semibold tracking-tight text-[var(--arena-terminal-text)]">
-            {title}
-          </h1>
-          {badge}
-        </div>
+        {showTitle ? (
+          <div className={`flex min-w-0 items-center gap-3 ${titleWidthClassName}`}>
+            <span
+              className="h-2 w-2 shrink-0 rounded-full bg-[var(--arena-terminal-accent)]"
+              style={{ boxShadow: '0 0 16px color-mix(in srgb, var(--arena-terminal-accent) 48%, transparent)' }}
+              aria-hidden="true"
+            />
+            <h1 className="truncate font-display text-xl font-semibold tracking-tight text-[var(--arena-terminal-text)]">
+              {title}
+            </h1>
+            {badge}
+          </div>
+        ) : (
+          <h1 className="sr-only">{title}</h1>
+        )}
 
         <div className={`grid min-w-0 gap-3 ${metricsClassName}`}>
           {metrics.map((metric) => (

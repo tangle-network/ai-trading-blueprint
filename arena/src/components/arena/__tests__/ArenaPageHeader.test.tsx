@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { ArenaPageHeader } from '../ArenaPageHeader';
 
@@ -22,5 +22,22 @@ describe('ArenaPageHeader', () => {
     expect(header).not.toHaveClass('rounded-[6px]');
     expect(header).not.toHaveClass('border');
     expect(innerBar).toHaveClass('min-h-14');
+  });
+
+  it('can keep the page heading accessible without visible duplicate brand chrome', () => {
+    render(
+      <ArenaPageHeader
+        title="Tangle"
+        showTitle={false}
+        metrics={[
+          { label: 'Agents', value: '12' },
+          { label: '30D Vol', value: '$4.2M' },
+          { label: 'Fills', value: '812' },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Tangle' })).toHaveClass('sr-only');
+    expect(screen.getByText('30D Vol')).toBeInTheDocument();
   });
 });
