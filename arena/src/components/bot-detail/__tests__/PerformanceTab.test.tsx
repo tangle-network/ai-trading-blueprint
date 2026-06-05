@@ -36,6 +36,9 @@ const lightweightChartMock = vi.hoisted(() => {
   const volumeSeries = {
     setData: vi.fn(),
   };
+  const lineSeries = {
+    setData: vi.fn(),
+  };
   const navPaneSeries = {
     applyOptions: vi.fn(),
     createPriceLine: vi.fn(),
@@ -58,6 +61,7 @@ const lightweightChartMock = vi.hoisted(() => {
     addSeries: vi.fn((seriesType: string, _options?: unknown, paneIndex?: number) => {
       if (seriesType === 'CandlestickSeries') return candleSeries;
       if (seriesType === 'HistogramSeries') return volumeSeries;
+      if (seriesType === 'LineSeries') return lineSeries;
       if (paneIndex === 1) return navPaneSeries;
       return areaSeries;
     }),
@@ -81,6 +85,7 @@ const lightweightChartMock = vi.hoisted(() => {
     CrosshairMode: { Magnet: 1 },
     HistogramSeries: 'HistogramSeries',
     LastPriceAnimationMode: { OnDataUpdate: 2 },
+    LineSeries: 'LineSeries',
     LineStyle: { Dashed: 2, Dotted: 1 },
     areaSeries,
     candleSeries,
@@ -88,6 +93,7 @@ const lightweightChartMock = vi.hoisted(() => {
     createChart: vi.fn(() => chart),
     createSeriesMarkers: vi.fn(() => markerApi),
     fitContent,
+    lineSeries,
     markerApi,
     navPaneSeries,
     pane0,
@@ -335,6 +341,7 @@ describe('PerformanceTab', () => {
     lightweightChartMock.createChart.mockClear();
     lightweightChartMock.createSeriesMarkers.mockClear();
     lightweightChartMock.fitContent.mockClear();
+    lightweightChartMock.lineSeries.setData.mockClear();
     lightweightChartMock.markerApi.detach.mockClear();
     lightweightChartMock.markerApi.markers.mockClear();
     lightweightChartMock.markerApi.setMarkers.mockClear();
@@ -819,6 +826,16 @@ describe('PerformanceTab', () => {
     );
     expect(screen.getAllByText('NAV').length).toBeGreaterThan(0);
     expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenLastCalledWith([]);
+    expect(screen.getByTestId('chart-market-coverage')).toHaveTextContent('2 candles');
+    expect(screen.getByTestId('chart-market-coverage')).toHaveTextContent('bot store');
+    expect(screen.getByRole('button', { name: 'VWAP' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'SMA 20' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'SMA 20' })).toHaveAttribute('aria-pressed', 'false');
+    expect(lightweightChartMock.lineSeries.setData).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ value: expect.any(Number) }),
+      ]),
+    );
     await waitFor(() => expect(lightweightChartMock.candleSeries.priceToCoordinate).toHaveBeenCalled());
     expect(lightweightChartMock.candleSeries.priceToCoordinate).toHaveBeenCalledWith(3300);
     expect(await screen.findByLabelText(/LONG .*Apr 23/i)).toBeInTheDocument();

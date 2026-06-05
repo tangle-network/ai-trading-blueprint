@@ -24,7 +24,11 @@ import {
   isBuySideTradeAction,
   isSellSideTradeAction,
 } from '~/lib/tradeDisplay';
-import { TradingPerformanceChart, type TradeChartMarker } from './TradingPerformanceChart';
+import {
+  TradingPerformanceChart,
+  type MarketDataCoverage,
+  type TradeChartMarker,
+} from './TradingPerformanceChart';
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 import { buildDecisionItemsFromTrades } from '~/lib/decisionFeed';
 import { TradeInstrumentDisplay } from './shared/AssetDisplay';
@@ -441,6 +445,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     () => Date.now() - selectedRange.days * 24 * 60 * 60 * 1000,
     [selectedRange.days],
   );
+  const selectedRangeEndMs = selectedRangeStartMs + selectedRange.days * 24 * 60 * 60 * 1000;
   const tradeMarkerFetchPages = tradeMarkerPagesForRange(selectedRange.value);
 
   useEffect(() => {
@@ -558,6 +563,17 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     [chartTheme, trades],
   );
   const hasMarketCandles = marketCandles.length > 1;
+  const marketDataCoverage = useMemo<MarketDataCoverage | null>(() => (
+    hasMarketCandles
+      ? {
+          sourceLabel: 'bot store',
+          requestedRangeLabel: selectedRange.label,
+          requestedFromMs: selectedRangeStartMs,
+          requestedToMs: selectedRangeEndMs,
+          botCreatedAtMs: Number.isFinite(bot.createdAt) ? bot.createdAt : null,
+        }
+      : null
+  ), [bot.createdAt, hasMarketCandles, selectedRange.label, selectedRangeEndMs, selectedRangeStartMs]);
   const effectiveChartMode = chartMode === 'market' && hasMarketCandles ? 'market' : 'nav';
   const chartIsRenderable = chartPoints.length > 0 || hasMarketCandles;
 
@@ -1043,6 +1059,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   mode={effectiveChartMode}
                   marketCandles={marketCandles}
                   marketLabel={marketCandleToken}
+                  marketDataCoverage={marketDataCoverage}
                   fillCountEvidence={fillCountEvidence}
                 />
               </div>

@@ -8,6 +8,7 @@ import type {
   IPriceLine,
   ISeriesApi,
   ISeriesMarkersPluginApi,
+  LineData,
   MouseEventParams,
   SeriesMarker,
   Time,
@@ -40,12 +41,21 @@ interface TradingPerformanceChartProps {
   mode?: 'nav' | 'market';
   marketCandles?: MarketCandle[];
   marketLabel?: string | null;
+  marketDataCoverage?: MarketDataCoverage | null;
   fillCountEvidence?: FillCountEvidence | null;
 }
 
 interface PreparedPoint {
   point: PerformanceChartPoint;
   time: UTCTimestamp;
+}
+
+export interface MarketDataCoverage {
+  sourceLabel: string;
+  requestedRangeLabel: string;
+  requestedFromMs: number;
+  requestedToMs: number;
+  botCreatedAtMs?: number | null;
 }
 
 interface HoverReadout {
@@ -56,8 +66,11 @@ interface HoverReadout {
 
 type AreaSeriesApi = ISeriesApi<'Area'>;
 type CandleSeriesApi = ISeriesApi<'Candlestick'>;
+type LineSeriesApi = ISeriesApi<'Line'>;
 type VolumeSeriesApi = ISeriesApi<'Histogram'>;
 type MarkerApi = ISeriesMarkersPluginApi<Time>;
+type MarketStudyId = 'vwap' | 'sma20' | 'sma50' | 'bb20';
+type StudyLineId = 'vwap' | 'sma20' | 'sma50' | 'bbUpper' | 'bbLower';
 
 interface ChartRuntime {
   chart: IChartApi;
@@ -66,6 +79,7 @@ interface ChartRuntime {
   navPaneSeries?: AreaSeriesApi;
   candleSeries?: CandleSeriesApi;
   volumeSeries?: VolumeSeriesApi;
+  studySeries?: Partial<Record<StudyLineId, LineSeriesApi>>;
   markerApi?: MarkerApi;
   startPriceLine?: IPriceLine;
   navPaneStartPriceLine?: IPriceLine;
@@ -80,6 +94,25 @@ const MARKET_AXIS_DAY_ONLY_THRESHOLD_MS = 5 * 24 * 60 * 60 * 1000;
 const MARKET_AXIS_EDGE_SUPPRESSION_MIN_MS = 8 * 60 * 1000;
 const MARKET_AXIS_EDGE_SUPPRESSION_MAX_MS = 6 * 60 * 60 * 1000;
 const MARKET_AXIS_EDGE_SUPPRESSION_RANGE_FRACTION = 0.005;
+const DEFAULT_MARKET_STUDIES: Record<MarketStudyId, boolean> = {
+  vwap: true,
+  sma20: true,
+  sma50: false,
+  bb20: false,
+};
+const MARKET_STUDY_CONTROLS: Array<{ id: MarketStudyId; label: string; lineIds: StudyLineId[] }> = [
+  { id: 'vwap', label: 'VWAP', lineIds: ['vwap'] },
+  { id: 'sma20', label: 'SMA 20', lineIds: ['sma20'] },
+  { id: 'sma50', label: 'SMA 50', lineIds: ['sma50'] },
+  { id: 'bb20', label: 'BB 20', lineIds: ['bbUpper', 'bbLower'] },
+];
+const STUDY_LINE_COLORS: Record<StudyLineId, string> = {
+  vwap: '#B788FF',
+  sma20: '#F2B84B',
+  sma50: '#6EA8FF',
+  bbUpper: '#8C96A3',
+  bbLower: '#8C96A3',
+};
 const markerTimeFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
@@ -93,6 +126,12 @@ const compactCandleTimeFormatter = new Intl.DateTimeFormat('en-US', {
 const compactCandleDayFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
+});
+const coverageTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
 });
 
 function formatAxisCurrency(value: number): string {
@@ -269,6 +308,103 @@ function toVolumeSeriesData(candles: MarketCandle[], chartTheme: ChartTheme): Hi
       ? `${chartTheme.positive}55`
       : `${chartTheme.negative}55`,
   }));
+}
+
+function toStudyPoint(candle: MarketCandle, value: number): LineData<Time> {
+  return {
+    time: Math.floor(candle.timestamp / 1000) as UTCTimestamp,
+    value,
+  };
+}
+
+function rollingAverageSeries(candles: MarketCandle[], period: number): LineData<Time>[] {
+  if (candles.length < period) return [];
+
+  const result: LineData<Time>[] = [];
+  let rollingSum = 0;
+  for (let index = 0; index < candles.length; index += 1) {
+    const candle = candles[index];
+    rollingSum += candle.close;
+    if (index >= period) {
+      rollingSum -= candles[index - period].close;
+    }
+    if (index >= period - 1) {
+      result.push(toStudyPoint(candle, rollingSum / period));
+    }
+  }
+
+  return result;
+}
+
+function vwapSeries(candles: MarketCandle[]): LineData<Time>[] {
+  const result: LineData<Time>[] = [];
+  let cumulativePriceVolume = 0;
+  let cumulativeVolume = 0;
+
+  for (const candle of candles) {
+    const volume = Math.max(0, candle.volume);
+    if (volume <= 0) continue;
+    const typicalPrice = (candle.high + candle.low + candle.close) / 3;
+    cumulativePriceVolume += typicalPrice * volume;
+    cumulativeVolume += volume;
+    if (cumulativeVolume > 0) {
+      result.push(toStudyPoint(candle, cumulativePriceVolume / cumulativeVolume));
+    }
+  }
+
+  return result;
+}
+
+function bollingerSeries(
+  candles: MarketCandle[],
+  period = 20,
+  deviations = 2,
+): { upper: LineData<Time>[]; lower: LineData<Time>[] } {
+  if (candles.length < period) return { upper: [], lower: [] };
+
+  const upper: LineData<Time>[] = [];
+  const lower: LineData<Time>[] = [];
+  for (let index = period - 1; index < candles.length; index += 1) {
+    const candle = candles[index];
+    const window = candles.slice(index - period + 1, index + 1);
+    const average = window.reduce((sum, item) => sum + item.close, 0) / period;
+    const variance = window.reduce((sum, item) => sum + (item.close - average) ** 2, 0) / period;
+    const bandWidth = Math.sqrt(variance) * deviations;
+    upper.push(toStudyPoint(candle, average + bandWidth));
+    lower.push(toStudyPoint(candle, average - bandWidth));
+  }
+
+  return { upper, lower };
+}
+
+function buildMarketStudyData(candles: MarketCandle[]): Record<StudyLineId, LineData<Time>[]> {
+  const bollinger = bollingerSeries(candles);
+  return {
+    vwap: vwapSeries(candles),
+    sma20: rollingAverageSeries(candles, 20),
+    sma50: rollingAverageSeries(candles, 50),
+    bbUpper: bollinger.upper,
+    bbLower: bollinger.lower,
+  };
+}
+
+function applyMarketStudyData(
+  studySeries: Partial<Record<StudyLineId, LineSeriesApi>> | undefined,
+  studyData: Record<StudyLineId, LineData<Time>[]>,
+  enabledStudies: Record<MarketStudyId, boolean>,
+): void {
+  studySeries?.vwap?.setData(enabledStudies.vwap ? studyData.vwap : []);
+  studySeries?.sma20?.setData(enabledStudies.sma20 ? studyData.sma20 : []);
+  studySeries?.sma50?.setData(enabledStudies.sma50 ? studyData.sma50 : []);
+  studySeries?.bbUpper?.setData(enabledStudies.bb20 ? studyData.bbUpper : []);
+  studySeries?.bbLower?.setData(enabledStudies.bb20 ? studyData.bbLower : []);
+}
+
+function enabledStudyHasData(
+  studyData: Record<StudyLineId, LineData<Time>[]>,
+  control: { lineIds: StudyLineId[] },
+): boolean {
+  return control.lineIds.some((lineId) => studyData[lineId].length > 0);
 }
 
 function estimateMarketMarkerToleranceSeconds(marketTimes: UTCTimestamp[]): number {
@@ -782,6 +918,62 @@ interface ExecutionCoverage {
   title: string;
 }
 
+interface MarketCoverageReadout {
+  label: string;
+  detail: string;
+  title: string;
+  tone: 'complete' | 'partial' | 'thin';
+}
+
+function formatCoverageSpan(spanMs: number): string {
+  if (!Number.isFinite(spanMs) || spanMs <= 0) return 'single print';
+  const minutes = Math.round(spanMs / 60_000);
+  if (minutes < 90) return `${Math.max(1, minutes)}m span`;
+  const hours = Math.round(spanMs / 3_600_000);
+  if (hours < 48) return `${hours}h span`;
+  const days = Math.round(spanMs / 86_400_000);
+  return `${days}d span`;
+}
+
+function formatCoveragePercent(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0% range';
+  if (value < 1) return '<1% range';
+  if (value < 10) return `${formatNumber(value, { maximumFractionDigits: 1 })}% range`;
+  return `${formatNumber(value, { maximumFractionDigits: 0 })}% range`;
+}
+
+function marketCoverageReadout(
+  candles: MarketCandle[],
+  coverage: MarketDataCoverage | null | undefined,
+): MarketCoverageReadout | null {
+  if (!coverage || candles.length === 0) return null;
+
+  const first = candles[0];
+  const latest = candles[candles.length - 1];
+  if (!first || !latest) return null;
+
+  const requestedSpanMs = Math.max(0, coverage.requestedToMs - coverage.requestedFromMs);
+  const observedSpanMs = Math.max(0, latest.timestamp - first.timestamp);
+  const rangePercent = requestedSpanMs > 0 ? observedSpanMs / requestedSpanMs * 100 : 0;
+  const firstLabel = coverageTimeFormatter.format(new Date(first.timestamp));
+  const latestLabel = coverageTimeFormatter.format(new Date(latest.timestamp));
+  const historyState = coverage.botCreatedAtMs != null && first.timestamp < coverage.botCreatedAtMs - 60_000
+    ? 'pre-agent'
+    : 'post-launch';
+  const tone = candles.length < 20 || rangePercent < 5
+    ? 'thin'
+    : rangePercent < 80
+      ? 'partial'
+      : 'complete';
+
+  return {
+    label: `${formatNumber(candles.length, { maximumFractionDigits: 0 })} candles · ${coverage.sourceLabel}`,
+    detail: `${formatCoverageSpan(observedSpanMs)} · ${formatCoveragePercent(rangePercent)} · ${historyState}`,
+    title: `${coverage.sourceLabel} returned ${candles.length} ${first.token} candles for ${coverage.requestedRangeLabel}. First: ${firstLabel}. Latest: ${latestLabel}. Requested: ${coverageTimeFormatter.format(new Date(coverage.requestedFromMs))} to ${coverageTimeFormatter.format(new Date(coverage.requestedToMs))}.`,
+    tone,
+  };
+}
+
 function buildExecutionCoverage({
   activeMode,
   exactOverlayFillCount,
@@ -849,12 +1041,14 @@ export function TradingPerformanceChart({
   mode = 'nav',
   marketCandles = [],
   marketLabel,
+  marketDataCoverage,
   fillCountEvidence,
 }: TradingPerformanceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverReadout, setHoverReadout] = useState<HoverReadout | null>(null);
   const [exactMarketOverlay, setExactMarketOverlay] = useState<ExactMarketMarkerOverlay[]>([]);
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
+  const [enabledStudies, setEnabledStudies] = useState<Record<MarketStudyId, boolean>>(DEFAULT_MARKET_STUDIES);
   const activeMode = mode === 'market' && marketCandles.length > 0 ? 'market' : 'nav';
   const hasIntegratedNavPane = activeMode === 'market' && points.length > 0;
   const denseTradeMarkers = tradeMarkers.length > DENSE_MARKER_THRESHOLD;
@@ -885,6 +1079,10 @@ export function TradingPerformanceChart({
   const volumeSeriesData = useMemo(
     () => toVolumeSeriesData(marketCandles, chartTheme),
     [chartTheme, marketCandles],
+  );
+  const marketStudyData = useMemo(
+    () => buildMarketStudyData(marketCandles),
+    [marketCandles],
   );
   const marketMarkerPlacementResult = useMemo(
     () => toMarketMarkerPlacements(tradeMarkers, marketCandles),
@@ -1067,6 +1265,45 @@ export function TradingPerformanceChart({
           scaleMargins: { top: 0.82, bottom: 0 },
           borderVisible: false,
         });
+        const studySeries: Partial<Record<StudyLineId, LineSeriesApi>> = {
+          vwap: chart.addSeries(charts.LineSeries, {
+            color: STUDY_LINE_COLORS.vwap,
+            lineWidth: 2,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          }),
+          sma20: chart.addSeries(charts.LineSeries, {
+            color: STUDY_LINE_COLORS.sma20,
+            lineWidth: 1,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          }),
+          sma50: chart.addSeries(charts.LineSeries, {
+            color: STUDY_LINE_COLORS.sma50,
+            lineWidth: 1,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          }),
+          bbUpper: chart.addSeries(charts.LineSeries, {
+            color: `${STUDY_LINE_COLORS.bbUpper}AA`,
+            lineWidth: 1,
+            lineStyle: charts.LineStyle.Dotted,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          }),
+          bbLower: chart.addSeries(charts.LineSeries, {
+            color: `${STUDY_LINE_COLORS.bbLower}AA`,
+            lineWidth: 1,
+            lineStyle: charts.LineStyle.Dotted,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+          }),
+        };
         const navPaneSeries = navPane
           ? chart.addSeries(charts.AreaSeries, {
               lineColor,
@@ -1089,6 +1326,7 @@ export function TradingPerformanceChart({
           mode: 'market',
           candleSeries,
           volumeSeries,
+          studySeries,
           navPaneSeries,
           markerApi,
         };
@@ -1142,6 +1380,7 @@ export function TradingPerformanceChart({
       if (runtime.mode === 'market' && runtime.candleSeries && runtime.volumeSeries) {
         runtime.candleSeries.setData(marketSeriesData);
         runtime.volumeSeries.setData(volumeSeriesData);
+        applyMarketStudyData(runtime.studySeries, marketStudyData, enabledStudies);
         if (runtime.navPaneSeries) {
           runtime.navPaneSeries.setData(navSeriesData);
           if (navSeriesData.length > 1) {
@@ -1344,6 +1583,7 @@ export function TradingPerformanceChart({
     });
     runtime.candleSeries.setData(marketSeriesData);
     runtime.volumeSeries.setData(volumeSeriesData);
+    applyMarketStudyData(runtime.studySeries, marketStudyData, enabledStudies);
     if (runtime.navPaneSeries) {
       runtime.navPaneSeries.applyOptions({
         lineColor,
@@ -1390,8 +1630,10 @@ export function TradingPerformanceChart({
     chartTheme.negative,
     chartTheme.positive,
     chartTheme.tickColor,
+    enabledStudies,
     fillTopColor,
     lineColor,
+    marketStudyData,
     marketSeriesData,
     navSeriesData,
     tradeMarkers,
@@ -1406,6 +1648,7 @@ export function TradingPerformanceChart({
   }, [exactMarketOverlay, selectedExecutionId]);
 
   const latestMarketCandle = marketCandles[marketCandles.length - 1] ?? null;
+  const marketCoverage = marketCoverageReadout(marketCandles, marketDataCoverage);
   const exactOverlayFillCount = exactMarketOverlay.reduce((sum, item) => sum + item.count, 0);
   const executionCoverage = buildExecutionCoverage({
     activeMode,
@@ -1556,6 +1799,50 @@ export function TradingPerformanceChart({
           )}
         </div>
       )}
+      {activeMode === 'market' && (
+        <div
+          className="pointer-events-auto absolute left-3 z-20 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-1.5"
+          style={{
+            bottom: hasIntegratedNavPane ? 'calc(31% + 10px)' : 52,
+          }}
+          aria-label="Market chart studies"
+        >
+          {MARKET_STUDY_CONTROLS.map((control) => {
+            const enabled = enabledStudies[control.id];
+            const hasData = enabledStudyHasData(marketStudyData, control);
+            const pressed = enabled && hasData;
+            return (
+              <button
+                key={control.id}
+                type="button"
+                className="h-7 rounded-sm border px-2 font-data text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+                style={{
+                  background: pressed
+                    ? chartTheme.tooltipBodyColor
+                    : chartTheme.tooltipBg,
+                  borderColor: pressed
+                    ? chartTheme.tooltipBodyColor
+                    : chartTheme.tooltipBorder,
+                  color: pressed
+                    ? chartTheme.chartSurface
+                    : chartTheme.tooltipTitleColor,
+                }}
+                aria-pressed={pressed}
+                disabled={!hasData}
+                title={hasData ? `${control.label} chart study` : `${control.label} needs more candle history`}
+                onClick={() => {
+                  setEnabledStudies((current) => ({
+                    ...current,
+                    [control.id]: !current[control.id],
+                  }));
+                }}
+              >
+                {control.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {activeMode === 'market' && navSeriesData.length > 0 && (
         <div
           className="pointer-events-none absolute bottom-2 left-3 rounded-sm border px-2 py-0.5 font-data text-[10px] font-semibold"
@@ -1598,24 +1885,47 @@ export function TradingPerformanceChart({
           </div>
         </div>
       )}
-      {executionCoverage && (
-        <div
-          className="pointer-events-none absolute right-3 top-3 z-20 rounded-md border px-3 py-2 font-data"
-          style={{
-            background: chartTheme.tooltipBg,
-            borderColor: chartTheme.tooltipBorder,
-            boxShadow: chartTheme.tooltipShadow,
-          }}
-          title={executionCoverage.title}
-          data-testid="chart-execution-coverage"
-        >
-          <div className="text-right text-xs font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
-            {formatNumber(executionCoverage.shown, { maximumFractionDigits: 0 })}
-            /{formatNumber(executionCoverage.total, { maximumFractionDigits: 0 })} fills
-          </div>
-          <div className="mt-0.5 max-w-[260px] truncate text-right text-[10px] font-medium" style={{ color: chartTheme.tooltipTitleColor }}>
-            {executionCoverage.detail}
-          </div>
+      {(marketCoverage || executionCoverage) && (
+        <div className="pointer-events-none absolute right-3 top-3 z-20 flex max-w-[min(330px,calc(100%-1.5rem))] flex-col items-end gap-2">
+          {marketCoverage && (
+            <div
+              className="rounded-md border px-3 py-2 font-data"
+              style={{
+                background: chartTheme.tooltipBg,
+                borderColor: marketCoverage.tone === 'thin' ? `${STUDY_LINE_COLORS.sma20}77` : chartTheme.tooltipBorder,
+                boxShadow: chartTheme.tooltipShadow,
+              }}
+              title={marketCoverage.title}
+              data-testid="chart-market-coverage"
+            >
+              <div className="text-right text-xs font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
+                {marketCoverage.label}
+              </div>
+              <div className="mt-0.5 max-w-[290px] truncate text-right text-[10px] font-medium" style={{ color: chartTheme.tooltipTitleColor }}>
+                {marketCoverage.detail}
+              </div>
+            </div>
+          )}
+          {executionCoverage && (
+            <div
+              className="rounded-md border px-3 py-2 font-data"
+              style={{
+                background: chartTheme.tooltipBg,
+                borderColor: chartTheme.tooltipBorder,
+                boxShadow: chartTheme.tooltipShadow,
+              }}
+              title={executionCoverage.title}
+              data-testid="chart-execution-coverage"
+            >
+              <div className="text-right text-xs font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
+                {formatNumber(executionCoverage.shown, { maximumFractionDigits: 0 })}
+                /{formatNumber(executionCoverage.total, { maximumFractionDigits: 0 })} fills
+              </div>
+              <div className="mt-0.5 max-w-[260px] truncate text-right text-[10px] font-medium" style={{ color: chartTheme.tooltipTitleColor }}>
+                {executionCoverage.detail}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
