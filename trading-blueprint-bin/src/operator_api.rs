@@ -8199,9 +8199,9 @@ mod tests {
         record
     }
 
-    static ENV_LOCK: Lazy<std::sync::Mutex<()>> = Lazy::new(|| std::sync::Mutex::new(()));
+    static ENV_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 
-    fn set_test_admin_env(_guard: &std::sync::MutexGuard<'_, ()>) {
+    fn set_test_admin_env(_guard: &tokio::sync::MutexGuard<'_, ()>) {
         // SAFETY: serialized by ENV_LOCK for tests that mutate OPERATOR_ADDRESS.
         unsafe {
             std::env::set_var("OPERATOR_ADDRESS", TEST_AUTH_ADDRESS);
@@ -8211,7 +8211,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn test_repair_strategy_requires_operator_admin() {
         ensure_state_dir();
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         // SAFETY: serialized by ENV_LOCK for tests that mutate OPERATOR_ADDRESS.
         unsafe {
             std::env::remove_var("OPERATOR_ADDRESS");
@@ -8243,7 +8243,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn test_repair_strategy_dry_run_retargets_hyperliquid_pack() {
         ensure_state_dir();
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         set_test_admin_env(&_guard);
         let prompt = "I want an agent that trades ETH perps on Hyperliquid with strict liquidation and drawdown limits.";
         let mut bot = seed_bot(
@@ -8319,7 +8319,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn test_repair_strategy_refuses_live_money_bot() {
         ensure_state_dir();
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         set_test_admin_env(&_guard);
         let mut bot = seed_bot(
             "repair-live-refused-1",
@@ -8356,7 +8356,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn test_repair_strategy_force_allows_active_trial_preview() {
         ensure_state_dir();
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         set_test_admin_env(&_guard);
         let mut bot = seed_bot(
             "repair-active-trial-force-1",
