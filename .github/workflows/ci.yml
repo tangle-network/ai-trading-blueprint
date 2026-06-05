@@ -118,6 +118,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.arena == 'true'
     runs-on: ubuntu-latest
+    env:
+      TZ: America/Denver
     steps:
       - uses: actions/checkout@v6
 
