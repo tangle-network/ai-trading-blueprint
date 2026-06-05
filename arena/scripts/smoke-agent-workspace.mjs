@@ -1699,6 +1699,7 @@ async function assertFixtureHomeDashboard(page, baseUrl, { screenshotDir = '', t
     await setViewport(page, viewport);
     await navigate(page, withTheme(baseUrl, theme));
     let metrics;
+    let reloadedHydrationFallback = false;
     try {
       metrics = await waitFor(async () => {
         const nextMetrics = await evaluate(page, `(() => {
@@ -1706,10 +1707,20 @@ async function assertFixtureHomeDashboard(page, baseUrl, { screenshotDir = '', t
           return {
             pathname: location.pathname,
             bodyText: document.body.innerText.slice(0, 5000),
+            bodyHtml: document.body.innerHTML.slice(0, 5000),
             scrollHeight: scrolling.scrollHeight,
             innerHeight: window.innerHeight,
           };
         })()`);
+        if (
+          !reloadedHydrationFallback
+          && nextMetrics.bodyText.trim().length === 0
+          && /__reactRouterContext|clientLoader|hydrateFallback/i.test(nextMetrics.bodyHtml)
+        ) {
+          reloadedHydrationFallback = true;
+          await page.send('Page.reload', { ignoreCache: true });
+          return false;
+        }
         return textIncludes(nextMetrics.bodyText, FIXTURE_HOME_EXPECTATIONS) ? nextMetrics : false;
       }, { timeoutMs: 30_000, intervalMs: 250 });
     } catch {
