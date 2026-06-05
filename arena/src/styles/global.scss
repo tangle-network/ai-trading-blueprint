@@ -540,6 +540,24 @@
   overflow-x: hidden;
 }
 
+.arena-observatory-transcript [data-sandbox-run-group] {
+  border-color: color-mix(in srgb, var(--arena-terminal-border) 82%, transparent) !important;
+  background: color-mix(in srgb, var(--arena-terminal-panel) 88%, var(--arena-terminal-bg)) !important;
+  color: var(--arena-terminal-text) !important;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--arena-terminal-text) 4%, transparent);
+}
+
+.arena-observatory-transcript [data-sandbox-run-group] [class~='border'],
+.arena-observatory-transcript [data-sandbox-run-group] [class~='border-border'] {
+  border-color: color-mix(in srgb, var(--arena-terminal-border) 76%, transparent) !important;
+}
+
+.arena-observatory-transcript [data-sandbox-run-group] [class~='bg-card'],
+.arena-observatory-transcript [data-sandbox-run-group] [class~='bg-muted'],
+.arena-observatory-transcript [data-sandbox-run-group] [class~='bg-muted/50'] {
+  background-color: color-mix(in srgb, var(--arena-terminal-panel) 82%, var(--arena-terminal-bg)) !important;
+}
+
 .arena-observatory-transcript [data-observatory-trace-role='assistant'] p,
 .arena-observatory-transcript [data-observatory-trace-role='assistant'] span,
 .arena-observatory-transcript [data-observatory-trace-role='assistant'] div {

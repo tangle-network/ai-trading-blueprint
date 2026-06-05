@@ -140,6 +140,31 @@ function statusClass(status: string): string {
   return 'text-emerald-700 dark:text-emerald-300';
 }
 
+function humanizeStatus(status?: string | null): string {
+  const value = (status ?? '').trim();
+  if (!value) return 'Unknown';
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
+function compactStatusLabel(status?: string | null): string {
+  const normalized = (status ?? '').toLowerCase();
+  if (normalized === 'awaiting_owner_feedback') return 'Awaiting owner';
+  if (normalized === 'queued_research') return 'Queued research';
+  if (normalized === 'queued_build') return 'Queued build';
+  return humanizeStatus(status);
+}
+
+function ideaSourceChips(idea: ObservatoryIdea): string[] {
+  return [
+    idea.finding_code ?? 'observatory-finding',
+    idea.category,
+    idea.finding_severity ? `${idea.finding_severity} severity` : null,
+    idea.source_run_id ? `run ${idea.source_run_id}` : null,
+  ].filter(Boolean) as string[];
+}
+
 function latestReflection(bot: ObservatoryOverviewBot): ObservatoryReflectionRun | null {
   return latestByCreatedAt(bot.records.reflection_runs);
 }
@@ -283,7 +308,12 @@ function buildReasoningSummary(
   idea?: ObservatoryIdea | null,
 ): string | null {
   const lines = [
+    idea?.finding_code ? `Finding: ${idea.finding_code}${idea.finding_severity ? ` (${idea.finding_severity})` : ''}` : null,
+    idea?.category ? `Category: ${idea.category}` : null,
     idea?.thesis ? `Idea thesis: ${idea.thesis}` : null,
+    idea?.expected_value ? `Expected value: ${idea.expected_value}` : null,
+    idea?.risk ? `Risk: ${idea.risk}` : null,
+    idea?.source_run_id ? `Source run: ${idea.source_run_id}` : null,
     session?.summary ? `Session summary: ${session.summary}` : null,
     ...(reflection?.uncertainties ?? []).map((uncertainty) => `Uncertainty: ${uncertainty}`),
   ].filter(Boolean);
@@ -340,6 +370,12 @@ function buildObservatoryTranscript({
         metadata: {
           observatory_kind: 'delegated_work',
           title: task?.title ?? session?.summary ?? 'Observatory work',
+          category: idea?.category ?? null,
+          finding_code: idea?.finding_code ?? null,
+          finding_severity: idea?.finding_severity ?? null,
+          expected_value: idea?.expected_value ?? null,
+          risk: idea?.risk ?? null,
+          source_run_id: idea?.source_run_id ?? reflection?.run_id ?? null,
           prompt: task?.prompt ?? null,
           evidence_refs: evidenceRefs,
           acceptance_criteria: task?.acceptance_criteria ?? [],
@@ -509,20 +545,44 @@ function IdeaList({
       {ideas.map((idea) => {
         const feedback = feedbackByIdeaId.get(idea.idea_id);
         const delegateAction = delegateActionForIdea(idea, feedback);
+        const sourceChips = ideaSourceChips(idea);
         return (
           <article key={idea.idea_id} className="bg-[var(--arena-terminal-bg)] p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <h3 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">
+                <h3 className="break-words font-display text-base font-semibold leading-5 text-[var(--arena-terminal-text)]">
                   {idea.title}
                 </h3>
                 <p className="mt-1 text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
                   {idea.thesis}
                 </p>
               </div>
-              <span className={`font-data text-xs ${statusClass(feedback ?? idea.status)}`}>
-                {feedback ?? idea.status}
+              <span
+                title={feedback ?? idea.status}
+                className={`max-w-full break-words text-right font-data text-xs leading-4 ${statusClass(feedback ?? idea.status)}`}
+              >
+                {compactStatusLabel(feedback ?? idea.status)}
               </span>
+            </div>
+            <div className="mt-3 grid gap-2 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-2">
+              <div className="flex flex-wrap gap-1.5">
+                {sourceChips.map((chip) => (
+                  <span key={chip} className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-1.5 py-1 font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
+                    {chip}
+                  </span>
+                ))}
+              </div>
+              <p className="text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
+                {idea.expected_value}
+              </p>
+              <div className="grid gap-1 font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
+                <span className="break-words">Risk: {idea.risk}</span>
+                {idea.evidence_refs.length > 0 ? (
+                  <span className="break-all">Evidence: {idea.evidence_refs[0]}</span>
+                ) : (
+                  <span>No evidence artifact attached.</span>
+                )}
+              </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5">
               <button
@@ -620,7 +680,7 @@ function DelegatedWorkList({
               type="button"
               aria-pressed={selected}
               onClick={() => onSelectSession(session.session_id)}
-              className={`grid w-full gap-2 p-3 text-left transition-colors sm:grid-cols-[9rem_minmax(0,1fr)_7rem] ${
+              className={`grid w-full gap-2 p-3 text-left transition-colors sm:grid-cols-[8.5rem_minmax(0,1fr)_minmax(7rem,9rem)] ${
                 selected
                   ? 'bg-[var(--arena-terminal-panel-strong)]'
                   : 'bg-[var(--arena-terminal-bg)] hover:bg-[var(--arena-terminal-panel)]'
@@ -636,8 +696,11 @@ function DelegatedWorkList({
                   {session.task_id ?? session.artifact_ref ?? 'no task id'}
                 </span>
               </span>
-              <span className={`text-right font-data text-xs ${statusClass(session.status)}`}>
-                {session.status}
+              <span
+                title={session.status}
+                className={`min-w-0 justify-self-start break-words font-data text-xs leading-4 sm:justify-self-end sm:text-right ${statusClass(session.status)}`}
+              >
+                {compactStatusLabel(session.status)}
               </span>
             </button>
           );
@@ -671,6 +734,12 @@ const renderObservatoryToolDetail: CustomToolRenderer = (part: ToolPart) => {
   const metadata = part.state.metadata as {
     observatory_kind?: string;
     title?: string | null;
+    category?: string | null;
+    finding_code?: string | null;
+    finding_severity?: string | null;
+    expected_value?: string | null;
+    risk?: string | null;
+    source_run_id?: string | null;
     prompt?: string | null;
     evidence_refs?: string[];
     acceptance_criteria?: string[];
@@ -686,9 +755,37 @@ const renderObservatoryToolDetail: CustomToolRenderer = (part: ToolPart) => {
   const acceptanceCriteria = metadata.acceptance_criteria ?? [];
   const safetyEntries = Object.entries(metadata.safety_limits ?? {});
   const artifactRefs = [metadata.artifact_ref, metadata.result_ref].filter(Boolean);
+  const sourceEntries = [
+    ['Finding', metadata.finding_code],
+    ['Severity', metadata.finding_severity],
+    ['Category', metadata.category],
+    ['Source run', metadata.source_run_id],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
 
   return (
     <div className="grid gap-3 p-3 text-sm text-[var(--arena-terminal-text-secondary)]">
+      {sourceEntries.length > 0 || metadata.expected_value || metadata.risk ? (
+        <section className="grid gap-2">
+          <h5 className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Source</h5>
+          {sourceEntries.length > 0 ? (
+            <div className="grid gap-1 sm:grid-cols-2">
+              {sourceEntries.map(([label, value]) => (
+                <span key={label} className="min-w-0 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-2 py-1.5 font-data text-xs">
+                  <span className="block truncate text-[var(--arena-terminal-text-muted)]">{label}</span>
+                  <span className="mt-0.5 block break-words text-[var(--arena-terminal-text)]">{value}</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {metadata.expected_value ? (
+            <p className="leading-5 text-[var(--arena-terminal-text-secondary)]">{metadata.expected_value}</p>
+          ) : null}
+          {metadata.risk ? (
+            <p className="font-data text-xs text-[var(--arena-terminal-text-muted)]">Risk: {metadata.risk}</p>
+          ) : null}
+        </section>
+      ) : null}
+
       {metadata.prompt ? (
         <section className="grid gap-1.5">
           <h5 className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Prompt</h5>
@@ -761,13 +858,16 @@ function WorkSessionStrip({
             type="button"
             onClick={() => onSelectSession(session.session_id)}
             aria-pressed={selected}
-            className={`h-8 shrink-0 border px-2.5 font-data text-xs transition-colors ${
+            title={`${session.source} · ${humanizeStatus(session.status)}`}
+            className={`inline-flex h-8 max-w-[18rem] min-w-0 shrink-0 items-center gap-1.5 border px-2.5 font-data text-xs transition-colors ${
               selected
                 ? 'border-[#50d2c1]/45 bg-[#50d2c1]/12 text-[var(--arena-terminal-text)]'
                 : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-muted)] hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)]'
             } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60`}
           >
-            {session.source} · {session.status}
+            <span className="truncate">{session.source}</span>
+            <span className="shrink-0 text-[var(--arena-terminal-text-muted)]">·</span>
+            <span className={`shrink-0 ${statusClass(session.status)}`}>{compactStatusLabel(session.status)}</span>
           </button>
         );
       })}
@@ -891,6 +991,7 @@ function ObservatoryRunTranscript({
     () => buildObservatoryTranscript({ bot, reflection, session, task, idea }),
     [bot, idea, reflection, session, task],
   );
+  const traceStatus = task?.status ?? session?.status ?? 'complete';
 
   useEffect(() => {
     setCollapsed(true);
@@ -935,8 +1036,11 @@ function ObservatoryRunTranscript({
               branding={OBSERVATORY_AGENT_BRANDING}
               renderToolDetail={renderObservatoryToolDetail}
               headerActions={(
-                <span className={`font-data text-xs ${statusClass(task?.status ?? session?.status ?? 'complete')}`}>
-                  {task?.status ?? session?.status ?? 'complete'}
+                <span
+                  title={traceStatus}
+                  className={`block max-w-[10rem] truncate font-data text-xs ${statusClass(traceStatus)}`}
+                >
+                  {compactStatusLabel(traceStatus)}
                 </span>
               )}
             />

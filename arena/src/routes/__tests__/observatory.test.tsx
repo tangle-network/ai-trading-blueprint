@@ -109,6 +109,9 @@ const overviewState = {
               idea_id: 'idea-1',
               bot_id: 'bot-1',
               created_at: '2026-06-04T10:00:00.000Z',
+              category: 'research',
+              finding_code: 'external-signal-not-checked',
+              finding_severity: 'high',
               title: 'Research ETH Perp Sentinel signal gap',
               thesis: 'The mandate needs external signal evidence, but it was not checked.',
               evidence_refs: ['artifact://memory/decision-contexts.jsonl#ctx-1'],
@@ -297,6 +300,8 @@ describe('ObservatoryPage', () => {
     render(<ObservatoryPage />, { wrapper: createWrapper() });
 
     fireEvent.click(screen.getByRole('tab', { name: 'Ideas 1' }));
+    expect(screen.getByText('external-signal-not-checked')).toBeInTheDocument();
+    expect(screen.getByText('high severity')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Delegate research' }));
     expect(hoisted.feedbackMutateMock).toHaveBeenCalledWith({
       ideaId: 'idea-1',
@@ -322,7 +327,7 @@ describe('ObservatoryPage', () => {
     render(<ObservatoryPage />, { wrapper: createWrapper() });
 
     fireEvent.click(screen.getByRole('tab', { name: 'Ideas 1' }));
-    expect(screen.getByText('delegate_research')).toBeInTheDocument();
+    expect(screen.getByText('Delegate Research')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delegate research' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Delegate build' })).not.toBeInTheDocument();
 

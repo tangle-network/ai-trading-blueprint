@@ -400,6 +400,9 @@ export interface ObservatoryIdea {
   idea_id: string;
   bot_id: string;
   created_at: string;
+  category?: string;
+  finding_code?: string;
+  finding_severity?: string;
   title: string;
   thesis: string;
   evidence_refs: string[];
