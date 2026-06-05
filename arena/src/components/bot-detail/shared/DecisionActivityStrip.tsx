@@ -9,7 +9,7 @@ const toneDotClass: Record<DecisionFeedTone, string> = {
   success: 'bg-emerald-500',
   warning: 'bg-amber-500',
   danger: 'bg-crimson-500',
-  active: 'bg-violet-500',
+  active: 'bg-[var(--arena-terminal-brand)]',
 };
 
 const toneTextClass: Record<DecisionFeedTone, string> = {
@@ -17,7 +17,7 @@ const toneTextClass: Record<DecisionFeedTone, string> = {
   success: 'text-emerald-700 dark:text-emerald-300',
   warning: 'text-amber-700 dark:text-amber-300',
   danger: 'text-crimson-600 dark:text-crimson-300',
-  active: 'text-violet-700 dark:text-violet-300',
+  active: 'text-[var(--arena-terminal-brand)]',
 };
 
 interface DecisionActivityStripProps {
@@ -49,7 +49,7 @@ export function DecisionActivityStrip({
         className,
       )}
     >
-      <div className="flex min-w-0 items-center gap-2 overflow-x-auto px-3 py-2">
+      <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto px-2.5 py-1.5">
         {items.slice(0, 18).map((item) => {
           const selected = item.id === selectedId;
           const actionIsStatus =
@@ -69,7 +69,7 @@ export function DecisionActivityStrip({
               aria-pressed={selected}
               onClick={() => onSelect?.(item)}
               className={cx(
-                'group flex min-w-[220px] max-w-[320px] shrink-0 items-center gap-2 border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2',
+                'group flex min-w-[190px] max-w-[280px] shrink-0 items-center gap-1.5 border px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2',
                 isTerminal ? 'rounded-[5px] focus-visible:ring-[var(--arena-terminal-accent)]' : 'rounded-lg focus-visible:ring-violet-500/60',
                 selected
                   ? isTerminal
@@ -81,32 +81,32 @@ export function DecisionActivityStrip({
               )}
             >
               <span
-                className={cx('h-2.5 w-2.5 shrink-0 rounded-full', toneDotClass[item.statusTone])}
+                className={cx('h-2 w-2 shrink-0 rounded-full', toneDotClass[item.statusTone])}
                 aria-hidden="true"
               />
               <span className="min-w-0 flex-1">
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate font-data text-sm font-semibold text-arena-elements-textPrimary">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate font-data text-xs font-semibold text-arena-elements-textPrimary">
                     {primaryLabel}
                   </span>
                   {item.notionalLabel && (
-                    <span className="shrink-0 font-data text-xs text-arena-elements-textSecondary">
+                    <span className="shrink-0 font-data text-[11px] text-arena-elements-textSecondary">
                       {item.notionalLabel}
                     </span>
                   )}
                 </span>
-                <span className="mt-0.5 flex min-w-0 items-center gap-2">
-                  <span className={cx('shrink-0 font-data text-xs', toneTextClass[item.statusTone])}>
+                <span className="mt-px flex min-w-0 items-center gap-1.5">
+                  <span className={cx('shrink-0 font-data text-[11px]', toneTextClass[item.statusTone])}>
                     {item.statusLabel}
                   </span>
                   {secondaryLabel && (
-                    <span className="truncate font-data text-xs text-arena-elements-textTertiary">
+                    <span className="truncate font-data text-[11px] text-arena-elements-textTertiary">
                       {secondaryLabel}
                     </span>
                   )}
                 </span>
               </span>
-              <span className="i-ph:caret-right text-sm text-arena-elements-textTertiary opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
+              <span className="i-ph:caret-right text-xs text-arena-elements-textTertiary opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
             </button>
           );
         })}

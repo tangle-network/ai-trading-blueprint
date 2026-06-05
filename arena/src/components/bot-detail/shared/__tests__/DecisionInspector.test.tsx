@@ -117,6 +117,7 @@ describe('decision inspector surfaces', () => {
 
     const button = screen.getByRole('button', { name: /trade/i });
     expect(button).toHaveAttribute('aria-pressed', 'true');
+    expect(button).toHaveClass('min-w-[190px]', 'py-1.5');
 
     await userEvent.click(button);
 

@@ -301,7 +301,7 @@ function RunsSidebar({
           )}
         </div>
         {!collapsed && summary.total > 0 && (
-          <div className="mt-2 flex min-w-0 items-center gap-2 font-data text-[11px] text-arena-elements-textTertiary">
+          <div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-data text-[10px] text-arena-elements-textTertiary">
             <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.running}</b> live</span>
             <span aria-hidden="true">/</span>
             <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.completed}</b> done</span>
@@ -328,6 +328,10 @@ function RunsSidebar({
           <>
             {runs.map((run) => {
               const isActive = run.id === activeRunId;
+              const statusLabel = getStatusLabel(run.status);
+              const normalizedStatus = statusLabel.toLowerCase();
+              const normalizedSignal = run.signalLabel.toLowerCase();
+              const showSignalLabel = normalizedSignal !== normalizedStatus;
               if (collapsed) {
                 return (
                   <button
@@ -335,7 +339,7 @@ function RunsSidebar({
                     type="button"
                     title={`${run.title} · ${run.signalLabel}`}
                     aria-pressed={isActive}
-                    className={`mx-1.5 my-1 flex h-10 w-10 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
+                    className={`mx-1.5 my-1 flex h-9 w-9 items-center justify-center rounded-[5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
                       isActive
                         ? "bg-arena-elements-item-backgroundActive"
                         : "hover:bg-arena-elements-item-backgroundHover"
@@ -343,7 +347,7 @@ function RunsSidebar({
                     onClick={() => onSelect(run.id)}
                   >
                     <span
-                      className={`h-2 w-2 rounded-full ${
+                      className={`h-1.5 w-1.5 rounded-full ${
                         run.status === "running"
                           ? "bg-amber-400 animate-pulse"
                           : run.status === "completed"
@@ -360,7 +364,7 @@ function RunsSidebar({
                 <button
                   key={run.id}
                   aria-pressed={isActive}
-                    className={`group grid w-full min-w-0 grid-cols-[10px_minmax(0,1fr)] gap-2.5 overflow-hidden border-l-2 px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
+                    className={`group grid w-full min-w-0 grid-cols-[8px_minmax(0,1fr)] gap-2 overflow-hidden border-l-2 px-2.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
                     isActive
                       ? "border-[var(--arena-terminal-accent)] bg-arena-elements-item-backgroundActive"
                       : "border-transparent hover:bg-arena-elements-item-backgroundHover"
@@ -379,27 +383,32 @@ function RunsSidebar({
                     }`}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="grid min-w-0 gap-1">
-                      <div className="truncate text-[15px] font-display font-semibold text-arena-elements-textPrimary">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="min-w-0 flex-1 truncate text-sm font-display font-semibold leading-5 text-arena-elements-textPrimary">
                         {run.title}
                       </div>
+                      <div className="shrink-0 font-data text-[10px] leading-4 text-arena-elements-textTertiary">
+                        {run.subtitle}
+                      </div>
                     </div>
-                    <div className="mt-0.5 truncate text-xs font-data text-arena-elements-textTertiary">
-                      {run.subtitle}
-                    </div>
-                    <div className="mt-1 grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-1.5 gap-y-0.5 font-data text-[11px] text-arena-elements-textTertiary">
-                      <span className={`min-w-0 truncate ${run.status === "running" ? "text-amber-400" : run.status === "completed" ? "text-emerald-400" : run.status === "interrupted" ? "text-slate-400" : "text-crimson-400"}`}>
-                        {getStatusLabel(run.status)}
+                    <div className="mt-px flex min-w-0 items-center gap-1.5 font-data text-[10px] leading-4 text-arena-elements-textTertiary">
+                      <span className={`shrink-0 ${run.status === "running" ? "text-amber-400" : run.status === "completed" ? "text-emerald-400" : run.status === "interrupted" ? "text-slate-400" : "text-crimson-400"}`}>
+                        {statusLabel}
                       </span>
+                      {showSignalLabel && (
+                        <>
+                          <span aria-hidden="true">/</span>
+                          <span className="min-w-0 truncate">
+                            {run.signalLabel}
+                          </span>
+                        </>
+                      )}
                       <span aria-hidden="true">/</span>
-                      <span className="min-w-0 truncate">
-                        {run.signalLabel}
-                      </span>
-                      <span className="col-start-1 shrink-0">
+                      <span className="shrink-0">
                         {run.durationLabel}
                       </span>
                       <span aria-hidden="true">/</span>
-                      <span className="min-w-0 truncate">
+                      <span className="shrink-0">
                         {run.tokenLabel}
                       </span>
                     </div>
@@ -408,10 +417,10 @@ function RunsSidebar({
               );
             })}
             {hasOlderRuns && !collapsed ? (
-              <div className="border-t border-arena-elements-dividerColor/40 px-3 py-2">
+              <div className="border-t border-arena-elements-dividerColor/40 px-2.5 py-1.5">
                 <button
                   type="button"
-                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/35 px-3 py-2 text-sm font-data text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-[5px] border border-arena-elements-dividerColor/60 bg-arena-elements-background-depth-1/35 px-2.5 py-1.5 text-xs font-data text-arena-elements-textSecondary transition-colors hover:bg-arena-elements-item-backgroundHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={onLoadOlder}
                   disabled={isLoadingOlderRuns}
                 >
