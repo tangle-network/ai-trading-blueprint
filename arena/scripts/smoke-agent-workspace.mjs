@@ -35,7 +35,7 @@ const SECTION_EXPECTATIONS = {
   ],
   runs: [
     ['ETH Macro Scalper', 'No runs yet'],
-    ['Reasoning', 'fast_backtest', 'Breakout retest'],
+    ['Reasoning', 'fast_backtest', 'Breakout retest', 'Evidence replay', 'Decision Path'],
   ],
   chat: [
     ['Review the ETH breakout retest', 'ETH breakout review', 'No chat sessions yet'],
@@ -69,6 +69,16 @@ const LIVE_SECTION_EXPECTATIONS = {
 const FIXTURE_HOME_EXPECTATIONS = ['Tangle', 'Volume', 'Fills', 'ETH Macro Scalper'];
 const FIXTURE_LEADERBOARD_EXPECTATIONS = ['Agents', '24H Vol', 'Active', 'ETH Macro Scalper', 'HL Perp'];
 const FIXTURE_ACTIVITY_EXPECTATIONS = ['Activity', '24H Vol', 'Fills', 'ETH Macro Scalper', 'ETH-PERP'];
+const FIXTURE_OBSERVATORY_EXPECTATIONS = [
+  'Observatory',
+  'ETH Macro Scalper',
+  'Latest reflection',
+  'Delegated work',
+  'Driver',
+  'Coding agent',
+  'Source-grounded finding is recorded.',
+  'CAP 3',
+];
 const FIXTURE_CREATE_EXPECTATIONS = ['New Agent', 'Mandate', 'Agent Profile', 'Prediction Markets', 'Prepare Live Activation'];
 const FIXTURE_PROVISION_EXPECTATIONS = ['Activate', 'Launch Check', 'Owner Wallet', 'Connect Wallet'];
 const FIXTURE_PROVISION_CONNECTED_EXPECTATIONS = [
@@ -482,12 +492,176 @@ function buildFixtureMessages() {
   ];
 }
 
+function buildFixtureObservatoryOverview(bot) {
+  const reflectionCreatedAt = fixtureIso(20);
+  return {
+    schema_version: 1,
+    bot_count: 1,
+    totals: {
+      reflection_runs: 1,
+      ideas: 1,
+      delegated_work_sessions: 1,
+    },
+    bots: [
+      {
+        bot_id: bot.id,
+        bot_name: bot.name,
+        strategy_type: bot.strategy_type,
+        trading_active: bot.trading_active,
+        paper_trade: bot.paper_trade,
+        error: null,
+        records: {
+          schema_version: 1,
+          world_signal_digests: [
+            {
+              digest_id: 'digest-smoke-1',
+              bot_id: bot.id,
+              created_at: reflectionCreatedAt,
+              source_status: 'captured',
+              freshness: fixtureIso(21),
+              confidence: 'medium',
+              source_count: 2,
+              signals: [
+                'ETH liquidity remained above the envelope threshold.',
+                'Funding drift stayed inside the paper promotion gate.',
+              ],
+              unavailable_reason: null,
+              evidence_ref: 'artifact://fixture/observatory/context#digest-smoke-1',
+            },
+          ],
+          reflection_runs: [
+            {
+              run_id: 'observatory-smoke-1',
+              bot_id: bot.id,
+              bot_name: bot.name,
+              created_at: reflectionCreatedAt,
+              trigger: 'manual',
+              requested_by: FIXTURE_OPERATOR,
+              mode: 'agentic-observatory',
+              world_model_questions: ['What signal am I missing before the next ETH perp tick?'],
+              evidence: {
+                fills_checked: 12,
+                market_context: 'fixture',
+              },
+              conclusions: ['External signal coverage is present but should stay paper gated.'],
+              uncertainties: ['News and cross-venue liquidity are simulated in this fixture.'],
+              findings: [
+                {
+                  code: 'external-signal-coverage',
+                  severity: 'medium',
+                  summary: 'The bot has recent ETH signal context but needs continued delegated review.',
+                },
+              ],
+              idea_ids: ['idea-smoke-1'],
+              delegated_session_ids: ['research-session-smoke-1'],
+              delegation_pressure: {
+                unique_sessions: 1,
+                active_sessions: 1,
+                terminal_sessions: 0,
+                duplicate_rows_removed: 0,
+                by_status: { queued_research: 1 },
+                by_source: { 'owner-feedback:research': 1 },
+                usage_reporting_status: 'partial',
+                usage_event_count: 2,
+                total_tokens: 2760,
+                cost_usd: 0.0184,
+                limits: { max_active_delegations: 3, max_cpu_pressure: 0.85, min_free_memory_mb: 512 },
+                pressure_level: 'low',
+                allows_new_delegation: true,
+                deny_reasons: ['active_delegation_cap'],
+              },
+              usage_summary: {
+                event_count: 2,
+                reporting_status: 'partial',
+                input_tokens: 1842,
+                output_tokens: 918,
+                total_tokens: 2760,
+                cost_usd: 0.0184,
+                providers: ['fixture'],
+                models: ['fixture-agent'],
+              },
+            },
+          ],
+          ideas: [
+            {
+              idea_id: 'idea-smoke-1',
+              bot_id: bot.id,
+              created_at: reflectionCreatedAt,
+              title: 'Research ETH cross-venue signal gap',
+              thesis: 'The bot should keep delegating external signal checks before sizing up.',
+              evidence_refs: ['artifact://fixture/observatory/context#digest-smoke-1'],
+              expected_value: 'Give the bot fresher market context without touching funds.',
+              risk: 'paper_only_until_existing_promotion_gates_pass',
+              proposed_action: 'delegate_research',
+              status: 'open',
+              source_run_id: 'observatory-smoke-1',
+            },
+          ],
+          research_tasks: [
+            {
+              task_id: 'research-smoke-1',
+              bot_id: bot.id,
+              idea_id: 'idea-smoke-1',
+              feedback_id: 'feedback-smoke-1',
+              owner: FIXTURE_OPERATOR,
+              created_at: reflectionCreatedAt,
+              updated_at: fixtureIso(18),
+              status: 'queued_research',
+              worker: 'observatory-research-queue',
+              worker_launch: 'manual_or_research_tick',
+              title: 'Research ETH cross-venue signal gap',
+              thesis: 'The bot should keep delegating external signal checks before sizing up.',
+              evidence_refs: ['artifact://fixture/observatory/context#digest-smoke-1'],
+              prompt: `Research-only Observatory task for bot ${bot.id}.`,
+              acceptance_criteria: ['Source-grounded finding is recorded.'],
+              safety_limits: { can_touch_funds: false, can_trade: false, can_promote: false },
+              result_ref: 'artifact://fixture/observatory/research-results#research-smoke-1',
+              result_summary: 'Source-grounded finding is recorded. ETH liquidity context remains paper gated until promotion checks pass.',
+            },
+          ],
+          delegated_work_sessions: [
+            {
+              session_id: 'research-session-smoke-1',
+              bot_id: bot.id,
+              source: 'owner-feedback:research',
+              status: 'queued_research',
+              created_at: reflectionCreatedAt,
+              idea_id: 'idea-smoke-1',
+              task_id: 'research-smoke-1',
+              summary: 'Owner queued read-only ETH signal research.',
+              artifact_ref: 'artifact://fixture/observatory/research-tasks#research-smoke-1',
+            },
+          ],
+          owner_feedback: [],
+          delegation_pressure: {
+            unique_sessions: 1,
+            active_sessions: 1,
+            terminal_sessions: 0,
+            duplicate_rows_removed: 0,
+            by_status: { queued_research: 1 },
+            by_source: { 'owner-feedback:research': 1 },
+            usage_reporting_status: 'partial',
+            usage_event_count: 2,
+            total_tokens: 2760,
+            cost_usd: 0.0184,
+            limits: { max_active_delegations: 3, max_cpu_pressure: 0.85, min_free_memory_mb: 512 },
+            pressure_level: 'low',
+            allows_new_delegation: true,
+            deny_reasons: ['active_delegation_cap'],
+          },
+        },
+      },
+    ],
+  };
+}
+
 function startFixtureOperatorServer({ emptyRunTranscript = false } = {}) {
   const bot = buildFixtureBotRecord();
   const trades = buildFixtureTrades();
   const candles = buildFixtureCandles();
   const metrics = buildFixtureMetrics();
   const messages = buildFixtureMessages();
+  const observatoryOverview = buildFixtureObservatoryOverview(bot);
   const platformBuckets = Array.from({ length: 24 }).map((_, index) => ({
     timestamp: new Date(Date.now() - (23 - index) * 60 * 60_000).toISOString(),
     bucket_usd: 12_000 + index * 530,
@@ -521,6 +695,10 @@ function startFixtureOperatorServer({ emptyRunTranscript = false } = {}) {
         deployment_kind: 'fleet',
         features: { chat: true, terminal: false },
       });
+      return;
+    }
+    if (pathname === '/api/observatory/overview') {
+      json(res, 200, observatoryOverview);
       return;
     }
     if (pathname === '/api/bots') {
@@ -910,10 +1088,19 @@ async function installFixtureOwnerAuth(page) {
   await page.send('Page.addScriptToEvaluateOnNewDocument', {
     source: `(() => {
       try {
-        const storageKey = ${JSON.stringify(FIXTURE_OWNER_AUTH_KEY)};
+        const address = ${JSON.stringify(FIXTURE_OPERATOR)};
+        const storageKeys = [
+          ${JSON.stringify(FIXTURE_OWNER_AUTH_KEY)},
+          'arena.operator_auth.' + address.toLowerCase() + '::/operator-api',
+          'arena.operator_auth.' + address.toLowerCase() + '::',
+        ];
         const session = ${JSON.stringify(session)};
-        window.sessionStorage?.setItem(storageKey, JSON.stringify(session));
-        window.localStorage?.setItem(storageKey, JSON.stringify(session));
+        window.sessionStorage?.setItem('arena.operator_auth.address', address);
+        window.localStorage?.setItem('arena.operator_auth.address', address);
+        for (const storageKey of storageKeys) {
+          window.sessionStorage?.setItem(storageKey, JSON.stringify(session));
+          window.localStorage?.setItem(storageKey, JSON.stringify(session));
+        }
       } catch {
         // Storage can be unavailable in constrained browser contexts.
       }
@@ -1513,6 +1700,55 @@ async function assertFixtureActivityDashboard(page, baseUrl, { screenshotDir = '
   }
 }
 
+async function assertFixtureObservatoryDashboard(page, baseUrl, { screenshotDir = '', theme = '' } = {}) {
+  const failures = [];
+
+  for (const viewport of VIEWPORTS) {
+    await setViewport(page, viewport);
+    await navigate(page, withPath(baseUrl, '/observatory', theme));
+    let metrics;
+    try {
+      metrics = await waitFor(async () => {
+        const nextMetrics = await evaluate(page, `(() => {
+          const scrolling = document.scrollingElement || document.documentElement;
+          return {
+            pathname: location.pathname,
+            bodyText: document.body.innerText.slice(0, 8000),
+            hasDriverTrace: Boolean(document.querySelector('[data-observatory-trace-role="user"]')),
+            hasAgentTrace: Boolean(document.querySelector('[data-observatory-trace-role="assistant"]')),
+            scrollHeight: scrolling.scrollHeight,
+            innerHeight: window.innerHeight,
+          };
+        })()`);
+        return nextMetrics.pathname.endsWith('/observatory')
+          && nextMetrics.hasDriverTrace
+          && nextMetrics.hasAgentTrace
+          && textIncludes(nextMetrics.bodyText, FIXTURE_OBSERVATORY_EXPECTATIONS)
+          ? nextMetrics
+          : false;
+      }, { timeoutMs: 12_000, intervalMs: 250 });
+    } catch {
+      const debugMetrics = await evaluate(page, `(() => ({
+        pathname: location.pathname,
+        bodyText: document.body.innerText.slice(0, 1200),
+        hasDriverTrace: Boolean(document.querySelector('[data-observatory-trace-role="user"]')),
+        hasAgentTrace: Boolean(document.querySelector('[data-observatory-trace-role="assistant"]')),
+      }))()`);
+      failures.push(`${viewport.width}x${viewport.height} observatory: timed out waiting for ${JSON.stringify(FIXTURE_OBSERVATORY_EXPECTATIONS)}; metrics=${JSON.stringify(debugMetrics)}`);
+      continue;
+    }
+
+    if (/Unexpected Application Error/i.test(metrics.bodyText)) {
+      failures.push(`${viewport.width}x${viewport.height} observatory: route rendered an error state`);
+    }
+    await captureScreenshot(page, screenshotDir, viewport, 'observatory', themeSuffix(theme));
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Observatory dashboard smoke failed:\n${failures.map((failure) => `- ${failure}`).join('\n')}`);
+  }
+}
+
 async function assertFixtureCreateCommand(page, baseUrl, { screenshotDir = '', theme = '' } = {}) {
   const failures = [];
 
@@ -1854,7 +2090,7 @@ async function main() {
   const themes = args.themeMatrix ? ['light', 'dark'] : [''];
 
   try {
-    if (args.ownerPerformance) {
+    if (args.fixture) {
       await installFixtureOwnerAuth(page);
     }
     const botId = args.fixture
@@ -1875,6 +2111,10 @@ async function main() {
           theme,
         });
         await assertFixtureActivityDashboard(page, args.url, {
+          screenshotDir: args.screenshotDir,
+          theme,
+        });
+        await assertFixtureObservatoryDashboard(page, args.url, {
           screenshotDir: args.screenshotDir,
           theme,
         });

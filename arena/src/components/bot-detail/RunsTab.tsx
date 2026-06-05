@@ -335,7 +335,7 @@ function RunsSidebar({
                     type="button"
                     title={`${run.title} · ${run.signalLabel}`}
                     aria-pressed={isActive}
-                    className={`mx-1.5 my-1 flex h-10 w-10 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
+                    className={`mx-1.5 my-1 flex h-10 w-10 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
                       isActive
                         ? "bg-arena-elements-item-backgroundActive"
                         : "hover:bg-arena-elements-item-backgroundHover"
@@ -360,9 +360,9 @@ function RunsSidebar({
                 <button
                   key={run.id}
                   aria-pressed={isActive}
-                    className={`group grid w-full min-w-0 grid-cols-[10px_minmax(0,1fr)] gap-2.5 overflow-hidden border-l-2 px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 ${
+                    className={`group grid w-full min-w-0 grid-cols-[10px_minmax(0,1fr)] gap-2.5 overflow-hidden border-l-2 px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
                     isActive
-                      ? "border-amber-500 bg-arena-elements-item-backgroundActive"
+                      ? "border-[var(--arena-terminal-accent)] bg-arena-elements-item-backgroundActive"
                       : "border-transparent hover:bg-arena-elements-item-backgroundHover"
                   }`}
                   onClick={() => onSelect(run.id)}
@@ -587,7 +587,7 @@ function RunResultSummary({ result }: { result: string }) {
                 <dt className="text-[12px] font-data font-medium text-arena-elements-textSecondary">
                   {item.label}
                 </dt>
-                <dd className="break-words text-sm font-data text-arena-elements-textPrimary">
+                <dd className="whitespace-pre-wrap break-words text-sm font-data text-arena-elements-textPrimary">
                   {item.value}
                 </dd>
               </div>
@@ -864,8 +864,9 @@ export function RunsTab({
   const activeRun =
     runs.find((run) => run.runId === activeRunId) ?? chooseDefaultRun(runs);
   const rawTranscriptSessionId = resolveTranscriptSessionId(botId, activeRun);
+  const hasExplicitTranscriptSession = Boolean(activeRun?.sessionId);
   const canStreamTranscript = Boolean(
-    rawTranscriptSessionId && isAuthenticated && token,
+    hasExplicitTranscriptSession && rawTranscriptSessionId && isAuthenticated && token,
   );
   const canReplayRunTrace = hasReplayableRunTrace(activeRun);
   const replaySessionId = buildRunReplaySessionId(activeRun);

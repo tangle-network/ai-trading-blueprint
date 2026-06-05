@@ -246,7 +246,7 @@ export function ConfigureStep({
   };
 
   return (
-    <div className="arena-trace-terminal overflow-hidden rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)]">
+    <div className="arena-trace-terminal flex min-h-full flex-col overflow-hidden bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)]">
       <div className="grid gap-px bg-[var(--arena-terminal-border)] lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,0.8fr)]">
         <LaunchHeaderCell
           icon={<Database className="h-4 w-4" />}
@@ -271,10 +271,10 @@ export function ConfigureStep({
 
       <div
         ref={workspaceRef}
-        className={`grid gap-0 p-2.5 lg:min-h-0 ${workspaceGridClass}`}
+        className={`grid gap-px bg-[var(--arena-terminal-border)] lg:min-h-0 ${workspaceGridClass}`}
         style={workspaceStyle}
       >
-        <div className="space-y-2.5 lg:col-start-1 lg:min-h-0 lg:overflow-auto lg:pr-2 lg:[scrollbar-gutter:stable]">
+        <div className="grid content-start gap-px lg:col-start-1 lg:min-h-0 lg:overflow-auto lg:[scrollbar-gutter:stable]">
           <ProvisionPanel title="Agent Identity">
             <label htmlFor="agent-name" className="block">
               <span className="mb-1.5 block font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
@@ -360,7 +360,7 @@ export function ConfigureStep({
             onClick={() => setLayout((current) => ({ ...current, railCollapsed: false }))}
           />
         ) : (
-        <aside className="grid content-start gap-2.5 lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:overflow-auto lg:pl-2 lg:[scrollbar-gutter:stable]">
+        <aside className="grid content-start gap-px lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:overflow-auto lg:[scrollbar-gutter:stable]">
           <ProvisionPanel
             title="Activation Review"
             action={(
@@ -396,7 +396,7 @@ export function ConfigureStep({
             onClick={goNext}
             disabled={!canNext}
             size="lg"
-            className="h-11 w-full rounded-[5px] bg-[var(--arena-terminal-accent)] font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] disabled:opacity-45"
+            className="h-11 w-full rounded-[5px] bg-[var(--arena-terminal-accent)] font-display text-sm font-semibold text-[var(--arena-terminal-accent-text)] transition-[background-color,opacity] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] disabled:opacity-45"
           >
             Review Activation
           </Button>
@@ -692,7 +692,7 @@ function ProvisionPanel({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
+    <section className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
       <div className="flex min-h-9 items-center justify-between gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-1.5">
         <h2 className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">{title}</h2>
         {action}

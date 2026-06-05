@@ -70,13 +70,13 @@ export function DecisionActivityStrip({
               onClick={() => onSelect?.(item)}
               className={cx(
                 'group flex min-w-[220px] max-w-[320px] shrink-0 items-center gap-2 border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2',
-                isTerminal ? 'rounded-[5px] focus-visible:ring-[#50d2c1]/60' : 'rounded-lg focus-visible:ring-violet-500/60',
+                isTerminal ? 'rounded-[5px] focus-visible:ring-[var(--arena-terminal-accent)]' : 'rounded-lg focus-visible:ring-violet-500/60',
                 selected
                   ? isTerminal
-                    ? 'border-[#50d2c1]/45 bg-[#143c38] shadow-[inset_3px_0_0_rgba(80,210,193,0.8)]'
+                    ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_var(--arena-terminal-accent)]'
                     : 'border-violet-500/45 bg-violet-500/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]'
                   : isTerminal
-                    ? 'border-[#273035] bg-[#0f1a1f] hover:border-[#50d2c1]/32 hover:bg-[#16242a]'
+                    ? 'border-[#273035] bg-[#0f1a1f] hover:border-[var(--arena-terminal-border-hover)] hover:bg-[#16242a]'
                     : 'border-arena-elements-dividerColor/45 bg-arena-elements-background-depth-1/26 hover:border-arena-elements-dividerColor/80 hover:bg-arena-elements-item-backgroundHover',
               )}
             >

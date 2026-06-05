@@ -417,7 +417,7 @@ export function PlatformVolumeChart({
                   onClick={() => setMode(item.value)}
                   className={`inline-flex h-7 items-center gap-1.5 rounded-[4px] px-2.5 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
                     selected
-                      ? isCommand ? 'bg-[#50d2c1] text-[#04060c]' : 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
+                      ? isCommand ? 'bg-[var(--arena-terminal-accent)] text-[var(--arena-terminal-accent-text)]' : 'bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary'
                       : isCommand ? 'text-[#949e9c] hover:bg-[#273035] hover:text-[#f6fefd]' : 'text-arena-elements-textSecondary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary'
                   }`}
                   aria-pressed={selected}

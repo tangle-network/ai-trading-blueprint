@@ -53,6 +53,7 @@ Design posture:
 - Compact chrome, route-native navigation, restrained color, square data surfaces, stable dimensions, and no nested card stacks.
 - Favor tables, charts, ledgers, tapes, inspectors, command surfaces, and copyable records over marketing cards or explanatory panels.
 - Light and dark themes are both production surfaces.
+- Color hierarchy: neutral surfaces carry structure, Tangle purple marks interaction/selection/focus/primary action, green is reserved for positive trading or healthy completion, amber/red are risk and failure.
 
 Non-goals:
 - Do not turn the app into a marketing landing page.

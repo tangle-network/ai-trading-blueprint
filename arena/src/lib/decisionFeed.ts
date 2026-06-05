@@ -86,9 +86,181 @@ export function formatResultValue(value: unknown): string | null {
   return null;
 }
 
+function countRecords(value: unknown): number | null {
+  return Array.isArray(value) ? value.length : null;
+}
+
+function firstRecord(value: unknown): Record<string, unknown> | null {
+  return Array.isArray(value) ? asRecord(value[0]) : null;
+}
+
+function stripInlineMarkdown(value: string): string {
+  return value
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+}
+
+function canonicalAgenticHeading(value: string): string {
+  const normalized = humanize(value).toLowerCase();
+  switch (normalized) {
+    case 'observed':
+      return 'Observed';
+    case 'concern':
+      return 'Concern';
+    case 'next safe action':
+      return 'Next safe action';
+    case 'missing evidence':
+      return 'Missing evidence';
+    default:
+      return humanize(value);
+  }
+}
+
+function agenticAssistantItems(value: unknown): RunResultSection['items'] {
+  const text = formatResultValue(value);
+  if (!text) return [];
+
+  const headingPattern = /(?:^|\n+)\s*\*\*(Observed|Concern|Next safe action|Missing evidence)\*\*\s*:?\s*/gi;
+  const matches = Array.from(text.matchAll(headingPattern));
+  if (matches.length === 0) {
+    return [{ label: 'Summary', value: stripInlineMarkdown(text) }];
+  }
+
+  return matches.flatMap((match, index) => {
+    const label = canonicalAgenticHeading(match[1] ?? 'Summary');
+    const start = (match.index ?? 0) + match[0].length;
+    const end = matches[index + 1]?.index ?? text.length;
+    const sectionText = stripInlineMarkdown(text.slice(start, end));
+    return sectionText ? [{ label, value: sectionText }] : [];
+  });
+}
+
+function joinFormattedList(value: unknown, formatter: (entry: unknown, index: number) => string | null): string | null {
+  if (!Array.isArray(value)) return null;
+  const formatted = value
+    .map((entry, index) => formatter(entry, index))
+    .filter((entry): entry is string => Boolean(entry));
+  return formatted.length > 0 ? formatted.join('\n') : null;
+}
+
+function summarizeFinding(value: unknown): string | null {
+  const finding = asRecord(value);
+  if (!finding) return formatResultValue(value);
+  const severity = formatResultValue(finding.severity);
+  const summary = formatResultValue(finding.summary);
+  const code = formatResultValue(finding.code);
+  const prefix = [severity, code].filter(Boolean).join(' / ');
+  return [prefix || null, summary].filter(Boolean).join(': ') || null;
+}
+
+function summarizeIdea(value: unknown, index: number): string | null {
+  const idea = asRecord(value);
+  if (!idea) return formatResultValue(value);
+  const title = formatResultValue(idea.title) ?? `Idea ${index + 1}`;
+  const action = formatResultValue(idea.proposed_action);
+  const status = formatResultValue(idea.status);
+  return [title, action, status].filter(Boolean).join(' / ');
+}
+
+function summarizeDelegatedSession(value: unknown, index: number): string | null {
+  const session = asRecord(value);
+  if (!session) return formatResultValue(value);
+  const summary = formatResultValue(session.summary) ?? `Session ${index + 1}`;
+  const status = formatResultValue(session.status);
+  const source = formatResultValue(session.source);
+  return [summary, status, source].filter(Boolean).join(' / ');
+}
+
+function pushObservatorySections(
+  sections: RunResultSection[],
+  result: Record<string, unknown>,
+) {
+  const records = asRecord(result.records) ?? result;
+  const agentic = asRecord(result.agentic_reflection) ?? asRecord(records.agentic_reflection);
+  const latestReflection = firstRecord(records.reflection_runs);
+  const pressure = asRecord(records.delegation_pressure) ?? asRecord(latestReflection?.delegation_pressure);
+  const usage = asRecord(records.usage_summary) ?? asRecord(latestReflection?.usage_summary);
+
+  if (agentic) {
+    const items = agenticAssistantItems(agentic.assistant_text);
+    pushResultItem(items, 'Status', agentic.status);
+    pushResultItem(items, 'Session', agentic.session_id);
+    pushResultItem(items, 'Trace', agentic.trace_id);
+    pushResultItem(items, 'Input tok', agentic.input_tokens);
+    pushResultItem(items, 'Output tok', agentic.output_tokens);
+    pushResultItem(items, 'Cost USD', agentic.cost_usd);
+    if (items.length) sections.push({ title: 'Agentic Reflection', items });
+  }
+
+  if (latestReflection) {
+    const items: RunResultSection['items'] = [];
+    pushResultItem(items, 'Trigger', latestReflection.trigger);
+    pushResultItem(items, 'Mode', latestReflection.mode);
+    pushResultItem(items, 'Conclusions', joinFormattedList(latestReflection.conclusions, (entry) => formatResultValue(entry)));
+    pushResultItem(items, 'Uncertainties', joinFormattedList(latestReflection.uncertainties, (entry) => formatResultValue(entry)));
+    pushResultItem(items, 'Findings', joinFormattedList(latestReflection.findings, summarizeFinding));
+    if (items.length) sections.push({ title: 'Reflection Record', items });
+  }
+
+  const recordItems: RunResultSection['items'] = [];
+  pushResultItem(recordItems, 'World signals', countRecords(records.world_signal_digests));
+  pushResultItem(recordItems, 'Reflection runs', countRecords(records.reflection_runs));
+  pushResultItem(recordItems, 'Ideas', countRecords(records.ideas));
+  pushResultItem(recordItems, 'Research tasks', countRecords(records.research_tasks));
+  pushResultItem(recordItems, 'Delegated work', countRecords(records.delegated_work_sessions));
+  pushResultItem(recordItems, 'Idea queue', joinFormattedList(records.ideas, summarizeIdea));
+  pushResultItem(recordItems, 'Work queue', joinFormattedList(records.delegated_work_sessions, summarizeDelegatedSession));
+  if (recordItems.length) sections.push({ title: 'Observatory Records', items: recordItems });
+
+  if (pressure) {
+    const items: RunResultSection['items'] = [];
+    pushResultItem(items, 'Pressure', pressure.pressure_level);
+    pushResultItem(items, 'Active', pressure.active_sessions);
+    pushResultItem(items, 'Total', pressure.unique_sessions);
+    pushResultItem(items, 'Allows new work', pressure.allows_new_delegation);
+    pushResultItem(items, 'Deny reasons', joinFormattedList(pressure.deny_reasons, (entry) => formatResultValue(entry)));
+    if (items.length) sections.push({ title: 'Delegation Pressure', items });
+  }
+
+  if (usage) {
+    const items: RunResultSection['items'] = [];
+    pushResultItem(items, 'Status', usage.reporting_status);
+    pushResultItem(items, 'Events', usage.event_count);
+    pushResultItem(items, 'Input tok', usage.input_tokens);
+    pushResultItem(items, 'Output tok', usage.output_tokens);
+    pushResultItem(items, 'Total tok', usage.total_tokens);
+    pushResultItem(items, 'Cost USD', usage.cost_usd);
+    pushResultItem(items, 'Providers', joinFormattedList(usage.providers, (entry) => formatResultValue(entry)));
+    pushResultItem(items, 'Models', joinFormattedList(usage.models, (entry) => formatResultValue(entry)));
+    if (items.length) sections.push({ title: 'Usage', items });
+  }
+}
+
+function getAgenticReflectionText(result: Record<string, unknown> | null): string | null {
+  const records = asRecord(result?.records) ?? result;
+  const agentic = asRecord(result?.agentic_reflection) ?? asRecord(records?.agentic_reflection);
+  const text = formatResultValue(agentic?.assistant_text);
+  return text ? stripInlineMarkdown(text) : null;
+}
+
+function hasObservatoryResult(result: Record<string, unknown> | null): boolean {
+  const records = asRecord(result?.records) ?? result;
+  return Boolean(
+    asRecord(result?.agentic_reflection)
+    || asRecord(records?.agentic_reflection)
+    || Array.isArray(records?.reflection_runs)
+    || Array.isArray(records?.world_signal_digests)
+    || Array.isArray(records?.delegated_work_sessions)
+  );
+}
+
 export function getRunSignalLabel(run: BotRun): string {
   if (run.error) return 'ERROR';
   const result = parseRunResultJson(run.result);
+  if (hasObservatoryResult(result)) return 'REFLECT';
   const decision = asRecord(result?.decision);
   const tradeAction = asRecord(result?.trade_action);
   const setup = asRecord(decision?.setup);
@@ -150,6 +322,7 @@ function formatAssetSummary(value: unknown): string | null {
 
 export function buildRunResultSections(result: Record<string, unknown>): RunResultSection[] {
   const sections: RunResultSection[] = [];
+  pushObservatorySections(sections, result);
   const checkedState = asRecord(result.checked_state);
   const decision = asRecord(result.decision);
   const setup = asRecord(decision?.setup);
@@ -316,6 +489,12 @@ function runStatusTone(run: BotRun): DecisionFeedTone {
 
 export function buildDecisionItemFromRun(run: BotRun): DecisionFeedItem {
   const parsed = parseRunResultJson(run.result);
+  const isObservatory = hasObservatoryResult(parsed);
+  const observatoryRecords = asRecord(parsed?.records) ?? parsed;
+  const latestReflection = firstRecord(observatoryRecords?.reflection_runs);
+  const observatoryPressure =
+    asRecord(observatoryRecords?.delegation_pressure)
+    ?? asRecord(latestReflection?.delegation_pressure);
   const checkedState = asRecord(parsed?.checked_state);
   const decision = asRecord(parsed?.decision);
   const setup = asRecord(decision?.setup);
@@ -328,7 +507,9 @@ export function buildDecisionItemFromRun(run: BotRun): DecisionFeedItem {
   const validationLabel = formatResultValue(tradeAction?.validation_status ?? approval?.status);
   const executionLabel = formatResultValue(tradeAction?.execution_status);
   const plainResult = parsed ? null : run.result?.trim();
+  const agenticText = getAgenticReflectionText(parsed);
   const reason =
+    agenticText ??
     formatResultValue(decision?.reason) ??
     formatResultValue(setup?.rationale) ??
     (plainResult && plainResult !== 'No messages.' ? plainResult : null) ??
@@ -344,14 +525,18 @@ export function buildDecisionItemFromRun(run: BotRun): DecisionFeedItem {
   addFact(provenance, 'Output tok', run.outputTokens);
 
   const stateValue =
+    (isObservatory ? formatResultValue(observatoryPressure?.pressure_level) : null) ??
     formatResultValue(checkedState?.nav_status) ??
     formatResultValue(checkedState?.mode);
   const decisionValue =
+    (isObservatory ? 'reflect' : null) ??
     formatResultValue(decision?.action) ??
     formatResultValue(setup?.action) ??
     (run.error ? 'error' : null);
+  const observatoryWorkCount = formatResultValue(observatoryPressure?.active_sessions);
   const tradeAttempted = formatResultValue(tradeAction?.attempted);
   const executionValue =
+    (isObservatory && observatoryWorkCount ? `${observatoryWorkCount} active delegations` : null) ??
     executionLabel ??
     (tradeAttempted ? `attempted ${tradeAttempted.toLowerCase()}` : null);
 
@@ -365,7 +550,9 @@ export function buildDecisionItemFromRun(run: BotRun): DecisionFeedItem {
     statusLabel: getStatusLabel(run.status),
     statusTone: runStatusTone(run),
     actionLabel,
-    instrumentLabel: setupAsset ?? tradeAsset ?? protocol ?? 'Trace',
+    instrumentLabel: isObservatory
+      ? 'Observatory'
+      : setupAsset ?? tradeAsset ?? protocol ?? 'Trace',
     reason,
     notionalLabel: formatNotional(tradeAction?.notional_usd ?? setup?.amount_in),
     venueLabel: protocol ?? undefined,
@@ -375,8 +562,15 @@ export function buildDecisionItemFromRun(run: BotRun): DecisionFeedItem {
     stages: [
       makeStage('state', 'State', stateValue, protocol, 'neutral', 'i-ph:activity'),
       makeStage('decision', 'Decision', decisionValue, reason, run.error ? 'danger' : 'neutral', 'i-ph:brain'),
-      makeStage('validation', 'Validation', validationLabel, null, 'neutral', 'i-ph:shield-check'),
-      makeStage('execution', 'Execution', executionValue, null, 'neutral', 'i-ph:lightning'),
+      makeStage(
+        'validation',
+        isObservatory ? 'Pressure' : 'Validation',
+        isObservatory ? formatResultValue(observatoryPressure?.allows_new_delegation) : validationLabel,
+        isObservatory ? formatResultValue(observatoryPressure?.pressure_level) : null,
+        'neutral',
+        'i-ph:shield-check',
+      ),
+      makeStage('execution', isObservatory ? 'Delegation' : 'Execution', executionValue, null, 'neutral', 'i-ph:lightning'),
     ],
     sections,
   };

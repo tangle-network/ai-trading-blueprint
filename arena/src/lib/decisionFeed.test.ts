@@ -174,4 +174,96 @@ describe('decisionFeed', () => {
       'Placed a bounded ETH breakout probe after fast replay and liquidity check.',
     );
   });
+
+  it('normalizes agentic Observatory JSON into product evidence instead of raw payload text', () => {
+    const run: BotRun = {
+      runId: 'obs_902241ba89627d5da466',
+      workflowId: 303,
+      workflowKind: 'conversation',
+      status: 'completed',
+      startedAt: 1_775_849_924,
+      completedAt: 1_775_850_048,
+      sessionId: 'convo-harness-canary2-1775849924',
+      transcriptAvailable: false,
+      traceId: 'trace-observatory-1',
+      durationMs: 124_000,
+      inputTokens: 1200,
+      outputTokens: 520,
+      result: JSON.stringify({
+        records: {
+          reflection_runs: [
+            {
+              trigger: 'manual',
+              mode: 'agentic-observatory',
+              conclusions: ['Execution occurred but generated no ideas.'],
+              uncertainties: ['Missing evidence about research outputs.'],
+              findings: [
+                {
+                  code: 'zero-ideas-after-delegation',
+                  severity: 'high',
+                  summary: 'Delegated work did not convert into strategy output.',
+                },
+              ],
+              delegation_pressure: {
+                pressure_level: 'low',
+                active_sessions: 4,
+                unique_sessions: 4,
+                allows_new_delegation: true,
+              },
+              usage_summary: {
+                reporting_status: 'reported',
+                event_count: 3,
+                input_tokens: 1200,
+                output_tokens: 520,
+                total_tokens: 1720,
+                cost_usd: 0.034,
+                providers: ['openai'],
+                models: ['gpt-5'],
+              },
+            },
+          ],
+          world_signal_digests: [{ digest_id: 'digest-1' }],
+          ideas: [],
+          research_tasks: [],
+          delegated_work_sessions: [
+            { summary: 'Research ETH context.', status: 'completed', source: 'observatory' },
+          ],
+        },
+        agentic_reflection: {
+          status: 'completed',
+          session_id: 'convo-harness-canary2-1775849924',
+          trace_id: 'trace-observatory-1',
+          input_tokens: 1200,
+          output_tokens: 520,
+          cost_usd: 0.034,
+          assistant_text: '**Observed**\nBot `harness-canary2` processed 1 world signal and executed 4 delegated work sessions but generated 0 ideas.\n\n**Concern**\nResearch is not converting into strategy output.\n\n**Next safe action**\nInspect delegated work artifacts before creating more sessions.\n\n**Missing evidence**\nNo source-grounded task result was attached.',
+        },
+      }),
+      error: null,
+    };
+
+    const item = buildDecisionItemFromRun(run);
+    const parsed = parseRunResultJson(run.result);
+    const sections = buildRunResultSections(parsed ?? {});
+
+    expect(getRunSignalLabel(run)).toBe('REFLECT');
+    expect(item.instrumentLabel).toBe('Observatory');
+    expect(item.reason).toContain('harness-canary2');
+    expect(item.reason).not.toContain('agentic_reflection');
+    expect(item.stages.map((stage) => [stage.label, stage.value])).toEqual([
+      ['State', 'low'],
+      ['Decision', 'reflect'],
+      ['Pressure', 'Yes'],
+      ['Delegation', '4 active delegations'],
+    ]);
+    expect(sections.map((section) => section.title)).toEqual([
+      'Agentic Reflection',
+      'Reflection Record',
+      'Observatory Records',
+      'Delegation Pressure',
+      'Usage',
+    ]);
+    expect(sections.flatMap((section) => section.items.map((item) => item.label))).toContain('Observed');
+    expect(JSON.stringify(sections)).not.toContain('agentic_reflection');
+  });
 });

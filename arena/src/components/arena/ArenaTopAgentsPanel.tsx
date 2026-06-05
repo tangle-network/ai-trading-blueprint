@@ -23,7 +23,7 @@ interface ArenaTopAgentsPanelProps {
 
 function valueTone(value: number): string {
   if (value === 0 || !Number.isFinite(value)) return 'text-[var(--arena-terminal-text-subtle)]';
-  return value > 0 ? 'text-[var(--arena-terminal-accent)]' : 'text-[var(--arena-terminal-danger)]';
+  return value > 0 ? 'text-[var(--arena-terminal-success)]' : 'text-[var(--arena-terminal-danger)]';
 }
 
 function formatFlowUsd(value: number): string {
@@ -128,7 +128,7 @@ export function ArenaTopAgentsPanel({
                     <span className="mt-1 flex min-w-0 items-center gap-1.5 font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
                       <span className="truncate">{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
                       <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
-                      <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-accent)]' : 'truncate'}>
+                      <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-success)]' : 'truncate'}>
                         {botStatusLabel(bot.status)}
                       </span>
                     </span>
@@ -170,7 +170,7 @@ export function ArenaTopAgentsPanel({
                       <span className="mt-1 flex min-w-0 items-center gap-2 font-data text-xs text-[var(--arena-terminal-text-muted)]">
                         <span className="truncate">{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
                         <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
-                        <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-accent)]' : 'truncate'}>
+                        <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-success)]' : 'truncate'}>
                           {botStatusLabel(bot.status)}
                         </span>
                         {bot.tvl > 0 && (

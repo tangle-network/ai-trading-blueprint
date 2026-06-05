@@ -66,7 +66,7 @@ export function LeaderboardTable({
             <article
               key={bot.id}
               className={`grid min-w-0 grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-3 transition-colors ${
-                selected ? 'bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_rgba(80,210,193,0.9)]' : 'bg-[var(--arena-terminal-panel)]'
+                selected ? 'bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_var(--arena-terminal-accent)]' : 'bg-[var(--arena-terminal-panel)]'
               }`}
             >
               <button
@@ -94,7 +94,7 @@ export function LeaderboardTable({
                       {STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}
                     </span>
                     <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
-                    <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-accent)]' : 'truncate text-[var(--arena-terminal-text-muted)]'}>
+                    <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-success)]' : 'truncate text-[var(--arena-terminal-text-muted)]'}>
                       {botStatusLabel(bot.status)}
                     </span>
                   </span>
@@ -133,7 +133,7 @@ export function LeaderboardTable({
                     {bot.pnlPercent === 0 ? (
                       <span className="text-[var(--arena-terminal-text-subtle)]">{returnValue}</span>
                     ) : bot.pnlPercent > 0 ? (
-                      <span className="text-[var(--arena-terminal-accent)]">{returnValue}</span>
+                      <span className="text-[var(--arena-terminal-success)]">{returnValue}</span>
                     ) : (
                       <span className="text-[var(--arena-terminal-danger)]">{returnValue}</span>
                     )}
@@ -182,7 +182,7 @@ export function LeaderboardTable({
           <TableRow
             key={bot.id}
             className={`group cursor-pointer border-b border-[var(--arena-terminal-border)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)] [content-visibility:auto] [contain-intrinsic-size:66px] ${
-              selected ? 'bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_rgba(80,210,193,0.9)]' : 'bg-[var(--arena-terminal-panel)]'
+              selected ? 'bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_var(--arena-terminal-accent)]' : 'bg-[var(--arena-terminal-panel)]'
             }`}
             role="button"
             tabIndex={0}
@@ -215,7 +215,7 @@ export function LeaderboardTable({
                       {STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}
                     </span>
                     <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
-                    <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-accent)]' : 'truncate text-[var(--arena-terminal-text-muted)]'}>
+                    <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-success)]' : 'truncate text-[var(--arena-terminal-text-muted)]'}>
                       {botStatusLabel(bot.status)}
                     </span>
                   </div>
@@ -252,7 +252,7 @@ export function LeaderboardTable({
               {bot.pnlPercent === 0 ? (
                 <span className="text-[var(--arena-terminal-text-subtle)]">{returnValue}</span>
               ) : bot.pnlPercent > 0 ? (
-                <span className="text-[var(--arena-terminal-accent)]">{returnValue}</span>
+                <span className="text-[var(--arena-terminal-success)]">{returnValue}</span>
               ) : (
                 <span className="text-[var(--arena-terminal-danger)]">{returnValue}</span>
               )}

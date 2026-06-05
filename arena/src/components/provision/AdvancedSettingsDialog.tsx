@@ -193,7 +193,7 @@ export function AdvancedSettingsDialog({
               <textarea
                 value={customExpertKnowledge || selectedPack.expertKnowledge}
                 onChange={(e) => setCustomExpertKnowledge(e.target.value)}
-                className="w-full min-h-56 max-h-[50vh] rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-4 py-3 text-sm font-data text-arena-elements-textSecondary leading-relaxed transition-[border-color,box-shadow] duration-150 focus:outline-none focus:border-[#50d2c1]/60 focus:ring-2 focus:ring-[#50d2c1]/20 resize-y"
+                className="w-full min-h-56 max-h-[50vh] rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-4 py-3 text-sm font-data text-arena-elements-textSecondary leading-relaxed transition-[border-color,box-shadow] duration-150 focus:outline-none focus:border-[var(--arena-terminal-border-hover)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--arena-terminal-accent)_24%,transparent)] resize-y"
               />
               {customExpertKnowledge && (
                 <Button
@@ -217,7 +217,7 @@ export function AdvancedSettingsDialog({
               <textarea
                 value={customInstructions}
                 onChange={(e) => setCustomInstructions(e.target.value)}
-                className="w-full min-h-40 max-h-[50vh] rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-4 py-3 text-sm font-data text-arena-elements-textSecondary leading-relaxed transition-[border-color,box-shadow] duration-150 focus:outline-none focus:border-[#50d2c1]/60 focus:ring-2 focus:ring-[#50d2c1]/20 resize-y"
+                className="w-full min-h-40 max-h-[50vh] rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-4 py-3 text-sm font-data text-arena-elements-textSecondary leading-relaxed transition-[border-color,box-shadow] duration-150 focus:outline-none focus:border-[var(--arena-terminal-border-hover)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--arena-terminal-accent)_24%,transparent)] resize-y"
                 placeholder={`Examples:\n- Only trade ETH/USDC pairs\n- Max position: 5% of portfolio\n- Focus on Asian session hours\n- Avoid news events`}
               />
             </div>
@@ -339,7 +339,7 @@ export function AdvancedSettingsDialog({
                     }}
                     className={`rounded-[4px] px-3 py-1.5 text-xs font-medium transition-colors ${
                       !provisionPaperTrade
-                        ? 'bg-[#50d2c1] text-[#06100e]'
+                        ? 'bg-[var(--arena-terminal-accent)] text-[var(--arena-terminal-accent-text)]'
                         : liveModeDisabled
                           ? 'text-arena-elements-textTertiary cursor-not-allowed opacity-60'
                           : 'text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
@@ -353,7 +353,7 @@ export function AdvancedSettingsDialog({
                     onClick={() => setProvisionPaperTrade(true)}
                     className={`rounded-[4px] px-3 py-1.5 text-xs font-medium transition-colors ${
                       provisionPaperTrade
-                        ? 'bg-[#50d2c1] text-[#06100e]'
+                        ? 'bg-[var(--arena-terminal-accent)] text-[var(--arena-terminal-accent-text)]'
                         : 'text-arena-elements-textSecondary hover:text-arena-elements-textPrimary'
                     }`}
                   >

@@ -200,8 +200,11 @@ function tradeMarkerPagesForRange(range: PerformanceRange): number {
 }
 
 function terminalStatValueClass(tone: string): string {
-  if (tone === 'text-arena-elements-icon-success' || tone === 'text-arena-elements-icon-error') {
-    return tone;
+  if (tone === 'text-arena-elements-icon-success') {
+    return 'text-[var(--arena-terminal-success)]';
+  }
+  if (tone === 'text-arena-elements-icon-error') {
+    return 'text-[var(--arena-terminal-danger)]';
   }
   return 'text-[#f6fefd]';
 }
@@ -345,7 +348,7 @@ function buildHyperliquidRiskSnapshot(portfolio: Portfolio | null | undefined): 
 
 function riskToneClass(value: number | null): string {
   if (value == null || !Number.isFinite(value) || value === 0) return 'text-[#d2dad7]';
-  return value > 0 ? 'text-[#50d2c1]' : 'text-[#ff5d6c]';
+  return value > 0 ? 'text-[var(--arena-terminal-success)]' : 'text-[#ff5d6c]';
 }
 
 function formatTradeMicrostructure(trade: Trade): string {
@@ -769,7 +772,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
           <div className="col-start-1 row-start-1 flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
             <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[72px] min-[1120px]:flex-row min-[1120px]:items-stretch">
               <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1120px]:w-[178px] min-[1120px]:border-b-0 min-[1120px]:border-r">
-                <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#123f3a] text-[#50d2c1]">
+                <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--arena-terminal-success-soft)] text-[var(--arena-terminal-success)]">
                   <span className="i-ph:chart-line-up text-base" />
                 </div>
                 <div className="min-w-0">
@@ -861,7 +864,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         <div className="col-start-1 row-start-1 flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
           <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[72px] min-[1120px]:flex-row min-[1120px]:items-stretch">
             <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1120px]:w-[178px] min-[1120px]:border-b-0 min-[1120px]:border-r">
-              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#123f3a] text-[#50d2c1]">
+              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--arena-terminal-success-soft)] text-[var(--arena-terminal-success)]">
                 <span className="i-ph:chart-line-up text-base" />
               </div>
               <div className="min-w-0">
@@ -915,9 +918,9 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   <button
                     key={mode}
                     type="button"
-                    className={`h-7 rounded-[4px] px-2.5 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 disabled:cursor-not-allowed disabled:opacity-45 ${
+                    className={`h-7 rounded-[4px] px-2.5 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] disabled:cursor-not-allowed disabled:opacity-45 ${
                       effectiveChartMode === mode
-                        ? 'bg-[var(--arena-terminal-accent)] text-[#04060c]'
+                        ? 'bg-[var(--arena-terminal-accent)] text-[var(--arena-terminal-accent-text)]'
                         : 'text-[#d2dad7] hover:bg-[#344148] hover:text-[#f6fefd]'
                     }`}
                     aria-pressed={effectiveChartMode === mode}
@@ -937,7 +940,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   <button
                     key={item.value}
                     type="button"
-                    className={`h-7 rounded-[4px] px-2 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${
+                    className={`h-7 rounded-[4px] px-2 font-data text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
                       range === item.value
                         ? 'bg-[var(--arena-terminal-text)] text-[var(--arena-terminal-bg)]'
                         : 'text-[#949e9c] hover:bg-[#344148] hover:text-[#f6fefd]'
@@ -1214,7 +1217,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   {selectedDecision ? (
                     <div className="min-w-0">
                       <div className="flex min-w-0 items-center justify-between gap-3">
-                        <div className="truncate font-data text-xs font-semibold uppercase text-[#50d2c1]">
+                        <div className="truncate font-data text-xs font-semibold uppercase text-[var(--arena-terminal-accent)]">
                           {selectedDecision.actionLabel}
                         </div>
                         <div className="shrink-0 font-data text-[11px] text-[#949e9c]">

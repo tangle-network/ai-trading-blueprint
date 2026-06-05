@@ -840,7 +840,7 @@ export default function CreateAgent() {
                       {selectedHint.shorthand}
                     </p>
                   </div>
-                  <span className="rounded-[4px] border border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-accent)]">
+                  <span className="rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-secondary)]">
                     Paper
                   </span>
                 </div>
@@ -998,7 +998,7 @@ export default function CreateAgent() {
             <section className="overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
                 <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Execution</h2>
-                <span className="font-mono text-xs text-[var(--arena-terminal-accent)]">Paper</span>
+                <span className="font-mono text-xs text-[var(--arena-terminal-text-secondary)]">Paper</span>
               </div>
               <div className="grid grid-cols-2">
                 {readinessRows.map(([label, value]) => (
@@ -1030,7 +1030,7 @@ export default function CreateAgent() {
                 type="submit"
                 form="create-agent-form"
                 disabled={!prompt.trim() || isCreating}
-                className="h-10 w-full rounded-[5px] bg-[var(--arena-terminal-accent)] px-5 font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] active:scale-[0.98] disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
+                className="h-10 w-full rounded-[5px] bg-[var(--arena-terminal-accent)] px-5 font-display text-sm font-semibold text-[var(--arena-terminal-accent-text)] transition-[background-color,opacity,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] active:scale-[0.98] disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
               >
                 {isCreating ? 'Creating…' : 'Create Paper Agent'}
               </Button>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
+import { ChatMessage } from '@tangle-network/sandbox-ui/chat';
 import { useAccount } from 'wagmi';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import {
@@ -445,65 +446,6 @@ function DelegatedWorkList({
   );
 }
 
-function TraceMessage({
-  role,
-  title,
-  meta,
-  icon,
-  align = 'left',
-  children,
-}: {
-  role: string;
-  title: string;
-  meta?: string | null;
-  icon: string;
-  align?: 'left' | 'right';
-  children: string;
-}) {
-  const messageRole = align === 'right' ? 'user' : 'assistant';
-  const isUser = align === 'right';
-
-  return (
-    <div
-      className={`arena-observatory-chat-message flex ${isUser ? 'justify-end' : 'justify-start'}`}
-    >
-      <div
-        data-observatory-trace-role={messageRole}
-        className={`grid max-w-[92%] grid-cols-[1.75rem_minmax(0,1fr)] gap-2 border px-3 py-2.5 font-display text-sm ${
-          isUser
-            ? 'border-[#50d2c1]/35 bg-[#50d2c1]/10 text-[var(--arena-terminal-text)]'
-            : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)]'
-        }`}
-      >
-        <span
-          className={`flex size-7 items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] ${icon} text-base ${
-            isUser ? 'text-[#50d2c1]' : 'text-[var(--arena-terminal-text-muted)]'
-          }`}
-          aria-hidden="true"
-        />
-        <span className="min-w-0">
-          <span className="flex min-w-0 items-center justify-between gap-3">
-            <span className="font-data text-[11px] uppercase text-[var(--arena-terminal-text-muted)]">
-              {role}
-            </span>
-            {meta ? (
-              <span className="truncate text-right font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
-                {meta}
-              </span>
-            ) : null}
-          </span>
-          <span className="mt-2 block whitespace-pre-wrap break-words leading-5">
-            {children}
-          </span>
-          <span className="mt-2 block truncate border-t border-[var(--arena-terminal-border)] pt-2 font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
-            {title}
-          </span>
-        </span>
-      </div>
-    </div>
-  );
-}
-
 function TraceDataPanel({
   title,
   icon,
@@ -543,13 +485,53 @@ function WorkSessionTrace({
 
   const safetyEntries = Object.entries(task?.safety_limits ?? {});
   const evidenceRefs = task?.evidence_refs?.length ? task.evidence_refs : idea?.evidence_refs ?? [];
-  const driverText = task?.prompt ?? idea?.thesis ?? session.summary;
+  const driverText = [
+    task?.worker_launch,
+    task?.prompt ?? idea?.thesis ?? session.summary,
+  ].filter(Boolean).join('\n\n');
   const agentText = task?.result_summary
     || (task?.result_ref ? `Result artifact: ${task.result_ref}` : null)
     || `No result recorded yet. Current status: ${session.status}.`;
+  const agentTracePanels = (
+    <div className="mt-3 grid gap-3">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <TraceDataPanel title="Artifacts" icon="i-ph:archive">
+          <div className="mt-2 grid gap-1.5 font-data text-xs text-[var(--arena-terminal-text-secondary)]">
+            <span className="break-all">{session.artifact_ref ?? 'No session artifact recorded.'}</span>
+            {evidenceRefs.slice(0, 4).map((ref) => (
+              <span key={ref} className="break-all text-[var(--arena-terminal-text-muted)]">{ref}</span>
+            ))}
+          </div>
+        </TraceDataPanel>
+
+        <TraceDataPanel title="Gates" icon="i-ph:shield-check">
+          <div className="mt-2 grid gap-1.5 font-data text-xs text-[var(--arena-terminal-text-secondary)]">
+            {safetyEntries.length > 0 ? safetyEntries.map(([key, value]) => (
+              <span key={key} className="flex min-w-0 items-center justify-between gap-3">
+                <span className="truncate text-[var(--arena-terminal-text-muted)]">{key}</span>
+                <span className="shrink-0 text-[var(--arena-terminal-text)]">{String(value)}</span>
+              </span>
+            )) : (
+              <span>No explicit task safety limits recorded.</span>
+            )}
+          </div>
+        </TraceDataPanel>
+      </div>
+
+      {task?.acceptance_criteria?.length ? (
+        <TraceDataPanel title="Acceptance" icon="i-ph:list-checks">
+          <div className="mt-2 grid gap-1.5 text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
+            {task.acceptance_criteria.map((criterion) => (
+              <span key={criterion}>{criterion}</span>
+            ))}
+          </div>
+        </TraceDataPanel>
+      ) : null}
+    </div>
+  );
 
   return (
-    <div className="min-w-0 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)]" aria-label="Work session transcript">
+    <div className="arena-sandbox-transcript arena-sandbox-transcript--terminal min-w-0 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)]" aria-label="Work session transcript">
       <div className="border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -567,60 +549,26 @@ function WorkSessionTrace({
       </div>
 
       <div className="grid gap-3 p-3">
-        <div className="space-y-3">
-          <TraceMessage
-            role="Driver"
-            title="Owner / Observatory"
-            meta={task?.worker_launch ?? session.source}
-            icon="i-ph:user-circle"
-            align="right"
-          >
-            {driverText}
-          </TraceMessage>
-
-          <TraceMessage
-            role="Coding agent"
-            title={task?.worker ?? 'Delegated worker'}
-            meta={session.status}
-            icon="i-ph:code"
-          >
-            {agentText}
-          </TraceMessage>
+        <div data-observatory-trace-role="user">
+          <ChatMessage
+            role="user"
+            content={driverText}
+            userLabel="Driver"
+            timestamp={task?.created_at ? new Date(task.created_at) : undefined}
+            avatar={<span className="i-ph:user-circle size-4" aria-hidden="true" />}
+          />
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <TraceDataPanel title="Artifacts" icon="i-ph:archive">
-            <div className="mt-2 grid gap-1.5 font-data text-xs text-[var(--arena-terminal-text-secondary)]">
-              <span className="break-all">{session.artifact_ref ?? 'No session artifact recorded.'}</span>
-              {evidenceRefs.slice(0, 4).map((ref) => (
-                <span key={ref} className="break-all text-[var(--arena-terminal-text-muted)]">{ref}</span>
-              ))}
-            </div>
-          </TraceDataPanel>
-
-          <TraceDataPanel title="Gates" icon="i-ph:shield-check">
-            <div className="mt-2 grid gap-1.5 font-data text-xs text-[var(--arena-terminal-text-secondary)]">
-              {safetyEntries.length > 0 ? safetyEntries.map(([key, value]) => (
-                <span key={key} className="flex min-w-0 items-center justify-between gap-3">
-                  <span className="truncate text-[var(--arena-terminal-text-muted)]">{key}</span>
-                  <span className="shrink-0 text-[var(--arena-terminal-text)]">{String(value)}</span>
-                </span>
-              )) : (
-                <span>No explicit task safety limits recorded.</span>
-              )}
-            </div>
-          </TraceDataPanel>
+        <div data-observatory-trace-role="assistant">
+          <ChatMessage
+            role="assistant"
+            content={agentText}
+            assistantLabel="Coding agent"
+            timestamp={task?.updated_at ? new Date(task.updated_at) : undefined}
+            avatar={<span className="i-ph:code size-4" aria-hidden="true" />}
+            toolCalls={agentTracePanels}
+          />
         </div>
-
-        {task?.acceptance_criteria?.length ? (
-          <TraceDataPanel title="Acceptance" icon="i-ph:list-checks">
-            <div className="mt-2 grid gap-1.5 text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
-              {task.acceptance_criteria.map((criterion) => (
-                <span key={criterion}>{criterion}</span>
-              ))}
-            </div>
-          </TraceDataPanel>
-        ) : null}
       </div>
     </div>
   );

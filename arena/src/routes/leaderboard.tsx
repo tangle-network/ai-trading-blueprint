@@ -83,7 +83,7 @@ function botMatchesSearch(bot: Bot, search: string): boolean {
 
 function valueTone(value: number): string {
   if (!Number.isFinite(value) || value === 0) return 'text-[#697371]';
-  return value > 0 ? 'text-[#50d2c1]' : 'text-[#ff5d6c]';
+  return value > 0 ? 'text-[var(--arena-terminal-success)]' : 'text-[#ff5d6c]';
 }
 
 function formatFlowUsd(value: number): string {
@@ -191,7 +191,7 @@ function SelectedAgentDossier({
             <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2 font-mono text-xs text-[#949e9c]">
               <span>{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
               <span className="h-1 w-1 rounded-full bg-[#697371]" aria-hidden="true" />
-              <span className={bot.status === 'active' ? 'text-[#50d2c1]' : 'text-[#949e9c]'}>
+              <span className={bot.status === 'active' ? 'text-[var(--arena-terminal-success)]' : 'text-[#949e9c]'}>
                 {botStatusLabel(bot.status)}
               </span>
               <span className="h-1 w-1 rounded-full bg-[#697371]" aria-hidden="true" />
@@ -274,7 +274,7 @@ function SelectedAgentDossier({
                   className="grid grid-cols-[3.75rem_6.25rem_minmax(0,1fr)_5.5rem] items-center gap-2 border-b border-[#273035] px-2.5 py-1.5 last:border-b-0"
                 >
                   <span className="font-mono text-[11px] text-[#697371]">{formatTradeAge(trade.timestamp)}</span>
-                  <span className="min-w-0 truncate font-data text-xs font-bold text-[#50d2c1]">
+                  <span className="min-w-0 truncate font-data text-xs font-bold text-[var(--arena-terminal-accent)]">
                     {formatTradeActionLabel(trade.action)}
                   </span>
                   <span className="min-w-0 truncate font-mono text-xs text-[#d2dad7]">{getTradeMarketLabel(trade)}</span>
@@ -333,7 +333,7 @@ function SelectedAgentCockpit({
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 font-mono text-xs text-[#949e9c]">
               <span>{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
               <span className="h-1 w-1 rounded-full bg-[#697371]" aria-hidden="true" />
-              <span className={bot.status === 'active' ? 'text-[#50d2c1]' : 'text-[#949e9c]'}>
+              <span className={bot.status === 'active' ? 'text-[var(--arena-terminal-success)]' : 'text-[#949e9c]'}>
                 {botStatusLabel(bot.status)}
               </span>
               <span className="h-1 w-1 rounded-full bg-[#697371]" aria-hidden="true" />

@@ -3656,8 +3656,8 @@ export default function ProvisionPage() {
   }
 
   return (
-    <div className="arena-trace-terminal min-h-full bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)]">
-      <div className="flex min-h-full w-full flex-col">
+    <div className="arena-trace-terminal flex min-h-full w-full overflow-y-auto bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)] lg:h-full lg:min-h-0 lg:overflow-hidden">
+      <section className="flex w-full flex-1 flex-col lg:h-full lg:min-h-0">
         <ArenaPageHeader
           title="Activate"
           titleWidthClassName="min-[1180px]:w-[11rem]"
@@ -3678,7 +3678,7 @@ export default function ProvisionPage() {
           )}
         />
 
-        <nav className="grid shrink-0 gap-2 md:grid-cols-4" aria-label="Provision steps">
+        <nav className="grid shrink-0 border-b border-[var(--arena-terminal-border)] md:grid-cols-4" aria-label="Provision steps">
         {STEP_ORDER.map((s, i) => {
           const isCurrent = s === step;
           const isDone = i < stepIndex;
@@ -3696,12 +3696,12 @@ export default function ProvisionPage() {
                   setStep(s);
                 }}
                 disabled={!isDone && !isCurrent}
-                className={`flex h-12 items-center gap-3 rounded-[5px] border px-3 text-left font-display text-sm font-medium transition-[background-color,border-color,color,opacity,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
+                className={`flex h-12 items-center gap-3 border-r border-[var(--arena-terminal-border)] px-3 text-left font-display text-sm font-medium transition-[background-color,border-color,color,opacity,transform] duration-150 last:border-r-0 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--arena-terminal-accent)] ${
                   isCurrent
-                    ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-text)]'
+                    ? 'bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-text)] shadow-[inset_0_-2px_0_var(--arena-terminal-accent)]'
                     : isDone
-                      ? 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)] hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)]'
-                      : 'cursor-default border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-subtle)]'
+                      ? 'bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)] hover:bg-[var(--arena-terminal-panel-strong)]'
+                      : 'cursor-default bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-subtle)]'
                 }`}
               >
                 <span
@@ -3722,7 +3722,7 @@ export default function ProvisionPage() {
         })}
         </nav>
 
-        <div className="space-y-4">
+        <div className="min-h-0 flex-1 overflow-y-auto">
         {ambiguousInstanceProvisionMessage && (
           <div className="flex items-start gap-3 rounded-[7px] border border-[color-mix(in_srgb,var(--arena-terminal-warning)_42%,var(--arena-terminal-border))] bg-[color-mix(in_srgb,var(--arena-terminal-warning)_10%,var(--arena-terminal-panel))] p-4">
             <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--arena-terminal-warning)]" />
@@ -3784,7 +3784,7 @@ export default function ProvisionPage() {
               <Button
                 disabled={!selectedBlueprint}
                 onClick={goNext}
-                className="h-10 rounded-[5px] bg-[var(--arena-terminal-accent)] px-4 font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] active:scale-[0.98] disabled:opacity-45"
+                className="h-10 rounded-[5px] bg-[var(--arena-terminal-accent)] px-4 font-display text-sm font-semibold text-[var(--arena-terminal-accent-text)] transition-[background-color,opacity,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] active:scale-[0.98] disabled:opacity-45"
               >
                 Continue
               </Button>
@@ -3976,7 +3976,7 @@ export default function ProvisionPage() {
           setShowInfra(true);
         }}
       />
-      </div>
+      </section>
     </div>
   );
 }

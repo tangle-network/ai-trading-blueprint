@@ -138,9 +138,9 @@
 }
 
 .arena-trade-pill-buy {
-  border-color: color-mix(in srgb, var(--arena-terminal-accent) 44%, var(--arena-terminal-border));
-  background: color-mix(in srgb, var(--arena-terminal-accent) 14%, var(--arena-terminal-panel));
-  color: var(--arena-terminal-accent);
+  border-color: color-mix(in srgb, var(--arena-terminal-success) 44%, var(--arena-terminal-border));
+  background: color-mix(in srgb, var(--arena-terminal-success) 14%, var(--arena-terminal-panel));
+  color: var(--arena-terminal-success);
 }
 
 .arena-trade-pill-sell {
@@ -300,6 +300,184 @@
   --chat-send-ring: color-mix(in srgb, var(--arena-terminal-accent) 34%, transparent);
 }
 
+.arena-sandbox-transcript {
+  --background: var(--arena-elements-bg-depth-1);
+  --foreground: var(--arena-elements-textPrimary);
+  --card: var(--arena-elements-bg-depth-2);
+  --muted: var(--arena-elements-bg-depth-3);
+  --muted-foreground: var(--arena-elements-textTertiary);
+  --accent: var(--arena-elements-item-backgroundHover);
+  --primary: #6d28d9;
+  --brand-primary: #6d28d9;
+  --brand-strong: #5b21b6;
+  --brand-glow: #8b5cf6;
+  --brand-cool: #6d28d9;
+  --border: var(--arena-elements-dividerColor);
+  --border-default: var(--arena-elements-dividerColor);
+  --border-subtle: color-mix(in srgb, var(--arena-elements-dividerColor) 72%, transparent);
+  --border-accent: color-mix(in srgb, #8b5cf6 42%, transparent);
+  --border-accent-hover: color-mix(in srgb, #8b5cf6 62%, transparent);
+  --accent-surface-soft: color-mix(in srgb, #8b5cf6 10%, transparent);
+  --accent-text: #6d28d9;
+  --bg-root: var(--arena-elements-bg-depth-1);
+  --bg-card: var(--arena-elements-bg-depth-2);
+  --text-primary: var(--arena-elements-textPrimary);
+  --text-muted: var(--arena-elements-textTertiary);
+  --text-dim: var(--arena-elements-textTertiary);
+  --surface-success-bg: rgba(16, 185, 129, 0.08);
+  --surface-success-border: rgba(16, 185, 129, 0.24);
+  --surface-success-text: #047857;
+  --surface-warning-bg: rgba(245, 158, 11, 0.09);
+  --surface-warning-border: rgba(245, 158, 11, 0.28);
+  --surface-warning-text: #b45309;
+  --surface-danger-bg: rgba(244, 63, 94, 0.08);
+  --surface-danger-border: rgba(244, 63, 94, 0.24);
+  --surface-danger-text: #be123c;
+  --code-error: #be123c;
+  --code-success: #047857;
+  --radius-sm: 5px;
+  --radius-md: 6px;
+  --radius-lg: 7px;
+  --radius-xl: 8px;
+  --radius-full: 999px;
+  --avatar-size: 2rem;
+  --chat-message-px: 0.875rem;
+  --chat-message-py: 0.7rem;
+  --font-size-xs: 11px;
+  --font-size-base: 14px;
+  --line-height-base: 1.5;
+}
+
+.arena-sandbox-transcript--terminal {
+  color-scheme: light dark;
+  background: var(--arena-terminal-bg);
+  color: var(--arena-terminal-text);
+  --background: var(--arena-terminal-bg);
+  --foreground: var(--arena-terminal-text);
+  --card: var(--arena-terminal-panel);
+  --muted: var(--arena-terminal-surface);
+  --muted-foreground: var(--arena-terminal-text-muted);
+  --accent: var(--arena-terminal-panel-strong);
+  --primary: var(--arena-terminal-accent);
+  --brand-primary: color-mix(in srgb, var(--arena-terminal-accent) 34%, var(--arena-terminal-panel));
+  --brand-strong: color-mix(in srgb, var(--arena-terminal-accent) 44%, var(--arena-terminal-panel));
+  --brand-glow: var(--arena-terminal-accent);
+  --brand-cool: var(--arena-terminal-accent);
+  --border: var(--arena-terminal-border);
+  --border-default: var(--arena-terminal-border);
+  --border-subtle: color-mix(in srgb, var(--arena-terminal-border) 78%, transparent);
+  --border-accent: color-mix(in srgb, var(--arena-terminal-accent) 36%, transparent);
+  --border-accent-hover: color-mix(in srgb, var(--arena-terminal-accent) 50%, transparent);
+  --accent-surface-soft: var(--arena-terminal-accent-soft);
+  --accent-text: var(--arena-terminal-accent);
+  --bg-root: var(--arena-terminal-bg);
+  --bg-card: var(--arena-terminal-panel);
+  --text-primary: var(--arena-terminal-text);
+  --text-muted: var(--arena-terminal-text-muted);
+  --text-dim: var(--arena-terminal-text-muted);
+  --surface-success-bg: color-mix(in srgb, var(--arena-terminal-success) 12%, var(--arena-terminal-panel));
+  --surface-success-border: var(--arena-terminal-success-border);
+  --surface-success-text: var(--arena-terminal-success);
+  --surface-danger-text: #ff7f9a;
+  --code-success: var(--arena-terminal-success);
+  --code-error: #ff7f9a;
+}
+
+.arena-sandbox-transcript .max-w-3xl {
+  max-width: 1120px;
+}
+
+.arena-sandbox-transcript .min-h-full.justify-end {
+  justify-content: flex-start !important;
+}
+
+.arena-sandbox-transcript .rounded-\[26px\],
+.arena-sandbox-transcript .rounded-\[28px\],
+.arena-sandbox-transcript .rounded-\[24px\],
+.arena-sandbox-transcript .rounded-\[22px\],
+.arena-sandbox-transcript .rounded-\[20px\],
+.arena-sandbox-transcript .rounded-2xl {
+  border-radius: var(--radius-lg) !important;
+}
+
+.arena-sandbox-transcript .rounded-br-\[12px\],
+.arena-sandbox-transcript .rounded-br-md {
+  border-bottom-right-radius: var(--radius-sm) !important;
+}
+
+.arena-sandbox-transcript .bg-card,
+.arena-sandbox-transcript [class~='bg-card'] {
+  background-color: var(--card) !important;
+}
+
+.arena-sandbox-transcript .bg-muted,
+.arena-sandbox-transcript [class~='bg-muted'],
+.arena-sandbox-transcript [class~='bg-muted/50'] {
+  background-color: color-mix(in srgb, var(--muted) 82%, transparent) !important;
+}
+
+.arena-sandbox-transcript [class~='bg-[var(--brand-primary)]'] {
+  background-color: var(--brand-primary) !important;
+}
+
+.arena-sandbox-transcript [class~='bg-[var(--accent-surface-soft)]'] {
+  background-color: var(--accent-surface-soft) !important;
+}
+
+.arena-sandbox-transcript [class~='bg-[var(--brand-cool)]'] {
+  background-color: var(--brand-cool) !important;
+}
+
+.arena-sandbox-transcript .text-foreground,
+.arena-sandbox-transcript [class~='text-foreground'] {
+  color: var(--foreground) !important;
+}
+
+.arena-sandbox-transcript .text-muted-foreground,
+.arena-sandbox-transcript [class~='text-muted-foreground'] {
+  color: var(--muted-foreground) !important;
+}
+
+.arena-sandbox-transcript [class~='text-[var(--accent-text)]'] {
+  color: var(--accent-text) !important;
+}
+
+.arena-sandbox-transcript [class~='text-[var(--brand-cool)]'] {
+  color: var(--brand-cool) !important;
+}
+
+.arena-sandbox-transcript [class~='text-white'] {
+  color: #fff !important;
+}
+
+.arena-sandbox-transcript [class~='text-white/60'] {
+  color: rgba(255, 255, 255, 0.68) !important;
+}
+
+.arena-sandbox-transcript .border-border,
+.arena-sandbox-transcript [class~='border-border'] {
+  border-color: var(--border) !important;
+}
+
+.arena-sandbox-transcript [class~='border-[var(--border-accent)]'] {
+  border-color: var(--border-accent) !important;
+}
+
+.arena-sandbox-transcript [class~='border-[var(--border-accent-hover)]'] {
+  border-color: var(--border-accent-hover) !important;
+}
+
+.arena-sandbox-transcript .tangle-prose {
+  color: var(--text-primary);
+}
+
+.arena-sandbox-transcript pre,
+.arena-sandbox-transcript code {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 :root[data-theme='dark'] .arena-trace-terminal,
 :root[data-theme='dark'] .arena-terminal-transcript code,
 :root[data-theme='dark'] .arena-terminal-transcript pre {
@@ -411,6 +589,17 @@
   border-color: var(--arena-terminal-border-hover) !important;
 }
 
+.arena-trace-terminal[class~='ring-[#50d2c1]/70'],
+.arena-trace-terminal [class~='ring-[#50d2c1]/70'],
+.arena-trace-terminal[class~='focus-visible:ring-[#50d2c1]/60']:focus-visible,
+.arena-trace-terminal [class~='focus-visible:ring-[#50d2c1]/60']:focus-visible,
+.arena-trace-terminal[class~='focus-visible:ring-[#50d2c1]/70']:focus-visible,
+.arena-trace-terminal [class~='focus-visible:ring-[#50d2c1]/70']:focus-visible,
+.arena-trace-terminal[class~='focus:ring-[#50d2c1]/20']:focus,
+.arena-trace-terminal [class~='focus:ring-[#50d2c1]/20']:focus {
+  --tw-ring-color: color-mix(in srgb, var(--arena-terminal-accent) 44%, transparent) !important;
+}
+
 .arena-trace-terminal[class~='divide-[#273035]'] > :not([hidden]) ~ :not([hidden]),
 .arena-trace-terminal [class~='divide-[#273035]'] > :not([hidden]) ~ :not([hidden]) {
   border-color: var(--arena-terminal-border) !important;
@@ -452,6 +641,13 @@
 .arena-trace-terminal[class~='text-[#c8fffb]'],
 .arena-trace-terminal [class~='text-[#c8fffb]'] {
   color: var(--arena-terminal-accent) !important;
+}
+
+.arena-trace-terminal[class~='text-[#04060c]'],
+.arena-trace-terminal [class~='text-[#04060c]'],
+.arena-trace-terminal[class~='text-[#06100e]'],
+.arena-trace-terminal [class~='text-[#06100e]'] {
+  color: var(--arena-terminal-accent-text) !important;
 }
 
 .arena-trace-terminal[class~='text-[#ff5d6c]'],

@@ -483,6 +483,111 @@ describe("RunsTab", () => {
     expect(screen.queryByText("Transcript unavailable")).not.toBeInTheDocument();
   });
 
+  it("renders observatory agentic reflection results as readable sections", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    const result = JSON.stringify({
+      agentic_reflection: {
+        assistant_text:
+          "**Observed**\nBot `harness-canary2` processed 1 world signal and executed 4 delegated work sessions.\n\n**Concern**\nDelegations produced zero strategy ideas.\n\n**Next safe action**\nInspect the research-to-idea conversion.",
+        status: "completed",
+        session_id: "ses_reflect_1",
+        trace_id: "trace_reflect_1",
+        input_tokens: 1200,
+        output_tokens: 450,
+        cost_usd: 0.015,
+      },
+      records: {
+        reflection_runs: [
+          {
+            trigger: "manual",
+            mode: "poke",
+            conclusions: ["research is running"],
+            uncertainties: ["idea synthesis is missing"],
+            findings: [
+              {
+                severity: "warning",
+                code: "NO_IDEAS",
+                summary: "Delegated research did not become strategy output.",
+              },
+            ],
+          },
+        ],
+        world_signal_digests: [{ id: "sig-1" }],
+        ideas: [],
+        research_tasks: [{ id: "task-1" }],
+        delegated_work_sessions: [
+          { summary: "Fetch ETH macro signal", status: "completed", source: "research" },
+          { summary: "Check venue liquidity", status: "completed", source: "research" },
+          { summary: "Compare drawdown constraints", status: "completed", source: "research" },
+          { summary: "Inspect paper-trade gap", status: "running", source: "analysis" },
+        ],
+        delegation_pressure: {
+          pressure_level: "low",
+          active_sessions: 4,
+          unique_sessions: 4,
+          allows_new_delegation: true,
+        },
+        usage_summary: {
+          reporting_status: "partial",
+          event_count: 4,
+          input_tokens: 1200,
+          output_tokens: 450,
+          total_tokens: 1650,
+          cost_usd: 0.015,
+          providers: ["openai"],
+          models: ["gpt-5"],
+        },
+      },
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "obs_902241ba89627d5da466",
+              workflow_id: 404,
+              workflow_kind: "observatory",
+              status: "completed",
+              started_at: 1_775_849_924,
+              completed_at: 1_775_850_048,
+              session_id: null,
+              transcript_available: false,
+              trace_id: "trace_reflect_1",
+              duration_ms: 128_000,
+              input_tokens: 1200,
+              output_tokens: 450,
+              result,
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByText("Agentic Reflection")).toBeInTheDocument();
+    expect(screen.getAllByText("Parsed Output").length).toBeGreaterThan(0);
+    expect(screen.getByText("Delegation Pressure")).toBeInTheDocument();
+    expect(screen.getByText("Observatory Records")).toBeInTheDocument();
+    expect(screen.getAllByText(/processed 1 world signal/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Fetch ETH macro signal/)).toBeInTheDocument();
+    expect(screen.queryByText(/agentic_reflection/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\{"agentic_reflection/)).not.toBeInTheDocument();
+  });
+
   it("loads public run replay through the transcript surface without owner auth", async () => {
     const { RunsTab } = await import("../RunsTab");
     authState.token = null;
@@ -591,6 +696,58 @@ describe("RunsTab", () => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
           sessionId: "ses_1b67cbb3cffey7L46b5A1X15w6",
+        }),
+      );
+    });
+  });
+
+  it("replays archived run messages instead of streaming derived session ids", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-transcript-archive",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_849_924,
+              completed_at: 1_775_849_984,
+              session_id: null,
+              transcript_available: true,
+              trace_id: "trace-archive",
+              duration_ms: 60_000,
+              input_tokens: 10,
+              output_tokens: 6,
+              result: "archived summary",
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          sessionId: "run-replay-run-transcript-archive",
+          historyPath: "/runs/run-transcript-archive/messages?limit=200",
+          streamEnabled: false,
         }),
       );
     });

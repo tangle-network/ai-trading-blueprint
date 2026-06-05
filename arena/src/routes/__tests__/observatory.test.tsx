@@ -275,8 +275,9 @@ describe('ObservatoryPage', () => {
     expect(screen.getByText('Coding agent')).toBeInTheDocument();
     expect(container.querySelector('[data-observatory-trace-role="user"]')).not.toBeNull();
     expect(container.querySelector('[data-observatory-trace-role="assistant"]')).not.toBeNull();
-    expect(container.querySelector('[data-chat-role]')).toBeNull();
-    expect(screen.getByText('Research-only Observatory task for bot bot-1.')).toBeInTheDocument();
+    expect(container.querySelector('[data-chat-role="user"]')).not.toBeNull();
+    expect(container.querySelector('[data-chat-role="assistant"]')).not.toBeNull();
+    expect(screen.getByText(/Research-only Observatory task for bot bot-1\./)).toBeInTheDocument();
     expect(screen.getByText('No result recorded yet. Current status: queued_research.')).toBeInTheDocument();
     expect(screen.getByText('Source-grounded finding is recorded.')).toBeInTheDocument();
     expect(screen.getByText('can_trade')).toBeInTheDocument();

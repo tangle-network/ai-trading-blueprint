@@ -53,7 +53,7 @@ export function ArenaHeaderLink({
     <Link
       to={to}
       onClick={onClick}
-      className={`inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border px-3 text-sm font-display font-medium transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${variantClassName}`}
+      className={`inline-flex h-9 w-fit items-center gap-2 rounded-[5px] border px-3 text-sm font-display font-medium transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${variantClassName}`}
     >
       <span className={`${icon} text-sm`} aria-hidden="true" />
       {children}

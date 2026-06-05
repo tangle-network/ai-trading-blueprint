@@ -123,12 +123,12 @@ export function SecretsStep({
             onClick={() => setUseOperatorKey(!useOperatorKey)}
             className={`w-full flex items-center gap-3 rounded-[5px] border p-3 text-left transition-[background-color,border-color,box-shadow] duration-150 ${
               useOperatorKey
-                ? 'border-[#50d2c1]/70 bg-[#143c38] ring-1 ring-[#50d2c1]/20'
-                : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] hover:border-[#50d2c1]/50'
+                ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] ring-1 ring-[color-mix(in_srgb,var(--arena-terminal-accent)_24%,transparent)]'
+                : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] hover:border-[var(--arena-terminal-border-hover)]'
             }`}
           >
             <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
-              useOperatorKey ? 'border-[#50d2c1] bg-[#50d2c1]' : 'border-arena-elements-textTertiary'
+              useOperatorKey ? 'border-[var(--arena-terminal-accent)] bg-[var(--arena-terminal-accent)]' : 'border-arena-elements-textTertiary'
             }`}>
               {useOperatorKey && (
                 <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={4}>
@@ -200,7 +200,7 @@ export function SecretsStep({
           {botDetailHref ? (
             <Link
               to={botDetailHref}
-              className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-[#50d2c1] hover:underline"
+              className="inline-flex items-center gap-1.5 text-sm font-display font-medium text-[var(--arena-terminal-accent)] hover:underline"
             >
               {viewBotLabel}
             </Link>

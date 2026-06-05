@@ -27,18 +27,18 @@ const toneIconClass: Record<DecisionFeedTone, string> = {
 
 const terminalToneBadgeClass: Record<DecisionFeedTone, string> = {
   neutral: 'border-[#273035] bg-[#16242a] text-[#d2dad7]',
-  success: 'border-[#50d2c1]/28 bg-[#143c38] text-[#50d2c1]',
+  success: 'border-[var(--arena-terminal-success-border)] bg-[var(--arena-terminal-success-soft)] text-[var(--arena-terminal-success)]',
   warning: 'border-amber-400/28 bg-amber-500/10 text-amber-300',
   danger: 'border-[#ed7088]/32 bg-[#3a1d26] text-[#ed7088]',
-  active: 'border-[#50d2c1]/28 bg-[#123f3a] text-[#50d2c1]',
+  active: 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]',
 };
 
 const terminalToneIconClass: Record<DecisionFeedTone, string> = {
   neutral: 'text-[#949e9c]',
-  success: 'text-[#50d2c1]',
+  success: 'text-[var(--arena-terminal-success)]',
   warning: 'text-amber-300',
   danger: 'text-[#ed7088]',
-  active: 'text-[#50d2c1]',
+  active: 'text-[var(--arena-terminal-accent)]',
 };
 
 interface DecisionInspectorProps {
@@ -93,7 +93,7 @@ function venuePresentation(label: string | undefined, instrumentLabel: string) {
     return { mark: 'AERO', label: 'Aerodrome', iconClass: 'i-ph:swap', toneClass: 'border-[#5fd7ff]/30 bg-[#0a2a34] text-[#7be6ff]' };
   }
   if (source.includes('hyperliquid')) {
-    return { mark: 'HL', label: 'Hyperliquid', iconClass: 'i-ph:chart-line-up', toneClass: 'border-[#50d2c1]/28 bg-[#0d302c] text-[#50d2c1]' };
+    return { mark: 'HL', label: 'Hyperliquid', iconClass: 'i-ph:chart-line-up', toneClass: 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]' };
   }
   if (source.includes('paper')) {
     return { mark: 'SIM', label: 'Paper', iconClass: 'i-ph:notepad', toneClass: 'border-[#6f5723] bg-[#201808] text-[#f2c066]' };
@@ -177,7 +177,7 @@ export function DecisionInspector({
               {venue.mark}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 items-center gap-1.5 font-data text-[11px] uppercase tracking-[0.12em] text-[#50d2c1]">
+              <div className="flex min-w-0 items-center gap-1.5 font-data text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-muted)]">
                 <span className={`${venue.iconClass} shrink-0 text-sm`} aria-hidden="true" />
                 <span className="truncate">{venue.label}</span>
               </div>
