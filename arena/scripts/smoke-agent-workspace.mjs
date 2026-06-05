@@ -80,7 +80,11 @@ const FIXTURE_OBSERVATORY_EXPECTATIONS = [
   'CAP 3',
 ];
 const FIXTURE_CREATE_EXPECTATIONS = ['New Agent', 'Mandate', 'Agent Profile', 'Prediction Markets', 'Prepare Live Activation'];
-const FIXTURE_PROVISION_EXPECTATIONS = ['Activate', 'Launch Check', 'Owner Wallet', 'Connect Wallet'];
+const FIXTURE_PROVISION_EXPECTATIONS = [
+  'Activate Agent',
+  'Connect a wallet to provision the runtime',
+  'Connect Wallet',
+];
 const FIXTURE_PROVISION_CONNECTED_EXPECTATIONS = [
   'Activate',
   'Base Sepolia',
