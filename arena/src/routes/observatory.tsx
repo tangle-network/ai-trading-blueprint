@@ -837,7 +837,7 @@ export default function ObservatoryPage() {
     return (
       <ConnectWalletPanel
         title="Connect owner wallet"
-        description="Owner or operator authentication is required to inspect bot reflections, ideas, delegated work, and cost telemetry."
+        description="Connect to inspect bot reflections, ideas, delegated work, and spend."
         bullets={['Trigger bot observation', 'Review emitted ideas', 'Track delegated work']}
       />
     );

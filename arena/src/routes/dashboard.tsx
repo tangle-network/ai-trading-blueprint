@@ -248,7 +248,7 @@ export default function HomePage() {
     return (
       <ConnectWalletPanel
         title="Connect owner wallet"
-        description="Wallet ownership determines which services, vaults, secrets, and operator-managed agents appear in this workspace."
+        description="Connect to load owner services, vaults, secrets, and operator agents."
         bullets={[
           'Owned service instances',
           'Operator-managed agents',

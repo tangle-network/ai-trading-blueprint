@@ -11,7 +11,7 @@ vi.mock('connectkit', () => ({
 }));
 
 describe('ConnectWalletPanel', () => {
-  it('renders a full-height launch access console', () => {
+  it('renders a compact wallet access rail without launch chrome', () => {
     render(
       <MemoryRouter>
         <ConnectWalletPanel
@@ -23,15 +23,14 @@ describe('ConnectWalletPanel', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Activate Agent' })).toBeInTheDocument();
-    expect(screen.getByText('Launch Check')).toBeInTheDocument();
-    expect(screen.getByText('Launch Path')).toBeInTheDocument();
-    expect(screen.getByText('Owner Wallet')).toBeInTheDocument();
-    expect(screen.getByText('Create paper agent')).toBeInTheDocument();
-    expect(screen.getByText('Watch fills and runs')).toBeInTheDocument();
+    expect(screen.getByText('Wallet signs service ownership, operator quotes, funding, and activation.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /connect wallet/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /agents/i })).toHaveAttribute('href', '/leaderboard');
+    expect(screen.getByRole('link', { name: /activity/i })).toHaveAttribute('href', '/activity');
     expect(screen.getByRole('link', { name: /new agent/i })).toHaveAttribute('href', '/create');
-    expect(screen.getByRole('link', { name: /activate agent/i })).toHaveAttribute('href', '/provision');
-    expect(screen.getByRole('link', { name: /live activity/i })).toHaveAttribute('href', '/activity');
-    expect(screen.getAllByText('Ready')).toHaveLength(4);
+    expect(screen.queryByText('Launch Check')).not.toBeInTheDocument();
+    expect(screen.queryByText('Launch Path')).not.toBeInTheDocument();
+    expect(screen.queryByText('Owner Wallet')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ready')).not.toBeInTheDocument();
   });
 });

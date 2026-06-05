@@ -1,4 +1,3 @@
-import { Button } from '@tangle-network/blueprint-ui/components';
 import { useStore } from '@nanostores/react';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { hydratedBotsStore } from '~/lib/stores/hydratedBots';
@@ -16,6 +15,8 @@ interface AuthTarget {
   auth: ReturnType<typeof useOperatorAuth>;
   isAvailable: boolean;
 }
+
+const operatorActionButtonClass = 'arena-command-link-primary inline-flex h-9 shrink-0 items-center justify-center gap-2 border px-3 font-display text-sm font-semibold transition-[background-color,opacity,transform] duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]';
 
 export function OperatorAccessCard({
   title = 'Operator authentication required',
@@ -82,20 +83,30 @@ export function OperatorAccessCard({
   };
 
   return (
-    <div className="glass-card rounded-xl text-center py-16 px-6 text-arena-elements-textSecondary">
-      <div className="i-ph:wallet text-4xl mb-4 mx-auto text-arena-elements-textTertiary" />
-      <h3 className="font-display font-semibold text-xl text-arena-elements-textPrimary mb-2">
-        {title}
-      </h3>
-      <p className="mx-auto max-w-2xl text-base mb-5">{description}</p>
-      <Button
-        onClick={() => { void authenticate(); }}
-        disabled={isAuthenticating}
-      >
-        {isAuthenticating ? 'Authenticating…' : 'Authenticate'}
-      </Button>
+    <div className="arena-trace-terminal border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-3 py-3 text-[var(--arena-terminal-text)]">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-muted)]">
+          <span className="i-ph:wallet text-lg" aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">
+            {title}
+          </h3>
+          <p className="mt-0.5 max-w-[64rem] overflow-hidden text-sm leading-5 text-[var(--arena-terminal-text-muted)]">
+            {description}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => { void authenticate(); }}
+          disabled={isAuthenticating || selectedTargets.length === 0}
+          className={operatorActionButtonClass}
+        >
+          {isAuthenticating ? 'Authenticating…' : 'Authenticate'}
+        </button>
+      </div>
       {error && (
-        <p className="mt-3 text-sm text-crimson-500">{error}</p>
+        <p className="mt-2 pl-0 font-data text-xs text-crimson-500 sm:pl-12">{error}</p>
       )}
     </div>
   );
@@ -107,14 +118,20 @@ export function UnsupportedFeatureCard({
   feature: string;
 }) {
   return (
-    <div className="glass-card rounded-xl text-center py-16 px-6 text-arena-elements-textSecondary">
-      <div className="i-ph:warning-circle text-4xl mb-4 mx-auto text-arena-elements-textTertiary" />
-      <h3 className="font-display font-semibold text-xl text-arena-elements-textPrimary mb-2">
-        {feature} unavailable
-      </h3>
-      <p className="mx-auto max-w-2xl text-base">
-        This operator does not currently expose {feature.toLowerCase()} through the frontend contract.
-      </p>
+    <div className="arena-trace-terminal border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-3 py-3 text-[var(--arena-terminal-text)]">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-warning)]">
+          <span className="i-ph:warning-circle text-lg" aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <h3 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">
+            {feature} unavailable
+          </h3>
+          <p className="mt-0.5 overflow-hidden text-sm leading-5 text-[var(--arena-terminal-text-muted)]">
+            This operator does not expose {feature.toLowerCase()}.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -161,22 +178,23 @@ export function OperatorSessionBanner() {
   };
 
   return (
-    <div className="flex shrink-0 flex-col gap-2 rounded-[6px] border border-arena-elements-dividerColor/70 bg-arena-elements-background-depth-2/70 px-3 py-2 sm:flex-row sm:items-center">
+    <div className="arena-trace-terminal flex shrink-0 flex-col gap-2 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 py-2 text-[var(--arena-terminal-text)] sm:flex-row sm:items-center">
       <div className="min-w-0 flex-1">
-        <div className="truncate font-display text-sm font-semibold text-arena-elements-textPrimary">
+        <div className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
           Operator session locked
         </div>
         {error && (
           <p className="mt-1 truncate text-xs text-crimson-500">{error}</p>
         )}
       </div>
-      <Button
+      <button
+        type="button"
         onClick={() => { void authenticateAll(); }}
         disabled={isAuthenticating}
-        size="sm"
+        className={operatorActionButtonClass}
       >
         {isAuthenticating ? 'Connecting…' : 'Authenticate'}
-      </Button>
+      </button>
     </div>
   );
 }

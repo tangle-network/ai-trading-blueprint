@@ -7,26 +7,30 @@ interface ConnectWalletPanelProps {
   description: string;
   footnote?: ReactNode;
   bullets?: readonly string[];
+  actions?: readonly AccessAction[];
 }
 
-const launchRoutes = [
+interface AccessAction {
+  label: string;
+  href: string;
+  icon: string;
+}
+
+const defaultAccessActions = [
+  {
+    label: 'Agents',
+    href: '/leaderboard',
+    icon: 'i-ph:table',
+  },
+  {
+    label: 'Activity',
+    href: '/activity',
+    icon: 'i-ph:pulse',
+  },
   {
     label: 'New Agent',
     href: '/create',
     icon: 'i-ph:chat-circle-dots',
-    meta: 'paper first',
-  },
-  {
-    label: 'Activate Agent',
-    href: '/provision',
-    icon: 'i-ph:rocket-launch',
-    meta: 'wallet',
-  },
-  {
-    label: 'Live Activity',
-    href: '/activity',
-    icon: 'i-ph:pulse',
-    meta: 'fills',
   },
 ] as const;
 
@@ -34,140 +38,48 @@ export function ConnectWalletPanel({
   title = 'Connect your wallet',
   description,
   footnote,
-  bullets,
+  actions = defaultAccessActions,
 }: ConnectWalletPanelProps) {
-  const checks = bullets && bullets.length > 0 ? bullets : [
-    'Operator access',
-    'Agent funding',
-    'Live telemetry',
-  ];
-
   return (
-    <div className="arena-trace-terminal flex min-h-full bg-[#081013] text-[#f6fefd] lg:h-full">
-      <div className="mx-auto flex w-full max-w-[1260px] flex-1 flex-col gap-3 lg:h-full lg:min-h-0">
-        <section className="grid border border-[#273035] bg-[#0b1418] lg:h-full lg:min-h-[560px] lg:grid-rows-[auto_minmax(0,1fr)] lg:overflow-hidden">
-          <div className="grid gap-4 border-b border-[#273035] px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-            <div className="min-w-0">
-              <p className="font-mono text-xs uppercase tracking-[0.18em] text-[#50d2c1]">
-                Arena Access
-              </p>
-              <h1 className="mt-1 text-pretty font-display text-2xl font-semibold tracking-tight text-[#f6fefd] md:text-3xl">
+    <div className="arena-trace-terminal flex min-h-full bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)] lg:h-full">
+      <section className="flex w-full min-w-0 flex-col">
+        <div className="shrink-0 border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-3 py-3">
+          <div className="flex min-w-0 flex-col gap-3 min-[900px]:flex-row min-[900px]:items-center">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
+                <span className="i-ph:wallet text-lg" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <h1 className="truncate font-display text-lg font-semibold tracking-tight text-[var(--arena-terminal-text)]">
                 {title}
-              </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-5 text-[#949e9c]">
-                {description}
-              </p>
-            </div>
-            <div className="grid grid-cols-3 overflow-hidden border border-[#273035] bg-[#081013] font-mono text-[11px] uppercase tracking-[0.12em] text-[#949e9c] md:w-[390px]">
-              <span className="border-r border-[#273035] px-3 py-2 text-center">Base</span>
-              <span className="border-r border-[#273035] px-3 py-2 text-center">Paper</span>
-              <span className="px-3 py-2 text-center text-[#50d2c1]">Risk</span>
-            </div>
-          </div>
-
-          <div className="grid gap-3 p-3 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="grid gap-3 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)]">
-              <section className="overflow-hidden border border-[#273035] bg-[#081013]">
-                <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] border-b border-[#273035] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[#697371]">
-                  <span>Launch Check</span>
-                  <span className="text-right">State</span>
-                </div>
-                {checks.map((bullet) => (
-                  <div
-                    key={bullet}
-                    className="grid grid-cols-[24px_minmax(0,1fr)_5.5rem] items-center gap-2 border-b border-[#273035] px-3 py-2.5 last:border-b-0"
-                  >
-                    <span className="i-ph:check-circle text-base text-[#50d2c1]" aria-hidden="true" />
-                    <span className="min-w-0 truncate font-display text-sm font-semibold text-[#f6fefd]">{bullet}</span>
-                    <span className="text-right font-mono text-xs text-[#50d2c1]">Ready</span>
-                  </div>
-                ))}
-              </section>
-
-              <section className="grid gap-2 border border-[#273035] bg-[#081013] p-2 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)]">
-                <div className="grid gap-2 md:grid-cols-3">
-                  {launchRoutes.map((route) => (
-                    <Link
-                      key={route.href}
-                      to={route.href}
-                      className="group grid min-h-[118px] content-between rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-3 transition-[background-color,border-color,transform] duration-150 hover:border-[#50d2c1]/55 hover:bg-[#132329] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-                    >
-                      <span className="flex items-center justify-between gap-3">
-                        <span className="flex h-10 w-10 items-center justify-center rounded-[5px] bg-[#143c38] text-[#50d2c1]">
-                          <span className={`${route.icon} text-xl`} aria-hidden="true" />
-                        </span>
-                        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-[#697371]">
-                          {route.meta}
-                        </span>
-                      </span>
-                      <span className="mt-5 flex items-center justify-between gap-3">
-                        <span className="font-display text-base font-semibold text-[#f6fefd]">
-                          {route.label}
-                        </span>
-                        <span className="i-ph:arrow-right text-base text-[#697371] transition-[color,transform] duration-150 group-hover:translate-x-0.5 group-hover:text-[#50d2c1]" aria-hidden="true" />
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-                <div className="min-h-0 overflow-hidden border border-[#273035] bg-[#0f1a1f]">
-                  <div className="grid grid-cols-[2rem_minmax(0,1fr)_8rem] border-b border-[#273035] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[#697371]">
-                    <span>#</span>
-                    <span>Launch Path</span>
-                    <span className="text-right">Surface</span>
-                  </div>
-                  {[
-                    ['01', 'Create paper agent', 'New Agent'],
-                    ['02', 'Sign service ownership', 'Activation'],
-                    ['03', 'Start operator runtime', 'Agent'],
-                    ['04', 'Watch fills and runs', 'Activity'],
-                  ].map(([index, action, surface]) => (
-                    <div
-                      key={index}
-                      className="grid grid-cols-[2rem_minmax(0,1fr)_8rem] items-center border-b border-[#273035] px-3 py-2.5 last:border-b-0"
-                    >
-                      <span className="font-mono text-xs text-[#50d2c1]">{index}</span>
-                      <span className="truncate font-display text-sm font-semibold text-[#f6fefd]">{action}</span>
-                      <span className="truncate text-right font-mono text-xs text-[#949e9c]">{surface}</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
-
-            <aside className="flex flex-col justify-between gap-3 border border-[#273035] bg-[#081013] p-3 lg:min-h-0">
-              <div>
-                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-[5px] bg-[#143c38] text-[#50d2c1]">
-                  <span className="i-ph:wallet text-xl" aria-hidden="true" />
-                </div>
-                <h2 className="font-display text-lg font-semibold text-[#f6fefd]">
-                  Owner Wallet
-                </h2>
-                <p className="mt-1 text-sm leading-5 text-[#949e9c]">
-                  Connect once to unlock service creation and operator access.
+                </h1>
+                <p className="mt-0.5 max-h-10 max-w-[64rem] overflow-hidden text-sm leading-5 text-[var(--arena-terminal-text-muted)]">
+                  {description}
                 </p>
-                <div className="space-y-2 border-y border-[#273035] py-3 font-mono text-xs">
-                  <ReadoutRow label="Owner" value="wallet" />
-                  <ReadoutRow label="Route" value="agent launch" />
-                  <ReadoutRow label="Access" value="operator" />
-                </div>
-                <div className="mt-3 space-y-2 rounded-[5px] border border-[#273035] bg-[#0f1a1f] p-3 font-mono text-xs">
-                  <ReadoutRow label="Network" value="base" />
-                  <ReadoutRow label="Mode" value="paper first" />
-                  <ReadoutRow label="Risk" value="gated" />
-                  <ReadoutRow label="Scope" value="owner" />
-                </div>
               </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2 min-[900px]:justify-end">
+              {actions.map((action) => (
+                <Link
+                  key={action.href}
+                  to={action.href}
+                  className="arena-command-link-secondary inline-flex h-9 items-center gap-2 border px-3 font-display text-sm font-medium transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] lg:hidden"
+                >
+                  <span className={`${action.icon} text-sm`} aria-hidden="true" />
+                  {action.label}
+                </Link>
+              ))}
               <ConnectKitButton.Custom>
                 {({ show, isConnecting }) => (
                   <button
                     type="button"
                     onClick={() => show?.()}
                     disabled={!show || isConnecting}
-                    className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[5px] bg-[#50d2c1] px-4 font-display text-sm font-semibold text-[#06100e] transition-[background-color,opacity,transform] duration-150 hover:bg-[#7ce6d9] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                    className="arena-command-link-primary inline-flex h-9 items-center justify-center gap-2 border px-3 font-display text-sm font-semibold transition-[background-color,opacity,transform] duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
                   >
                     {isConnecting ? (
                       <>
-                        <span className="h-3.5 w-3.5 rounded-full border-2 border-[#06100e]/25 border-t-[#06100e]" />
+                        <span className="h-3.5 w-3.5 rounded-full border-2 border-[var(--arena-terminal-accent-text)]/25 border-t-[var(--arena-terminal-accent-text)]" />
                         Connecting…
                       </>
                     ) : (
@@ -179,24 +91,16 @@ export function ConnectWalletPanel({
                   </button>
                 )}
               </ConnectKitButton.Custom>
-            </aside>
+            </div>
           </div>
-        </section>
-        {footnote && (
-          <p className="self-end font-mono text-xs text-[#697371]">
+          {footnote && (
+            <p className="mt-2 pl-12 font-data text-xs text-[var(--arena-terminal-text-subtle)]">
             {footnote}
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ReadoutRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[76px_minmax(0,1fr)] items-center gap-3">
-      <span className="uppercase tracking-[0.12em] text-[#697371]">{label}</span>
-      <span className="min-w-0 truncate text-right text-[#d2dad7]">{value}</span>
+            </p>
+          )}
+        </div>
+        <div className="min-h-0 flex-1" />
+      </section>
     </div>
   );
 }
