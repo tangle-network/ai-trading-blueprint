@@ -17,6 +17,10 @@ export default defineConfig({
         stubs,
         'sandbox-ui-hooks.ts',
       ),
+      '@tangle-network/sandbox-ui/run': path.join(
+        stubs,
+        'sandbox-ui-run.tsx',
+      ),
       '@tangle-network/sandbox-ui/utils': path.join(
         stubs,
         'sandbox-ui-utils.ts',

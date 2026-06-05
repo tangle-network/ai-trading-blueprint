@@ -72,12 +72,14 @@ const FIXTURE_ACTIVITY_EXPECTATIONS = ['Activity', '24H Vol', 'Fills', 'ETH Macr
 const FIXTURE_OBSERVATORY_EXPECTATIONS = [
   'Observatory',
   'ETH Macro Scalper',
-  'Latest reflection',
-  'Delegated work',
-  'Driver',
-  'Coding agent',
+  'Output',
+  'Trace',
+  'Findings',
+  'Ideas',
+  'Delegations',
+  'Agent',
+  '1 tool, 1 response',
   'Source-grounded finding is recorded.',
-  'CAP 3',
 ];
 const FIXTURE_CREATE_EXPECTATIONS = ['New Agent', 'Mandate', 'Agent Profile', 'Prediction Markets', 'Review Activation'];
 const FIXTURE_PROVISION_EXPECTATIONS = [
@@ -1850,6 +1852,7 @@ async function assertFixtureObservatoryDashboard(page, baseUrl, { screenshotDir 
             bodyText: document.body.innerText.slice(0, 8000),
             hasDriverTrace: Boolean(document.querySelector('[data-observatory-trace-role="user"]')),
             hasAgentTrace: Boolean(document.querySelector('[data-observatory-trace-role="assistant"]')),
+            hasRunGroup: Boolean(document.querySelector('[data-observatory-trace-role="assistant"] [data-state]')),
             scrollHeight: scrolling.scrollHeight,
             innerHeight: window.innerHeight,
           };
@@ -1857,6 +1860,7 @@ async function assertFixtureObservatoryDashboard(page, baseUrl, { screenshotDir 
         return nextMetrics.pathname.endsWith('/observatory')
           && nextMetrics.hasDriverTrace
           && nextMetrics.hasAgentTrace
+          && nextMetrics.hasRunGroup
           && textIncludes(nextMetrics.bodyText, FIXTURE_OBSERVATORY_EXPECTATIONS)
           ? nextMetrics
           : false;
@@ -1867,6 +1871,7 @@ async function assertFixtureObservatoryDashboard(page, baseUrl, { screenshotDir 
         bodyText: document.body.innerText.slice(0, 1200),
         hasDriverTrace: Boolean(document.querySelector('[data-observatory-trace-role="user"]')),
         hasAgentTrace: Boolean(document.querySelector('[data-observatory-trace-role="assistant"]')),
+        hasRunGroup: Boolean(document.querySelector('[data-observatory-trace-role="assistant"] [data-state]')),
       }))()`);
       failures.push(`${viewport.width}x${viewport.height} observatory: timed out waiting for ${JSON.stringify(FIXTURE_OBSERVATORY_EXPECTATIONS)}; metrics=${JSON.stringify(debugMetrics)}`);
       continue;

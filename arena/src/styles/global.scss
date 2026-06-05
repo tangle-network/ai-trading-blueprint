@@ -526,6 +526,43 @@
   overflow-wrap: anywhere;
 }
 
+.arena-observatory-transcript {
+  overflow-wrap: anywhere;
+}
+
+.arena-observatory-transcript [data-observatory-trace-role],
+.arena-observatory-transcript [data-observatory-trace-role] * {
+  min-width: 0;
+}
+
+.arena-observatory-transcript [data-observatory-trace-role='assistant'] {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.arena-observatory-transcript [data-observatory-trace-role='assistant'] p,
+.arena-observatory-transcript [data-observatory-trace-role='assistant'] span,
+.arena-observatory-transcript [data-observatory-trace-role='assistant'] div {
+  max-width: 100%;
+}
+
+.arena-observatory-transcript [data-observatory-trace-role='assistant'] .truncate {
+  max-width: 100%;
+}
+
+.arena-observatory-transcript [data-observatory-trace-role='assistant'] button .text-\[11px\] {
+  white-space: nowrap;
+}
+
+.arena-observatory-transcript [data-observatory-trace-role='assistant'] button .text-foreground\/70 {
+  display: none !important;
+}
+
+.arena-observatory-driver {
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--arena-terminal-text) 5%, transparent);
+}
+
 :root[data-theme='dark'] .arena-trace-terminal,
 :root[data-theme='dark'] .arena-terminal-transcript code,
 :root[data-theme='dark'] .arena-terminal-transcript pre {

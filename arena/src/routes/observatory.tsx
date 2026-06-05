@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { MetaFunction } from 'react-router';
 import { Link } from 'react-router';
-import { ChatMessage } from '@tangle-network/sandbox-ui/chat';
+import { RunGroup } from '@tangle-network/sandbox-ui/run';
+import type {
+  AgentBranding,
+  CustomToolRenderer,
+  Run,
+  SessionMessage,
+  SessionPart,
+  ToolPart,
+  ToolStatus,
+} from '@tangle-network/sandbox-ui/types';
 import { useAccount } from 'wagmi';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import {
@@ -37,10 +46,22 @@ interface ObservatoryWorkspaceLayout {
   botListCollapsed: boolean;
 }
 
+type ObservatoryInspectorTab = 'output' | 'trace' | 'findings' | 'ideas' | 'delegations';
+
 const OBSERVATORY_WORKSPACE_LAYOUT_KEY = 'arena:observatory-workspace-layout';
 const DEFAULT_OBSERVATORY_WORKSPACE_LAYOUT: ObservatoryWorkspaceLayout = {
   botListPercent: 34,
   botListCollapsed: false,
+};
+
+const OBSERVATORY_AGENT_BRANDING: AgentBranding = {
+  label: 'Agent',
+  accentClass: 'text-[#50d2c1]',
+  bgClass: 'bg-[#50d2c1]/10',
+  containerBgClass: 'bg-[var(--arena-terminal-bg)]',
+  borderClass: 'border-[#50d2c1]/25',
+  iconClass: 'i-ph:brain',
+  textClass: 'whitespace-nowrap text-[var(--arena-terminal-text)]',
 };
 
 function normalizeObservatoryLayout(value: Partial<ObservatoryWorkspaceLayout>): ObservatoryWorkspaceLayout {
@@ -74,6 +95,20 @@ function formatCost(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '$0';
   if (value < 0.01) return `$${value.toFixed(4)}`;
   return `$${value.toFixed(2)}`;
+}
+
+function timestampMs(value?: string | null): number | undefined {
+  if (!value) return undefined;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : undefined;
+}
+
+function toolStatusFor(value?: string | null): ToolStatus {
+  const lower = (value ?? '').toLowerCase();
+  if (/fail|error|reject|blocked/.test(lower)) return 'error';
+  if (/running|dispatch|execut/.test(lower)) return 'running';
+  if (/complete|done|success|accepted/.test(lower)) return 'completed';
+  return 'pending';
 }
 
 function latestByCreatedAt<T extends { created_at?: string | null }>(items: T[]): T | null {
@@ -198,6 +233,167 @@ function ideaById(ideas: ObservatoryIdea[]): Map<string, ObservatoryIdea> {
     map.set(idea.idea_id, idea);
   }
   return map;
+}
+
+function buildDriverText(
+  bot: ObservatoryOverviewBot,
+  session: ObservatoryDelegatedWorkSession | null,
+  task?: ObservatoryResearchTask | null,
+  idea?: ObservatoryIdea | null,
+): string {
+  if (!session) {
+    return [
+      `Observe ${bot.bot_name}.`,
+      'Review the latest market context, operating gaps, ideas, delegated work, and whether this agent is improving its trading process.',
+    ].join('\n\n');
+  }
+
+  return [
+    task?.worker_launch ? `Launch: ${task.worker_launch}` : null,
+    task?.prompt ?? idea?.thesis ?? session.summary,
+  ].filter(Boolean).join('\n\n');
+}
+
+function buildAgentOutput(
+  bot: ObservatoryOverviewBot,
+  reflection: ObservatoryReflectionRun | null,
+  session: ObservatoryDelegatedWorkSession | null,
+  task?: ObservatoryResearchTask | null,
+): string {
+  if (session) {
+    if (task?.result_summary) return task.result_summary;
+    if (task?.result_ref) return `Output recorded at ${task.result_ref}.`;
+    return `Output pending. Current status: ${session.status}.`;
+  }
+
+  if (reflection?.conclusions.length) {
+    return reflection.conclusions.join('\n');
+  }
+
+  if (bot.error) {
+    return `Observatory could not load records for this bot: ${bot.error}.`;
+  }
+
+  return 'No Observatory output has been recorded yet. Trigger an observation to create the first run.';
+}
+
+function buildReasoningSummary(
+  reflection: ObservatoryReflectionRun | null,
+  session: ObservatoryDelegatedWorkSession | null,
+  idea?: ObservatoryIdea | null,
+): string | null {
+  const lines = [
+    idea?.thesis ? `Idea thesis: ${idea.thesis}` : null,
+    session?.summary ? `Session summary: ${session.summary}` : null,
+    ...(reflection?.uncertainties ?? []).map((uncertainty) => `Uncertainty: ${uncertainty}`),
+  ].filter(Boolean);
+
+  return lines.length ? lines.join('\n') : null;
+}
+
+function buildObservatoryTranscript({
+  bot,
+  reflection,
+  session,
+  task,
+  idea,
+}: {
+  bot: ObservatoryOverviewBot;
+  reflection: ObservatoryReflectionRun | null;
+  session: ObservatoryDelegatedWorkSession | null;
+  task?: ObservatoryResearchTask | null;
+  idea?: ObservatoryIdea | null;
+}): {
+  userMessage: SessionMessage;
+  assistantRun: Run;
+  partMap: Record<string, SessionPart[]>;
+} {
+  const sessionId = session?.session_id ?? reflection?.run_id ?? `${bot.bot_id}-observatory`;
+  const userMessageId = `${sessionId}:driver`;
+  const assistantMessageId = `${sessionId}:agent`;
+  const created = timestampMs(task?.created_at ?? session?.created_at ?? reflection?.created_at);
+  const updated = timestampMs(task?.updated_at ?? reflection?.created_at);
+  const output = buildAgentOutput(bot, reflection, session, task);
+  const reasoning = buildReasoningSummary(reflection, session, idea);
+  const assistantParts: SessionPart[] = [
+    { type: 'text', text: output },
+  ];
+
+  if (reasoning) {
+    assistantParts.push({
+      type: 'reasoning',
+      text: `Recorded reasoning summary\n${reasoning}`,
+      time: created ? { start: created, end: updated ?? created } : undefined,
+    });
+  }
+
+  if (session || task) {
+    const evidenceRefs = task?.evidence_refs?.length ? task.evidence_refs : idea?.evidence_refs ?? [];
+    assistantParts.push({
+      type: 'tool',
+      id: `${sessionId}:tool`,
+      tool: task?.worker ?? session?.source ?? 'observatory',
+      state: {
+        status: toolStatusFor(task?.status ?? session?.status),
+        input: task?.prompt ?? session?.summary,
+        output: task?.result_summary ?? task?.result_ref ?? session?.artifact_ref ?? null,
+        metadata: {
+          observatory_kind: 'delegated_work',
+          title: task?.title ?? session?.summary ?? 'Observatory work',
+          prompt: task?.prompt ?? null,
+          evidence_refs: evidenceRefs,
+          acceptance_criteria: task?.acceptance_criteria ?? [],
+          safety_limits: task?.safety_limits ?? {},
+          artifact_ref: session?.artifact_ref ?? null,
+          result_ref: task?.result_ref ?? null,
+          status: task?.status ?? session?.status ?? 'unknown',
+        },
+        time: created ? { start: created, end: updated ?? created } : undefined,
+      },
+    });
+  }
+
+  const userMessage: SessionMessage = {
+    id: userMessageId,
+    role: 'user',
+    sessionID: sessionId,
+    time: { created },
+    _insertionIndex: 0,
+  };
+  const assistantMessage: SessionMessage = {
+    id: assistantMessageId,
+    role: 'assistant',
+    sessionID: sessionId,
+    time: { created: updated ?? created, updated, completed: updated },
+    _insertionIndex: 1,
+  };
+
+  return {
+    userMessage,
+    assistantRun: {
+      id: `${sessionId}:run`,
+      messages: [assistantMessage],
+      isComplete: toolStatusFor(task?.status ?? session?.status) !== 'running',
+      isStreaming: false,
+      stats: {
+        toolCount: assistantParts.filter((part) => part.type === 'tool').length,
+        messageCount: 1,
+        thinkingDurationMs: 0,
+        textPartCount: assistantParts.filter((part) => part.type === 'text').length,
+        toolCategories: new Set(['task']),
+      },
+      summaryText: output,
+      finalTextPart: {
+        messageId: assistantMessageId,
+        partIndex: 0,
+        text: output,
+      },
+    },
+    partMap: {
+      [userMessageId]: [{ type: 'text', text: buildDriverText(bot, session, task, idea) }],
+      [assistantMessageId]: assistantParts,
+    },
+  };
 }
 
 function useSelectedBot(bots: ObservatoryOverviewBot[]) {
@@ -471,7 +667,115 @@ function TraceDataPanel({
   );
 }
 
-function WorkSessionTrace({
+const renderObservatoryToolDetail: CustomToolRenderer = (part: ToolPart) => {
+  const metadata = part.state.metadata as {
+    observatory_kind?: string;
+    title?: string | null;
+    prompt?: string | null;
+    evidence_refs?: string[];
+    acceptance_criteria?: string[];
+    safety_limits?: Record<string, unknown>;
+    artifact_ref?: string | null;
+    result_ref?: string | null;
+    status?: string | null;
+  } | undefined;
+
+  if (metadata?.observatory_kind !== 'delegated_work') return null;
+
+  const evidenceRefs = metadata.evidence_refs ?? [];
+  const acceptanceCriteria = metadata.acceptance_criteria ?? [];
+  const safetyEntries = Object.entries(metadata.safety_limits ?? {});
+  const artifactRefs = [metadata.artifact_ref, metadata.result_ref].filter(Boolean);
+
+  return (
+    <div className="grid gap-3 p-3 text-sm text-[var(--arena-terminal-text-secondary)]">
+      {metadata.prompt ? (
+        <section className="grid gap-1.5">
+          <h5 className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Prompt</h5>
+          <p className="whitespace-pre-wrap leading-5">{metadata.prompt}</p>
+        </section>
+      ) : null}
+
+      {acceptanceCriteria.length > 0 ? (
+        <section className="grid gap-1.5">
+          <h5 className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Acceptance</h5>
+          <div className="grid gap-1.5">
+            {acceptanceCriteria.map((criterion) => (
+              <span key={criterion} className="grid grid-cols-[18px_minmax(0,1fr)] gap-2">
+                <span className="i-ph:check-circle text-sm text-[#50d2c1]" aria-hidden="true" />
+                <span>{criterion}</span>
+              </span>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {safetyEntries.length > 0 ? (
+        <section className="grid gap-1.5">
+          <h5 className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Gates</h5>
+          <div className="grid gap-1 sm:grid-cols-3">
+            {safetyEntries.map(([key, value]) => (
+              <span key={key} className="min-w-0 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-2 py-1.5 font-data text-xs">
+                <span className="block truncate text-[var(--arena-terminal-text-muted)]">{key}</span>
+                <span className="mt-0.5 block truncate text-[var(--arena-terminal-text)]">{String(value)}</span>
+              </span>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {evidenceRefs.length > 0 || artifactRefs.length > 0 ? (
+        <section className="grid gap-1.5">
+          <h5 className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Artifacts</h5>
+          <div className="grid gap-1 font-data text-xs">
+            {[...artifactRefs, ...evidenceRefs].slice(0, 6).map((ref) => (
+              <span key={ref} className="break-all text-[var(--arena-terminal-text-muted)]">{ref}</span>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+};
+
+function WorkSessionStrip({
+  sessions,
+  selectedSessionId,
+  onSelectSession,
+}: {
+  sessions: ObservatoryDelegatedWorkSession[];
+  selectedSessionId?: string | null;
+  onSelectSession: (sessionId: string) => void;
+}) {
+  const uniqueSessions = uniqueDelegatedWorkSessions(sessions);
+
+  if (uniqueSessions.length === 0) return null;
+
+  return (
+    <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-2" aria-label="Work sessions">
+      {uniqueSessions.map((session) => {
+        const selected = selectedSessionId === session.session_id;
+        return (
+          <button
+            key={session.session_id}
+            type="button"
+            onClick={() => onSelectSession(session.session_id)}
+            aria-pressed={selected}
+            className={`h-8 shrink-0 border px-2.5 font-data text-xs transition-colors ${
+              selected
+                ? 'border-[#50d2c1]/45 bg-[#50d2c1]/12 text-[var(--arena-terminal-text)]'
+                : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-muted)] hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)]'
+            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60`}
+          >
+            {session.source} · {session.status}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SessionDetailPanel({
   session,
   task,
   idea,
@@ -490,15 +794,15 @@ function WorkSessionTrace({
 
   const safetyEntries = Object.entries(task?.safety_limits ?? {});
   const evidenceRefs = task?.evidence_refs?.length ? task.evidence_refs : idea?.evidence_refs ?? [];
-  const driverText = [
-    task?.worker_launch,
-    task?.prompt ?? idea?.thesis ?? session.summary,
-  ].filter(Boolean).join('\n\n');
-  const agentText = task?.result_summary
-    || (task?.result_ref ? `Result artifact: ${task.result_ref}` : null)
-    || `No result recorded yet. Current status: ${session.status}.`;
-  const agentTracePanels = (
-    <div className="mt-3 grid gap-3">
+
+  return (
+    <div className="grid gap-3">
+      <TraceDataPanel title="Prompt" icon="i-ph:chat-circle-text">
+        <p className="whitespace-pre-wrap text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
+          {task?.prompt ?? idea?.thesis ?? session.summary}
+        </p>
+      </TraceDataPanel>
+
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <TraceDataPanel title="Artifacts" icon="i-ph:archive">
           <div className="mt-2 grid gap-1.5 font-data text-xs text-[var(--arena-terminal-text-secondary)]">
@@ -534,45 +838,109 @@ function WorkSessionTrace({
       ) : null}
     </div>
   );
+}
+
+function DriverMessage({
+  message,
+  parts,
+}: {
+  message: SessionMessage;
+  parts: SessionPart[];
+}) {
+  const text = parts
+    .filter((part) => part.type === 'text' || part.type === 'reasoning')
+    .map((part) => ('text' in part ? part.text : ''))
+    .filter(Boolean)
+    .join('\n\n');
 
   return (
-    <div className="arena-sandbox-transcript arena-sandbox-transcript--terminal min-w-0 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)]" aria-label="Work session transcript">
-      <div className="border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] p-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h4 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
-              {task?.title ?? session.summary}
-            </h4>
-            <p className="mt-1 truncate font-data text-xs text-[var(--arena-terminal-text-muted)]">
-              {session.source} · {formatDate(session.created_at)} · {session.task_id ?? session.session_id}
-            </p>
+    <article
+      data-chat-role={message.role}
+      className="arena-observatory-driver grid gap-2 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-3 py-2.5 text-[var(--arena-terminal-text)]"
+    >
+      <div className="flex items-center gap-2">
+        <span className="i-ph:steering-wheel text-base text-[var(--arena-terminal-accent)]" aria-hidden="true" />
+        <span className="font-data text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--arena-terminal-text-muted)]">
+          Driver
+        </span>
+      </div>
+      <p className="whitespace-pre-wrap break-words text-sm leading-5 text-[var(--arena-terminal-text)]">
+        {text || 'Observe this agent and report the latest output.'}
+      </p>
+    </article>
+  );
+}
+
+function ObservatoryRunTranscript({
+  bot,
+  reflection,
+  session,
+  task,
+  idea,
+  usage,
+}: {
+  bot: ObservatoryOverviewBot;
+  reflection: ObservatoryReflectionRun | null;
+  session: ObservatoryDelegatedWorkSession | null;
+  task?: ObservatoryResearchTask | null;
+  idea?: ObservatoryIdea | null;
+  usage?: ObservatoryReflectionRun['usage_summary'];
+}) {
+  const [collapsed, setCollapsed] = useState(true);
+  const transcript = useMemo(
+    () => buildObservatoryTranscript({ bot, reflection, session, task, idea }),
+    [bot, idea, reflection, session, task],
+  );
+
+  useEffect(() => {
+    setCollapsed(true);
+  }, [bot.bot_id, reflection?.run_id, session?.session_id]);
+
+  return (
+    <div
+      data-sandbox-ui="true"
+      data-sandbox-theme="vault"
+      className="arena-chat-shell arena-sandbox-transcript arena-sandbox-transcript--terminal arena-observatory-transcript arena-trace-terminal flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#081013] text-[#f6fefd]"
+    >
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[#273035] bg-[#0b1418] px-3 py-2">
+        <div className="min-w-0">
+          <div className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+            {session ? task?.title ?? session.summary : 'Latest Observatory output'}
           </div>
-          <span className={`font-data text-xs ${statusClass(session.status)}`}>
-            {session.status}
-          </span>
+          <div className="mt-0.5 truncate font-data text-xs text-[var(--arena-terminal-text-muted)]">
+            {session ? `${session.source} · ${formatDate(session.created_at)}` : reflection ? `${reflection.trigger} · ${formatDate(reflection.created_at)}` : 'No run yet'}
+          </div>
         </div>
+        {usage ? (
+          <span className="shrink-0 font-data text-xs text-[var(--arena-terminal-text-muted)]">
+            {usage.reporting_status} · {usage.total_tokens} tok · {formatCost(usage.cost_usd)}
+          </span>
+        ) : null}
       </div>
 
-      <div className="grid gap-3 p-3">
-        <div data-observatory-trace-role="user">
-          <ChatMessage
-            role="user"
-            content={driverText}
-            userLabel="Driver"
-            timestamp={task?.created_at ? new Date(task.created_at) : undefined}
-            avatar={<span className="i-ph:user-circle size-4" aria-hidden="true" />}
-          />
-        </div>
-
-        <div data-observatory-trace-role="assistant">
-          <ChatMessage
-            role="assistant"
-            content={agentText}
-            assistantLabel="Coding agent"
-            timestamp={task?.updated_at ? new Date(task.updated_at) : undefined}
-            avatar={<span className="i-ph:code size-4" aria-hidden="true" />}
-            toolCalls={agentTracePanels}
-          />
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3" aria-label="Work session transcript">
+        <div className="mx-auto grid max-w-[980px] gap-3">
+          <div data-observatory-trace-role="user" className="min-w-0">
+            <DriverMessage
+              message={transcript.userMessage}
+              parts={transcript.partMap[transcript.userMessage.id] ?? []}
+            />
+          </div>
+          <div data-observatory-trace-role="assistant" className="min-w-0 overflow-hidden">
+            <RunGroup
+              run={transcript.assistantRun}
+              partMap={transcript.partMap}
+              collapsed={collapsed}
+              onToggle={() => setCollapsed((value) => !value)}
+              branding={OBSERVATORY_AGENT_BRANDING}
+              renderToolDetail={renderObservatoryToolDetail}
+              headerActions={(
+                <span className={`font-data text-xs ${statusClass(task?.status ?? session?.status ?? 'complete')}`}>
+                  {task?.status ?? session?.status ?? 'complete'}
+                </span>
+              )}
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -615,6 +983,7 @@ function Inspector({
   onTrigger: () => void;
   triggerPending: boolean;
 }) {
+  const [activeTab, setActiveTab] = useState<ObservatoryInspectorTab>('output');
   const feedback = useObservatoryIdeaFeedback(bot?.bot_id ?? '', {
     operatorApiUrl: ALL_TRADING_OPERATOR_API_URLS[0],
     enabled: !!bot,
@@ -664,6 +1033,13 @@ function Inspector({
   const selectedSession = delegatedSessions.find((session) => session.session_id === selectedSessionId) ?? delegatedSessions[0] ?? null;
   const selectedTask = selectedSession?.task_id ? taskById.get(selectedSession.task_id) : null;
   const selectedIdea = selectedSession?.idea_id ? ideasById.get(selectedSession.idea_id) : null;
+  const tabs: Array<{ id: ObservatoryInspectorTab; label: string; value?: string }> = [
+    { id: 'output', label: 'Output' },
+    { id: 'trace', label: 'Trace', value: selectedSession ? '1' : '0' },
+    { id: 'findings', label: 'Findings', value: String(reflection?.findings.length ?? 0) },
+    { id: 'ideas', label: 'Ideas', value: String(bot.records.ideas.length) },
+    { id: 'delegations', label: 'Delegations', value: `${pressure.active_sessions}/${pressure.unique_sessions}` },
+  ];
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--arena-terminal-panel)]">
@@ -696,73 +1072,53 @@ function Inspector({
         </div>
       </div>
 
-      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4">
-        <div className="grid min-w-0 gap-4">
-          <section className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <h3 className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Latest reflection</h3>
-              {usage && (
-                <span className="w-full max-w-full break-words font-data text-xs text-[var(--arena-terminal-text-muted)] sm:w-auto sm:whitespace-nowrap">
-                  {usage.reporting_status} · {usage.total_tokens} tok · {formatCost(usage.cost_usd)}
-                </span>
-              )}
-            </div>
-            {reflection ? (
-              <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3">
-                <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_16rem]">
-                  <div className="min-w-0">
-                    {reflection.conclusions.map((conclusion) => (
-                      <p key={conclusion} className="break-words text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
-                        {conclusion}
-                      </p>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 font-data text-xs lg:grid-cols-1">
-                    <div className="min-w-0">
-                      <div className="text-base font-bold text-[var(--arena-terminal-text)]">{reflection.findings.length}</div>
-                      <div className="uppercase tracking-normal text-[var(--arena-terminal-text-muted)]">Findings</div>
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-base font-bold text-[var(--arena-terminal-text)]">{reflection.idea_ids.length}</div>
-                      <div className="uppercase tracking-normal text-[var(--arena-terminal-text-muted)]">Ideas</div>
-                    </div>
-                    <div className="min-w-0">
-                      <div className={`text-base font-bold ${pressureClass(pressure.pressure_level)}`}>{pressure.active_sessions}</div>
-                      <div className="uppercase tracking-normal text-[var(--arena-terminal-text-muted)]">Active</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3 text-sm text-[var(--arena-terminal-text-secondary)]">
-                Trigger this bot to write the first Observatory record.
-              </div>
-            )}
-          </section>
+      <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-1" role="tablist" aria-label="Observatory views">
+        {tabs.map((tab) => {
+          const active = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex h-9 shrink-0 items-center gap-2 px-3 font-display text-sm font-semibold transition-colors ${
+                active
+                  ? 'bg-[var(--arena-terminal-panel-strong)] text-[var(--arena-terminal-text)] shadow-[inset_0_-2px_0_#50d2c1]'
+                  : 'text-[var(--arena-terminal-text-muted)] hover:bg-[var(--arena-terminal-panel)] hover:text-[var(--arena-terminal-text)]'
+              } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60`}
+            >
+              <span>{tab.label}</span>
+              {tab.value ? <span className="font-data text-xs text-[var(--arena-terminal-text-muted)]">{tab.value}</span> : null}
+            </button>
+          );
+        })}
+      </div>
 
-          <section className="min-w-0">
-            <h3 className="mb-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Signal digest</h3>
-            <SignalDigest digest={digest} />
-          </section>
-
-          <section className="min-w-0">
-            <h3 className="mb-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Findings</h3>
-            <FindingList findings={reflection?.findings ?? []} />
-          </section>
-
-          <section className="min-w-0">
-            <h3 className="mb-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Ideas</h3>
-            <IdeaList
-              ideas={bot.records.ideas}
-              feedbackByIdeaId={feedbackByIdeaId}
-              isPending={feedback.isPending}
-              onFeedback={(ideaId, action) => feedback.mutate({ ideaId, action })}
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+        {activeTab === 'output' ? (
+          <div className="flex h-full min-h-0 flex-col">
+            <WorkSessionStrip
+              sessions={bot.records.delegated_work_sessions}
+              selectedSessionId={selectedSession?.session_id ?? null}
+              onSelectSession={setSelectedSessionId}
             />
-          </section>
+            <div className="min-h-0 flex-1">
+              <ObservatoryRunTranscript
+                bot={bot}
+                reflection={reflection}
+                session={selectedSession}
+                task={selectedTask}
+                idea={selectedIdea}
+                usage={usage}
+              />
+            </div>
+          </div>
+        ) : null}
 
-          <section className="min-w-0">
-            <h3 className="mb-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Delegated work</h3>
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+        {activeTab === 'trace' ? (
+          <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden p-3">
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
               <DelegatedWorkList
                 sessions={bot.records.delegated_work_sessions}
                 pressure={pressure}
@@ -770,14 +1126,44 @@ function Inspector({
                 selectedSessionId={selectedSession?.session_id ?? null}
                 onSelectSession={setSelectedSessionId}
               />
-              <WorkSessionTrace
+              <SessionDetailPanel
                 session={selectedSession}
                 task={selectedTask}
                 idea={selectedIdea}
               />
             </div>
-          </section>
-        </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'findings' ? (
+          <div className="grid h-full min-h-0 gap-3 overflow-y-auto overflow-x-hidden p-3 xl:grid-cols-[minmax(0,1fr)_22rem]">
+            <FindingList findings={reflection?.findings ?? []} />
+            <SignalDigest digest={digest} />
+          </div>
+        ) : null}
+
+        {activeTab === 'ideas' ? (
+          <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden p-3">
+            <IdeaList
+              ideas={bot.records.ideas}
+              feedbackByIdeaId={feedbackByIdeaId}
+              isPending={feedback.isPending}
+              onFeedback={(ideaId, action) => feedback.mutate({ ideaId, action })}
+            />
+          </div>
+        ) : null}
+
+        {activeTab === 'delegations' ? (
+          <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden p-3">
+            <DelegatedWorkList
+              sessions={bot.records.delegated_work_sessions}
+              pressure={pressure}
+              researchTasks={bot.records.research_tasks}
+              selectedSessionId={selectedSession?.session_id ?? null}
+              onSelectSession={setSelectedSessionId}
+            />
+          </div>
+        ) : null}
       </div>
     </section>
   );
