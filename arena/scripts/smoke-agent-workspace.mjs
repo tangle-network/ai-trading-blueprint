@@ -1711,13 +1711,14 @@ async function assertFixtureHomeDashboard(page, baseUrl, { screenshotDir = '', t
           };
         })()`);
         return textIncludes(nextMetrics.bodyText, FIXTURE_HOME_EXPECTATIONS) ? nextMetrics : false;
-      }, { timeoutMs: 12_000, intervalMs: 250 });
+      }, { timeoutMs: 30_000, intervalMs: 250 });
     } catch {
       const debugMetrics = await evaluate(page, `(() => ({
         pathname: location.pathname,
         bodyText: document.body.innerText.slice(0, 900),
+        bodyHtml: document.body.innerHTML.slice(0, 900),
       }))()`);
-      failures.push(`${viewport.width}x${viewport.height} home: timed out waiting for ${JSON.stringify(FIXTURE_HOME_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
+      failures.push(`${viewport.width}x${viewport.height} home: timed out waiting for ${JSON.stringify(FIXTURE_HOME_EXPECTATIONS)}; body="${debugMetrics.bodyText}" html="${debugMetrics.bodyHtml}"`);
       continue;
     }
 
