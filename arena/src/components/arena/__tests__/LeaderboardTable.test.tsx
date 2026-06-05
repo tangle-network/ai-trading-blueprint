@@ -43,7 +43,7 @@ describe('LeaderboardTable', () => {
   it('separates recent activity from total fills and refuses stale under-counts', () => {
     const bot = makeBot();
 
-    render(
+    const { container } = render(
       <MemoryRouter>
         <LeaderboardTable
           bots={[bot]}
@@ -68,6 +68,7 @@ describe('LeaderboardTable', () => {
     const table = screen.getByRole('table');
     expect(table).toHaveClass('rounded-none');
     expect(table.parentElement).toHaveClass('rounded-none');
+    expect(container.querySelector('tr[role="button"]')).toHaveClass('[contain-intrinsic-size:54px]');
     expect(within(table).getByText('24H')).toBeInTheDocument();
     expect(within(table).getByText('Total')).toBeInTheDocument();
     expect(within(table).getByTitle('Visible fills from the latest fetched trade ledger.')).toHaveTextContent('12');
