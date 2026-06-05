@@ -204,6 +204,47 @@ function waitForShutdownSignal() {
   });
 }
 
+function waitForProcessExit(child, timeoutMs = 2000) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.off('exit', handleExit);
+    };
+    const handleExit = () => {
+      cleanup();
+      resolve(true);
+    };
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve(false);
+    }, timeoutMs);
+
+    child.once('exit', handleExit);
+  });
+}
+
+async function removeDirectoryWithRetries(directory) {
+  let lastError;
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    try {
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 100,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      await wait(150 * attempt);
+    }
+  }
+
+  throw lastError;
+}
+
 async function waitFor(predicate, { timeoutMs = 8000, intervalMs = 100 } = {}) {
   const start = Date.now();
   let lastError;
@@ -991,8 +1032,15 @@ async function launchChrome(chromePath) {
     child,
     port,
     async close() {
-      child.kill('SIGTERM');
-      await rm(profileDir, { recursive: true, force: true });
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGTERM');
+        const exited = await waitForProcessExit(child, 2000);
+        if (!exited && child.exitCode === null && child.signalCode === null) {
+          child.kill('SIGKILL');
+          await waitForProcessExit(child, 2000);
+        }
+      }
+      await removeDirectoryWithRetries(profileDir);
     },
   };
 }
