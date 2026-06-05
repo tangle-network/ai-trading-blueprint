@@ -182,7 +182,7 @@ function SelectedAgentDossier({
 
   return (
     <section
-      aria-label="Selected agent dossier"
+      aria-label="Selected agent details"
       className="hidden min-h-0 flex-1 grid-rows-[auto_auto_minmax(0,1fr)] border-t border-[#273035] bg-[#0b1418] min-[1024px]:grid"
     >
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[#273035] px-3 py-2 min-[1360px]:hidden">
@@ -228,8 +228,8 @@ function SelectedAgentDossier({
         <AgentDossierCell label="Last" value={activityStats?.lastTradeAt ? formatTradeAge(activityStats.lastTradeAt) : '—'} />
       </div>
 
-      <div className="grid min-h-0 grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-0 min-[1360px]:grid-cols-1">
-        <div className="min-w-0 border-r border-[#273035] px-3 py-2 min-[1360px]:hidden">
+      <div className="grid min-h-0 grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-0 overflow-hidden min-[1360px]:grid-cols-1">
+        <div className="min-w-0 overflow-hidden border-r border-[#273035] px-3 py-2 min-[1360px]:hidden">
           <div className="mb-2 flex items-center justify-between gap-3">
             <span className="font-display text-sm font-semibold text-[#f6fefd]">Execution</span>
             <span className={`rounded-[4px] border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] ${
@@ -263,14 +263,18 @@ function SelectedAgentDossier({
             <span className="min-w-0 truncate text-right text-[#f6fefd] min-[1360px]:hidden">{bot.serviceId ? String(bot.serviceId) : '—'}</span>
           </div>
         </div>
-        <div className="min-w-0 px-3 py-2">
-          <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex min-h-0 min-w-0 flex-col px-3 py-2">
+          <div className="mb-2 flex shrink-0 items-center justify-between gap-3">
             <span className="font-display text-sm font-semibold text-[#f6fefd]">Recent fills</span>
             <span className="font-mono text-xs text-[#697371]">{formatNumber(trades.length, { maximumFractionDigits: 0 })}</span>
           </div>
           {trades.length > 0 ? (
-            <div className="min-h-0 overflow-hidden border border-[#273035]">
-              {trades.slice(0, 8).map(({ trade }) => (
+            <div
+              data-testid="selected-agent-fills-scroll"
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain border border-[#273035] [scrollbar-gutter:stable]"
+              aria-label="Selected agent recent fills"
+            >
+              {trades.map(({ trade }) => (
                 <div
                   key={trade.id}
                   className="grid grid-cols-[3.75rem_6.25rem_minmax(0,1fr)_5.5rem] items-center gap-2 border-b border-[#273035] px-2.5 py-1.5 last:border-b-0"
@@ -287,7 +291,7 @@ function SelectedAgentDossier({
               ))}
             </div>
           ) : (
-            <div className="flex h-[120px] items-center justify-center border border-[#273035] font-display text-sm text-[#949e9c]">
+            <div className="flex min-h-0 flex-1 items-center justify-center border border-[#273035] font-display text-sm text-[#949e9c]">
               No recent fills.
             </div>
           )}
@@ -469,8 +473,7 @@ export default function LeaderboardPage() {
   const selectedAgentTrades = useMemo(() => {
     if (!selectedBot) return [];
     return latestAgentActivity.trades
-      .filter((item) => item.botId === selectedBot.id || item.trade.botId === selectedBot.id)
-      .slice(0, 8);
+      .filter((item) => item.botId === selectedBot.id || item.trade.botId === selectedBot.id);
   }, [latestAgentActivity.trades, selectedBot]);
 
   useEffect(() => {
@@ -641,7 +644,7 @@ export default function LeaderboardPage() {
                     {formatNumber(visibleBots.length, { maximumFractionDigits: 0 })} / {formatNumber(sortedBots.length, { maximumFractionDigits: 0 })}
                   </span>
                   <WorkspaceControlButton
-                    label={layout.dossierCollapsed ? 'Restore selected agent dossier' : 'Minimize selected agent dossier'}
+                    label={layout.dossierCollapsed ? 'Restore selected agent details' : 'Minimize selected agent details'}
                     icon={layout.dossierCollapsed ? 'i-ph:arrows-out-line-vertical' : 'i-ph:minus-bold'}
                     onClick={() => setLayout((current) => ({
                       ...current,
@@ -673,13 +676,13 @@ export default function LeaderboardPage() {
             <WorkspaceResizeHandle
               orientation="horizontal"
               className="row-start-2"
-              ariaLabel="Resize leaderboard and selected agent dossier"
-              title="Drag to resize leaderboard and selected agent dossier"
+              ariaLabel="Resize leaderboard and selected agent details"
+              title="Drag to resize leaderboard and selected agent details"
               onPointerDown={startDossierResize}
             />
             {layout.dossierCollapsed ? (
               <WorkspaceCollapsedPane
-                label="Dossier"
+                label="Details"
                 icon="i-ph:identification-card"
                 className="row-start-3"
                 onClick={() => setLayout((current) => ({ ...current, dossierCollapsed: false }))}

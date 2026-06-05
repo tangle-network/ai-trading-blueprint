@@ -188,6 +188,11 @@ describe('LeaderboardPage', () => {
     hoisted.latestAgentTradeItems.push(
       makeActivityTrade({ id: 'trade-1', notionalUsd: 1_000 }),
       makeActivityTrade({ id: 'trade-2', notionalUsd: 1_500, timestamp: Date.now() - 20 * 60 * 1000 }),
+      ...Array.from({ length: 10 }, (_, index) => makeActivityTrade({
+        id: `trade-extra-${index}`,
+        notionalUsd: 2_000 + index,
+        timestamp: Date.now() - (index + 1) * 60 * 1000,
+      })),
     );
 
     const { default: LeaderboardPage } = await import('../leaderboard');
@@ -206,8 +211,13 @@ describe('LeaderboardPage', () => {
       'min-h-0',
     );
     expect(screen.getByLabelText('Selected agent cockpit')).toBeInTheDocument();
-    expect(screen.getByLabelText('Selected agent dossier')).toBeInTheDocument();
+    expect(screen.getByLabelText('Selected agent details')).toBeInTheDocument();
     expect(screen.getByLabelText('Agent leaderboard')).toHaveClass('max-h-[260px]');
+    expect(screen.getByLabelText('Selected agent recent fills')).toHaveClass(
+      'overflow-y-auto',
+      'min-h-0',
+      'flex-1',
+    );
     expect(screen.getByRole('heading', { name: 'ETH Macro Scalper' })).toBeInTheDocument();
     expect(screen.getByText('Routing')).toBeInTheDocument();
     expect(screen.getAllByText('24H').length).toBeGreaterThanOrEqual(1);
@@ -218,13 +228,13 @@ describe('LeaderboardPage', () => {
       activityStatsByBotId: expect.any(Map),
     }));
     expect(hoisted.leaderboardTableProps.at(-1).activityStatsByBotId.get('bot-1')).toEqual(expect.objectContaining({
-      recentFills: 2,
-      recentNotionalUsd: 2_500,
+      recentFills: 12,
+      recentNotionalUsd: 22_545,
       lastMarket: 'ETH-PERP',
     }));
     expect(screen.getByText('agent leaderboard table')).toBeInTheDocument();
-    expect(screen.getAllByText('$2.5K').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('ETH-PERP').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('$22.5K').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('ETH-PERP').length).toBeGreaterThanOrEqual(12);
     expect(screen.queryByText('platform volume')).not.toBeInTheDocument();
     expect(screen.queryByText('latest trades')).not.toBeInTheDocument();
     expect(hoisted.platformVolumeChartProps).toHaveLength(0);
