@@ -8255,6 +8255,80 @@ async fn test_candle_store_rejects_empty_batch() {
 }
 
 #[tokio::test]
+async fn test_candle_store_filters_by_source_and_interval() {
+    let mock = MockServer::start().await;
+    let state = test_state(&mock.uri()).await;
+    let app = build_router(state);
+
+    let body = serde_json::json!({
+        "source": "hyperliquid",
+        "interval": "1m",
+        "candles": [
+            {"timestamp": 10_000, "token": "ARB", "open": "1.10", "high": "1.12", "low": "1.09", "close": "1.11", "volume": "50000"},
+            {"timestamp": 10_060, "token": "ARB", "open": "1.11", "high": "1.13", "low": "1.10", "close": "1.12", "volume": "45000"}
+        ]
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", auth_header())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/market-data/candles?token=ARB&source=hyperliquid&interval=1m")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["source"], "hyperliquid");
+    assert_eq!(json["interval"], "1m");
+    assert_eq!(json["total"], 2);
+    assert_eq!(json["coverage"]["first"], 10_000);
+    assert_eq!(json["coverage"]["last"], 10_060);
+    assert_eq!(json["candles"][0]["source"], "hyperliquid");
+    assert_eq!(json["candles"][0]["interval"], "1m");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/market-data/candles?token=ARB&source=binance&interval=1m")
+                .header("authorization", auth_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["total"], 0);
+    assert_eq!(json["candles"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn test_chart_study_record_and_query() {
     let mock = MockServer::start().await;
     let state = test_state(&mock.uri()).await;

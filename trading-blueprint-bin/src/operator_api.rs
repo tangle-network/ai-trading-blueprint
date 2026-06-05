@@ -566,9 +566,12 @@ struct TradeListQuery {
 #[derive(Deserialize)]
 struct CandleListQuery {
     token: Option<String>,
+    source: Option<String>,
+    interval: Option<String>,
     from: Option<i64>,
     to: Option<i64>,
     limit: Option<usize>,
+    backfill: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -6714,6 +6717,12 @@ async fn get_bot_market_candles(
     if let Some(token) = query.token {
         remote_query.push(("token", token));
     }
+    if let Some(source) = query.source {
+        remote_query.push(("source", source));
+    }
+    if let Some(interval) = query.interval {
+        remote_query.push(("interval", interval));
+    }
     if let Some(from) = query.from {
         remote_query.push(("from", from.to_string()));
     }
@@ -6722,6 +6731,9 @@ async fn get_bot_market_candles(
     }
     if let Some(limit) = query.limit {
         remote_query.push(("limit", limit.to_string()));
+    }
+    if let Some(backfill) = query.backfill {
+        remote_query.push(("backfill", backfill.to_string()));
     }
 
     match fetch_trading_api_json(&bot, "/market-data/candles", &remote_query).await {

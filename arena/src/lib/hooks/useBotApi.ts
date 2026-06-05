@@ -156,6 +156,9 @@ interface ApiTradeCountEvidence {
 interface ApiCandle {
   timestamp: number | string;
   token: string;
+  source?: string | null;
+  interval?: string | null;
+  fetched_at_ms?: number | string | null;
   open: string;
   high: string;
   low: string;
@@ -166,6 +169,11 @@ interface ApiCandle {
 interface ApiCandleListResponse {
   candles: ApiCandle[];
   total: number;
+  source?: string | null;
+  interval?: string | null;
+  backfilled?: boolean;
+  fetched?: number;
+  backfill_error?: string | null;
 }
 
 interface ApiChartStudyPoint {
@@ -515,6 +523,10 @@ export interface ObservatoryTriggerResponse {
 export interface MarketCandle {
   timestamp: number;
   token: string;
+  source?: string | null;
+  interval?: string | null;
+  fetchedAtMs?: number | null;
+  backfilled?: boolean;
   open: number;
   high: number;
   low: number;
@@ -945,10 +957,17 @@ export function normalizeCandles(
   window?: { fromMs?: number; toMs?: number },
 ): MarketCandle[] {
   const candles = Array.isArray(data) ? data : data.candles;
+  const responseSource = Array.isArray(data) ? null : data.source ?? null;
+  const responseInterval = Array.isArray(data) ? null : data.interval ?? null;
+  const responseBackfilled = Array.isArray(data) ? false : Boolean(data.backfilled);
   return candles
     .map((candle) => ({
       timestamp: unixTimestampMs(candle.timestamp),
       token: candle.token,
+      source: candle.source ?? responseSource,
+      interval: candle.interval ?? responseInterval,
+      fetchedAtMs: candle.fetched_at_ms == null ? null : unixTimestampMs(candle.fetched_at_ms),
+      backfilled: responseBackfilled,
       open: Number(candle.open),
       high: Number(candle.high),
       low: Number(candle.low),
@@ -1753,7 +1772,12 @@ export function useBotMarketCandles(
   botId: string,
   token: string | null | undefined,
   days = 30,
-  options: BotApiQueryOptions & { limit?: number } = {},
+  options: BotApiQueryOptions & {
+    backfill?: boolean;
+    interval?: string;
+    limit?: number;
+    source?: string | null;
+  } = {},
 ) {
   const apiUrl = options.operatorApiUrl ?? '';
   const auth = useOperatorAuth(apiUrl);
@@ -1762,6 +1786,9 @@ export function useBotMarketCandles(
   const needsAuth = fleetReadRequiresAuth(deploymentKind);
   const authKey = needsAuth ? auth.authCacheKey : 'public';
   const normalizedToken = token?.trim();
+  const source = options.source?.trim() || undefined;
+  const interval = options.interval?.trim() || undefined;
+  const backfill = options.backfill ?? false;
 
   return useQuery<MarketCandle[]>({
     queryKey: [
@@ -1771,6 +1798,9 @@ export function useBotMarketCandles(
       normalizedToken,
       days,
       options.limit ?? 500,
+      source ?? null,
+      interval ?? null,
+      backfill,
       deploymentKind,
       authKey,
     ],
@@ -1784,6 +1814,9 @@ export function useBotMarketCandles(
         to: String(to),
         limit: String(options.limit ?? 500),
       });
+      if (source) params.set('source', source);
+      if (interval) params.set('interval', interval);
+      if (backfill) params.set('backfill', 'true');
       const path = `${buildBotScopedPathForDeploymentKind(
         deploymentKind,
         botId,

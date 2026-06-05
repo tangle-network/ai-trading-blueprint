@@ -12,6 +12,12 @@ pub struct StoredCandle {
     pub timestamp: i64,
     pub token: String,
     pub bot_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fetched_at_ms: Option<i64>,
     pub open: String,
     pub high: String,
     pub low: String,
@@ -43,16 +49,39 @@ pub fn candles() -> Result<&'static PersistentStore<StoredCandle>, String> {
         .map_err(|e: String| e)
 }
 
-fn candle_key(bot_id: &str, token: &str, timestamp: i64) -> String {
-    format!("candle:{bot_id}:{token}:{timestamp}")
+fn normalize_key_part(value: Option<&str>, fallback: &str) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback)
+        .to_ascii_lowercase()
 }
 
-/// Record a batch of candles. Deduplicates by (bot_id, token, timestamp).
+fn candle_key(
+    bot_id: &str,
+    token: &str,
+    source: Option<&str>,
+    interval: Option<&str>,
+    timestamp: i64,
+) -> String {
+    let token = normalize_key_part(Some(token), "unknown");
+    let source = normalize_key_part(source, "unspecified");
+    let interval = normalize_key_part(interval, "unspecified");
+    format!("candle:{bot_id}:{token}:{source}:{interval}:{timestamp}")
+}
+
+/// Record a batch of candles. Deduplicates by bot, token, source, interval, and timestamp.
 pub fn record_candles(bot_id: &str, candles_batch: &[StoredCandle]) -> Result<usize, String> {
     let store = candles()?;
     let mut recorded = 0;
     for candle in candles_batch {
-        let key = candle_key(bot_id, &candle.token, candle.timestamp);
+        let key = candle_key(
+            bot_id,
+            &candle.token,
+            candle.source.as_deref(),
+            candle.interval.as_deref(),
+            candle.timestamp,
+        );
         store
             .insert(key, candle.clone())
             .map_err(|e| e.to_string())?;
@@ -64,6 +93,8 @@ pub fn record_candles(bot_id: &str, candles_batch: &[StoredCandle]) -> Result<us
 pub struct CandleQuery {
     pub bot_id: String,
     pub token: Option<String>,
+    pub source: Option<String>,
+    pub interval: Option<String>,
     pub from: Option<i64>,
     pub to: Option<i64>,
     pub limit: usize,
@@ -76,7 +107,25 @@ pub fn query_candles(q: &CandleQuery) -> Result<Vec<StoredCandle>, String> {
         .map_err(|e| e.to_string())?
         .into_iter()
         .filter(|c| c.bot_id == bid)
-        .filter(|c| q.token.as_ref().is_none_or(|t| &c.token == t))
+        .filter(|c| {
+            q.token
+                .as_ref()
+                .is_none_or(|t| c.token.eq_ignore_ascii_case(t))
+        })
+        .filter(|c| {
+            q.source.as_ref().is_none_or(|source| {
+                c.source
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(source))
+            })
+        })
+        .filter(|c| {
+            q.interval.as_ref().is_none_or(|interval| {
+                c.interval
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(interval))
+            })
+        })
         .filter(|c| q.from.is_none_or(|f| c.timestamp >= f))
         .filter(|c| q.to.is_none_or(|t| c.timestamp <= t))
         .collect();

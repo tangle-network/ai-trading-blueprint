@@ -2,6 +2,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -28,12 +29,22 @@ pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
 #[derive(Deserialize)]
 pub struct RecordCandlesRequest {
     pub candles: Vec<CandleInput>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub interval: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct CandleInput {
     pub timestamp: i64,
     pub token: String,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub interval: Option<String>,
+    #[serde(default)]
+    pub fetched_at_ms: Option<i64>,
     pub open: String,
     pub high: String,
     pub low: String,
@@ -60,20 +71,7 @@ async fn record_candles(
         ));
     }
 
-    let stored: Vec<StoredCandle> = req
-        .candles
-        .into_iter()
-        .map(|c| StoredCandle {
-            timestamp: c.timestamp,
-            token: c.token,
-            bot_id: state.bot_id.clone(),
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-            volume: c.volume,
-        })
-        .collect();
+    let stored = stored_candles_from_request(&state.bot_id, req);
 
     let recorded = candle_store::record_candles(&state.bot_id, &stored)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -96,20 +94,7 @@ async fn record_candles_multi_bot(
         ));
     }
 
-    let stored: Vec<StoredCandle> = req
-        .candles
-        .into_iter()
-        .map(|c| StoredCandle {
-            timestamp: c.timestamp,
-            token: c.token,
-            bot_id: bot.bot_id.clone(),
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-            volume: c.volume,
-        })
-        .collect();
+    let stored = stored_candles_from_request(&bot.bot_id, req);
 
     let recorded = candle_store::record_candles(&bot.bot_id, &stored)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -120,34 +105,43 @@ async fn record_candles_multi_bot(
 #[derive(Deserialize)]
 pub struct GetCandlesQuery {
     pub token: Option<String>,
+    pub source: Option<String>,
+    pub interval: Option<String>,
     pub from: Option<i64>,
     pub to: Option<i64>,
     pub limit: Option<usize>,
+    pub backfill: Option<bool>,
 }
 
 #[derive(Serialize)]
 pub struct GetCandlesResponse {
     pub candles: Vec<StoredCandle>,
     pub total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+    pub backfilled: bool,
+    pub fetched: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backfill_error: Option<String>,
+    pub coverage: CandleCoverage,
+}
+
+#[derive(Serialize)]
+pub struct CandleCoverage {
+    pub requested_from: Option<i64>,
+    pub requested_to: Option<i64>,
+    pub first: Option<i64>,
+    pub last: Option<i64>,
+    pub candles: usize,
 }
 
 async fn get_candles(
     State(state): State<Arc<TradingApiState>>,
     Query(query): Query<GetCandlesQuery>,
 ) -> Result<Json<GetCandlesResponse>, (StatusCode, String)> {
-    let limit = query.limit.unwrap_or(1000).min(10_000);
-
-    let candles = candle_store::query_candles(&CandleQuery {
-        bot_id: state.bot_id.clone(),
-        token: query.token,
-        from: query.from,
-        to: query.to,
-        limit,
-    })
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let total = candles.len();
-    Ok(Json(GetCandlesResponse { candles, total }))
+    get_candles_inner(&state.bot_id, query).await
 }
 
 async fn get_candles_multi_bot(
@@ -155,19 +149,7 @@ async fn get_candles_multi_bot(
     axum::Extension(bot): axum::Extension<crate::BotContext>,
     Query(query): Query<GetCandlesQuery>,
 ) -> Result<Json<GetCandlesResponse>, (StatusCode, String)> {
-    let limit = query.limit.unwrap_or(1000).min(10_000);
-
-    let candles = candle_store::query_candles(&CandleQuery {
-        bot_id: bot.bot_id.clone(),
-        token: query.token,
-        from: query.from,
-        to: query.to,
-        limit,
-    })
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let total = candles.len();
-    Ok(Json(GetCandlesResponse { candles, total }))
+    get_candles_inner(&bot.bot_id, query).await
 }
 
 // ── Fetch historical candles from a configurable source ────────────────
@@ -222,6 +204,198 @@ fn parse_interval(s: &str) -> Result<trading_runtime::backtest::Interval, (Statu
     }
 }
 
+fn interval_seconds(interval: trading_runtime::backtest::Interval) -> i64 {
+    match interval {
+        trading_runtime::backtest::Interval::Min1 => 60,
+        trading_runtime::backtest::Interval::Min5 => 5 * 60,
+        trading_runtime::backtest::Interval::Min15 => 15 * 60,
+        trading_runtime::backtest::Interval::Hour1 => 60 * 60,
+        trading_runtime::backtest::Interval::Hour4 => 4 * 60 * 60,
+        trading_runtime::backtest::Interval::Day1 => 24 * 60 * 60,
+    }
+}
+
+fn normalize_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn stored_candles_from_request(bot_id: &str, req: RecordCandlesRequest) -> Vec<StoredCandle> {
+    let request_source = normalize_optional(req.source);
+    let request_interval = normalize_optional(req.interval);
+    req.candles
+        .into_iter()
+        .map(|c| StoredCandle {
+            timestamp: c.timestamp,
+            token: c.token,
+            bot_id: bot_id.to_string(),
+            source: normalize_optional(c.source).or_else(|| request_source.clone()),
+            interval: normalize_optional(c.interval).or_else(|| request_interval.clone()),
+            fetched_at_ms: c.fetched_at_ms,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+        })
+        .collect()
+}
+
+fn should_backfill(
+    existing: &[StoredCandle],
+    query: &GetCandlesQuery,
+    limit: usize,
+    interval: trading_runtime::backtest::Interval,
+) -> bool {
+    if existing.is_empty() {
+        return true;
+    }
+    if existing.len() < limit.min(20) {
+        return true;
+    }
+
+    let interval_secs = interval_seconds(interval);
+    let target_to = query.to.unwrap_or_else(|| Utc::now().timestamp());
+    let stale_threshold_secs = (interval_secs * 2).max(5 * 60);
+    let latest = existing
+        .iter()
+        .map(|candle| candle.timestamp)
+        .max()
+        .unwrap_or_default();
+    latest + stale_threshold_secs < target_to
+}
+
+fn query_stored_candles(
+    bot_id: &str,
+    query: &GetCandlesQuery,
+    source: Option<String>,
+    interval: Option<String>,
+    limit: usize,
+) -> Result<Vec<StoredCandle>, (StatusCode, String)> {
+    candle_store::query_candles(&CandleQuery {
+        bot_id: bot_id.to_string(),
+        token: normalize_optional(query.token.clone()),
+        source,
+        interval,
+        from: query.from,
+        to: query.to,
+        limit,
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+async fn get_candles_inner(
+    bot_id: &str,
+    query: GetCandlesQuery,
+) -> Result<Json<GetCandlesResponse>, (StatusCode, String)> {
+    let limit = query.limit.unwrap_or(1000).min(10_000);
+    let mut response_source = normalize_optional(query.source.clone());
+    let mut response_interval = normalize_optional(query.interval.clone());
+    let mut backfilled = false;
+    let mut fetched = 0usize;
+    let mut backfill_error = None;
+
+    if query.backfill.unwrap_or(false)
+        && let Some(token) = normalize_optional(query.token.clone())
+    {
+        let source = response_source
+            .as_deref()
+            .map(trading_runtime::candle_sources::Source::parse)
+            .transpose()
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?
+            .unwrap_or(trading_runtime::candle_sources::Source::Binance);
+        let interval_text = response_interval.clone().unwrap_or_else(default_interval);
+        let interval = parse_interval(&interval_text)?;
+        response_source = Some(source.name().to_string());
+        response_interval = Some(interval_text.clone());
+
+        let existing = query_stored_candles(
+            bot_id,
+            &query,
+            response_source.clone(),
+            response_interval.clone(),
+            limit,
+        )?;
+
+        if should_backfill(&existing, &query, limit, interval) {
+            match trading_runtime::candle_sources::fetch_from_source(
+                source,
+                &token,
+                interval,
+                limit.min(5_000) as u32,
+            )
+            .await
+            {
+                Ok(candles) => {
+                    let fetched_at_ms = Utc::now().timestamp_millis();
+                    let stored: Vec<StoredCandle> = candles
+                        .iter()
+                        .map(|c| StoredCandle {
+                            timestamp: c.timestamp,
+                            token: c.token.clone(),
+                            bot_id: bot_id.to_string(),
+                            source: response_source.clone(),
+                            interval: response_interval.clone(),
+                            fetched_at_ms: Some(fetched_at_ms),
+                            open: c.open.to_string(),
+                            high: c.high.to_string(),
+                            low: c.low.to_string(),
+                            close: c.close.to_string(),
+                            volume: c.volume.to_string(),
+                        })
+                        .collect();
+
+                    fetched = candle_store::record_candles(bot_id, &stored)
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+                    backfilled = fetched > 0;
+                }
+                Err(err) => {
+                    backfill_error = Some(format!(
+                        "Fetch failed for {token} from {}: {err}",
+                        source.name()
+                    ));
+                    tracing::warn!(
+                        bot_id = %bot_id,
+                        token = %token,
+                        source = source.name(),
+                        interval = %interval_text,
+                        error = %err,
+                        "chart candle read-through backfill failed"
+                    );
+                }
+            }
+        }
+    }
+
+    let candles = query_stored_candles(
+        bot_id,
+        &query,
+        response_source.clone(),
+        response_interval.clone(),
+        limit,
+    )?;
+    let total = candles.len();
+    let coverage = CandleCoverage {
+        requested_from: query.from,
+        requested_to: query.to,
+        first: candles.first().map(|candle| candle.timestamp),
+        last: candles.last().map(|candle| candle.timestamp),
+        candles: total,
+    };
+
+    Ok(Json(GetCandlesResponse {
+        candles,
+        total,
+        source: response_source,
+        interval: response_interval,
+        backfilled,
+        fetched,
+        backfill_error,
+        coverage,
+    }))
+}
+
 async fn fetch_historical(
     State(state): State<Arc<TradingApiState>>,
     Json(req): Json<FetchHistoricalRequest>,
@@ -271,12 +445,16 @@ async fn fetch_historical_inner(
                     )
                 })?;
 
+        let fetched_at_ms = Utc::now().timestamp_millis();
         let stored: Vec<StoredCandle> = candles
             .iter()
             .map(|c| StoredCandle {
                 timestamp: c.timestamp,
                 token: c.token.clone(),
                 bot_id: bot_id.to_string(),
+                source: Some(source.name().to_string()),
+                interval: Some(req.interval.clone()),
+                fetched_at_ms: Some(fetched_at_ms),
                 open: c.open.to_string(),
                 high: c.high.to_string(),
                 low: c.low.to_string(),

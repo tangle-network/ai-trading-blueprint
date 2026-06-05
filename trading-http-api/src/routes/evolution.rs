@@ -344,6 +344,8 @@ async fn run_evolution_inner(
     let stored = candle_store::query_candles(&CandleQuery {
         bot_id: bot_id.to_string(),
         token: req.token.clone(),
+        source: None,
+        interval: None,
         from: None,
         to: None,
         limit: 100_000,
@@ -1363,6 +1365,8 @@ async fn get_status_inner(
     let all = candle_store::query_candles(&CandleQuery {
         bot_id: bot_id.to_string(),
         token: None,
+        source: None,
+        interval: None,
         from: None,
         to: None,
         limit: 100_000,

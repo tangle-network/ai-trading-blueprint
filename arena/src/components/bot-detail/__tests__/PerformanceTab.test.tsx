@@ -869,7 +869,7 @@ describe('PerformanceTab', () => {
     expect(screen.getAllByText('NAV').length).toBeGreaterThan(0);
     expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenLastCalledWith([]);
     expect(screen.getByTestId('chart-market-coverage')).toHaveTextContent('2 candles');
-    expect(screen.getByTestId('chart-market-coverage')).toHaveTextContent('bot store');
+    expect(screen.getByTestId('chart-market-coverage')).toHaveTextContent('Hyperliquid 15m');
     expect(screen.getByRole('button', { name: 'VWAP' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'SMA 20' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'SMA 20' })).toHaveAttribute('aria-pressed', 'false');
