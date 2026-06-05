@@ -1,6 +1,7 @@
 import { encodeAbiParameters, parseAbiParameters } from 'viem';
 import type { TradingBlueprintDef, ProvisionParams } from './types';
 import { strategyPacks } from './strategy-packs';
+import { resolveTradingBlueprintId } from './ids';
 
 function encodeProvision(params: ProvisionParams): `0x${string}` {
   // Instance uses the same ABI as cloud (TradingProvisionRequest is shared)
@@ -49,7 +50,7 @@ export const tradingInstance: TradingBlueprintDef = {
   description: 'Single dedicated bot per service — one agent, one strategy, full focus. Best for individual traders.',
   icon: 'i-ph:user',
   color: 'teal',
-  blueprintId: import.meta.env.VITE_INSTANCE_BLUEPRINT_ID ?? '0',
+  blueprintId: resolveTradingBlueprintId(import.meta.env.VITE_INSTANCE_BLUEPRINT_ID, '2'),
   isFleet: false,
   isTee: false,
   defaults: {

@@ -9,12 +9,12 @@ import { tradingInstance } from './trading-instance';
 import { tradingTeeInstance } from './trading-tee-instance';
 import type { TradingBlueprintDef } from './types';
 
-/** All registered trading blueprints. Filter out those with blueprintId '0' (not configured). */
+/** All registered trading blueprints. Production defaults are the first deployed trading blueprint ids. */
 export const TRADING_BLUEPRINTS: TradingBlueprintDef[] = [
   tradingCloud,
   tradingInstance,
   tradingTeeInstance,
-].filter((b) => b.blueprintId !== '0');
+];
 
 /** Get a blueprint by ID, or the first available. */
 export function getBlueprint(id: string): TradingBlueprintDef | undefined {

@@ -1084,11 +1084,13 @@ function ProvisionStageBar({
   step,
   stepIndex,
   txHash,
+  canConfigure,
   setStep,
 }: {
   step: WizardStep;
   stepIndex: number;
   txHash: `0x${string}` | undefined;
+  canConfigure: boolean;
   setStep: (step: WizardStep) => void;
 }) {
   return (
@@ -1099,12 +1101,18 @@ function ProvisionStageBar({
       {STEP_ORDER.map((candidate, index) => {
         const isCurrent = candidate === step;
         const isDone = index < stepIndex;
-        const canOpen =
-          isDone &&
-          !(
-            txHash &&
-            STEP_ORDER.indexOf(candidate) < STEP_ORDER.indexOf('deploy')
-          );
+        const canOpen = (() => {
+          if (isCurrent) return true;
+          if (txHash) {
+            return (
+              isDone &&
+              STEP_ORDER.indexOf(candidate) >= STEP_ORDER.indexOf('deploy')
+            );
+          }
+          if (candidate === 'blueprint') return true;
+          if (candidate === 'configure') return canConfigure;
+          return isDone;
+        })();
 
         return (
           <button
@@ -1113,7 +1121,7 @@ function ProvisionStageBar({
             onClick={() => {
               if (canOpen) setStep(candidate);
             }}
-            disabled={!canOpen && !isCurrent}
+            disabled={!canOpen}
             className={`group relative flex h-10 min-w-[9rem] items-center justify-center border-r border-[var(--arena-terminal-border)] px-3 font-display text-xs font-semibold transition-[background-color,color,opacity] duration-150 last:border-r-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--arena-terminal-accent)] ${
               isCurrent
                 ? 'bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-text)]'
@@ -3740,6 +3748,7 @@ export default function ProvisionPage() {
           step={step}
           stepIndex={stepIndex}
           txHash={txHash}
+          canConfigure={!!selectedBlueprint}
           setStep={setStep}
         />
 

@@ -1,6 +1,7 @@
 import { encodeAbiParameters, parseAbiParameters, zeroAddress } from 'viem';
 import type { TradingBlueprintDef, ProvisionParams } from './types';
 import { strategyPacks } from './strategy-packs';
+import { resolveTradingBlueprintId } from './ids';
 
 function encodeProvision(params: ProvisionParams): `0x${string}` {
   return encodeAbiParameters(
@@ -48,7 +49,7 @@ export const tradingCloud: TradingBlueprintDef = {
   description: 'Multi-instance fleet — deploy multiple trading bots per service. Best for operators managing a portfolio of strategies.',
   icon: 'i-ph:cloud',
   color: 'violet',
-  blueprintId: import.meta.env.VITE_BLUEPRINT_ID ?? '0',
+  blueprintId: resolveTradingBlueprintId(import.meta.env.VITE_BLUEPRINT_ID, '1'),
   isFleet: true,
   isTee: false,
   defaults: {

@@ -1,4 +1,5 @@
 import type { TradingBlueprintDef } from './types';
+import { resolveTradingBlueprintId } from './ids';
 import { tradingInstance } from './trading-instance';
 
 export const tradingTeeInstance: TradingBlueprintDef = {
@@ -8,7 +9,7 @@ export const tradingTeeInstance: TradingBlueprintDef = {
   description: 'TEE-secured single bot — hardware-isolated execution for maximum security. Keys never leave the enclave.',
   icon: 'i-ph:shield-check',
   color: 'blue',
-  blueprintId: import.meta.env.VITE_TEE_BLUEPRINT_ID ?? '0',
+  blueprintId: resolveTradingBlueprintId(import.meta.env.VITE_TEE_BLUEPRINT_ID, '3'),
   isTee: true,
   defaults: {
     cpuCores: 2n,
