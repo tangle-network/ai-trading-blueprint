@@ -4,7 +4,6 @@ import {
   useCallback,
   useMemo,
   useRef,
-  Fragment,
 } from 'react';
 import { useSearchParams } from 'react-router';
 import type { MetaFunction } from 'react-router';
@@ -1079,6 +1078,65 @@ function compactHeaderChainName(name: string): string {
 function compactHeaderBlueprintName(name: string | undefined): string {
   if (!name) return 'Blueprint';
   return name.replace(/^Trading\s+/i, '').trim() || name;
+}
+
+function ProvisionStageBar({
+  step,
+  stepIndex,
+  txHash,
+  setStep,
+}: {
+  step: WizardStep;
+  stepIndex: number;
+  txHash: `0x${string}` | undefined;
+  setStep: (step: WizardStep) => void;
+}) {
+  return (
+    <div
+      className="flex shrink-0 overflow-x-auto border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]"
+      aria-label="Provision state"
+    >
+      {STEP_ORDER.map((candidate, index) => {
+        const isCurrent = candidate === step;
+        const isDone = index < stepIndex;
+        const canOpen =
+          isDone &&
+          !(
+            txHash &&
+            STEP_ORDER.indexOf(candidate) < STEP_ORDER.indexOf('deploy')
+          );
+
+        return (
+          <button
+            key={candidate}
+            type="button"
+            onClick={() => {
+              if (canOpen) setStep(candidate);
+            }}
+            disabled={!canOpen && !isCurrent}
+            className={`group relative flex h-10 min-w-[9rem] items-center justify-center border-r border-[var(--arena-terminal-border)] px-3 font-display text-xs font-semibold transition-[background-color,color,opacity] duration-150 last:border-r-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--arena-terminal-accent)] ${
+              isCurrent
+                ? 'bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-text)]'
+                : isDone
+                  ? 'text-[var(--arena-terminal-text-secondary)] hover:bg-[var(--arena-terminal-panel-strong)]'
+                  : 'cursor-default text-[var(--arena-terminal-text-subtle)]'
+            }`}
+          >
+            <span
+              className={`mr-2 h-1.5 w-1.5 rounded-full ${
+                isCurrent
+                  ? 'bg-[var(--arena-terminal-accent)]'
+                  : isDone
+                    ? 'bg-[var(--arena-terminal-success)]'
+                    : 'bg-[var(--arena-terminal-border-hover)]'
+              }`}
+            />
+            {STEP_LABELS[candidate]}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 export function executionTargetsForStrategy(
@@ -3659,7 +3717,7 @@ export default function ProvisionPage() {
     <div className="arena-trace-terminal flex min-h-full w-full overflow-y-auto bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)] lg:h-full lg:min-h-0 lg:overflow-hidden">
       <section className="flex w-full flex-1 flex-col lg:h-full lg:min-h-0">
         <ArenaPageHeader
-          title="Activate"
+          title="Activate Agent"
           titleWidthClassName="min-[1180px]:w-[11rem]"
           metrics={[
             { label: 'Network', value: compactHeaderChainName(targetChain.name), title: targetChain.name },
@@ -3678,49 +3736,12 @@ export default function ProvisionPage() {
           )}
         />
 
-        <nav className="grid shrink-0 border-b border-[var(--arena-terminal-border)] md:grid-cols-4" aria-label="Provision steps">
-        {STEP_ORDER.map((s, i) => {
-          const isCurrent = s === step;
-          const isDone = i < stepIndex;
-          return (
-            <Fragment key={s}>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!isDone) return;
-                  if (
-                    txHash &&
-                    STEP_ORDER.indexOf(s) < STEP_ORDER.indexOf('deploy')
-                  )
-                  return;
-                  setStep(s);
-                }}
-                disabled={!isDone && !isCurrent}
-                className={`flex h-12 items-center gap-3 border-r border-[var(--arena-terminal-border)] px-3 text-left font-display text-sm font-medium transition-[background-color,border-color,color,opacity,transform] duration-150 last:border-r-0 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--arena-terminal-accent)] ${
-                  isCurrent
-                    ? 'bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-text)] shadow-[inset_0_-2px_0_var(--arena-terminal-accent)]'
-                    : isDone
-                      ? 'bg-[var(--arena-terminal-panel)] text-[var(--arena-terminal-text-secondary)] hover:bg-[var(--arena-terminal-panel-strong)]'
-                      : 'cursor-default bg-[var(--arena-terminal-surface)] text-[var(--arena-terminal-text-subtle)]'
-                }`}
-              >
-                <span
-                  className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border font-mono text-xs font-semibold ${
-                    isCurrent
-                      ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-accent)]'
-                      : isDone
-                        ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]'
-                        : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text-subtle)]'
-                  }`}
-                >
-                  {isDone ? '\u2713' : i + 1}
-                </span>
-                {STEP_LABELS[s]}
-              </button>
-            </Fragment>
-          );
-        })}
-        </nav>
+        <ProvisionStageBar
+          step={step}
+          stepIndex={stepIndex}
+          txHash={txHash}
+          setStep={setStep}
+        />
 
         <div className="min-h-0 flex-1 overflow-y-auto">
         {ambiguousInstanceProvisionMessage && (

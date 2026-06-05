@@ -55,6 +55,44 @@ function SummaryRow({
   );
 }
 
+function ProvisionReviewShell({
+  eyebrow,
+  title,
+  description,
+  summary,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  summary: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <Card className="rounded-none border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] shadow-none">
+      <CardContent className="grid gap-0 p-0 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-4 p-5">
+          <div>
+            <span className="block font-data text-sm uppercase tracking-wider text-arena-elements-textSecondary">
+              {eyebrow}
+            </span>
+            <h2 className="mt-2 font-display text-xl font-semibold text-arena-elements-textPrimary">
+              {title}
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm text-arena-elements-textTertiary">
+              {description}
+            </p>
+          </div>
+          {children}
+        </div>
+        <aside className="border-t border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-5 lg:border-l lg:border-t-0">
+          {summary}
+        </aside>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function DeployStep({
   isInstance,
   latestDeployment,
@@ -83,23 +121,52 @@ export function DeployStep({
   goBack,
   resetTx,
 }: DeployStepProps) {
-  const botRouteId = latestDeployment ? getProvisionBotRouteId(latestDeployment) : undefined;
+  const botRouteId = latestDeployment
+    ? getProvisionBotRouteId(latestDeployment)
+    : undefined;
+  const hasServiceBlocker =
+    !serviceInfo?.isActive ||
+    !serviceInfo?.isPermitted ||
+    serviceInfo?.blueprintMismatch;
+  const instanceActivationDisabled =
+    !isConnected ||
+    isNewServicePending ||
+    newServiceDeploying ||
+    instanceProvisioning;
+  const instanceActivationLabel = !isConnected
+    ? 'Connect Wallet'
+    : isNewServicePending
+      ? 'Confirm in Wallet...'
+      : newServiceDeploying
+        ? 'Waiting for Service Activation...'
+        : instanceProvisioning
+          ? 'Provisioning Instance Bot...'
+          : `Activate Instance (${formatCost(totalCost)})`;
+  const runtimeSubmitLabel = !isConnected
+    ? 'Connect Wallet'
+    : serviceInfo?.blueprintMismatch
+      ? `Wrong Blueprint (service uses #${serviceInfo.blueprintId})`
+      : !serviceInfo?.isActive
+        ? 'Service Not Active'
+        : !serviceInfo?.isPermitted
+          ? 'Not Permitted on Service'
+          : isPending
+            ? 'Confirm in Wallet...'
+            : 'Provision Runtime';
 
   return (
     <>
       {/* Instance blueprint: create service -> auto-provision */}
       {isInstance && !latestDeployment && (
-        <Card className="rounded-none border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] shadow-none">
-          <CardContent className="pt-5 pb-5 space-y-4">
-            <div>
-              <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
-                Activate Instance
-              </span>
-              <p className="text-xs text-arena-elements-textTertiary mt-1">
-                Create the dedicated service, vault route, and sidecar that can run this paper mandate as an operator-managed agent.
-              </p>
-            </div>
-            <div className="p-3.5 bg-arena-elements-item-backgroundHover/30 border border-arena-elements-borderColor/40">
+        <ProvisionReviewShell
+          eyebrow="Activate Instance"
+          title="Create an operator-managed paper agent"
+          description="This submits the service request, binds the vault route, and starts the sidecar that can run this agent profile under the selected operator."
+          summary={(
+            <div className="space-y-3">
+              <div className="font-display text-sm font-semibold text-arena-elements-textPrimary">
+                Request summary
+              </div>
               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm font-data">
                 <SummaryRow label="Blueprint" value={selectedBlueprint?.name ?? 'Instance'} />
                 <SummaryRow label="Agent" value={name} />
@@ -115,6 +182,14 @@ export function DeployStep({
                 />
               </div>
             </div>
+          )}
+        >
+          <div className="space-y-3">
+            {selectedOperators.size === 0 && (
+              <div className="border border-[color-mix(in_srgb,var(--arena-terminal-warning)_36%,var(--arena-terminal-border))] bg-[color-mix(in_srgb,var(--arena-terminal-warning)_10%,var(--arena-terminal-panel))] p-3 text-sm text-arena-elements-textSecondary">
+                Pick at least one operator before activation.
+              </div>
+            )}
 
             {selectedOperators.size === 0 && (
               <Button
@@ -129,7 +204,10 @@ export function DeployStep({
             {selectedOperators.size > 0 && quotes.length === 0 && !isQuoting && (
               <Button
                 variant="outline"
-                onClick={() => { setShowInfra(true); refetchQuotes(); }}
+                onClick={() => {
+                  setShowInfra(true);
+                  refetchQuotes();
+                }}
                 className="w-full"
               >
                 Get Operator Quotes
@@ -147,17 +225,9 @@ export function DeployStep({
                 onClick={handleDeployNewService}
                 className="w-full"
                 size="lg"
-                disabled={!isConnected || isNewServicePending || newServiceDeploying || instanceProvisioning}
+                disabled={instanceActivationDisabled}
               >
-                {!isConnected
-                  ? 'Connect Wallet'
-                  : isNewServicePending
-                    ? 'Confirm in Wallet...'
-                    : newServiceDeploying
-                      ? 'Waiting for Service Activation...'
-                      : instanceProvisioning
-                        ? 'Provisioning Instance Bot...'
-                        : `Activate Instance (${formatCost(totalCost)})`}
+                {instanceActivationLabel}
               </Button>
             )}
 
@@ -166,23 +236,21 @@ export function DeployStep({
                 {instanceProvisionError}
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </ProvisionReviewShell>
       )}
 
       {/* Fleet blueprint: standard submitJob flow */}
       {!isInstance && !txHash && (
-        <Card className="rounded-none border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] shadow-none">
-          <CardContent className="pt-5 pb-5 space-y-4">
-            <div>
-              <span className="text-sm font-data uppercase tracking-wider text-arena-elements-textSecondary block">
-                Provision Runtime
-              </span>
-              <p className="text-xs text-arena-elements-textTertiary mt-1">
-                Submit the operator job to Service {serviceId}. The operator spins up the sidecar and runs the agent with this activation config.
-              </p>
-            </div>
-            <div className="p-3.5 bg-arena-elements-item-backgroundHover/30 border border-arena-elements-borderColor/40">
+        <ProvisionReviewShell
+          eyebrow="Provision Runtime"
+          title="Submit this agent profile to the active service"
+          description={`This sends the job to Service ${serviceId}. The operator provisions the sidecar and starts the agent with the selected mandate, cadence, and runtime config.`}
+          summary={(
+            <div className="space-y-3">
+              <div className="font-display text-sm font-semibold text-arena-elements-textPrimary">
+                Request summary
+              </div>
               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm font-data">
                 <SummaryRow label="Service" value={`#${serviceId}`} />
                 <SummaryRow label="Agent" value={name} />
@@ -195,26 +263,24 @@ export function DeployStep({
                 />
               </div>
             </div>
+          )}
+        >
+          <div className="space-y-3">
+            {hasServiceBlocker && (
+              <div className="border border-[color-mix(in_srgb,var(--arena-terminal-warning)_36%,var(--arena-terminal-border))] bg-[color-mix(in_srgb,var(--arena-terminal-warning)_10%,var(--arena-terminal-panel))] p-3 text-sm text-arena-elements-textSecondary">
+                The selected service must be active, permitted, and attached to the chosen blueprint before the wallet call can proceed.
+              </div>
+            )}
             <Button
               onClick={handleSubmit}
               className="w-full"
               size="lg"
-              disabled={!isConnected || isPending || !serviceInfo?.isActive || !serviceInfo?.isPermitted || serviceInfo?.blueprintMismatch}
+              disabled={!isConnected || isPending || hasServiceBlocker}
             >
-              {!isConnected
-                ? 'Connect Wallet'
-                : serviceInfo?.blueprintMismatch
-                  ? `Wrong Blueprint (service uses #${serviceInfo.blueprintId})`
-                  : !serviceInfo?.isActive
-                    ? 'Service Not Active'
-                    : !serviceInfo?.isPermitted
-                      ? 'Not Permitted on Service'
-                      : isPending
-                        ? 'Confirm in Wallet...'
-                        : 'Provision Runtime'}
+              {runtimeSubmitLabel}
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        </ProvisionReviewShell>
       )}
 
       {txHash && (

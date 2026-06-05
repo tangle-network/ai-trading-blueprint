@@ -38,6 +38,7 @@ export function ConnectWalletPanel({
   title = 'Connect your wallet',
   description,
   footnote,
+  bullets = [],
   actions = defaultAccessActions,
 }: ConnectWalletPanelProps) {
   return (
@@ -51,7 +52,7 @@ export function ConnectWalletPanel({
               </span>
               <div className="min-w-0">
                 <h1 className="truncate font-display text-lg font-semibold tracking-tight text-[var(--arena-terminal-text)]">
-                {title}
+                  {title}
                 </h1>
                 <p className="mt-0.5 max-h-10 max-w-[64rem] overflow-hidden text-sm leading-5 text-[var(--arena-terminal-text-muted)]">
                   {description}
@@ -95,10 +96,28 @@ export function ConnectWalletPanel({
           </div>
           {footnote && (
             <p className="mt-2 pl-12 font-data text-xs text-[var(--arena-terminal-text-subtle)]">
-            {footnote}
+              {footnote}
             </p>
           )}
         </div>
+        {bullets.length > 0 && (
+          <div className="grid shrink-0 gap-px border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-border)] sm:grid-cols-2 xl:grid-cols-4">
+            {bullets.map((bullet) => (
+              <div
+                key={bullet}
+                className="flex min-h-14 items-center gap-3 bg-[var(--arena-terminal-bg)] px-4 py-3"
+              >
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--arena-terminal-accent)]"
+                  aria-hidden="true"
+                />
+                <span className="font-data text-sm text-[var(--arena-terminal-text-secondary)]">
+                  {bullet}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="min-h-0 flex-1" />
       </section>
     </div>
