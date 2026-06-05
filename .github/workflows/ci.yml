@@ -36,47 +36,72 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: dorny/paths-filter@v3
+      - name: Collect changed files
         if: github.event_name != 'workflow_call'
-        id: filter
-        with:
-          filters: |
-            arena:
-              - 'arena/**'
-              - '.github/workflows/deploy-arena.yml'
-            contracts:
-              - 'contracts/**'
-              - 'deployments/**'
-              - 'foundry.toml'
-              - 'slither.config.json'
-            rust:
-              - '.cargo/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'patches/**'
-              - 'scripts/**'
-              - 'trading-*/**'
-            ci:
-              - '.github/workflows/ci.yml'
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before || '' }}
+          BASE_REF: ${{ github.base_ref || '' }}
+        run: |
+          set -euo pipefail
+          changed_file_list="$(mktemp)"
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+            git diff --name-only "origin/$BASE_REF" "$GITHUB_SHA" > "$changed_file_list"
+          elif [ -n "$BEFORE_SHA" ] && ! [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+            git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" > "$changed_file_list"
+          else
+            git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" > "$changed_file_list"
+          fi
+
+          {
+            echo 'files<<EOF'
+            cat "$changed_file_list"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Decide CI lanes
         id: decide
         env:
           EVENT_NAME: ${{ github.event_name }}
-          ARENA_CHANGED: ${{ steps.filter.outputs.arena || 'false' }}
-          CONTRACTS_CHANGED: ${{ steps.filter.outputs.contracts || 'false' }}
-          RUST_CHANGED: ${{ steps.filter.outputs.rust || 'false' }}
-          CI_CHANGED: ${{ steps.filter.outputs.ci || 'false' }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files || '' }}
         run: |
           set -euo pipefail
           full=false
-          arena="$ARENA_CHANGED"
-          contracts="$CONTRACTS_CHANGED"
-          rust="$RUST_CHANGED"
+          arena=false
+          contracts=false
+          rust=false
+          ci=false
+
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            case "$file" in
+              arena/*|.github/workflows/deploy-arena.yml)
+                arena=true
+                ;;
+            esac
+            case "$file" in
+              contracts/*|deployments/*|foundry.toml|slither.config.json)
+                contracts=true
+                ;;
+            esac
+            case "$file" in
+              .cargo/*|Cargo.toml|Cargo.lock|patches/*|scripts/*|trading-*/*)
+                rust=true
+                ;;
+            esac
+            case "$file" in
+              .github/workflows/ci.yml)
+                ci=true
+                ;;
+            esac
+          done <<< "$CHANGED_FILES"
 
           # Reusable deploy gates must remain conservative: contract deployment
           # calls this workflow before broadcasting, so it gets the full suite.
-          if [ "$EVENT_NAME" = "workflow_call" ] || [ "$CI_CHANGED" = "true" ]; then
+          if [ "$EVENT_NAME" = "workflow_call" ] || [ "$ci" = "true" ]; then
             full=true
             arena=true
             contracts=true
