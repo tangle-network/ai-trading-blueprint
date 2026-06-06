@@ -304,7 +304,7 @@ fn backfill_decision(
         let desired_count = expected_count.min(limit);
         let minimum_count = ((desired_count as f64) * 0.9).ceil() as usize;
         if existing.len() < minimum_count.max(20).min(desired_count) {
-            return BackfillDecision::Blocking;
+            return BackfillDecision::BackgroundRefresh;
         }
 
         let required_from = if desired_count >= expected_count {
@@ -319,7 +319,7 @@ fn backfill_decision(
                 .min()
                 .unwrap_or_default();
             if earliest > required_from + interval_secs {
-                return BackfillDecision::Blocking;
+                return BackfillDecision::BackgroundRefresh;
             }
         }
     }
@@ -693,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn backfills_fresh_but_shallow_cache_that_misses_requested_start() {
+    fn refreshes_fresh_but_shallow_cache_in_background() {
         let interval = trading_runtime::backtest::Interval::Min15;
         let to = 1_700_000_000;
         let from = to - 30 * 24 * 60 * 60;
@@ -713,6 +713,27 @@ mod tests {
         assert!(should_backfill(&existing, &query, 8_640, interval));
         assert_eq!(
             backfill_decision(&existing, &query, 8_640, interval),
+            BackfillDecision::BackgroundRefresh
+        );
+    }
+
+    #[test]
+    fn blocks_for_empty_cache() {
+        let interval = trading_runtime::backtest::Interval::Min15;
+        let to = 1_700_000_000;
+        let from = to - 30 * 24 * 60 * 60;
+        let query = GetCandlesQuery {
+            token: Some("ETH".to_string()),
+            source: Some("hyperliquid".to_string()),
+            interval: Some("15m".to_string()),
+            from: Some(from),
+            to: Some(to),
+            limit: Some(8_640),
+            backfill: Some(true),
+        };
+
+        assert_eq!(
+            backfill_decision(&[], &query, 8_640, interval),
             BackfillDecision::Blocking
         );
     }
