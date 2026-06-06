@@ -3,14 +3,18 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use crate::candle_store::{self, CandleQuery, StoredCandle};
 use crate::{MultiBotTradingState, TradingApiState};
 
 const DEFAULT_CANDLE_LIMIT: usize = 1_000;
 const MAX_CANDLE_LIMIT: usize = 10_000;
+static CANDLE_REFRESHES_IN_FLIGHT: Lazy<Mutex<HashSet<String>>> =
+    Lazy::new(|| Mutex::new(HashSet::new()));
 
 pub fn router() -> Router<Arc<TradingApiState>> {
     Router::new()
@@ -274,17 +278,24 @@ fn stored_candles_from_request(bot_id: &str, req: RecordCandlesRequest) -> Vec<S
         .collect()
 }
 
-fn should_backfill(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackfillDecision {
+    None,
+    Blocking,
+    BackgroundRefresh,
+}
+
+fn backfill_decision(
     existing: &[StoredCandle],
     query: &GetCandlesQuery,
     limit: usize,
     interval: trading_runtime::backtest::Interval,
-) -> bool {
+) -> BackfillDecision {
     if existing.is_empty() {
-        return true;
+        return BackfillDecision::Blocking;
     }
     if existing.len() < limit.min(20) {
-        return true;
+        return BackfillDecision::Blocking;
     }
 
     let interval_secs = interval_seconds(interval);
@@ -293,7 +304,7 @@ fn should_backfill(
         let desired_count = expected_count.min(limit);
         let minimum_count = ((desired_count as f64) * 0.9).ceil() as usize;
         if existing.len() < minimum_count.max(20).min(desired_count) {
-            return true;
+            return BackfillDecision::Blocking;
         }
 
         let required_from = if desired_count >= expected_count {
@@ -308,7 +319,7 @@ fn should_backfill(
                 .min()
                 .unwrap_or_default();
             if earliest > required_from + interval_secs {
-                return true;
+                return BackfillDecision::Blocking;
             }
         }
     }
@@ -319,7 +330,21 @@ fn should_backfill(
         .map(|candle| candle.timestamp)
         .max()
         .unwrap_or_default();
-    latest + stale_threshold_secs < target_to
+    if latest + stale_threshold_secs < target_to {
+        return BackfillDecision::BackgroundRefresh;
+    }
+
+    BackfillDecision::None
+}
+
+#[cfg(test)]
+fn should_backfill(
+    existing: &[StoredCandle],
+    query: &GetCandlesQuery,
+    limit: usize,
+    interval: trading_runtime::backtest::Interval,
+) -> bool {
+    backfill_decision(existing, query, limit, interval) != BackfillDecision::None
 }
 
 fn query_stored_candles(
@@ -339,6 +364,89 @@ fn query_stored_candles(
         limit,
     })
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+async fn fetch_and_store_candles(
+    bot_id: &str,
+    token: &str,
+    source: trading_runtime::candle_sources::Source,
+    interval: trading_runtime::backtest::Interval,
+    interval_text: &str,
+    limit: usize,
+) -> Result<usize, String> {
+    let candles = trading_runtime::candle_sources::fetch_from_source(
+        source,
+        token,
+        interval,
+        limit.min(5_000) as u32,
+    )
+    .await
+    .map_err(|err| format!("Fetch failed for {token} from {}: {err}", source.name()))?;
+    let fetched_at_ms = Utc::now().timestamp_millis();
+    let stored: Vec<StoredCandle> = candles
+        .iter()
+        .map(|c| StoredCandle {
+            timestamp: c.timestamp,
+            token: c.token.clone(),
+            bot_id: bot_id.to_string(),
+            source: Some(source.name().to_string()),
+            interval: Some(interval_text.to_string()),
+            fetched_at_ms: Some(fetched_at_ms),
+            open: c.open.to_string(),
+            high: c.high.to_string(),
+            low: c.low.to_string(),
+            close: c.close.to_string(),
+            volume: c.volume.to_string(),
+        })
+        .collect();
+
+    candle_store::record_candles(bot_id, &stored).map_err(|e| e.to_string())
+}
+
+fn candle_refresh_key(bot_id: &str, token: &str, source: &str, interval: &str) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        bot_id,
+        token.trim().to_ascii_lowercase(),
+        source.trim().to_ascii_lowercase(),
+        interval.trim().to_ascii_lowercase()
+    )
+}
+
+fn spawn_stale_candle_refresh(
+    bot_id: String,
+    token: String,
+    source: trading_runtime::candle_sources::Source,
+    interval: trading_runtime::backtest::Interval,
+    interval_text: String,
+    limit: usize,
+) {
+    let key = candle_refresh_key(&bot_id, &token, source.name(), &interval_text);
+    let should_spawn = CANDLE_REFRESHES_IN_FLIGHT
+        .lock()
+        .map(|mut in_flight| in_flight.insert(key.clone()))
+        .unwrap_or(false);
+    if !should_spawn {
+        return;
+    }
+
+    tokio::spawn(async move {
+        let result =
+            fetch_and_store_candles(&bot_id, &token, source, interval, &interval_text, limit).await;
+        if let Err(err) = result {
+            tracing::warn!(
+                bot_id = %bot_id,
+                token = %token,
+                source = source.name(),
+                interval = %interval_text,
+                error = %err,
+                "background chart candle refresh failed"
+            );
+        }
+        if let Ok(mut in_flight) = CANDLE_REFRESHES_IN_FLIGHT.lock() {
+            in_flight.remove(&key);
+        }
+    });
 }
 
 async fn get_candles_inner(
@@ -381,53 +489,46 @@ pub async fn resolve_candles_for_bot(
             limit,
         )?;
 
-        if should_backfill(&existing, &query, limit, interval) {
-            match trading_runtime::candle_sources::fetch_from_source(
-                source,
-                &token,
-                interval,
-                limit.min(5_000) as u32,
-            )
-            .await
-            {
-                Ok(candles) => {
-                    let fetched_at_ms = Utc::now().timestamp_millis();
-                    let stored: Vec<StoredCandle> = candles
-                        .iter()
-                        .map(|c| StoredCandle {
-                            timestamp: c.timestamp,
-                            token: c.token.clone(),
-                            bot_id: bot_id.to_string(),
-                            source: response_source.clone(),
-                            interval: response_interval.clone(),
-                            fetched_at_ms: Some(fetched_at_ms),
-                            open: c.open.to_string(),
-                            high: c.high.to_string(),
-                            low: c.low.to_string(),
-                            close: c.close.to_string(),
-                            volume: c.volume.to_string(),
-                        })
-                        .collect();
-
-                    fetched = candle_store::record_candles(bot_id, &stored)
-                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-                    backfilled = fetched > 0;
-                }
-                Err(err) => {
-                    backfill_error = Some(format!(
-                        "Fetch failed for {token} from {}: {err}",
-                        source.name()
-                    ));
-                    tracing::warn!(
-                        bot_id = %bot_id,
-                        token = %token,
-                        source = source.name(),
-                        interval = %interval_text,
-                        error = %err,
-                        "chart candle read-through backfill failed"
-                    );
+        match backfill_decision(&existing, &query, limit, interval) {
+            BackfillDecision::Blocking => {
+                match fetch_and_store_candles(
+                    bot_id,
+                    &token,
+                    source,
+                    interval,
+                    &interval_text,
+                    limit,
+                )
+                .await
+                {
+                    Ok(recorded) => {
+                        fetched = recorded;
+                        backfilled = fetched > 0;
+                    }
+                    Err(err) => {
+                        backfill_error = Some(err.clone());
+                        tracing::warn!(
+                            bot_id = %bot_id,
+                            token = %token,
+                            source = source.name(),
+                            interval = %interval_text,
+                            error = %err,
+                            "chart candle read-through backfill failed"
+                        );
+                    }
                 }
             }
+            BackfillDecision::BackgroundRefresh => {
+                spawn_stale_candle_refresh(
+                    bot_id.to_string(),
+                    token,
+                    source,
+                    interval,
+                    interval_text,
+                    limit,
+                );
+            }
+            BackfillDecision::None => {}
         }
     }
 
@@ -610,6 +711,10 @@ mod tests {
             .collect();
 
         assert!(should_backfill(&existing, &query, 8_640, interval));
+        assert_eq!(
+            backfill_decision(&existing, &query, 8_640, interval),
+            BackfillDecision::Blocking
+        );
     }
 
     #[test]
@@ -631,6 +736,10 @@ mod tests {
             .collect();
 
         assert!(!should_backfill(&existing, &query, 8_640, interval));
+        assert_eq!(
+            backfill_decision(&existing, &query, 8_640, interval),
+            BackfillDecision::None
+        );
     }
 
     #[test]
@@ -652,5 +761,35 @@ mod tests {
             .collect();
 
         assert!(!should_backfill(&existing, &query, 120, interval));
+        assert_eq!(
+            backfill_decision(&existing, &query, 120, interval),
+            BackfillDecision::None
+        );
+    }
+
+    #[test]
+    fn stale_but_covered_cache_refreshes_in_background() {
+        let interval = trading_runtime::backtest::Interval::Min15;
+        let to = 1_700_000_000;
+        let from = to - 30 * 24 * 60 * 60;
+        let query = GetCandlesQuery {
+            token: Some("ETH".to_string()),
+            source: Some("hyperliquid".to_string()),
+            interval: Some("15m".to_string()),
+            from: Some(from),
+            to: Some(to),
+            limit: Some(8_640),
+            backfill: Some(true),
+        };
+        let stale_to = to - 60 * 60;
+        let existing: Vec<StoredCandle> = (0..2_881)
+            .map(|index| candle(stale_to - (2_880 - index) * 15 * 60))
+            .collect();
+
+        assert!(should_backfill(&existing, &query, 8_640, interval));
+        assert_eq!(
+            backfill_decision(&existing, &query, 8_640, interval),
+            BackfillDecision::BackgroundRefresh
+        );
     }
 }
