@@ -1,9 +1,13 @@
+use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use rust_decimal::Decimal;
 use sandbox_runtime::store::PersistentStore;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 static CANDLES: OnceCell<PersistentStore<StoredCandle>> = OnceCell::new();
+static CANDLE_RECORD_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// A candle persisted in the store. Uses String for Decimal fields to match
 /// the metrics_store/trade_store pattern (avoids serde precision issues).
@@ -73,6 +77,24 @@ fn candle_key(
 /// Record a batch of candles. Deduplicates by bot, token, source, interval, and timestamp.
 pub fn record_candles(bot_id: &str, candles_batch: &[StoredCandle]) -> Result<usize, String> {
     let store = candles()?;
+    let _guard = CANDLE_RECORD_LOCK
+        .lock()
+        .map_err(|_| "candle record lock poisoned".to_string())?;
+    let mut next: HashMap<String, StoredCandle> = store
+        .values()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|candle| {
+            let key = candle_key(
+                &candle.bot_id,
+                &candle.token,
+                candle.source.as_deref(),
+                candle.interval.as_deref(),
+                candle.timestamp,
+            );
+            (key, candle)
+        })
+        .collect();
     let mut recorded = 0;
     for candle in candles_batch {
         let key = candle_key(
@@ -82,11 +104,10 @@ pub fn record_candles(bot_id: &str, candles_batch: &[StoredCandle]) -> Result<us
             candle.interval.as_deref(),
             candle.timestamp,
         );
-        store
-            .insert(key, candle.clone())
-            .map_err(|e| e.to_string())?;
+        next.insert(key, candle.clone());
         recorded += 1;
     }
+    store.replace(next).map_err(|e| e.to_string())?;
     Ok(recorded)
 }
 
