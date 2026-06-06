@@ -76,9 +76,9 @@ export function ArenaPageHeader({
 
   return (
     <section className="shrink-0 overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
-      <div className="flex min-h-14 flex-col gap-2 px-3 py-1.5 min-[1180px]:flex-row min-[1180px]:items-center">
+      <div className="flex min-h-14 flex-col justify-center gap-2 px-3 py-2 min-[1180px]:h-14 min-[1180px]:flex-row min-[1180px]:items-center min-[1180px]:py-0">
         {showTitle ? (
-          <div className={`flex min-w-0 items-center gap-3 ${titleWidthClassName}`}>
+          <div className={`flex min-w-0 items-center gap-3 min-[1180px]:self-center ${titleWidthClassName}`}>
             <span
               className="h-2 w-2 shrink-0 rounded-full bg-[var(--arena-terminal-accent)]"
               style={{ boxShadow: '0 0 16px color-mix(in srgb, var(--arena-terminal-accent) 48%, transparent)' }}
@@ -93,19 +93,19 @@ export function ArenaPageHeader({
           <h1 className="sr-only">{title}</h1>
         )}
 
-        <div className={`grid min-w-0 gap-3 ${metricsClassName}`}>
+        <div className={`grid min-w-0 items-center gap-3 min-[1180px]:self-center ${metricsClassName}`}>
           {metrics.map((metric) => (
             <ArenaHeaderMetric key={metric.label} {...metric} />
           ))}
         </div>
 
         {children && (
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 min-[1180px]:self-center">
             {children}
           </div>
         )}
 
-        <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5 min-[1180px]:ml-auto min-[1180px]:w-auto">
+        <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5 min-[1180px]:ml-auto min-[1180px]:w-auto min-[1180px]:self-center">
           {controls}
           {utilities}
         </div>
