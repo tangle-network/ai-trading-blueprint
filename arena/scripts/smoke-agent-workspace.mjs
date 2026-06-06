@@ -69,6 +69,7 @@ const LIVE_SECTION_EXPECTATIONS = {
 const FIXTURE_HOME_EXPECTATIONS = ['Home', 'Volume', 'Fills', 'ETH Macro Scalper'];
 const FIXTURE_LEADERBOARD_EXPECTATIONS = ['Agents', '24H Vol', 'Active', 'ETH Macro Scalper', 'HL Perp'];
 const FIXTURE_ACTIVITY_EXPECTATIONS = ['Activity', '24H Vol', 'Fills', 'ETH Macro Scalper', 'ETH-PERP'];
+const FIXTURE_DASHBOARD_EXPECTATIONS = ['My Agents', 'ETH Macro Scalper', 'PNL', 'NAV'];
 const FIXTURE_OBSERVATORY_EXPECTATIONS = [
   'Observatory',
   'ETH Macro Scalper',
@@ -2036,6 +2037,56 @@ async function assertFixtureProvisionConnected(page, baseUrl, { screenshotDir = 
   }
 }
 
+async function assertFixtureOwnerDashboard(page, baseUrl, { screenshotDir = '', theme = '' } = {}) {
+  const failures = [];
+  const dashboardUrl = new URL('/dashboard', baseUrl);
+  if (theme) dashboardUrl.searchParams.set('theme', theme);
+
+  for (const viewport of VIEWPORTS) {
+    await setViewport(page, viewport);
+    await navigate(page, dashboardUrl.toString());
+    let metrics;
+    try {
+      metrics = await waitFor(async () => {
+        const nextMetrics = await evaluate(page, `(() => {
+          const scrolling = document.scrollingElement || document.documentElement;
+          return {
+            pathname: location.pathname,
+            search: location.search,
+            bodyText: document.body.innerText.slice(0, 8000),
+            scrollHeight: scrolling.scrollHeight,
+            innerHeight: window.innerHeight,
+          };
+        })()`);
+        return nextMetrics.pathname.endsWith('/dashboard')
+          && textIncludes(nextMetrics.bodyText, FIXTURE_DASHBOARD_EXPECTATIONS)
+          ? nextMetrics
+          : false;
+      }, { timeoutMs: 15_000, intervalMs: 250 });
+    } catch {
+      const debugMetrics = await evaluate(page, `(() => ({
+        pathname: location.pathname,
+        search: location.search,
+        bodyText: document.body.innerText.slice(0, 1200),
+      }))()`);
+      failures.push(`${viewport.width}x${viewport.height} dashboard: timed out waiting for ${JSON.stringify(FIXTURE_DASHBOARD_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
+      continue;
+    }
+
+    if (/Unexpected Application Error/i.test(metrics.bodyText)) {
+      failures.push(`${viewport.width}x${viewport.height} dashboard: route rendered an error state`);
+    }
+    if (/Connect owner wallet/i.test(metrics.bodyText)) {
+      failures.push(`${viewport.width}x${viewport.height} dashboard: still rendered disconnected wallet gate`);
+    }
+    await captureScreenshot(page, screenshotDir, viewport, 'dashboard', themeSuffix(theme));
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Owner dashboard smoke failed:\n${failures.map((failure) => `- ${failure}`).join('\n')}`);
+  }
+}
+
 async function clickNav(page, label) {
   const clicked = await waitFor(() => evaluate(page, `(async () => {
     const normalize = (value) => value.replace(/\\s+/g, ' ').trim().toLowerCase();
@@ -2279,6 +2330,10 @@ async function main() {
       await installFixtureWallet(page);
       for (const theme of themes) {
         await assertFixtureProvisionConnected(page, args.url, {
+          screenshotDir: args.screenshotDir,
+          theme,
+        });
+        await assertFixtureOwnerDashboard(page, args.url, {
           screenshotDir: args.screenshotDir,
           theme,
         });

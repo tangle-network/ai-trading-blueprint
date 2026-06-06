@@ -480,6 +480,13 @@ function compactCapabilityLabel(label: string): string {
   return label
 }
 
+function capabilityControlLabel(label: string): string {
+  if (/hyperliquid/i.test(label)) return 'Hyperliquid'
+  if (/prediction/i.test(label)) return 'Prediction'
+  if (/defi/i.test(label)) return 'Yield'
+  return label
+}
+
 export default function CreateAgent() {
   const [prompt, setPrompt] = useState(DEFAULT_STRATEGY_HINT.prompt)
   const [selectedCapabilityIds, setSelectedCapabilityIds] = useState<CapabilityId[]>(DEFAULT_STRATEGY_HINT.capabilityIds)
@@ -692,7 +699,7 @@ export default function CreateAgent() {
               >
                 Mandate
               </label>
-              <div className="inline-flex w-fit items-center gap-2 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-2.5 py-1.5 font-mono text-xs text-[var(--arena-terminal-text-secondary)]">
+              <div className="inline-flex w-fit items-center gap-2 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-2.5 py-1.5 font-mono text-xs text-[var(--arena-terminal-text-secondary)]">
                 <span className={`${detectedProfile.icon} text-base text-[var(--arena-terminal-accent)]`} aria-hidden="true" />
                 <span>{detectedProfile.label}</span>
               </div>
@@ -730,7 +737,7 @@ export default function CreateAgent() {
                       {selectedHint.shorthand}
                     </p>
                   </div>
-                  <span className="rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-secondary)]">
+                  <span className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-secondary)]">
                     Paper
                   </span>
                 </div>
@@ -840,15 +847,15 @@ export default function CreateAgent() {
           <aside className="grid overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:grid-rows-[auto_auto_auto_auto]">
             <section className="grid overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
               <div className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
-                <span className="flex h-[34px] w-[34px] items-center justify-center rounded-[5px] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
+                <span className="flex h-[34px] w-[34px] items-center justify-center border border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
                   <span className={`${detectedProfile.icon} text-lg`} aria-hidden="true" />
                 </span>
                 <div className="min-w-0">
-                  <h2 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">Starting Points</h2>
+                  <h2 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">Mandate Seeds</h2>
                   <p className="truncate font-mono text-xs text-[var(--arena-terminal-text-muted)]">{detectedProfile.label} / {detectedProfile.venue}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-1.5 p-2">
+              <div className="grid gap-1 p-2">
                 {STRATEGY_HINTS.map((hint) => {
                   const active = selectedHint.label === hint.label
 
@@ -918,7 +925,7 @@ export default function CreateAgent() {
                 type="submit"
                 form="create-agent-form"
                 disabled={!prompt.trim() || isCreating}
-                className="h-10 w-full rounded-[5px] bg-[var(--arena-terminal-accent)] px-5 font-display text-sm font-semibold text-[var(--arena-terminal-accent-text)] transition-[background-color,opacity,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] active:scale-[0.98] disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
+                className="h-10 w-full rounded-none bg-[var(--arena-terminal-accent)] px-5 font-display text-sm font-semibold text-[var(--arena-terminal-accent-text)] transition-[background-color,opacity,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] active:scale-[0.98] disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
               >
                 {isCreating ? 'Opening…' : 'Launch Paper Agent'}
               </Button>
@@ -948,13 +955,13 @@ function StrategyBookButton({
       onClick={onSelect}
       disabled={disabled}
       aria-pressed={active}
-      className={`grid min-h-[50px] w-full grid-cols-[26px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2 py-1.5 text-left transition-[background-color,border-color,opacity,transform] duration-150 active:scale-[0.99] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
+      className={`grid min-h-[42px] w-full grid-cols-[24px_minmax(0,1fr)] items-center gap-2 border px-2 py-1.5 text-left transition-[background-color,border-color,opacity,transform] duration-150 active:scale-[0.99] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
         active
           ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_var(--arena-terminal-accent)]'
           : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)]'
       }`}
     >
-      <span className="flex h-[26px] w-[26px] items-center justify-center rounded-[5px] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-accent)]">
+      <span className="flex h-6 w-6 items-center justify-center bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-accent)]">
         <span className={`${hint.icon} text-base`} aria-hidden="true" />
       </span>
       <span className="min-w-0">
@@ -988,7 +995,7 @@ function DraftTicketField({
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}
         maxLength={maxLength}
-        className="h-7 min-w-0 rounded-[4px] border border-transparent bg-transparent px-0 font-mono text-[13px] font-semibold text-[var(--arena-terminal-text)] outline-none transition-[background-color,border-color,padding] duration-150 placeholder:text-[var(--arena-terminal-text-subtle)] hover:border-[var(--arena-terminal-border)] hover:bg-[var(--arena-terminal-bg)] hover:px-2 focus:border-[var(--arena-terminal-border-hover)] focus:bg-[var(--arena-terminal-bg)] focus:px-2 focus:ring-2 focus:ring-[var(--arena-terminal-accent-soft)] disabled:opacity-60"
+        className="h-7 min-w-0 border border-transparent bg-transparent px-0 font-mono text-[13px] font-semibold text-[var(--arena-terminal-text)] outline-none transition-[background-color,border-color,padding] duration-150 placeholder:text-[var(--arena-terminal-text-subtle)] hover:border-[var(--arena-terminal-border)] hover:bg-[var(--arena-terminal-bg)] hover:px-2 focus:border-[var(--arena-terminal-border-hover)] focus:bg-[var(--arena-terminal-bg)] focus:px-2 focus:ring-2 focus:ring-[var(--arena-terminal-accent-soft)] disabled:opacity-60"
       />
     </label>
   )
@@ -996,8 +1003,8 @@ function DraftTicketField({
 
 function RiskCheck({ label }: { label: string }) {
   return (
-    <div className="grid grid-cols-[22px_minmax(0,1fr)] items-center gap-2 rounded-[4px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-2 py-1.5">
-      <span className="flex h-[22px] w-[22px] items-center justify-center rounded-[4px] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
+    <div className="grid grid-cols-[22px_minmax(0,1fr)] items-center gap-2 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-2 py-1.5">
+      <span className="flex h-[22px] w-[22px] items-center justify-center bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
         <span className="i-ph:check-bold text-xs" aria-hidden="true" />
       </span>
       <span className="min-w-0 truncate font-mono text-[12px] text-[var(--arena-terminal-text-secondary)]">
@@ -1025,18 +1032,18 @@ function CapabilityToggle({
       disabled={disabled}
       aria-pressed={active}
       title={capability.summary}
-      className={`grid min-h-[54px] grid-cols-[24px_minmax(0,1fr)] items-center gap-2 rounded-[5px] border px-2 py-1.5 text-left transition-[background-color,border-color,box-shadow,opacity,transform] duration-150 active:scale-[0.99] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
+      className={`grid min-h-[50px] grid-cols-[24px_minmax(0,1fr)] items-center gap-2 border px-2 py-1.5 text-left transition-[background-color,border-color,box-shadow,opacity,transform] duration-150 active:scale-[0.99] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
         active
           ? 'border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] shadow-[inset_3px_0_0_var(--arena-terminal-accent)]'
           : 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)]'
       }`}
     >
-      <span className="flex h-6 w-6 items-center justify-center rounded-[5px] bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-accent)]">
+      <span className="flex h-6 w-6 items-center justify-center bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-accent)]">
         <span className={`${capability.icon} text-sm`} aria-hidden="true" />
       </span>
       <span className="min-w-0">
         <span className="block truncate font-display text-[12px] font-semibold text-[var(--arena-terminal-text)]">
-          {capability.label}
+          {capabilityControlLabel(capability.label)}
         </span>
         <span className="block truncate font-mono text-[10px] text-[var(--arena-terminal-text-muted)]">
           {capability.protocols.join(', ')}
@@ -1056,7 +1063,7 @@ function RouteChip({
   value: string
 }) {
   return (
-    <div className="grid min-h-[54px] content-between gap-1.5 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-2.5">
+    <div className="grid min-h-[50px] content-between gap-1.5 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-2.5">
       <span className="flex items-center justify-between gap-3">
         <span className={`${icon} text-base text-[var(--arena-terminal-accent)]`} aria-hidden="true" />
         <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">{label}</span>

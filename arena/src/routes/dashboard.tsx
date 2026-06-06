@@ -2,7 +2,6 @@ import { useEffect, useState, useMemo, useCallback, useRef, useSyncExternalStore
 import type { MetaFunction } from 'react-router';
 import { useAccount } from 'wagmi';
 import { parseAbiItem } from 'viem';
-import { Badge, StaggerContainer, StaggerItem } from '@tangle-network/blueprint-ui/components';
 import { toast } from 'sonner';
 import {
   provisionsForOwner,
@@ -201,8 +200,6 @@ export default function HomePage() {
   const avgRiskScore = scoredBots.length > 0
     ? Math.round(scoredBots.reduce((sum, b) => sum + b.avgValidatorScore, 0) / scoredBots.length)
     : 0;
-  const knownBotCount = visibleMyBots.length;
-
   // Handlers
   const dismissProvision = useCallback((id: string) => {
     removeProvision(id);
@@ -296,7 +293,7 @@ export default function HomePage() {
     || failedProvisions.length > 0;
   const dashboardMetrics: ArenaPageMetric[] = [
     { label: 'Services', value: String(services.length) },
-    { label: 'Active Agents', value: operatorDataIncomplete ? '-' : String(activeBots.length) },
+    { label: 'Active', value: operatorDataIncomplete ? '-' : String(activeBots.length) },
     {
       label: 'NAV',
       value: operatorDataIncomplete
@@ -321,7 +318,6 @@ export default function HomePage() {
         <h2 className="text-sm font-data uppercase tracking-wider text-[var(--arena-terminal-text-secondary)]">
           Services
         </h2>
-        <Badge variant="secondary" className="text-[10px]">{services.length}</Badge>
         <WorkspaceControlButton
           label={dashboardLayout.servicesCollapsed ? 'Restore services' : 'Minimize services'}
           icon={dashboardLayout.servicesCollapsed ? 'i-ph:arrows-out-line-vertical' : 'i-ph:minus-bold'}
@@ -333,38 +329,37 @@ export default function HomePage() {
         />
       </div>
       <div className="min-h-0 overflow-auto p-3 [scrollbar-gutter:stable]">
-        <StaggerContainer>
-          <div className="space-y-2">
-            {services.map((svc) => (
-              <StaggerItem key={svc.serviceId}>
-                <ServiceCard
-                  service={svc}
-                  bots={myBotsByService.get(svc.serviceId) ?? []}
-                  lockedBotCount={lockedBotsByService.get(svc.serviceId) ?? 0}
-                />
-              </StaggerItem>
-            ))}
-          </div>
-        </StaggerContainer>
+        <div className="space-y-2">
+          {services.map((svc) => (
+            <ServiceCard
+              key={svc.serviceId}
+              service={svc}
+              bots={myBotsByService.get(svc.serviceId) ?? []}
+              lockedBotCount={lockedBotsByService.get(svc.serviceId) ?? 0}
+            />
+          ))}
+        </div>
       </div>
     </section>
   ) : null;
+  const showMyAgentsSectionHeader = services.length > 0 || hasLockedBots;
   const myAgentsSection = hasBotSection ? (
     <section className="flex min-h-0 flex-col overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
-      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-2">
-        <h2 className="text-sm font-data uppercase tracking-wider text-[var(--arena-terminal-text-secondary)]">
-          My Agents
-        </h2>
-        <Badge variant="secondary" className="text-[10px]">{knownBotCount}</Badge>
-        {hasLockedBots && (
-          <span className="text-xs font-data text-[var(--arena-terminal-text-muted)]">
-            {lockedOperatorProvisions.length} require operator auth
-          </span>
-        )}
-      </div>
+      {showMyAgentsSectionHeader && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--arena-terminal-border)] px-3 py-2">
+          <h2 className="text-sm font-data uppercase tracking-wider text-[var(--arena-terminal-text-secondary)]">
+            My Agents
+          </h2>
+          {hasLockedBots && (
+            <span className="text-xs font-data text-[var(--arena-terminal-text-muted)]">
+              {lockedOperatorProvisions.length} require operator auth
+            </span>
+          )}
+        </div>
+      )}
       {visibleMyBots.length > 0 ? (
         <div className="min-h-0 overflow-auto p-3 [scrollbar-gutter:stable]">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="space-y-1.5">
             {visibleMyBots.map((bot) => {
               const configureHandler = (bot.status === 'needs_config' || bot.lifecycleStatus === 'awaiting_secrets')
                 ? () => setSecretsTarget({

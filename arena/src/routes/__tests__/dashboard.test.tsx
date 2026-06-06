@@ -253,7 +253,7 @@ describe('dashboard auth-aware rendering', () => {
     }));
     expect(screen.getByText('service-1-locked-1')).toBeInTheDocument();
     expect(screen.queryByText('provisioning-1-failed-0')).not.toBeInTheDocument();
-    expect(screen.getByText('Active Agents').parentElement).toHaveTextContent('-');
+    expect(screen.getByText('Active').parentElement).toHaveTextContent('-');
   });
 
   it('keeps genuinely unresolved provisions in the provisioning section', async () => {
