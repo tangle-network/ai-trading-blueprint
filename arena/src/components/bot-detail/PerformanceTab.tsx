@@ -39,6 +39,7 @@ import {
   fillCountEvidenceSubvalue,
   resolveFillCountEvidence,
 } from '~/lib/tradeEvidence';
+import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 import {
   WorkspaceCollapsedPane,
   WorkspaceControlButton,
@@ -93,10 +94,40 @@ function readStrategyString(strategyConfig: Record<string, unknown> | undefined,
   return null;
 }
 
+function readStrategyChainId(strategyConfig: Record<string, unknown> | undefined): number | undefined {
+  if (!strategyConfig) return undefined;
+  for (const key of ['protocol_chain_id', 'chain_id']) {
+    const raw = strategyConfig[key];
+    const parsed = typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string'
+        ? Number(raw)
+        : Number.NaN;
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  }
+  return undefined;
+}
+
+function isAddressToken(value: string | null | undefined): boolean {
+  return /^0x[a-f0-9]{32,}$/i.test(value?.trim() ?? '');
+}
+
+function resolveCandleTokenCandidate(
+  value: string | null | undefined,
+  chainId: number | undefined,
+): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (!isAddressToken(trimmed)) return trimmed;
+
+  const resolved = resolveAssetDisplay(trimmed, chainId);
+  return resolved.isKnown ? resolved.symbol : trimmed;
+}
+
 function normalizeCandleToken(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
-  if (/^0x[a-f0-9]{32,}$/i.test(trimmed)) return trimmed;
+  if (isAddressToken(trimmed)) return trimmed;
   const normalized = trimmed
     .replace(/-PERP$/i, '')
     .replace(/\/USD[CT]?$/i, '')
@@ -114,11 +145,13 @@ function isStableCandleToken(value: string | null | undefined): boolean {
 
 function firstRiskCandleToken(...values: Array<string | null | undefined>): string | null {
   const normalized = values.map(normalizeCandleToken).filter((value): value is string => value != null);
-  return normalized.find((value) => !isStableCandleToken(value)) ?? normalized[0] ?? null;
+  const chartable = normalized.filter((value) => !isAddressToken(value));
+  return chartable.find((value) => !isStableCandleToken(value)) ?? chartable[0] ?? null;
 }
 
 function inferMarketCandleToken(bot: Bot, trades: Trade[] | undefined): string | null {
   const latestTrade = trades?.find((trade) => Number.isFinite(trade.timestamp));
+  const strategyChainId = readStrategyChainId(bot.strategyConfig) ?? latestTrade?.chainId ?? bot.chainId;
   if (latestTrade?.hyperliquidMetadata?.asset) {
     return normalizeCandleToken(latestTrade.hyperliquidMetadata.asset);
   }
@@ -135,9 +168,20 @@ function inferMarketCandleToken(bot: Bot, trades: Trade[] | undefined): string |
     return normalizeCandleToken(latestTrade.predictionMetadata.tokenId);
   }
   return firstRiskCandleToken(
-    latestTrade?.tokenIn,
-    latestTrade?.tokenOut,
-    readStrategyString(bot.strategyConfig, ['asset', 'symbol', 'token', 'base_asset']),
+    resolveCandleTokenCandidate(latestTrade?.assetIn.symbol, strategyChainId),
+    resolveCandleTokenCandidate(latestTrade?.assetOut.symbol, strategyChainId),
+    resolveCandleTokenCandidate(latestTrade?.tokenIn, strategyChainId),
+    resolveCandleTokenCandidate(latestTrade?.tokenOut, strategyChainId),
+    resolveCandleTokenCandidate(latestTrade?.rawTokenIn, strategyChainId),
+    resolveCandleTokenCandidate(latestTrade?.rawTokenOut, strategyChainId),
+    resolveCandleTokenCandidate(readStrategyString(bot.strategyConfig, [
+      'asset',
+      'symbol',
+      'token',
+      'base_asset',
+      'asset_token',
+      'cash_token',
+    ]), strategyChainId),
   );
 }
 
@@ -240,7 +284,7 @@ function marketCandleIntervalForRange(range: PerformanceRange): string {
 }
 
 function inferMarketCandleSource(bot: Bot, token: string | null | undefined): string | null {
-  if (!token || /^0x[a-f0-9]{32,}$/i.test(token) || isStableCandleToken(token)) return null;
+  if (!token || isAddressToken(token) || isStableCandleToken(token)) return null;
   const strategyType = bot.strategyType.toLowerCase();
   if (strategyType.includes('hyperliquid')) return 'hyperliquid';
   if (strategyType.includes('drift')) return 'drift';

@@ -978,6 +978,66 @@ describe('PerformanceTab', () => {
     );
   });
 
+  it('requests Binance ETH backfill for Base address-form DEX trades', () => {
+    mockTrades = [
+      makeTrade({
+        action: 'swap',
+        tokenIn: 'USDC',
+        tokenOut: 'WETH',
+        rawTokenIn: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        rawTokenOut: '0x4200000000000000000000000000000000000006',
+        assetIn: {
+          rawToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+          symbol: 'USDC',
+          name: 'USD Coin',
+          primaryLabel: 'USD Coin',
+          secondaryLabel: 'USDC',
+          isKnown: true,
+          accentClassName: 'bg-blue-100 text-blue-700',
+          iconText: 'U',
+        },
+        assetOut: {
+          rawToken: '0x4200000000000000000000000000000000000006',
+          symbol: 'WETH',
+          name: 'Wrapped Ether',
+          primaryLabel: 'Wrapped Ether',
+          secondaryLabel: 'WETH',
+          isKnown: true,
+          accentClassName: 'bg-sky-100 text-sky-700',
+          iconText: 'W',
+        },
+      }),
+    ];
+
+    render(
+      <PerformanceTab
+        bot={makeBot({
+          strategyType: 'multi',
+          chainId: 84532,
+          strategyConfig: {
+            asset_token: '0x4200000000000000000000000000000000000006',
+            cash_token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+            protocol_chain_id: 8453,
+          },
+        })}
+        isLive={false}
+      />,
+    );
+
+    expect(useBotMarketCandlesMock).toHaveBeenCalledWith(
+      'bot-1',
+      'ETH',
+      90,
+      expect.objectContaining({
+        backfill: true,
+        interval: '15m',
+        limit: 8_640,
+        refetchInterval: false,
+        source: 'binance',
+      }),
+    );
+  });
+
   it('opens the market chart on the selected range while keeping older candles loaded for panning', async () => {
     mockMetrics = [
       {
