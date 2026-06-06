@@ -345,6 +345,13 @@ async fn get_candles_inner(
     bot_id: &str,
     query: GetCandlesQuery,
 ) -> Result<Json<GetCandlesResponse>, (StatusCode, String)> {
+    resolve_candles_for_bot(bot_id, query).await.map(Json)
+}
+
+pub async fn resolve_candles_for_bot(
+    bot_id: &str,
+    query: GetCandlesQuery,
+) -> Result<GetCandlesResponse, (StatusCode, String)> {
     let limit = resolved_candle_limit(&query);
     let mut response_source = normalize_optional(query.source.clone());
     let mut response_interval = normalize_optional(query.interval.clone());
@@ -440,7 +447,7 @@ async fn get_candles_inner(
         candles: total,
     };
 
-    Ok(Json(GetCandlesResponse {
+    Ok(GetCandlesResponse {
         candles,
         total,
         source: response_source,
@@ -449,7 +456,7 @@ async fn get_candles_inner(
         fetched,
         backfill_error,
         coverage,
-    }))
+    })
 }
 
 async fn fetch_historical(

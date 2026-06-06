@@ -6776,37 +6776,22 @@ async fn get_bot_market_candles(
     Query(query): Query<CandleListQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
-    let mut remote_query = Vec::new();
-    if let Some(token) = query.token {
-        remote_query.push(("token", token));
-    }
-    if let Some(source) = query.source {
-        remote_query.push(("source", source));
-    }
-    if let Some(interval) = query.interval {
-        remote_query.push(("interval", interval));
-    }
-    if let Some(from) = query.from {
-        remote_query.push(("from", from.to_string()));
-    }
-    if let Some(to) = query.to {
-        remote_query.push(("to", to.to_string()));
-    }
-    if let Some(limit) = query.limit {
-        remote_query.push(("limit", limit.to_string()));
-    }
-    if let Some(backfill) = query.backfill {
-        remote_query.push(("backfill", backfill.to_string()));
-    }
-
-    match fetch_trading_api_json(&bot, "/market-data/candles", &remote_query).await {
-        Ok(Some(payload)) => Ok(Json(payload)),
-        Ok(None) => Ok(Json(serde_json::json!({ "candles": [], "total": 0 }))),
-        Err(err) => {
-            tracing::warn!(bot_id = %bot.id, "trading api candle request failed: {err}");
-            Ok(Json(serde_json::json!({ "candles": [], "total": 0 })))
-        }
-    }
+    let payload = trading_http_api::routes::candles::resolve_candles_for_bot(
+        &bot.id,
+        trading_http_api::routes::candles::GetCandlesQuery {
+            token: query.token,
+            source: query.source,
+            interval: query.interval,
+            from: query.from,
+            to: query.to,
+            limit: query.limit,
+            backfill: query.backfill,
+        },
+    )
+    .await?;
+    serde_json::to_value(payload)
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
 async fn get_bot_chart_studies(
