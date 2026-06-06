@@ -268,17 +268,18 @@ describe('bot workspace routing', () => {
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/performance');
   });
 
-  it('switches from chat focus mode to performance in one click', async () => {
+  it('switches from chat dense mode to performance through the agent rail', async () => {
     const router = renderBotWorkspace(['/arena/bot/bot-1/chat']);
 
     expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('link', { name: /agent/i }));
+    expect(screen.queryByRole('link', { name: /^back to agent$/i })).not.toBeInTheDocument();
+    clickFirstWorkspaceLink(/performance/i);
 
     expect(await findWorkspace('workspace-performance')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/performance');
   });
 
-  it('returns from chat focus mode to the agent section that opened it', async () => {
+  it('keeps chat dense mode route-native instead of using a fullscreen return link', async () => {
     const router = renderBotWorkspace(['/arena/bot/bot-1/portfolio']);
 
     expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
@@ -287,7 +288,8 @@ describe('bot workspace routing', () => {
     expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/chat');
 
-    fireEvent.click(screen.getByRole('link', { name: /agent/i }));
+    expect(screen.queryByRole('link', { name: /^back to agent$/i })).not.toBeInTheDocument();
+    clickFirstWorkspaceLink(/portfolio/i);
 
     expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/portfolio');
@@ -296,10 +298,11 @@ describe('bot workspace routing', () => {
       await router.navigate(-1);
     });
 
-    expect(router.state.location.pathname).toBe('/arena/bot/bot-1/portfolio');
+    expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/arena/bot/bot-1/chat');
   });
 
-  it('preserves alias route tokens when returning from chat focus mode', async () => {
+  it('preserves alias route tokens when moving out of chat dense mode', async () => {
     const router = renderBotWorkspace(['/arena/bot/sandbox-1/portfolio']);
 
     expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
@@ -308,13 +311,14 @@ describe('bot workspace routing', () => {
     expect(await findWorkspace('workspace-chat')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/sandbox-1/chat');
 
-    fireEvent.click(screen.getByRole('link', { name: /agent/i }));
+    expect(screen.queryByRole('link', { name: /^back to agent$/i })).not.toBeInTheDocument();
+    clickFirstWorkspaceLink(/portfolio/i);
 
     expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/sandbox-1/portfolio');
   });
 
-  it('returns from runs focus mode to the agent section that opened it', async () => {
+  it('keeps runs dense mode route-native instead of using a fullscreen return link', async () => {
     const router = renderBotWorkspace(['/arena/bot/bot-1/portfolio']);
 
     expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
@@ -323,7 +327,8 @@ describe('bot workspace routing', () => {
     expect(await findWorkspace('workspace-runs')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/runs');
 
-    fireEvent.click(screen.getByRole('link', { name: /agent/i }));
+    expect(screen.queryByRole('link', { name: /^back to agent$/i })).not.toBeInTheDocument();
+    clickFirstWorkspaceLink(/portfolio/i);
 
     expect(await findWorkspace('workspace-portfolio')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/arena/bot/bot-1/portfolio');

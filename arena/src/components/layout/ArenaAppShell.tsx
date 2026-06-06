@@ -67,10 +67,29 @@ export function ArenaAppShell() {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
   });
+  const [botWorkspaceSidebarExpanded, setBotWorkspaceSidebarExpanded] = useState(false);
 
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? 'true' : 'false');
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (!isBotWorkspace) setBotWorkspaceSidebarExpanded(false);
+  }, [isBotWorkspace]);
+
+  const displayedSidebarCollapsed = isBotWorkspace ? !botWorkspaceSidebarExpanded : sidebarCollapsed;
+  const setDisplayedSidebarCollapsed: Dispatch<SetStateAction<boolean>> = (value) => {
+    if (!isBotWorkspace) {
+      setSidebarCollapsed(value);
+      return;
+    }
+
+    setBotWorkspaceSidebarExpanded((expanded) => {
+      const currentCollapsed = !expanded;
+      const nextCollapsed = typeof value === 'function' ? value(currentCollapsed) : value;
+      return !nextCollapsed;
+    });
+  };
 
   return (
     <div className="bp-tone-arena arena-trace-terminal flex h-[100dvh] overflow-hidden bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)]">
@@ -81,13 +100,11 @@ export function ArenaAppShell() {
         Skip to content
       </a>
 
-      {!isBotWorkspace && (
-        <DesktopArenaSidebar
-          pathname={location.pathname}
-          sidebarCollapsed={sidebarCollapsed}
-          setSidebarCollapsed={setSidebarCollapsed}
-        />
-      )}
+      <DesktopArenaSidebar
+        pathname={location.pathname}
+        sidebarCollapsed={displayedSidebarCollapsed}
+        setSidebarCollapsed={setDisplayedSidebarCollapsed}
+      />
 
       <ArenaHeaderUtilitiesContext.Provider value={!isBotWorkspace ? <HeaderUtilityControls /> : null}>
       <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">

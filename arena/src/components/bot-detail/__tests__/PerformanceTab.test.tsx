@@ -10,6 +10,7 @@ import { PerformanceTab } from '../PerformanceTab';
 
 const lightweightChartMock = vi.hoisted(() => {
   const fitContent = vi.fn();
+  const setVisibleRange = vi.fn();
   const timeToCoordinate = vi.fn((time: number) => {
     const base = Date.parse('2026-04-23T10:00:00.000Z') / 1000;
     return (time - base) * 2;
@@ -18,6 +19,7 @@ const lightweightChartMock = vi.hoisted(() => {
   const unsubscribeVisibleLogicalRangeChange = vi.fn();
   const timeScale = {
     fitContent,
+    setVisibleRange,
     subscribeVisibleLogicalRangeChange,
     timeToCoordinate,
     unsubscribeVisibleLogicalRangeChange,
@@ -100,6 +102,7 @@ const lightweightChartMock = vi.hoisted(() => {
     pane0,
     pane1,
     priceScale,
+    setVisibleRange,
     subscribeVisibleLogicalRangeChange,
     timeScale,
     timeToCoordinate,
@@ -347,6 +350,7 @@ describe('PerformanceTab', () => {
     lightweightChartMock.createChart.mockClear();
     lightweightChartMock.createSeriesMarkers.mockClear();
     lightweightChartMock.fitContent.mockClear();
+    lightweightChartMock.setVisibleRange.mockClear();
     lightweightChartMock.lineSeries.setData.mockClear();
     lightweightChartMock.markerApi.detach.mockClear();
     lightweightChartMock.markerApi.markers.mockClear();
@@ -868,7 +872,7 @@ describe('PerformanceTab', () => {
     );
     expect(screen.getAllByText('NAV').length).toBeGreaterThan(0);
     expect(lightweightChartMock.markerApi.setMarkers).toHaveBeenLastCalledWith([]);
-    expect(screen.getByTestId('chart-market-coverage')).toHaveTextContent('2 candles');
+    expect(screen.getByTestId('chart-market-coverage')).toHaveTextContent('2/2 candles');
     expect(screen.getByTestId('chart-market-coverage')).toHaveTextContent('Hyperliquid 15m');
     expect(screen.getByRole('button', { name: 'VWAP' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'SMA 20' })).toBeDisabled();
@@ -878,7 +882,7 @@ describe('PerformanceTab', () => {
         expect.objectContaining({ value: expect.any(Number) }),
       ]),
     );
-    expect(screen.getByTestId('chart-agent-studies-chip')).toHaveTextContent('Agent 2');
+    expect(screen.getByTestId('chart-agent-studies-chip')).toHaveTextContent('Invalidation +1');
     expect(screen.getByTestId('chart-agent-studies-chip')).toHaveAttribute(
       'title',
       expect.stringContaining('Breakout guard: Invalidation'),
@@ -898,6 +902,64 @@ describe('PerformanceTab', () => {
     expect(await screen.findByLabelText(/LONG .*Apr 23/i)).toBeInTheDocument();
     expect(screen.getByText('1/1 fills')).toBeInTheDocument();
     expect(screen.getByTestId('chart-execution-coverage')).toHaveTextContent('2 candles');
+  });
+
+  it('opens the market chart on the selected range while keeping older candles loaded for panning', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-30T00:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockTrades = [
+      makeTrade({
+        id: 'latest-eth',
+        action: 'open_long',
+        timestamp: Date.parse('2026-04-30T00:00:00.000Z'),
+        hyperliquidMetadata: {
+          asset: 'ETH',
+          assetSize: '0.03',
+          orderType: 'market',
+          reduceOnly: false,
+        },
+        venue: 'perp',
+      }),
+    ];
+    const firstLoadedMs = Date.parse('2026-03-25T00:00:00.000Z');
+    mockMarketCandles = Array.from({ length: 37 }, (_, index) => {
+      const open = 3200 + index * 4;
+      return {
+        timestamp: firstLoadedMs + index * 24 * 60 * 60 * 1000,
+        token: 'ETH',
+        open,
+        high: open + 16,
+        low: open - 12,
+        close: open + 6,
+        volume: 1000 + index,
+      };
+    });
+
+    render(
+      <PerformanceTab
+        bot={makeBot({
+          strategyType: 'hyperliquid_perp',
+          strategyConfig: { asset: 'ETH' },
+        })}
+        isLive
+      />,
+    );
+
+    const latestLoadedMs = Date.parse('2026-04-30T00:00:00.000Z');
+    await waitFor(() => expect(lightweightChartMock.setVisibleRange).toHaveBeenCalled());
+    expect(lightweightChartMock.setVisibleRange).toHaveBeenLastCalledWith({
+      from: Math.floor((latestLoadedMs - 30 * 24 * 60 * 60 * 1000) / 1000),
+      to: Math.ceil(latestLoadedMs / 1000),
+    });
+    expect(screen.getByTestId('chart-market-coverage')).toHaveTextContent('31/37 candles');
   });
 
   it('groups dense same-location market executions into one readable marker', async () => {

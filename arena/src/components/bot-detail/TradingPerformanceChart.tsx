@@ -42,6 +42,7 @@ interface TradingPerformanceChartProps {
   marketCandles?: MarketCandle[];
   marketLabel?: string | null;
   marketDataCoverage?: MarketDataCoverage | null;
+  visibleRange?: { fromMs: number; toMs: number } | null;
   chartStudies?: ChartStudy[];
   fillCountEvidence?: FillCountEvidence | null;
 }
@@ -56,6 +57,8 @@ export interface MarketDataCoverage {
   requestedRangeLabel: string;
   requestedFromMs: number;
   requestedToMs: number;
+  loadedFromMs?: number | null;
+  loadedToMs?: number | null;
   botCreatedAtMs?: number | null;
 }
 
@@ -163,6 +166,47 @@ function timeRangeMs(first: Time | undefined, last: Time | undefined): number {
   const lastTimestamp = timestampMsFromChartTime(last);
   if (firstTimestamp == null || lastTimestamp == null) return 0;
   return Math.max(0, lastTimestamp - firstTimestamp);
+}
+
+function dataRangeMs(data: Array<{ time: Time }>): { firstMs: number; lastMs: number; spanMs: number } | null {
+  const firstMs = timestampMsFromChartTime(data[0]?.time);
+  const lastMs = timestampMsFromChartTime(data[data.length - 1]?.time);
+  if (firstMs == null || lastMs == null || lastMs < firstMs) return null;
+  return {
+    firstMs,
+    lastMs,
+    spanMs: lastMs - firstMs,
+  };
+}
+
+function applyPreferredVisibleRange(
+  chart: IChartApi,
+  data: Array<{ time: Time }>,
+  visibleRange: { fromMs: number; toMs: number } | null | undefined,
+): void {
+  if (!visibleRange || visibleRange.toMs <= visibleRange.fromMs || data.length < 2) {
+    chart.timeScale().fitContent();
+    return;
+  }
+
+  const loaded = dataRangeMs(data);
+  if (!loaded) {
+    chart.timeScale().fitContent();
+    return;
+  }
+
+  const requestedSpanMs = visibleRange.toMs - visibleRange.fromMs;
+  if (loaded.spanMs < requestedSpanMs * 0.9) {
+    chart.timeScale().fitContent();
+    return;
+  }
+
+  const toMs = loaded.lastMs;
+  const fromMs = Math.max(loaded.firstMs, toMs - requestedSpanMs);
+  chart.timeScale().setVisibleRange({
+    from: Math.floor(fromMs / 1000) as UTCTimestamp,
+    to: Math.ceil(toMs / 1000) as UTCTimestamp,
+  });
 }
 
 function shouldSuppressChartEdgeTick(time: Time, first: Time | undefined, last: Time | undefined): boolean {
@@ -1051,23 +1095,32 @@ function marketCoverageReadout(
   if (!first || !latest) return null;
 
   const requestedSpanMs = Math.max(0, coverage.requestedToMs - coverage.requestedFromMs);
-  const observedSpanMs = Math.max(0, latest.timestamp - first.timestamp);
-  const rangePercent = requestedSpanMs > 0 ? observedSpanMs / requestedSpanMs * 100 : 0;
+  const loadedSpanMs = Math.max(0, latest.timestamp - first.timestamp);
+  const visibleCandles = candles.filter((candle) =>
+    candle.timestamp >= coverage.requestedFromMs && candle.timestamp <= coverage.requestedToMs,
+  );
+  const visibleFirst = visibleCandles[0] ?? null;
+  const visibleLatest = visibleCandles[visibleCandles.length - 1] ?? null;
+  const visibleObservedSpanMs = visibleFirst && visibleLatest
+    ? Math.max(0, visibleLatest.timestamp - visibleFirst.timestamp)
+    : 0;
+  const rangePercent = requestedSpanMs > 0 ? Math.min(100, visibleObservedSpanMs / requestedSpanMs * 100) : 0;
   const firstLabel = coverageTimeFormatter.format(new Date(first.timestamp));
   const latestLabel = coverageTimeFormatter.format(new Date(latest.timestamp));
   const historyState = coverage.botCreatedAtMs != null && first.timestamp < coverage.botCreatedAtMs - 60_000
     ? 'pre-agent'
     : 'post-launch';
-  const tone = candles.length < 20 || rangePercent < 5
+  const tone = visibleCandles.length < 20 || rangePercent < 5
     ? 'thin'
     : rangePercent < 80
       ? 'partial'
       : 'complete';
+  const visibleCountLabel = `${formatNumber(visibleCandles.length, { maximumFractionDigits: 0 })}/${formatNumber(candles.length, { maximumFractionDigits: 0 })}`;
 
   return {
-    label: `${formatNumber(candles.length, { maximumFractionDigits: 0 })} candles · ${coverage.sourceLabel}`,
-    detail: `${formatCoverageSpan(observedSpanMs)} · ${formatCoveragePercent(rangePercent)} · ${historyState}`,
-    title: `${coverage.sourceLabel} returned ${candles.length} ${first.token} candles for ${coverage.requestedRangeLabel}. First: ${firstLabel}. Latest: ${latestLabel}. Requested: ${coverageTimeFormatter.format(new Date(coverage.requestedFromMs))} to ${coverageTimeFormatter.format(new Date(coverage.requestedToMs))}.`,
+    label: `${visibleCountLabel} candles · ${coverage.sourceLabel}`,
+    detail: `${formatCoveragePercent(rangePercent)} visible · ${formatCoverageSpan(loadedSpanMs)} loaded · ${historyState}`,
+    title: `${coverage.sourceLabel} returned ${candles.length} ${first.token} candles with ${visibleCandles.length} in the ${coverage.requestedRangeLabel} viewport. Loaded: ${firstLabel} to ${latestLabel}. Visible: ${coverageTimeFormatter.format(new Date(coverage.requestedFromMs))} to ${coverageTimeFormatter.format(new Date(coverage.requestedToMs))}.`,
     tone,
   };
 }
@@ -1140,6 +1193,7 @@ export function TradingPerformanceChart({
   marketCandles = [],
   marketLabel,
   marketDataCoverage,
+  visibleRange,
   chartStudies = [],
   fillCountEvidence,
 }: TradingPerformanceChartProps) {
@@ -1187,6 +1241,14 @@ export function TradingPerformanceChart({
     () => buildAgentStudyLines(chartStudies, marketCandles),
     [chartStudies, marketCandles],
   );
+  const agentStudySummary = useMemo(() => {
+    if (agentStudyLines.length === 0) return null;
+    if (agentStudyLines.length === 1) return agentStudyLines[0]?.label ?? 'Agent overlay';
+    const firstLabel = agentStudyLines[0]?.label;
+    return firstLabel
+      ? `${firstLabel} +${formatNumber(agentStudyLines.length - 1, { maximumFractionDigits: 0 })}`
+      : `Agent overlays ${formatNumber(agentStudyLines.length, { maximumFractionDigits: 0 })}`;
+  }, [agentStudyLines]);
   const marketMarkerPlacementResult = useMemo(
     () => toMarketMarkerPlacements(tradeMarkers, marketCandles),
     [marketCandles, tradeMarkers],
@@ -1208,6 +1270,7 @@ export function TradingPerformanceChart({
   const markerReadoutsByIdRef = useRef(new Map<string, MarkerPlacement>());
   const activeModeRef = useRef(activeMode);
   const marketLabelRef = useRef<string | null | undefined>(marketLabel);
+  const visibleRangeRef = useRef<typeof visibleRange>(visibleRange);
   const firstMarketTimeRef = useRef<Time | undefined>(undefined);
   const lastMarketTimeRef = useRef<Time | undefined>(undefined);
   const firstNavTimeRef = useRef<Time | undefined>(undefined);
@@ -1219,6 +1282,7 @@ export function TradingPerformanceChart({
   useEffect(() => {
     activeModeRef.current = activeMode;
     marketLabelRef.current = marketLabel;
+    visibleRangeRef.current = visibleRange;
     tradeMarkersRef.current = tradeMarkers;
     marketCandlesRef.current = marketCandles;
     agentStudyLinesRef.current = agentStudyLines;
@@ -1235,7 +1299,7 @@ export function TradingPerformanceChart({
     lastMarketTimeRef.current = marketSeriesData[marketSeriesData.length - 1]?.time;
     firstNavTimeRef.current = preparedPoints[0]?.time;
     lastNavTimeRef.current = preparedPoints[preparedPoints.length - 1]?.time;
-  }, [activeMode, agentStudyLines, marketCandles, marketLabel, markerReadoutsById, marketSeriesData, preparedPoints, tradeMarkers]);
+  }, [activeMode, agentStudyLines, marketCandles, marketLabel, markerReadoutsById, marketSeriesData, preparedPoints, tradeMarkers, visibleRange]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -1511,7 +1575,7 @@ export function TradingPerformanceChart({
           }
         }
         runtime.markerApi?.setMarkers([]);
-        chart.timeScale().fitContent();
+        applyPreferredVisibleRange(chart, marketSeriesData, visibleRangeRef.current);
         updateExactOverlay();
         fitOnNextDataRef.current = false;
       }
@@ -1529,7 +1593,7 @@ export function TradingPerformanceChart({
             title: 'NAV',
           });
         }
-        chart.timeScale().fitContent();
+        applyPreferredVisibleRange(chart, navSeriesData, visibleRangeRef.current);
         fitOnNextDataRef.current = false;
       }
 
@@ -1667,7 +1731,7 @@ export function TradingPerformanceChart({
     }
 
     if (fitOnNextDataRef.current) {
-      runtime.chart.timeScale().fitContent();
+      applyPreferredVisibleRange(runtime.chart, navSeriesData, visibleRange);
       fitOnNextDataRef.current = false;
     }
   }, [
@@ -1679,6 +1743,7 @@ export function TradingPerformanceChart({
     fillTopColor,
     lineColor,
     navSeriesData,
+    visibleRange,
   ]);
 
   useEffect(() => {
@@ -1729,7 +1794,7 @@ export function TradingPerformanceChart({
     runtime.markerApi?.setMarkers([]);
 
     if (fitOnNextDataRef.current) {
-      runtime.chart.timeScale().fitContent();
+      applyPreferredVisibleRange(runtime.chart, marketSeriesData, visibleRange);
       fitOnNextDataRef.current = false;
     }
     const nextOverlay = buildExactMarketMarkerOverlay({
@@ -1757,7 +1822,18 @@ export function TradingPerformanceChart({
     tradeMarkers,
     marketCandles,
     volumeSeriesData,
+    visibleRange,
   ]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    if (runtime.mode === 'market') {
+      applyPreferredVisibleRange(runtime.chart, marketSeriesData, visibleRange);
+      return;
+    }
+    applyPreferredVisibleRange(runtime.chart, navSeriesData, visibleRange);
+  }, [activeMode, marketSeriesData, navSeriesData, visibleRange]);
 
   useEffect(() => {
     if (!selectedExecutionId) return;
@@ -1970,7 +2046,7 @@ export function TradingPerformanceChart({
               title={agentStudyLines.map((line) => line.detail).join(' · ')}
               data-testid="chart-agent-studies-chip"
             >
-              Agent {formatNumber(agentStudyLines.length, { maximumFractionDigits: 0 })}
+              {agentStudySummary}
             </span>
           )}
         </div>

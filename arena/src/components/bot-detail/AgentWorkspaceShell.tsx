@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Address } from 'viem';
 import type { Bot } from '~/lib/types/bot';
 import { Identicon } from '@tangle-network/blueprint-ui/components';
@@ -98,7 +98,6 @@ export function AgentWorkspaceShell({
   navItems,
   buildSectionHref,
   buildSectionState,
-  backHref,
   focusMode = false,
   children,
 }: AgentWorkspaceShellProps) {
@@ -112,14 +111,6 @@ export function AgentWorkspaceShell({
   const targetNetwork = targetChainId != null
     ? networks[targetChainId]?.label ?? `Chain ${targetChainId}`
     : 'Unknown network';
-  const summary = useBotLiveSummary({
-    botId: bot.id,
-    botName: displayName,
-    operatorApiUrl: bot.operatorApiUrl,
-    operatorKind: bot.operatorKind,
-    chainId: bot.chainId,
-    enabled: !focusMode,
-  });
   const [addressCopied, setAddressCopied] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = usePersistentWorkspaceLayout(
@@ -127,6 +118,21 @@ export function AgentWorkspaceShell({
     DEFAULT_AGENT_WORKSPACE_SHELL_LAYOUT,
     normalizeAgentWorkspaceShellLayout,
   );
+  useEffect(() => {
+    if (!focusMode) return;
+    setLayout((current) => (
+      current.railCollapsed
+        ? current
+        : { ...current, railCollapsed: true }
+    ));
+  }, [focusMode, setLayout]);
+  const summary = useBotLiveSummary({
+    botId: bot.id,
+    botName: displayName,
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+    chainId: bot.chainId,
+  });
   const explorerAddress = getExplorerAddressUrl(targetChainId ?? bot.chainId, bot.operatorAddress);
 
   const formatSignedPercent = (value: number | null) => {
@@ -404,66 +410,30 @@ export function AgentWorkspaceShell({
       ref={shellRef}
       className="arena-trace-terminal flex h-full min-h-0 overflow-hidden bg-[var(--arena-terminal-bg)] [&_.glass-card]:!rounded-none [&_[class*='rounded'][class*='border']]:!rounded-none [&_[data-slot=table-container]]:!rounded-none [&_.relative.overflow-auto]:!rounded-none [&_table]:!rounded-none"
     >
-      {focusMode ? (
-        <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="arena-trace-terminal shrink-0 border-b border-[#273035] bg-[#081013] text-[#f6fefd]">
-            <div className="flex h-11 min-w-0 items-center gap-2 px-2">
-              <Link
-                to={backHref ?? `/arena/bot/${encodeURIComponent(bot.id)}/performance`}
-                replace
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[5px] font-display text-sm font-medium text-[#949e9c] transition-colors hover:bg-[#16242a] hover:text-[#f6fefd] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-                aria-label="Back to agent"
-                title="Back to agent"
-              >
-                <span className="i-ph:arrow-left text-base" aria-hidden="true" />
-              </Link>
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-display text-sm font-semibold text-[#f6fefd]">
-                  {activeSection === 'chat' ? 'Chat' : activeSection === 'runs' ? 'Runs' : title}
-                </div>
-              </div>
-              <div className="ml-auto hidden min-w-0 items-center gap-2 pr-2 sm:flex">
-                <Identicon address={bot.operatorAddress as Address} size={22} />
-                <span className="max-w-[280px] truncate font-display text-sm font-medium text-[#d2dad7]">
-                  {title}
-                </span>
-              </div>
-            </div>
+      {layout.railCollapsed ? (
+        <WorkspaceCollapsedPane
+          label="Agent"
+          icon="i-ph:robot"
+          orientation="vertical"
+          className="hidden w-11 shrink-0 border-r border-[#273035] bg-[#0b1418] lg:flex"
+          onClick={() => setLayout((current) => ({ ...current, railCollapsed: false }))}
+        />
+      ) : agentRail}
+      <WorkspaceResizeHandle
+        orientation="vertical"
+        className="hidden w-2 lg:flex"
+        ariaLabel="Resize agent rail"
+        title="Drag to resize agent rail"
+        onPointerDown={startRailResize}
+      />
+      <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        {mobileHeader}
+        <div className={`min-h-0 flex-1 overflow-hidden ${focusMode ? 'p-0' : 'p-2 sm:p-3'}`}>
+          <div className="h-full min-h-0 w-full">
+            {children}
           </div>
-          <div className="min-h-0 flex-1 overflow-hidden p-0">
-            <div className="h-full min-h-0">
-              {children}
-            </div>
-          </div>
-        </section>
-      ) : (
-        <>
-          {layout.railCollapsed ? (
-            <WorkspaceCollapsedPane
-              label="Agent"
-              icon="i-ph:robot"
-              orientation="vertical"
-              className="hidden w-11 shrink-0 border-r border-[#273035] bg-[#0b1418] lg:flex"
-              onClick={() => setLayout((current) => ({ ...current, railCollapsed: false }))}
-            />
-          ) : agentRail}
-          <WorkspaceResizeHandle
-            orientation="vertical"
-            className="hidden w-2 lg:flex"
-            ariaLabel="Resize agent rail"
-            title="Drag to resize agent rail"
-            onPointerDown={startRailResize}
-          />
-          <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-            {mobileHeader}
-            <div className="min-h-0 flex-1 overflow-hidden p-2 sm:p-3">
-              <div className="h-full min-h-0 w-full">
-                {children}
-              </div>
-            </div>
-          </section>
-        </>
-      )}
+        </div>
+      </section>
     </div>
   );
 }

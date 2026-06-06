@@ -171,12 +171,21 @@ describe('ArenaAppShell', () => {
     '/arena/bot/mine/operations',
     '/arena/bot/mine/chat',
     '/arena/bot/mine/runs',
-  ])('keeps agent workspace routes free of global navigation chrome: %s', (path) => {
+  ])('keeps compact global navigation on agent workspace routes: %s', (path) => {
     renderShell(path);
 
-    expect(screen.queryByRole('navigation', { name: 'Tangle navigation' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /base sepolia testnet/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /transactions/i })).not.toBeInTheDocument();
+    const sidebar = screen.getByRole('navigation', { name: 'Tangle navigation' }).closest('aside');
+
+    expect(sidebar).not.toBeNull();
+    expect(sidebar).toHaveClass('w-16');
+    expect(within(sidebar!).getByRole('link', { name: 'Tangle Trading' }).querySelector('img')).toHaveAttribute(
+      'src',
+      '/tangle-mark.svg',
+    );
+    expect(within(sidebar!).getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
+    expect(within(sidebar!).getByRole('button', { name: 'Network' })).toBeInTheDocument();
+    expect(within(sidebar!).queryByRole('button', { name: 'Transactions' })).not.toBeInTheDocument();
+    expect(within(sidebar!).queryByRole('button', { name: 'Theme' })).not.toBeInTheDocument();
     expect(screen.getByText('Agent body')).toBeInTheDocument();
   });
 });

@@ -167,6 +167,22 @@ function formatChartNumber(value: number | null): string {
   });
 }
 
+function formatCompactChartNumber(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const absolute = Math.abs(value);
+  const sign = value < 0 ? '-' : '';
+  if (absolute >= 1_000_000_000) {
+    return `${sign}${formatNumber(absolute / 1_000_000_000, { maximumFractionDigits: 1 })}B`;
+  }
+  if (absolute >= 1_000_000) {
+    return `${sign}${formatNumber(absolute / 1_000_000, { maximumFractionDigits: 1 })}M`;
+  }
+  if (absolute >= 100_000) {
+    return `${sign}${formatNumber(absolute / 1_000, { maximumFractionDigits: 0 })}K`;
+  }
+  return formatChartNumber(value);
+}
+
 function formatChartPercent(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return '—';
   return `${formatNumber(value, {
@@ -184,11 +200,19 @@ function formatLeverageValue(value: number | null): string {
 }
 
 function marketCandleLimitForRange(range: PerformanceRange): number {
-  if (range === '1d') return 1_440;
-  if (range === '7d') return 2_200;
-  if (range === '30d') return 3_200;
-  if (range === '6m') return 4_600;
-  return 2_400;
+  if (range === '1d') return 10_080;
+  if (range === '7d') return 8_640;
+  if (range === '30d') return 8_640;
+  if (range === '6m') return 8_800;
+  return 4_400;
+}
+
+function marketCandleFetchDaysForRange(range: PerformanceRange): number {
+  if (range === '1d') return 7;
+  if (range === '7d') return 30;
+  if (range === '30d') return 90;
+  if (range === '6m') return 365;
+  return 365;
 }
 
 function marketCandleIntervalForRange(range: PerformanceRange): string {
@@ -236,6 +260,10 @@ function tradeMarkerPagesForRange(range: PerformanceRange): number {
     default:
       return 20;
   }
+}
+
+function filterCandlesToWindow<T extends { timestamp: number }>(candles: T[], fromMs: number, toMs: number): T[] {
+  return candles.filter((candle) => candle.timestamp >= fromMs && candle.timestamp <= toMs);
 }
 
 function terminalStatValueClass(tone: string): string {
@@ -476,11 +504,13 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     normalizePerformanceWorkspaceLayout,
   );
   const selectedRange = PERFORMANCE_RANGES.find((item) => item.value === range) ?? PERFORMANCE_RANGES[1];
-  const selectedRangeStartMs = useMemo(
-    () => Date.now() - selectedRange.days * 24 * 60 * 60 * 1000,
+  const selectedRangeEndMs = useMemo(
+    () => Date.now(),
     [selectedRange.days],
   );
-  const selectedRangeEndMs = selectedRangeStartMs + selectedRange.days * 24 * 60 * 60 * 1000;
+  const selectedRangeStartMs = selectedRangeEndMs - selectedRange.days * 24 * 60 * 60 * 1000;
+  const marketCandleFetchDays = marketCandleFetchDaysForRange(selectedRange.value);
+  const marketCandleFetchStartMs = selectedRangeEndMs - marketCandleFetchDays * 24 * 60 * 60 * 1000;
   const tradeMarkerFetchPages = tradeMarkerPagesForRange(selectedRange.value);
 
   useEffect(() => {
@@ -513,7 +543,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
     pages: tradeMarkerFetchPages,
-    stopAtTimestampMs: selectedRangeStartMs,
+    stopAtTimestampMs: marketCandleFetchStartMs,
     refetchInterval: isLive ? 30_000 : false,
   });
   const tradePage = markerTradePage ?? latestTradePage;
@@ -526,7 +556,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   );
   const marketCandleSource = useMemo(() => inferMarketCandleSource(bot), [bot]);
   const marketCandleInterval = marketCandleIntervalForRange(selectedRange.value);
-  const { data: marketCandles = [] } = useBotMarketCandles(bot.id, marketCandleToken, selectedRange.days, {
+  const { data: marketCandles = [] } = useBotMarketCandles(bot.id, marketCandleToken, marketCandleFetchDays, {
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 60_000 : false,
@@ -617,6 +647,19 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const hasMarketCandles = marketCandles.length > 1;
   const firstMarketCandle = marketCandles[0] ?? null;
   const latestMarketCandle = marketCandles[marketCandles.length - 1] ?? null;
+  const visibleMarketRangeEndMs = latestMarketCandle?.timestamp ?? selectedRangeEndMs;
+  const visibleMarketRangeStartMs = visibleMarketRangeEndMs - selectedRange.days * 24 * 60 * 60 * 1000;
+  const visibleMarketRange = useMemo(
+    () => ({ fromMs: visibleMarketRangeStartMs, toMs: visibleMarketRangeEndMs }),
+    [visibleMarketRangeEndMs, visibleMarketRangeStartMs],
+  );
+  const visibleMarketCandles = useMemo(
+    () => filterCandlesToWindow(marketCandles, visibleMarketRangeStartMs, visibleMarketRangeEndMs),
+    [marketCandles, visibleMarketRangeEndMs, visibleMarketRangeStartMs],
+  );
+  const marketStatCandles = visibleMarketCandles.length > 1 ? visibleMarketCandles : marketCandles;
+  const firstVisibleMarketCandle = marketStatCandles[0] ?? null;
+  const latestVisibleMarketCandle = marketStatCandles[marketStatCandles.length - 1] ?? null;
   const marketDataCoverage = useMemo<MarketDataCoverage | null>(() => (
     hasMarketCandles
       ? {
@@ -625,8 +668,10 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             latestMarketCandle?.interval ?? firstMarketCandle?.interval ?? marketCandleInterval,
           ),
           requestedRangeLabel: selectedRange.label,
-          requestedFromMs: selectedRangeStartMs,
-          requestedToMs: selectedRangeEndMs,
+          requestedFromMs: visibleMarketRangeStartMs,
+          requestedToMs: visibleMarketRangeEndMs,
+          loadedFromMs: firstMarketCandle?.timestamp ?? null,
+          loadedToMs: latestMarketCandle?.timestamp ?? null,
           botCreatedAtMs: Number.isFinite(bot.createdAt) ? bot.createdAt : null,
         }
       : null
@@ -634,14 +679,16 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     bot.createdAt,
     firstMarketCandle?.interval,
     firstMarketCandle?.source,
+    firstMarketCandle?.timestamp,
     hasMarketCandles,
     latestMarketCandle?.interval,
     latestMarketCandle?.source,
+    latestMarketCandle?.timestamp,
     marketCandleInterval,
     marketCandleSource,
     selectedRange.label,
-    selectedRangeEndMs,
-    selectedRangeStartMs,
+    visibleMarketRangeEndMs,
+    visibleMarketRangeStartMs,
   ]);
   const effectiveChartMode = chartMode === 'market' && hasMarketCandles ? 'market' : 'nav';
   const chartIsRenderable = chartPoints.length > 0 || hasMarketCandles;
@@ -672,20 +719,20 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const chartLowValue = chartPoints.length > 0
     ? Math.min(...chartPoints.map((point) => point.value))
     : null;
-  const marketMove = firstMarketCandle && latestMarketCandle
-    ? latestMarketCandle.close - firstMarketCandle.open
+  const marketMove = firstVisibleMarketCandle && latestVisibleMarketCandle
+    ? latestVisibleMarketCandle.close - firstVisibleMarketCandle.open
     : null;
-  const marketMovePercent = marketMove != null && firstMarketCandle && firstMarketCandle.open > 0
-    ? (marketMove / firstMarketCandle.open) * 100
+  const marketMovePercent = marketMove != null && firstVisibleMarketCandle && firstVisibleMarketCandle.open > 0
+    ? (marketMove / firstVisibleMarketCandle.open) * 100
     : null;
-  const marketHighValue = marketCandles.length > 0
-    ? Math.max(...marketCandles.map((candle) => candle.high))
+  const marketHighValue = marketStatCandles.length > 0
+    ? Math.max(...marketStatCandles.map((candle) => candle.high))
     : null;
-  const marketLowValue = marketCandles.length > 0
-    ? Math.min(...marketCandles.map((candle) => candle.low))
+  const marketLowValue = marketStatCandles.length > 0
+    ? Math.min(...marketStatCandles.map((candle) => candle.low))
     : null;
-  const marketVolumeValue = marketCandles.length > 0
-    ? marketCandles.reduce((sum, candle) => sum + candle.volume, 0)
+  const marketVolumeValue = marketStatCandles.length > 0
+    ? marketStatCandles.reduce((sum, candle) => sum + candle.volume, 0)
     : null;
   const recentTradeTape = useMemo(() => (latestTrades ?? []).slice(0, 12), [latestTrades]);
   const tradeDecisionItems = useMemo(
@@ -743,7 +790,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         {
           label: 'Volume',
           shortLabel: 'Vol',
-          value: formatChartNumber(marketVolumeValue),
+          value: formatCompactChartNumber(marketVolumeValue),
           tone: 'text-arena-elements-textPrimary',
         },
         {
@@ -1143,6 +1190,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   marketCandles={marketCandles}
                   marketLabel={marketCandleToken}
                   marketDataCoverage={marketDataCoverage}
+                  visibleRange={visibleMarketRange}
                   chartStudies={chartStudies}
                   fillCountEvidence={fillCountEvidence}
                 />

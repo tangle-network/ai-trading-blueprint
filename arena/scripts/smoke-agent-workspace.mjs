@@ -41,7 +41,7 @@ const SECTION_EXPECTATIONS = {
     ['Review the ETH breakout retest', 'ETH breakout review', 'No chat sessions yet'],
     ['fast_backtest', 'hyperliquid_nav', 'No chat sessions yet'],
   ],
-  operations: ['Operations', 'Validation', 'Evidence'],
+  operations: ['Control Plane', 'Validation', 'Evidence'],
 };
 const LIVE_SECTION_EXPECTATIONS = {
   performance: [
@@ -62,7 +62,7 @@ const LIVE_SECTION_EXPECTATIONS = {
     ['No chat sessions yet', 'Ask', 'Owner Sign In'],
   ],
   operations: [
-    'Operations',
+    'Control Plane',
     ['Validation', 'Validator', 'Controls', 'Terminal', 'Envelope'],
   ],
 };
@@ -160,6 +160,7 @@ function printHelp() {
 Checks:
   - discovers a rendered /arena/bot/:id link
   - verifies Performance, Portfolio, Runs, Chat, Operations do not body-scroll at 1440x900 and 1280x800
+  - verifies agent workspace routes keep the compact global navigation rail
   - verifies browser-visible operator API health and CORS when the deployed build exposes an operator URL
   - verifies Portfolio -> Chat -> browser Back -> Portfolio
   - verifies Chat -> Performance changes route in one click
@@ -2211,9 +2212,18 @@ async function assertCollapsibleRails(page, baseUrl, botId) {
     throw new Error(`Agent performance route did not settle after sidebar collapse check: ${JSON.stringify(debugMetrics)}; ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  const hasGlobalAgentChrome = await evaluate(page, `Boolean(document.querySelector('nav[aria-label="Tangle navigation"]'))`);
-  if (hasGlobalAgentChrome) {
-    throw new Error('Agent workspace route still rendered global arena navigation');
+  const globalAgentChrome = await evaluate(page, `(() => {
+    const nav = document.querySelector('nav[aria-label="Tangle navigation"]');
+    const aside = nav?.closest('aside');
+    return {
+      hasNav: Boolean(nav),
+      width: aside?.getBoundingClientRect().width ?? 0,
+      hasExpand: Boolean(document.querySelector('button[aria-label="Expand sidebar"]')),
+      hasCollapse: Boolean(document.querySelector('button[aria-label="Collapse sidebar"]')),
+    };
+  })()`);
+  if (!globalAgentChrome.hasNav || globalAgentChrome.width > 96 || !globalAgentChrome.hasExpand || globalAgentChrome.hasCollapse) {
+    throw new Error(`Agent workspace route did not render compact global navigation: ${JSON.stringify(globalAgentChrome)}`);
   }
 }
 
@@ -2238,14 +2248,14 @@ async function assertRouteNavigation(page, baseUrl, botId) {
     const pathname = await evaluate(page, 'location.pathname');
     return pathname.endsWith('/chat');
   });
-  await clickNav(page, 'Back to agent');
+  await clickNav(page, 'Performance');
   await waitFor(async () => {
     const pathname = await evaluate(page, 'location.pathname');
-    return pathname.endsWith('/portfolio');
+    return pathname.endsWith('/performance');
   });
 
   await navigate(page, withPath(baseUrl, `/arena/bot/${encodeURIComponent(botId)}/chat`));
-  await clickNav(page, 'Back to agent');
+  await clickNav(page, 'Performance');
   await waitFor(async () => {
     const pathname = await evaluate(page, 'location.pathname');
     return pathname.endsWith('/performance');
