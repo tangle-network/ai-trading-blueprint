@@ -19,7 +19,9 @@ import { buildPerformanceChartPoints } from './performanceChart';
 import type { Trade } from '~/lib/types/trade';
 import {
   formatTradeActionLabel,
+  formatTradeModeLabel,
   formatTradeUsd,
+  getHyperliquidSizeLabel,
   getTradeActionToneClass,
   getTradeMarketLabel,
   isBuySideTradeAction,
@@ -304,11 +306,50 @@ function formatTradeMarkerText(trade: Trade): string {
 }
 
 function formatTradeMarkerTooltip(trade: Trade): string {
-  const pair = getTradeMarketLabel(trade);
+  const market = getTradeMarketLabel(trade);
   const notional = trade.notionalUsd != null && trade.notionalUsd > 0
     ? ` · ${formatTradeUsd(trade.notionalUsd)}`
     : '';
-  return `${formatTradeActionLabel(trade.action)} ${pair}${notional}`;
+  return `${formatTradeActionLabel(trade.action)} ${market}${notional}`;
+}
+
+function formatTradeVenueLabel(trade: Trade): string {
+  const protocol = trade.targetProtocol?.trim().toLowerCase();
+  if (protocol === 'hyperliquid') return 'Hyperliquid';
+  if (protocol === 'polymarket') return 'Polymarket';
+  if (protocol === 'drift') return 'Drift';
+  if (protocol === 'geckoterminal') return 'GeckoTerminal';
+  if (protocol) {
+    return protocol
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+  return trade.venue === 'perp' ? 'Perp venue' : 'DEX venue';
+}
+
+function formatTradeMarkerPrice(trade: Trade): string {
+  const price = trade.execution?.filledPriceUsd
+    ?? trade.execution?.requestedPriceUsd
+    ?? trade.priceUsd;
+  return formatTradeUsd(price);
+}
+
+function formatTradeMarkerSize(trade: Trade): string | null {
+  return getHyperliquidSizeLabel(trade);
+}
+
+function formatTradeMarkerDetail(trade: Trade): string {
+  return [
+    formatTradeVenueLabel(trade),
+    getTradeMarketLabel(trade),
+    formatTradeModeLabel(trade),
+    formatTradeMarkerSize(trade),
+    `${formatTradeMarkerPrice(trade)} fill`,
+    trade.notionalUsd != null && trade.notionalUsd > 0 ? `${formatTradeUsd(trade.notionalUsd)} notional` : null,
+    formatTradeMicrostructure(trade),
+  ]
+    .filter((item): item is string => Boolean(item))
+    .join(' · ');
 }
 
 function formatTradeStatus(value: string | null | undefined): string {
@@ -442,6 +483,17 @@ function buildTradeMarkers(
         ?? trade.execution?.requestedPriceUsd
         ?? trade.priceUsd,
       tooltip: formatTradeMarkerTooltip(trade),
+      venueLabel: formatTradeVenueLabel(trade),
+      marketLabel: getTradeMarketLabel(trade),
+      modeLabel: formatTradeModeLabel(trade),
+      notionalLabel: trade.notionalUsd != null && trade.notionalUsd > 0
+        ? formatTradeUsd(trade.notionalUsd)
+        : null,
+      priceLabel: formatTradeMarkerPrice(trade),
+      sizeLabel: formatTradeMarkerSize(trade),
+      statusLabel: formatTradeMicrostructure(trade),
+      timeLabel: formatTradeTime(trade.timestamp),
+      detail: formatTradeMarkerDetail(trade),
       color: tradeMarkerColor(trade, chartTheme),
       shape: tradeMarkerShape(trade),
       position: tradeMarkerPosition(trade),
@@ -562,7 +614,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     refetchInterval: isLive ? 60_000 : false,
     source: marketCandleSource,
     interval: marketCandleInterval,
-    backfill: isLive && marketCandleSource != null,
+    backfill: marketCandleSource != null,
     limit: marketCandleLimitForRange(selectedRange.value),
   });
   const { data: chartStudies = [] } = useBotChartStudies(

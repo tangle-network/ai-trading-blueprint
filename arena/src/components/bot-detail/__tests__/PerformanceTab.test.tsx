@@ -114,6 +114,9 @@ const operatorAuthMock = vi.hoisted(() => ({
   isAuthenticated: false,
   token: null as string | null,
 }));
+const useBotMarketCandlesMock = vi.hoisted(() => vi.fn(() => ({
+  data: [] as typeof mockMarketCandles,
+})));
 
 vi.mock('../lightweightChartRuntime', () => ({
   loadLightweightCharts: vi.fn(async () => lightweightChartMock),
@@ -191,9 +194,7 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
           },
     };
   },
-  useBotMarketCandles: () => ({
-    data: mockMarketCandles,
-  }),
+  useBotMarketCandles: useBotMarketCandlesMock,
   useBotChartStudies: () => ({
     data: mockChartStudies,
   }),
@@ -326,6 +327,10 @@ describe('PerformanceTab', () => {
     mockMarkerTradePageLoading = false;
     mockChartStudies = [];
     mockMarketCandles = [];
+    useBotMarketCandlesMock.mockImplementation(() => ({
+      data: mockMarketCandles,
+    }));
+    useBotMarketCandlesMock.mockClear();
     operatorAuthMock.isAuthenticated = false;
     operatorAuthMock.token = null;
     lightweightChartMock.areaSeries.createPriceLine.mockClear();
@@ -767,6 +772,7 @@ describe('PerformanceTab', () => {
       makeTrade({
         id: 'open-eth',
         action: 'open_long',
+        targetProtocol: 'hyperliquid',
         timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
         hyperliquidMetadata: {
           asset: 'ETH',
@@ -902,6 +908,31 @@ describe('PerformanceTab', () => {
     expect(await screen.findByLabelText(/LONG .*Apr 23/i)).toBeInTheDocument();
     expect(screen.getByText('1/1 fills')).toBeInTheDocument();
     expect(screen.getByTestId('chart-execution-coverage')).toHaveTextContent('2 candles');
+  });
+
+  it('requests venue backfill for inactive Hyperliquid bots so the chart still has market history', () => {
+    render(
+      <PerformanceTab
+        bot={makeBot({
+          strategyType: 'hyperliquid_perp',
+          strategyConfig: { asset: 'ETH' },
+        })}
+        isLive={false}
+      />,
+    );
+
+    expect(useBotMarketCandlesMock).toHaveBeenCalledWith(
+      'bot-1',
+      'ETH',
+      90,
+      expect.objectContaining({
+        backfill: true,
+        interval: '15m',
+        limit: 8_640,
+        refetchInterval: false,
+        source: 'hyperliquid',
+      }),
+    );
   });
 
   it('opens the market chart on the selected range while keeping older candles loaded for panning', async () => {
@@ -1513,8 +1544,10 @@ describe('PerformanceTab', () => {
       makeTrade({
         id: 'sell-eth',
         action: 'sell',
+        targetProtocol: 'hyperliquid',
         timestamp: Date.parse('2026-04-23T10:00:00.000Z'),
         priceUsd: 3300,
+        notionalUsd: 100,
         venue: 'perp',
         hyperliquidMetadata: {
           asset: 'ETH',
@@ -1526,8 +1559,10 @@ describe('PerformanceTab', () => {
       makeTrade({
         id: 'long-eth',
         action: 'open_long',
+        targetProtocol: 'hyperliquid',
         timestamp: Date.parse('2026-04-23T10:01:00.000Z'),
         priceUsd: 3324,
+        notionalUsd: 99.72,
         venue: 'perp',
         hyperliquidMetadata: {
           asset: 'ETH',
@@ -1571,12 +1606,22 @@ describe('PerformanceTab', () => {
     const ticket = await screen.findByTestId('chart-featured-execution');
     expect(within(ticket).getByText('LONG')).toBeInTheDocument();
     expect(ticket).toHaveTextContent('$3,324');
+    expect(ticket).toHaveTextContent('Hyperliquid');
+    expect(ticket).toHaveTextContent('ETH-PERP');
+    expect(ticket).toHaveTextContent('0.03 ETH');
+    expect(ticket).toHaveTextContent('$99.72 notional');
 
     await user.click(await screen.findByLabelText(/Sell .*Apr 23/i));
 
     const pinnedTicket = screen.getByTestId('chart-featured-execution');
     expect(within(pinnedTicket).getByText('SELL')).toBeInTheDocument();
     expect(pinnedTicket).toHaveTextContent('$3,300');
+    expect(pinnedTicket).toHaveTextContent('Hyperliquid');
+    expect(pinnedTicket).toHaveTextContent('$100 notional');
+    const markerTooltip = screen.getByTestId('chart-execution-tooltip');
+    expect(markerTooltip).toHaveTextContent('SELL');
+    expect(markerTooltip).toHaveTextContent('Hyperliquid');
+    expect(markerTooltip).toHaveTextContent('ETH-PERP');
   });
 
   it('keeps execution evidence visible while showing the owner copilot', async () => {

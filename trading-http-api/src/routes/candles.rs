@@ -9,6 +9,9 @@ use std::sync::Arc;
 use crate::candle_store::{self, CandleQuery, StoredCandle};
 use crate::{MultiBotTradingState, TradingApiState};
 
+const DEFAULT_CANDLE_LIMIT: usize = 1_000;
+const MAX_CANDLE_LIMIT: usize = 10_000;
+
 pub fn router() -> Router<Arc<TradingApiState>> {
     Router::new()
         .route("/market-data/candles", post(record_candles))
@@ -215,6 +218,35 @@ fn interval_seconds(interval: trading_runtime::backtest::Interval) -> i64 {
     }
 }
 
+fn expected_candle_count(
+    query: &GetCandlesQuery,
+    interval: trading_runtime::backtest::Interval,
+) -> Option<usize> {
+    let from = query.from?;
+    let to = query.to.unwrap_or_else(|| Utc::now().timestamp());
+    if to <= from {
+        return None;
+    }
+    let interval_secs = interval_seconds(interval).max(1);
+    Some(((to - from) / interval_secs + 1) as usize)
+}
+
+fn resolved_candle_limit(query: &GetCandlesQuery) -> usize {
+    if let Some(limit) = query.limit {
+        return limit.min(MAX_CANDLE_LIMIT);
+    }
+
+    let interval = query.interval.as_deref().unwrap_or("1h");
+    expected_candle_count(
+        query,
+        parse_interval(interval)
+            .ok()
+            .unwrap_or(trading_runtime::backtest::Interval::Hour1),
+    )
+    .unwrap_or(DEFAULT_CANDLE_LIMIT)
+    .clamp(DEFAULT_CANDLE_LIMIT, MAX_CANDLE_LIMIT)
+}
+
 fn normalize_optional(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
@@ -257,6 +289,30 @@ fn should_backfill(
 
     let interval_secs = interval_seconds(interval);
     let target_to = query.to.unwrap_or_else(|| Utc::now().timestamp());
+    if let Some(expected_count) = expected_candle_count(query, interval) {
+        let desired_count = expected_count.min(limit);
+        let minimum_count = ((desired_count as f64) * 0.9).ceil() as usize;
+        if existing.len() < minimum_count.max(20).min(desired_count) {
+            return true;
+        }
+
+        let required_from = if desired_count >= expected_count {
+            query.from
+        } else {
+            Some(target_to.saturating_sub((desired_count.saturating_sub(1) as i64) * interval_secs))
+        };
+        if let Some(required_from) = required_from {
+            let earliest = existing
+                .iter()
+                .map(|candle| candle.timestamp)
+                .min()
+                .unwrap_or_default();
+            if earliest > required_from + interval_secs {
+                return true;
+            }
+        }
+    }
+
     let stale_threshold_secs = (interval_secs * 2).max(5 * 60);
     let latest = existing
         .iter()
@@ -289,7 +345,7 @@ async fn get_candles_inner(
     bot_id: &str,
     query: GetCandlesQuery,
 ) -> Result<Json<GetCandlesResponse>, (StatusCode, String)> {
-    let limit = query.limit.unwrap_or(1000).min(10_000);
+    let limit = resolved_candle_limit(&query);
     let mut response_source = normalize_optional(query.source.clone());
     let mut response_interval = normalize_optional(query.interval.clone());
     let mut backfilled = false;
@@ -474,4 +530,120 @@ async fn fetch_historical_inner(
         fetched,
         total_stored,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candle(timestamp: i64) -> StoredCandle {
+        StoredCandle {
+            timestamp,
+            token: "ETH".to_string(),
+            bot_id: "bot-1".to_string(),
+            source: Some("hyperliquid".to_string()),
+            interval: Some("15m".to_string()),
+            fetched_at_ms: Some(timestamp * 1000),
+            open: "3000".to_string(),
+            high: "3010".to_string(),
+            low: "2990".to_string(),
+            close: "3005".to_string(),
+            volume: "10".to_string(),
+        }
+    }
+
+    #[test]
+    fn resolved_limit_expands_to_requested_window() {
+        let from = 1_700_000_000;
+        let to = from + 30 * 24 * 60 * 60;
+        let query = GetCandlesQuery {
+            token: Some("ETH".to_string()),
+            source: Some("hyperliquid".to_string()),
+            interval: Some("15m".to_string()),
+            from: Some(from),
+            to: Some(to),
+            limit: None,
+            backfill: Some(true),
+        };
+
+        assert_eq!(resolved_candle_limit(&query), 2_881);
+    }
+
+    #[test]
+    fn resolved_limit_honors_explicit_cap() {
+        let query = GetCandlesQuery {
+            token: Some("ETH".to_string()),
+            source: Some("hyperliquid".to_string()),
+            interval: Some("15m".to_string()),
+            from: Some(1_700_000_000),
+            to: Some(1_700_000_000 + 30 * 24 * 60 * 60),
+            limit: Some(50_000),
+            backfill: Some(true),
+        };
+
+        assert_eq!(resolved_candle_limit(&query), MAX_CANDLE_LIMIT);
+    }
+
+    #[test]
+    fn backfills_fresh_but_shallow_cache_that_misses_requested_start() {
+        let interval = trading_runtime::backtest::Interval::Min15;
+        let to = 1_700_000_000;
+        let from = to - 30 * 24 * 60 * 60;
+        let query = GetCandlesQuery {
+            token: Some("ETH".to_string()),
+            source: Some("hyperliquid".to_string()),
+            interval: Some("15m".to_string()),
+            from: Some(from),
+            to: Some(to),
+            limit: Some(8_640),
+            backfill: Some(true),
+        };
+        let existing: Vec<StoredCandle> = (0..80)
+            .map(|index| candle(to - (79 - index) * 15 * 60))
+            .collect();
+
+        assert!(should_backfill(&existing, &query, 8_640, interval));
+    }
+
+    #[test]
+    fn does_not_backfill_when_cache_covers_requested_window() {
+        let interval = trading_runtime::backtest::Interval::Min15;
+        let to = 1_700_000_000;
+        let from = to - 30 * 24 * 60 * 60;
+        let query = GetCandlesQuery {
+            token: Some("ETH".to_string()),
+            source: Some("hyperliquid".to_string()),
+            interval: Some("15m".to_string()),
+            from: Some(from),
+            to: Some(to),
+            limit: Some(8_640),
+            backfill: Some(true),
+        };
+        let existing: Vec<StoredCandle> = (0..2_881)
+            .map(|index| candle(from + index * 15 * 60))
+            .collect();
+
+        assert!(!should_backfill(&existing, &query, 8_640, interval));
+    }
+
+    #[test]
+    fn explicit_small_limit_checks_latest_window_not_full_from_to_span() {
+        let interval = trading_runtime::backtest::Interval::Min15;
+        let to = 1_700_000_000;
+        let from = to - 30 * 24 * 60 * 60;
+        let query = GetCandlesQuery {
+            token: Some("ETH".to_string()),
+            source: Some("hyperliquid".to_string()),
+            interval: Some("15m".to_string()),
+            from: Some(from),
+            to: Some(to),
+            limit: Some(120),
+            backfill: Some(true),
+        };
+        let existing: Vec<StoredCandle> = (0..120)
+            .map(|index| candle(to - (119 - index) * 15 * 60))
+            .collect();
+
+        assert!(!should_backfill(&existing, &query, 120, interval));
+    }
 }

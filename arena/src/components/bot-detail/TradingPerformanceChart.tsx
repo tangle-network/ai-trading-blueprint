@@ -28,6 +28,15 @@ export interface TradeChartMarker {
   timestampMs: number;
   executionPriceUsd?: number | null;
   tooltip: string;
+  venueLabel?: string | null;
+  marketLabel?: string | null;
+  modeLabel?: string | null;
+  notionalLabel?: string | null;
+  priceLabel?: string | null;
+  sizeLabel?: string | null;
+  statusLabel?: string | null;
+  timeLabel?: string | null;
+  detail?: string | null;
   color: string;
   shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square';
   position: 'aboveBar' | 'belowBar' | 'inBar';
@@ -848,12 +857,14 @@ function formatExecutionDetail(item: ExactMarketMarkerOverlay): string {
       : `${markerTimeFormatter.format(new Date(startTimestamp))} - ${markerTimeFormatter.format(new Date(endTimestamp))}`;
     const sample = item.members
       .slice(0, 2)
-      .map((marker) => marker.tooltip)
+      .map((marker) => marker.detail ?? marker.tooltip)
       .join(' · ');
     const remainder = item.members.length > 2 ? ` · +${item.members.length - 2} more` : '';
     return `${timeRange} · ${sample}${remainder}`;
   }
-  return `${formatExecutionTime(item.marker.timestampMs)} · ${item.marker.tooltip}`;
+  return item.marker.detail
+    ? `${formatExecutionTime(item.marker.timestampMs)} · ${item.marker.detail}`
+    : `${formatExecutionTime(item.marker.timestampMs)} · ${item.marker.tooltip}`;
 }
 
 function executionReadout(item: ExactMarketMarkerOverlay): HoverReadout {
@@ -862,6 +873,42 @@ function executionReadout(item: ExactMarketMarkerOverlay): HoverReadout {
     value: item.value,
     detail: item.count > 1 ? formatExecutionDetail(item) : formatExecutionTime(item.marker.timestampMs),
   };
+}
+
+function executionTitle(item: ExactMarketMarkerOverlay): string {
+  return item.count > 1
+    ? `${item.marker.text} x${formatNumber(item.count, { maximumFractionDigits: 0 })}`
+    : item.marker.text;
+}
+
+function executionMarketLine(item: ExactMarketMarkerOverlay): string {
+  if (item.count > 1) {
+    const venues = Array.from(new Set(item.members
+      .map((marker) => marker.venueLabel)
+      .filter((value): value is string => Boolean(value))));
+    const markets = Array.from(new Set(item.members
+      .map((marker) => marker.marketLabel)
+      .filter((value): value is string => Boolean(value))));
+    return [venues[0], markets[0]].filter(Boolean).join(' · ') || formatExecutionDetail(item);
+  }
+  return [
+    item.marker.venueLabel,
+    item.marker.marketLabel,
+    item.marker.modeLabel,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function executionSecondaryLine(item: ExactMarketMarkerOverlay): string {
+  if (item.count > 1) return formatExecutionDetail(item);
+  return [
+    item.marker.sizeLabel,
+    item.marker.notionalLabel ? `${item.marker.notionalLabel} notional` : null,
+    item.marker.statusLabel,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 function surroundingTimes(marketTimes: UTCTimestamp[], target: UTCTimestamp): [UTCTimestamp, UTCTimestamp] | null {
@@ -959,7 +1006,10 @@ function exactOverlayEquals(left: ExactMarketMarkerOverlay[], right: ExactMarket
       && item.count === other.count
       && Math.abs(item.x - other.x) < 0.5
       && Math.abs(item.y - other.y) < 0.5
-      && item.value === other.value;
+      && item.value === other.value
+      && item.marker.tooltip === other.marker.tooltip
+      && item.marker.detail === other.marker.detail
+      && item.marker.priceLabel === other.marker.priceLabel;
   });
 }
 
@@ -1201,6 +1251,7 @@ export function TradingPerformanceChart({
   const [hoverReadout, setHoverReadout] = useState<HoverReadout | null>(null);
   const [exactMarketOverlay, setExactMarketOverlay] = useState<ExactMarketMarkerOverlay[]>([]);
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
+  const [hoveredExecutionId, setHoveredExecutionId] = useState<string | null>(null);
   const [enabledStudies, setEnabledStudies] = useState<Record<MarketStudyId, boolean>>(DEFAULT_MARKET_STUDIES);
   const activeMode = mode === 'market' && marketCandles.length > 0 ? 'market' : 'nav';
   const hasIntegratedNavPane = activeMode === 'market' && points.length > 0;
@@ -1841,6 +1892,12 @@ export function TradingPerformanceChart({
     setSelectedExecutionId(null);
   }, [exactMarketOverlay, selectedExecutionId]);
 
+  useEffect(() => {
+    if (!hoveredExecutionId) return;
+    if (exactMarketOverlay.some((item) => item.id === hoveredExecutionId)) return;
+    setHoveredExecutionId(null);
+  }, [exactMarketOverlay, hoveredExecutionId]);
+
   const latestMarketCandle = marketCandles[marketCandles.length - 1] ?? null;
   const marketCoverage = marketCoverageReadout(marketCandles, marketDataCoverage);
   const exactOverlayFillCount = exactMarketOverlay.reduce((sum, item) => sum + item.count, 0);
@@ -1856,9 +1913,14 @@ export function TradingPerformanceChart({
   const selectedExecution = selectedExecutionId
     ? exactMarketOverlay.find((item) => item.id === selectedExecutionId) ?? null
     : null;
-  const featuredExecution = selectedExecution ?? exactMarketOverlay[exactMarketOverlay.length - 1] ?? null;
+  const hoveredExecution = hoveredExecutionId
+    ? exactMarketOverlay.find((item) => item.id === hoveredExecutionId) ?? null
+    : null;
+  const activeExecution = hoveredExecution ?? selectedExecution;
+  const featuredExecution = selectedExecution ?? hoveredExecution ?? exactMarketOverlay[exactMarketOverlay.length - 1] ?? null;
   const selectedReadout = selectedExecution ? executionReadout(selectedExecution) : null;
-  const readout = hoverReadout ?? selectedReadout ?? (activeMode === 'market' && latestMarketCandle
+  const hoveredReadout = hoveredExecution ? executionReadout(hoveredExecution) : null;
+  const readout = hoverReadout ?? hoveredReadout ?? selectedReadout ?? (activeMode === 'market' && latestMarketCandle
     ? {
         label: marketLabel ?? latestMarketCandle.token,
         value: latestMarketCandle.close,
@@ -1868,8 +1930,9 @@ export function TradingPerformanceChart({
       ? {
           label: latestPoint.tooltipLabel,
           value: latestPoint.value,
-        }
+      }
       : null);
+  const activeExecutionTooltipPlacement = activeExecution && activeExecution.y < 126 ? 'below' : 'above';
 
   return (
     <div
@@ -1900,18 +1963,23 @@ export function TradingPerformanceChart({
               onClick={() => {
                 const nextSelectedId = selectedExecutionId === item.id ? null : item.id;
                 setSelectedExecutionId(nextSelectedId);
+                setHoveredExecutionId(item.id);
                 setHoverReadout(nextSelectedId ? executionReadout(item) : null);
               }}
               onFocus={() => {
+                setHoveredExecutionId(item.id);
                 setHoverReadout(executionReadout(item));
               }}
               onMouseEnter={() => {
+                setHoveredExecutionId(item.id);
                 setHoverReadout(executionReadout(item));
               }}
               onMouseLeave={() => {
+                setHoveredExecutionId(null);
                 if (selectedExecutionId !== item.id) setHoverReadout(null);
               }}
               onBlur={() => {
+                setHoveredExecutionId(null);
                 if (selectedExecutionId !== item.id) setHoverReadout(null);
               }}
             >
@@ -1969,6 +2037,48 @@ export function TradingPerformanceChart({
               )}
             </button>
           ))}
+        </div>
+      )}
+      {activeMode === 'market' && activeExecution && (
+        <div
+          className={`pointer-events-none absolute z-30 w-[min(312px,calc(100%-2rem))] -translate-x-1/2 rounded-md border px-3 py-2 font-data ${
+            activeExecutionTooltipPlacement === 'below'
+              ? 'translate-y-4'
+              : '-translate-y-[calc(100%+14px)]'
+          }`}
+          style={{
+            left: `clamp(156px, ${activeExecution.x}px, calc(100% - 156px))`,
+            top: activeExecution.y,
+            background: chartTheme.tooltipBg,
+            borderColor: activeExecution.color,
+            boxShadow: chartTheme.tooltipShadow,
+          }}
+          data-testid="chart-execution-tooltip"
+        >
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ backgroundColor: activeExecution.color }}
+                aria-hidden="true"
+              />
+              <span className="truncate text-sm font-semibold" style={{ color: chartTheme.tooltipBodyColor }}>
+                {executionTitle(activeExecution)}
+              </span>
+            </div>
+            <span className="shrink-0 text-sm font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
+              {activeExecution.marker.priceLabel ?? formatAxisCurrency(activeExecution.value)}
+            </span>
+          </div>
+          <div className="mt-1 truncate text-xs font-semibold" style={{ color: chartTheme.tooltipTitleColor }}>
+            {executionMarketLine(activeExecution)}
+          </div>
+          <div className="mt-1 truncate text-xs" style={{ color: chartTheme.tooltipTitleColor }}>
+            {executionSecondaryLine(activeExecution)}
+          </div>
+          <div className="mt-1 text-xs tabular-nums" style={{ color: chartTheme.tooltipTitleColor }}>
+            {activeExecution.marker.timeLabel ?? formatExecutionTime(activeExecution.marker.timestampMs)}
+          </div>
         </div>
       )}
       {readout && (
@@ -2065,8 +2175,9 @@ export function TradingPerformanceChart({
       )}
       {featuredExecution && (
         <div
-          className="pointer-events-none absolute bottom-3 right-3 z-20 max-w-[min(360px,calc(100%-1.5rem))] rounded-md border px-3 py-2"
+          className="pointer-events-none absolute right-3 z-20 max-w-[min(420px,calc(100%-1.5rem))] rounded-md border px-3 py-2 font-data"
           style={{
+            bottom: activeMode === 'market' && hasIntegratedNavPane ? 'calc(31% + 14px)' : 12,
             background: chartTheme.tooltipBg,
             borderColor: chartTheme.tooltipBorder,
             boxShadow: chartTheme.tooltipShadow,
@@ -2080,16 +2191,20 @@ export function TradingPerformanceChart({
               aria-hidden="true"
             />
             <span className="truncate font-data text-sm font-semibold" style={{ color: chartTheme.tooltipBodyColor }}>
-              {featuredExecution.count > 1
-                ? `${featuredExecution.marker.text} x${formatNumber(featuredExecution.count, { maximumFractionDigits: 0 })}`
-                : featuredExecution.marker.text}
+              {executionTitle(featuredExecution)}
             </span>
-            <span className="font-data text-sm font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
-              {formatAxisCurrency(featuredExecution.value)}
+            <span className="shrink-0 font-data text-sm font-semibold tabular-nums" style={{ color: chartTheme.tooltipBodyColor }}>
+              {featuredExecution.marker.priceLabel ?? formatAxisCurrency(featuredExecution.value)}
             </span>
           </div>
+          <div className="mt-1 truncate text-xs font-semibold" style={{ color: chartTheme.tooltipTitleColor }}>
+            {executionMarketLine(featuredExecution)}
+          </div>
           <div className="mt-1 truncate font-data text-xs" style={{ color: chartTheme.tooltipTitleColor }}>
-            {formatExecutionDetail(featuredExecution)}
+            {executionSecondaryLine(featuredExecution)}
+          </div>
+          <div className="mt-1 truncate font-data text-xs tabular-nums" style={{ color: chartTheme.tooltipTitleColor }}>
+            {featuredExecution.marker.timeLabel ?? formatExecutionTime(featuredExecution.marker.timestampMs)}
           </div>
         </div>
       )}
