@@ -1326,6 +1326,17 @@ async function installFixtureWallet(page) {
 
 async function navigate(page, url) {
   await page.send('Page.navigate', { url });
+  await waitForDocument(page);
+  await wait(250);
+}
+
+async function reload(page) {
+  await page.send('Page.reload', { ignoreCache: true });
+  await waitForDocument(page);
+  await wait(500);
+}
+
+async function waitForDocument(page) {
   await waitFor(async () => {
     const readyState = await evaluate(page, 'document.readyState');
     return readyState === 'interactive' || readyState === 'complete';
@@ -1333,7 +1344,6 @@ async function navigate(page, url) {
   await waitFor(async () => {
     return evaluate(page, `Boolean(document.body && document.body.children.length > 0)`);
   }, { timeoutMs: 15_000, intervalMs: 100 });
-  await wait(250);
 }
 
 function withTheme(baseUrl, theme = '') {
@@ -1724,7 +1734,7 @@ async function assertFixtureHomeDashboard(page, baseUrl, { screenshotDir = '', t
           && /__reactRouterContext|clientLoader|hydrateFallback/i.test(nextMetrics.bodyHtml)
         ) {
           reloadedHydrationFallback = true;
-          await page.send('Page.reload', { ignoreCache: true });
+          await reload(page);
           return false;
         }
         return textIncludes(nextMetrics.bodyText, FIXTURE_HOME_EXPECTATIONS) ? nextMetrics : false;
