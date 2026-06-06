@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from 'react'
 import type { MetaFunction } from 'react-router'
-import { Link, useNavigate } from 'react-router'
+import { useNavigate } from 'react-router'
 import { Button } from '@tangle-network/blueprint-ui/components'
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader'
 import { saveCreateStrategyDraft, type CreateStrategyDraft } from '~/lib/createStrategyDraft'
@@ -566,14 +566,6 @@ export default function CreateAgent() {
       [field]: value,
     }))
   }, [])
-  const persistDraft = useCallback(() => {
-    const promptWithDraft = buildCreatePrompt(draft, selectedCapabilityIds)
-    const agentProfile = buildCreateAgentProfile(draft, selectedCapabilityIds, selectedHint.label)
-    saveCreateStrategyDraft({
-      ...attachCapabilityFields(draft, selectedCapabilityIds, agentProfile),
-      prompt: promptWithDraft,
-    })
-  }, [draft, selectedCapabilityIds, selectedHint.label])
   const workspaceStyle = {
     '--create-rail-width': `${layout.railWidth}px`,
   } as CSSProperties
@@ -632,7 +624,7 @@ export default function CreateAgent() {
     const createPrompt = buildCreatePrompt(cleanDraft, selectedCapabilityIds)
     const agentProfile = buildCreateAgentProfile(cleanDraft, selectedCapabilityIds, selectedHint.label)
     setIsCreating(true)
-    setStatus('Opening activation quote…')
+    setStatus('Opening wallet review…')
     setError('')
     saveCreateStrategyDraft({
       ...attachCapabilityFields(cleanDraft, selectedCapabilityIds, agentProfile),
@@ -675,7 +667,6 @@ export default function CreateAgent() {
                 onClick={() => setLayout(DEFAULT_CREATE_WORKSPACE_LAYOUT)}
               />
               <ArenaHeaderLink to="/leaderboard" icon="i-ph:table">Agents</ArenaHeaderLink>
-              <ArenaHeaderLink to="/provision?draft=create" icon="i-ph:rocket-launch" variant="primary" onClick={persistDraft}>Activate</ArenaHeaderLink>
             </>
           )}
         />
@@ -930,16 +921,8 @@ export default function CreateAgent() {
                 disabled={!prompt.trim() || isCreating}
                 className="h-10 w-full rounded-[5px] bg-[var(--arena-terminal-accent)] px-5 font-display text-sm font-semibold text-[var(--arena-terminal-accent-text)] transition-[background-color,opacity,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] active:scale-[0.98] disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
               >
-                {isCreating ? 'Opening…' : 'Activate Paper Agent'}
+                {isCreating ? 'Opening…' : 'Launch Paper Agent'}
               </Button>
-              <Link
-                to="/provision?draft=create"
-                onClick={persistDraft}
-                className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 font-display text-xs font-semibold text-[var(--arena-terminal-text-secondary)] transition-[background-color,border-color,color,transform] duration-150 hover:border-[var(--arena-terminal-border-hover)] hover:bg-[var(--arena-terminal-panel-strong)] hover:text-[var(--arena-terminal-text)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
-              >
-                <span className="i-ph:rocket-launch text-base text-[var(--arena-terminal-accent)]" aria-hidden="true" />
-                Review Activation
-              </Link>
             </section>
           </aside>
           )}

@@ -90,6 +90,7 @@ interface ConfigureStepProps {
   selectedOperators: Set<Address>;
   setShowAdvanced: (v: boolean) => void;
   strategyExecutionNotice?: string | null;
+  profileLaunchMode?: boolean;
   capabilityFocusLabels?: string[];
   availableProtocolCount?: number;
   executionTargetLabel?: string;
@@ -126,6 +127,7 @@ export function ConfigureStep({
   selectedOperators,
   setShowAdvanced,
   strategyExecutionNotice,
+  profileLaunchMode = false,
   capabilityFocusLabels,
   availableProtocolCount,
   executionTargetLabel,
@@ -181,9 +183,11 @@ export function ConfigureStep({
     predictionPacks.length > 0 &&
     showsPredictionMarketChoices(strategyType, selectedPack);
   const providerLabel = selectedPack.providers.slice(0, 3).join(', ');
-  const inheritedFocusLabel = capabilityFocusLabels?.length
-    ? capabilityFocusLabels.join(', ')
-    : selectedPack.name;
+  const capabilitySummaryLabels = capabilityFocusLabels?.length
+    ? capabilityFocusLabels
+    : [selectedPack.name];
+  const inheritedFocusLabel = capabilitySummaryLabels.join(', ');
+  const isProfileLaunch = profileLaunchMode || Boolean(agentProfileName || capabilityFocusLabels?.length);
   const accessLabel = availableProtocolCount && availableProtocolCount > 0
     ? `${availableProtocolCount} wired protocols`
     : providerLabel;
@@ -304,7 +308,7 @@ export function ConfigureStep({
             </label>
           </ProvisionPanel>
 
-          <ProvisionPanel title="Activation Adapter" action={(
+          <ProvisionPanel title={isProfileLaunch ? 'Capability Profile' : 'Activation Adapter'} action={(
             <Button
               type="button"
               variant="outline"
@@ -316,25 +320,36 @@ export function ConfigureStep({
               Runtime
             </Button>
           )}>
-            <div className="grid auto-rows-[56px] gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
-              {primaryPacks.map((pack) => (
-                <StrategyPackButton
-                  key={pack.id}
-                  pack={pack}
-                  active={strategyType === pack.id}
-                  onClick={() => setStrategyType(pack.id)}
-                />
-              ))}
-            </div>
-            {showPredictionPacks && (
-              <div className="mt-2.5">
-                <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-accent)]">
-                  <span className="i-ph:newspaper-clipping text-sm" aria-hidden="true" />
-                  Prediction Markets
+            {isProfileLaunch ? (
+              <div className="grid gap-2.5">
+                <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+                  {capabilitySummaryLabels.map((label) => (
+                    <CapabilityFocusChip key={label} label={label} />
+                  ))}
                 </div>
-                <div className="grid auto-rows-[38px] gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
-                  {predictionPacks.map((pack) => (
-                    <PredictionPackButton
+                <div className="grid overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-border)] sm:grid-cols-3">
+                  <GuardrailRow
+                    label="Runtime Adapter"
+                    value={selectedPack.name}
+                    compact
+                  />
+                  <GuardrailRow
+                    label="Venue Access"
+                    value={accessLabel}
+                    compact
+                  />
+                  <GuardrailRow
+                    label="Execution"
+                    value={executionModeLabel}
+                    compact
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="grid auto-rows-[56px] gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+                  {primaryPacks.map((pack) => (
+                    <StrategyPackButton
                       key={pack.id}
                       pack={pack}
                       active={strategyType === pack.id}
@@ -342,7 +357,25 @@ export function ConfigureStep({
                     />
                   ))}
                 </div>
-              </div>
+                {showPredictionPacks && (
+                  <div className="mt-2.5">
+                    <div className="mb-1.5 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-accent)]">
+                      <span className="i-ph:newspaper-clipping text-sm" aria-hidden="true" />
+                      Prediction Markets
+                    </div>
+                    <div className="grid auto-rows-[38px] gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+                      {predictionPacks.map((pack) => (
+                        <PredictionPackButton
+                          key={pack.id}
+                          pack={pack}
+                          active={strategyType === pack.id}
+                          onClick={() => setStrategyType(pack.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
             {strategyExecutionNotice && (
               <p className="mt-3 rounded-[5px] border border-[color-mix(in_srgb,var(--arena-terminal-warning)_42%,var(--arena-terminal-border))] bg-[color-mix(in_srgb,var(--arena-terminal-warning)_10%,var(--arena-terminal-panel))] px-3 py-2 font-mono text-xs text-[var(--arena-terminal-warning)]">
@@ -381,7 +414,7 @@ export function ConfigureStep({
             )}
           >
             <div className="space-y-2.5">
-              <ReadRow label="Focus" value={inheritedFocusLabel} />
+              <ReviewFocusRows labels={capabilitySummaryLabels} />
               <ReadRow label="Profile" value={profileLabel} />
               <ReadRow label="Adapter" value={selectedPack.name} />
               <ReadRow label="Mode" value={executionModeLabel} />
@@ -407,7 +440,7 @@ export function ConfigureStep({
             size="lg"
             className="h-11 w-full rounded-[5px] bg-[var(--arena-terminal-accent)] font-display text-sm font-semibold text-[var(--arena-terminal-accent-text)] transition-[background-color,opacity] duration-150 hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_82%,var(--arena-terminal-text))] disabled:opacity-45"
           >
-            Review Activation
+            {isProfileLaunch ? 'Review Wallet Request' : 'Review Activation'}
           </Button>
 
           {isHyperliquidStrategy && (
@@ -848,6 +881,37 @@ function AssetLogo({
     >
       {fallbackText}
     </span>
+  );
+}
+
+function CapabilityFocusChip({ label }: { label: string }) {
+  return (
+    <div className="grid min-h-[42px] grid-cols-[18px_minmax(0,1fr)] items-center gap-2 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-2.5 py-1.5">
+      <span className="h-2 w-2 rounded-full bg-[var(--arena-terminal-accent)] shadow-[0_0_0_3px_var(--arena-terminal-accent-soft)]" aria-hidden="true" />
+      <span className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function ReviewFocusRows({ labels }: { labels: string[] }) {
+  return (
+    <div className="grid gap-2 border-b border-[var(--arena-terminal-border)] pb-2">
+      <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--arena-terminal-text-subtle)]">
+        Focus
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {labels.map((label) => (
+          <span
+            key={label}
+            className="inline-flex min-h-6 max-w-full items-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-2 font-mono text-[11px] text-[var(--arena-terminal-text-secondary)]"
+          >
+            <span className="truncate">{label}</span>
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 

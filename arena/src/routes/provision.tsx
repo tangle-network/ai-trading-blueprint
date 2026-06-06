@@ -3709,14 +3709,23 @@ export default function ProvisionPage() {
   if (!isConnected) {
     return (
       <ConnectWalletPanel
-        title="Activate Agent"
-        description="Connect a wallet to provision the runtime, bind service ownership, fund the route, and flip a paper agent into an active operator-managed instance."
-        bullets={[
-          'Agent mandate',
-          'Runtime quote',
-          'Service ownership',
-          'Activation keys',
-        ]}
+        title={createDraftRequested ? 'New Agent' : 'Activate Agent'}
+        description={createDraftRequested
+          ? 'Connect a wallet to review the saved agent profile, get an operator quote, and launch the paper instance.'
+          : 'Connect a wallet to provision the runtime, bind service ownership, fund the route, and flip a paper agent into an active operator-managed instance.'}
+        bullets={createDraftRequested
+          ? [
+            'Saved profile',
+            'Operator quote',
+            'Paper instance',
+            'Activation keys',
+          ]
+          : [
+            'Agent mandate',
+            'Runtime quote',
+            'Service ownership',
+            'Activation keys',
+          ]}
       />
     );
   }
@@ -3725,7 +3734,7 @@ export default function ProvisionPage() {
     <div className="arena-trace-terminal flex min-h-full w-full overflow-y-auto bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text)] lg:h-full lg:min-h-0 lg:overflow-hidden">
       <section className="flex w-full flex-1 flex-col lg:h-full lg:min-h-0">
         <ArenaPageHeader
-          title="Activate Agent"
+          title={createDraftRequested ? 'New Agent' : 'Activate Agent'}
           titleWidthClassName="min-[1180px]:w-[11rem]"
           metrics={[
             { label: 'Network', value: compactHeaderChainName(targetChain.name), title: targetChain.name },
@@ -3739,7 +3748,9 @@ export default function ProvisionPage() {
           controls={(
             <>
               <ArenaHeaderLink to="/" icon="i-ph:chart-line-up">Terminal</ArenaHeaderLink>
-              <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">New Agent</ArenaHeaderLink>
+              {!createDraftRequested && (
+                <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">New Agent</ArenaHeaderLink>
+              )}
             </>
           )}
         />
@@ -3840,6 +3851,7 @@ export default function ProvisionPage() {
             selectedOperators={selectedOperators}
             setShowAdvanced={setShowAdvanced}
             strategyExecutionNotice={strategyExecutionNotice}
+            profileLaunchMode={!!draftProtocolIntent}
             capabilityFocusLabels={draftProtocolIntent?.capabilityFocus}
             availableProtocolCount={draftProtocolIntent?.availableProtocols?.length}
             executionTargetLabel={selectedExecutionTarget?.label}
@@ -3870,6 +3882,9 @@ export default function ProvisionPage() {
             selectedBlueprint={selectedBlueprint}
             selectedPack={selectedPack}
             name={name}
+            agentProfileObjective={draftProtocolIntent?.agentProfile?.objective.description}
+            capabilityFocusLabels={draftProtocolIntent?.capabilityFocus}
+            availableProtocolCount={draftProtocolIntent?.availableProtocols?.length}
             effectiveCron={effectiveCron}
             serviceId={serviceId}
             serviceInfo={serviceInfo}

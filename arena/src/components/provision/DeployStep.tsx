@@ -16,6 +16,9 @@ interface DeployStepProps {
   selectedBlueprint: TradingBlueprintDef | undefined;
   selectedPack: StrategyPackDef;
   name: string;
+  agentProfileObjective?: string;
+  capabilityFocusLabels?: string[];
+  availableProtocolCount?: number;
   effectiveCron: string;
   serviceId: string;
   serviceInfo: ServiceInfo | null;
@@ -50,7 +53,7 @@ function SummaryRow({
   return (
     <>
       <span className="text-arena-elements-textTertiary">{label}</span>
-      <span className={valueClassName}>{value}</span>
+      <span className={`min-w-0 break-words text-right ${valueClassName}`}>{value}</span>
     </>
   );
 }
@@ -100,6 +103,9 @@ export function DeployStep({
   selectedBlueprint,
   selectedPack,
   name,
+  agentProfileObjective,
+  capabilityFocusLabels,
+  availableProtocolCount,
   effectiveCron,
   serviceId,
   serviceInfo,
@@ -153,6 +159,13 @@ export function DeployStep({
           : isPending
             ? 'Confirm in Wallet...'
             : 'Provision Runtime';
+  const isProfileLaunch = Boolean(agentProfileObjective || capabilityFocusLabels?.length);
+  const focusLabel = capabilityFocusLabels?.length
+    ? capabilityFocusLabels.join(', ')
+    : selectedPack.name;
+  const accessLabel = availableProtocolCount && availableProtocolCount > 0
+    ? `${availableProtocolCount} wired protocols`
+    : selectedPack.providers.slice(0, 3).join(', ');
 
   return (
     <>
@@ -160,8 +173,10 @@ export function DeployStep({
       {isInstance && !latestDeployment && (
         <ProvisionReviewShell
           eyebrow="Activate Instance"
-          title="Create an operator-managed paper agent"
-          description="This submits the service request, binds the vault route, and starts the sidecar that can run this agent profile under the selected operator."
+          title={isProfileLaunch ? 'Activate this agent profile' : 'Create an operator-managed paper agent'}
+          description={isProfileLaunch
+            ? 'This submits the service request, binds the vault route, and starts the sidecar with the full capability profile from Create.'
+            : 'This submits the service request, binds the vault route, and starts the sidecar that can run this agent profile under the selected operator.'}
           summary={(
             <div className="space-y-3">
               <div className="font-display text-sm font-semibold text-arena-elements-textPrimary">
@@ -170,6 +185,8 @@ export function DeployStep({
               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm font-data">
                 <SummaryRow label="Blueprint" value={selectedBlueprint?.name ?? 'Instance'} />
                 <SummaryRow label="Agent" value={name} />
+                <SummaryRow label="Focus" value={focusLabel} valueClassName="text-arena-elements-textPrimary text-right" />
+                <SummaryRow label="Access" value={accessLabel} valueClassName="text-arena-elements-textPrimary text-right" />
                 <SummaryRow label="Adapter" value={selectedPack.name} />
                 <SummaryRow label="Frequency" value={`Every ${cronToHuman(effectiveCron)}`} />
                 <SummaryRow
@@ -244,8 +261,10 @@ export function DeployStep({
       {!isInstance && !txHash && (
         <ProvisionReviewShell
           eyebrow="Provision Runtime"
-          title="Submit this agent profile to the active service"
-          description={`This sends the job to Service ${serviceId}. The operator provisions the sidecar and starts the agent with the selected mandate, cadence, and runtime config.`}
+          title={isProfileLaunch ? 'Submit this agent profile' : 'Submit this agent profile to the active service'}
+          description={isProfileLaunch
+            ? `This sends the full capability profile to Service ${serviceId}. The operator provisions the sidecar with the mandate, venue preferences, cadence, and runtime config.`
+            : `This sends the job to Service ${serviceId}. The operator provisions the sidecar and starts the agent with the selected mandate, cadence, and runtime config.`}
           summary={(
             <div className="space-y-3">
               <div className="font-display text-sm font-semibold text-arena-elements-textPrimary">
@@ -254,6 +273,8 @@ export function DeployStep({
               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm font-data">
                 <SummaryRow label="Service" value={`#${serviceId}`} />
                 <SummaryRow label="Agent" value={name} />
+                <SummaryRow label="Focus" value={focusLabel} valueClassName="text-arena-elements-textPrimary text-right" />
+                <SummaryRow label="Access" value={accessLabel} valueClassName="text-arena-elements-textPrimary text-right" />
                 <SummaryRow label="Adapter" value={selectedPack.name} />
                 <SummaryRow label="Frequency" value={`Every ${cronToHuman(effectiveCron)}`} />
                 <SummaryRow

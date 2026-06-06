@@ -80,7 +80,7 @@ describe('create agent route', () => {
       'I want to trade political and news events on Polymarket. Find markets with edge and manage positions.',
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /activate paper agent/i }))
+    fireEvent.click(screen.getByRole('button', { name: /launch paper agent/i }))
 
     await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledWith('/provision?draft=create'))
     const draft = readStoredDraft()
@@ -139,7 +139,7 @@ describe('create agent route', () => {
       'I want an agent that trades ETH perps on Hyperliquid, using breakout retests with strict max leverage, liquidation buffer, and drawdown limits.',
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /activate paper agent/i }))
+    fireEvent.click(screen.getByRole('button', { name: /launch paper agent/i }))
 
     await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledWith('/provision?draft=create'))
     const draft = readStoredDraft()
@@ -159,6 +159,46 @@ describe('create agent route', () => {
     })
     expect(draft.availableProtocols).toEqual(expect.arrayContaining(['hyperliquid', 'uniswap_v3', 'gmx_v2', 'vertex']))
     expect(draft.preferredProtocols).toEqual(['hyperliquid'])
+  })
+
+  it('persists a multi-capability AgentProfile as the activation draft', async () => {
+    const { default: CreateAgent } = await import('../create')
+    render(<CreateAgent />)
+
+    fireEvent.click(screen.getByText('Multi-Venue').closest('button')!)
+    fireEvent.click(screen.getByRole('button', { name: /launch paper agent/i }))
+
+    await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledWith('/provision?draft=create'))
+    expect(screen.queryByText('Review Activation')).not.toBeInTheDocument()
+
+    const draft = readStoredDraft()
+    expect(draft.capabilityFocus).toEqual([
+      'Hyperliquid Perps',
+      'DEX Spot',
+      'DeFi Yield',
+      'Prediction Markets',
+      'EVM Perps',
+    ])
+    expect(draft.preferredProtocols).toEqual([
+      'hyperliquid',
+      'uniswap_v3',
+      'aerodrome',
+      'aave_v3',
+      'morpho_vault',
+      'polymarket_clob',
+      'gmx_v2',
+      'vertex',
+    ])
+    expect(draft.agentProfile.capabilities).toMatchObject({
+      focus: [
+        'Hyperliquid Perps',
+        'DEX Spot',
+        'DeFi Yield',
+        'Prediction Markets',
+        'EVM Perps',
+      ],
+      venueAccessMode: 'all_wired_with_preferences',
+    })
   })
 
   it('keeps the blueprint path rail as a contiguous stack without spacer gutters', async () => {

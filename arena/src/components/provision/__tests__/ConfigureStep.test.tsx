@@ -127,13 +127,14 @@ describe('ConfigureStep', () => {
     expect(screen.getByText('DeFi Yield')).toBeInTheDocument();
   });
 
-  it('surfaces the inherited agent profile separately from the activation adapter', () => {
+  it('surfaces the inherited agent profile without collapsing it into the adapter picker', () => {
     render(
       <ConfigureStep
         {...defaultProps({
           name: 'ETH Perp Sentinel',
           agentProfileName: 'ETH Perp Sentinel',
           agentProfileObjective: 'Autonomously trade and improve the mandate.',
+          profileLaunchMode: true,
           capabilityFocusLabels: ['Hyperliquid Perps', 'DEX Spot'],
           availableProtocolCount: 8,
         })}
@@ -141,8 +142,14 @@ describe('ConfigureStep', () => {
     );
 
     expect(screen.getByText('Agent Profile')).toBeInTheDocument();
+    expect(screen.getByText('Capability Profile')).toBeInTheDocument();
+    expect(screen.queryByText('Activation Adapter')).not.toBeInTheDocument();
+    expect(screen.queryByText('DeFi Yield')).not.toBeInTheDocument();
     expect(screen.getAllByText('ETH Perp Sentinel').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Adapter')).toBeInTheDocument();
+    expect(screen.getByText('Runtime Adapter')).toBeInTheDocument();
+    expect(screen.getByText('Review Wallet Request')).toBeInTheDocument();
+    expect(screen.getAllByText('Hyperliquid Perps').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('DEX Spot').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('8 wired protocols').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Autonomously trade and improve the mandate.')).toBeInTheDocument();
   });
