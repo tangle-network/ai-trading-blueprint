@@ -41,6 +41,19 @@ Primary actions:
 - Connect wallet, authenticate operator access, select network, review activation/provisioning, and configure secrets.
 - Collapse/expand navigation and, eventually, persist user-controlled workspace layout.
 
+Creation model decision:
+- The user is not buying a strategy pack. The user is defining an autonomous trading agent with a mandate, risk constraints, venue preferences, learning policy, telemetry, and paper/live activation state.
+- `AgentProfile` is the durable product primitive. It should be created first, inspected as the source of truth, and passed through launch/provisioning without collapsing multi-venue intent into one visible adapter choice.
+- Templates are allowed only as starting points that seed the mandate. They must not imply that the agent is hard-wired to a pack, venue, or deterministic strategy unless the owner explicitly constrains it.
+- Strategy type, adapter, execution target, validator trust, asset universe, and collateral fields are runtime compiler outputs. They belong in wallet/operator review, advanced inspection, or error recovery, not as the main mental model.
+- The ideal flow is one launch cockpit: write/select mandate, edit the derived AgentProfile, review the runtime plan and operator quote, connect/sign, then land in the agent workspace. `/provision` may remain as a resumable transaction route, but it should not feel like a second product flow.
+
+Creation alternatives evaluated:
+- Keep Create and Provision as separate strategy-pack wizards: 4/10. It exposes implementation, forces users to reason about adapters, and makes adaptive multi-venue agents feel smaller than the backend intent.
+- Chat-only agent creation: 7/10. It fits AI expectations but hides risk, operator quote, wallet, and venue constraints too easily; useful as an input mode, not the whole control surface.
+- AgentProfile-first launch cockpit with derived runtime plan: 9/10. It matches the promise of “tell the agent what to trade and let it figure out the best adaptive strategy,” while still keeping wallet, permissions, operator, validator, telemetry, and paper/live evidence explicit.
+- Fully autonomous marketplace agent with no configuration UI: 6/10 today. This could become powerful later, but current operator, whitelist, vault, and validation controls need first-class owner review.
+
 Trust, risk, and compliance:
 - Never fake trades, transcripts, validation, success states, or data freshness.
 - Make consequential identifiers copyable: bot ID, operator, submitter, vault, transaction/order/reference IDs where present.

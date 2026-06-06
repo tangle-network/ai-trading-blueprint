@@ -201,16 +201,19 @@ describe('create agent route', () => {
     })
   })
 
-  it('keeps the blueprint path rail as a contiguous stack without spacer gutters', async () => {
+  it('shows a derived runtime plan instead of a numbered blueprint path rail', async () => {
     const { default: CreateAgent } = await import('../create')
     render(<CreateAgent />)
 
-    const rail = screen.getByText('Path').closest('aside')
+    const rail = screen.getByText('Runtime Plan').closest('aside')
 
     expect(rail).not.toBeNull()
     expect(rail).toHaveClass('border', 'overflow-hidden')
     expect(rail).not.toHaveClass('gap-2.5')
-    expect(rail).toContainElement(screen.getByText('Mandate Templates'))
+    expect(rail).toContainElement(screen.getByText('Starting Points'))
+    expect(rail).toContainElement(screen.getByText('Runtime Plan'))
     expect(rail).toContainElement(screen.getByText('Execution'))
+    expect(screen.queryByText('Path')).not.toBeInTheDocument()
+    expect(screen.queryByText('Parse Mandate')).not.toBeInTheDocument()
   })
 })

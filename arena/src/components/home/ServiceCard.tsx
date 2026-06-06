@@ -29,7 +29,7 @@ export function ServiceCard({
   const totalTvl = bots.reduce((sum, b) => sum + b.tvl, 0);
 
   return (
-    <div className="glass-card rounded-lg border border-arena-elements-borderColor/40 transition-colors hover:border-arena-elements-borderColorActive/30">
+    <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] transition-colors hover:border-[var(--arena-terminal-border-hover)]">
       {/* Collapsed row */}
       <button
         type="button"
@@ -124,7 +124,7 @@ export function ServiceCard({
                 </h4>
                 <div className="space-y-1">
                   {service.operators.map((op) => (
-                    <div key={op} className="flex items-center gap-2 px-2 py-1 rounded bg-arena-elements-background-depth-3/50">
+                    <div key={op} className="flex items-center gap-2 bg-arena-elements-background-depth-3/50 px-2 py-1">
                       <Identicon address={op} size={18} />
                       <span className="text-xs font-data text-arena-elements-textPrimary">
                         {truncateAddress(op)}
@@ -156,7 +156,7 @@ export function ServiceCard({
                       <Link
                         key={addr}
                         to={`/vault/${addr}`}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-data bg-arena-elements-background-depth-3/50 border border-arena-elements-borderColor/40 hover:border-violet-500/40 transition-colors"
+                        className="inline-flex items-center gap-1 border border-arena-elements-borderColor/40 bg-arena-elements-background-depth-3/50 px-2 py-1 font-data text-xs transition-colors hover:border-violet-500/40"
                       >
                         <div className="i-ph:vault text-[10px] text-arena-elements-textTertiary" />
                         <span className="text-violet-700 dark:text-violet-400">
@@ -192,7 +192,7 @@ export function ServiceCard({
                       return isProvisioning ? (
                         <div
                           key={bot.id}
-                          className="flex items-center gap-2 px-2 py-1 rounded bg-arena-elements-background-depth-3/50"
+                          className="flex items-center gap-2 bg-arena-elements-background-depth-3/50 px-2 py-1"
                         >
                           {inner}
                         </div>
@@ -200,7 +200,7 @@ export function ServiceCard({
                         <Link
                           key={bot.id}
                           to={`/arena/bot/${encodeURIComponent(bot.id)}/performance`}
-                          className="flex items-center gap-2 px-2 py-1 rounded bg-arena-elements-background-depth-3/50 hover:bg-arena-elements-background-depth-3 transition-colors"
+                          className="flex items-center gap-2 bg-arena-elements-background-depth-3/50 px-2 py-1 transition-colors hover:bg-arena-elements-background-depth-3"
                         >
                           {inner}
                         </Link>
@@ -211,7 +211,7 @@ export function ServiceCard({
               )}
 
               {lockedBotCount > 0 && (
-                <div className="rounded border border-amber-500/15 bg-amber-500/5 px-2.5 py-2">
+                <div className="border border-amber-500/15 bg-amber-500/5 px-2.5 py-2">
                   <p className="text-[11px] font-data text-arena-elements-textSecondary">
                     {lockedBotCount} operator-managed bot{lockedBotCount === 1 ? '' : 's'} hidden until wallet authentication completes.
                   </p>

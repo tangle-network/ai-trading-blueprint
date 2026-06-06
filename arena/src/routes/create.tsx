@@ -512,6 +512,7 @@ export default function CreateAgent() {
     () => capabilityLabels(selectedCapabilityIds),
     [selectedCapabilityIds],
   )
+  const primaryRuntimeLabel = compactCapabilityLabel(primaryCapability.label)
   const preferredProtocols = useMemo(
     () => preferredProtocolsForCapabilities(selectedCapabilityIds),
     [selectedCapabilityIds],
@@ -547,12 +548,12 @@ export default function CreateAgent() {
     ].map((item) => item.trim()).filter(Boolean),
     [detectedProfile.envelope, draft.drawdown, draft.sizing],
   )
-  const launchPathRows = useMemo(() => [
-    ['01', 'Parse Mandate', selectedHint.label],
-    ['02', 'Tune Profile', draft.name],
-    ['03', 'Apply Risk', draft.drawdown],
-    ['04', 'Open Workspace', '/performance'],
-  ], [draft.drawdown, draft.name, selectedHint.label])
+  const runtimePlanRows = useMemo(() => [
+    ['Focus', selectedCapabilityLabels.join(', ')],
+    ['Venues', `${ALL_WIRED_PROTOCOLS.length} wired / ${primaryRuntimeLabel}`],
+    ['Paper', `$${Number(DEFAULT_PAPER_INITIAL_CAPITAL_USD).toLocaleString()} paper / evidence first`],
+    ['Next', 'Wallet -> operator quote'],
+  ], [primaryRuntimeLabel, selectedCapabilityLabels])
   const readinessRows = useMemo(() => [
     ['Operator', operatorLabel],
     ['Focus', selectedCapabilityLabels.join(', ')],
@@ -647,8 +648,8 @@ export default function CreateAgent() {
           title="New Agent"
           titleWidthClassName="min-[1180px]:w-[11rem]"
           metrics={[
-            { label: 'Focus', value: compactCapabilityLabel(primaryCapability.label), title: selectedCapabilityLabels.join(', ') },
-            { label: 'Access', value: `${ALL_WIRED_PROTOCOLS.length} venues`, title: ALL_WIRED_PROTOCOLS.join(', ') },
+            { label: 'Focus', value: primaryRuntimeLabel, title: selectedCapabilityLabels.join(', ') },
+            { label: 'Venues', value: String(ALL_WIRED_PROTOCOLS.length), title: ALL_WIRED_PROTOCOLS.join(', ') },
             { label: 'Mode', value: 'Paper' },
           ]}
           controls={(
@@ -843,7 +844,7 @@ export default function CreateAgent() {
                   <span className={`${detectedProfile.icon} text-lg`} aria-hidden="true" />
                 </span>
                 <div className="min-w-0">
-                  <h2 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">Mandate Templates</h2>
+                  <h2 className="truncate font-display text-base font-semibold text-[var(--arena-terminal-text)]">Starting Points</h2>
                   <p className="truncate font-mono text-xs text-[var(--arena-terminal-text-muted)]">{detectedProfile.label} / {detectedProfile.venue}</p>
                 </div>
               </div>
@@ -872,14 +873,12 @@ export default function CreateAgent() {
             </section>
 
             <section className="overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
-              <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_8rem] border-b border-[var(--arena-terminal-border)] px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--arena-terminal-text-subtle)]">
-                <span>#</span>
-                <span>Path</span>
-                <span className="text-right">Surface</span>
+              <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2">
+                <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Runtime Plan</h2>
               </div>
               <div>
-                {launchPathRows.map(([index, action, output]) => (
-                  <LedgerRow key={index} index={index} action={action} output={output} />
+                {runtimePlanRows.map(([label, value]) => (
+                  <PlanRow key={label} label={label} value={value} />
                 ))}
               </div>
             </section>
@@ -1067,20 +1066,17 @@ function RouteChip({
   )
 }
 
-function LedgerRow({
-  index,
-  action,
-  output,
+function PlanRow({
+  label,
+  value,
 }: {
-  index: string
-  action: string
-  output: string
+  label: string
+  value: string
 }) {
   return (
-    <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_8rem] items-center border-b border-[var(--arena-terminal-border)] px-3 py-2 last:border-b-0">
-      <span className="font-mono text-xs text-[var(--arena-terminal-accent)]">{index}</span>
-      <span className="min-w-0 truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">{action}</span>
-      <span className="min-w-0 truncate text-right font-mono text-xs text-[var(--arena-terminal-text-muted)]">{output}</span>
+    <div className="grid grid-cols-[6.25rem_minmax(0,1fr)] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2 last:border-b-0">
+      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">{label}</span>
+      <span className="min-w-0 truncate text-right font-mono text-xs text-[var(--arena-terminal-text-secondary)]">{value}</span>
     </div>
   )
 }

@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import { zeroAddress } from 'viem';
 import type { Address } from 'viem';
-import { Badge, Button, Card, CardContent, Identicon } from '@tangle-network/blueprint-ui/components';
+import { Badge, Button, Identicon } from '@tangle-network/blueprint-ui/components';
 import { SparklineChart } from '~/components/arena/SparklineChart';
 import type { Bot } from '~/lib/types/bot';
 import { STRATEGY_SHORT } from '~/lib/format';
@@ -58,20 +58,22 @@ export function HomeBotCard({
       };
 
   return (
-    <Card className={`${borderColor} transition-all duration-200`}>
-      <CardContent className="p-4 space-y-3">
+    <article
+      className={`border bg-[var(--arena-terminal-panel)] transition-[border-color,background-color] duration-150 ${borderColor}`}
+    >
+      <div className="space-y-2.5 p-3">
         {/* Header row */}
         <div className="flex items-start gap-3">
           {/* Strategy icon */}
-          <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${iconBg}`}>
-            <span className={`text-lg font-display font-bold ${iconColor}`}>
+          <div className={`flex h-9 w-9 shrink-0 items-center justify-center border border-arena-elements-borderColor/35 ${iconBg}`}>
+            <span className={`font-display text-base font-bold ${iconColor}`}>
               {strategyInitial}
             </span>
           </div>
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-base font-display font-semibold truncate">
+              <span className="truncate font-display text-sm font-semibold">
                 {bot.name}
               </span>
               <Badge variant={badge.variant} className="text-[10px]">
@@ -105,7 +107,7 @@ export function HomeBotCard({
             <button
               type="button"
               onClick={(e) => { e.preventDefault(); onDismiss(); }}
-              className="p-1 rounded text-arena-elements-textTertiary hover:text-crimson-400 transition-colors shrink-0"
+              className="shrink-0 p-1 text-arena-elements-textTertiary transition-colors hover:text-crimson-400"
               aria-label="Dismiss from dashboard"
             >
               <div className="i-ph:x text-sm" />
@@ -119,7 +121,7 @@ export function HomeBotCard({
             {/* PnL */}
             <div>
               {bot.pnlPercent !== 0 ? (
-                <span className={`font-data font-bold text-xl ${
+                <span className={`font-data text-xl font-bold ${
                   bot.pnlPercent >= 0 ? 'text-arena-elements-icon-success' : 'text-arena-elements-icon-error'
                 }`}>
                   {bot.pnlPercent >= 0 ? '+' : ''}{bot.pnlPercent.toFixed(1)}%
@@ -155,7 +157,7 @@ export function HomeBotCard({
             {/* Validator score */}
             {bot.avgValidatorScore > 0 && (
               <div className="flex items-center gap-2">
-                <span className={`text-xs font-data font-bold px-1.5 py-0.5 rounded ${
+                <span className={`px-1.5 py-0.5 font-data text-xs font-bold ${
                   bot.avgValidatorScore >= 85
                     ? 'bg-emerald-700/10 dark:bg-emerald-500/10 text-arena-elements-icon-success'
                     : bot.avgValidatorScore >= 70
@@ -174,7 +176,7 @@ export function HomeBotCard({
             {bot.sparklineData.length > 1 ? (
               <SparklineChart data={bot.sparklineData} positive={bot.pnlPercent >= 0} width={100} height={40} />
             ) : (
-              <div className="w-[100px] h-[40px] rounded bg-arena-elements-background-depth-3/50 flex items-center justify-center">
+              <div className="flex h-[40px] w-[100px] items-center justify-center border border-arena-elements-borderColor/30 bg-arena-elements-background-depth-3/50">
                 <span className="text-[10px] font-data text-arena-elements-textTertiary">No data</span>
               </div>
             )}
@@ -183,7 +185,7 @@ export function HomeBotCard({
 
         {/* Needs config banner */}
         {isNeedsConfig && onConfigure && (
-          <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/15">
+          <div className="flex items-center gap-2 border border-amber-500/15 bg-amber-500/5 p-2.5">
             <div className="i-ph:key text-sm text-amber-500 shrink-0" />
             <span className="text-xs font-data text-arena-elements-textSecondary flex-1">
               Configure API keys to activate trading
@@ -220,7 +222,7 @@ export function HomeBotCard({
             </>
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </article>
   );
 }

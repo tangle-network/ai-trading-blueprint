@@ -400,7 +400,7 @@ export default function HomePage() {
     <section className="grid gap-3 overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3 lg:grid-cols-[minmax(0,1fr)_300px]">
       <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-4">
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-[5px] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
+          <span className="flex h-10 w-10 items-center justify-center border border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
             <span className="i-ph:robot text-xl" aria-hidden="true" />
           </span>
           <div>
