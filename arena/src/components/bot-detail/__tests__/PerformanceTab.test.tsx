@@ -935,6 +935,49 @@ describe('PerformanceTab', () => {
     );
   });
 
+  it('requests Binance ETH backfill for WETH/USDC DEX bots instead of charting the stable quote leg', () => {
+    mockTrades = [
+      makeTrade({
+        action: 'sell',
+        tokenIn: 'WETH',
+        tokenOut: 'USDC',
+        assetIn: {
+          rawToken: 'WETH',
+          symbol: 'WETH',
+          name: 'Wrapped Ether',
+          primaryLabel: 'WETH',
+          isKnown: true,
+          accentClassName: 'bg-sky-100 text-sky-700',
+          iconText: 'W',
+        },
+        assetOut: {
+          rawToken: 'USDC',
+          symbol: 'USDC',
+          name: 'USD Coin',
+          primaryLabel: 'USDC',
+          isKnown: true,
+          accentClassName: 'bg-blue-100 text-blue-700',
+          iconText: 'U',
+        },
+      }),
+    ];
+
+    render(<PerformanceTab bot={makeBot({ strategyType: 'dex' })} isLive={false} />);
+
+    expect(useBotMarketCandlesMock).toHaveBeenCalledWith(
+      'bot-1',
+      'ETH',
+      90,
+      expect.objectContaining({
+        backfill: true,
+        interval: '15m',
+        limit: 8_640,
+        refetchInterval: false,
+        source: 'binance',
+      }),
+    );
+  });
+
   it('opens the market chart on the selected range while keeping older candles loaded for panning', async () => {
     mockMetrics = [
       {

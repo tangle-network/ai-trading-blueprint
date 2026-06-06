@@ -97,11 +97,24 @@ function normalizeCandleToken(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
   if (/^0x[a-f0-9]{32,}$/i.test(trimmed)) return trimmed;
-  return trimmed
+  const normalized = trimmed
     .replace(/-PERP$/i, '')
     .replace(/\/USD[CT]?$/i, '')
     .replace(/-USD[CT]?$/i, '')
     .toUpperCase();
+  if (normalized === 'WETH') return 'ETH';
+  if (normalized === 'WBTC') return 'BTC';
+  return normalized;
+}
+
+function isStableCandleToken(value: string | null | undefined): boolean {
+  const token = normalizeCandleToken(value);
+  return token === 'USDC' || token === 'USDT' || token === 'DAI' || token === 'USD';
+}
+
+function firstRiskCandleToken(...values: Array<string | null | undefined>): string | null {
+  const normalized = values.map(normalizeCandleToken).filter((value): value is string => value != null);
+  return normalized.find((value) => !isStableCandleToken(value)) ?? normalized[0] ?? null;
 }
 
 function inferMarketCandleToken(bot: Bot, trades: Trade[] | undefined): string | null {
@@ -121,9 +134,10 @@ function inferMarketCandleToken(bot: Bot, trades: Trade[] | undefined): string |
   if (latestTrade?.predictionMetadata?.tokenId) {
     return normalizeCandleToken(latestTrade.predictionMetadata.tokenId);
   }
-  return normalizeCandleToken(
-    latestTrade?.tokenOut
-      ?? readStrategyString(bot.strategyConfig, ['asset', 'symbol', 'token', 'base_asset']),
+  return firstRiskCandleToken(
+    latestTrade?.tokenIn,
+    latestTrade?.tokenOut,
+    readStrategyString(bot.strategyConfig, ['asset', 'symbol', 'token', 'base_asset']),
   );
 }
 
@@ -225,25 +239,30 @@ function marketCandleIntervalForRange(range: PerformanceRange): string {
   return '4h';
 }
 
-function inferMarketCandleSource(bot: Bot): string | null {
+function inferMarketCandleSource(bot: Bot, token: string | null | undefined): string | null {
+  if (!token || /^0x[a-f0-9]{32,}$/i.test(token) || isStableCandleToken(token)) return null;
   const strategyType = bot.strategyType.toLowerCase();
   if (strategyType.includes('hyperliquid')) return 'hyperliquid';
   if (strategyType.includes('drift')) return 'drift';
   if (strategyType.includes('polymarket')) return 'polymarket';
-  return null;
+  return 'binance';
 }
 
 function formatMarketSourceLabel(source: string | null | undefined, interval: string | null | undefined): string {
   const key = source?.trim().toLowerCase();
   const sourceLabel = key === 'hyperliquid'
     ? 'Hyperliquid'
-    : key === 'drift'
-      ? 'Drift'
-      : key === 'polymarket'
-        ? 'Polymarket'
-        : key === 'geckoterminal'
-          ? 'GeckoTerminal'
-          : 'bot store';
+    : key === 'binance'
+      ? 'Binance'
+      : key === 'coinbase'
+        ? 'Coinbase'
+        : key === 'drift'
+          ? 'Drift'
+          : key === 'polymarket'
+            ? 'Polymarket'
+            : key === 'geckoterminal'
+              ? 'GeckoTerminal'
+              : 'bot store';
   return interval ? `${sourceLabel} ${interval}` : sourceLabel;
 }
 
@@ -606,7 +625,10 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     () => inferMarketCandleToken(bot, trades),
     [bot, trades],
   );
-  const marketCandleSource = useMemo(() => inferMarketCandleSource(bot), [bot]);
+  const marketCandleSource = useMemo(
+    () => inferMarketCandleSource(bot, marketCandleToken),
+    [bot, marketCandleToken],
+  );
   const marketCandleInterval = marketCandleIntervalForRange(selectedRange.value);
   const { data: marketCandles = [] } = useBotMarketCandles(bot.id, marketCandleToken, marketCandleFetchDays, {
     operatorApiUrl: bot.operatorApiUrl,
