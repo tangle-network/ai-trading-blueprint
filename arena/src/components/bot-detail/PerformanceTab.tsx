@@ -270,7 +270,7 @@ function marketCandleLimitForRange(range: PerformanceRange): number {
 function marketCandleFetchDaysForRange(range: PerformanceRange): number {
   if (range === '1d') return 7;
   if (range === '7d') return 30;
-  if (range === '30d') return 90;
+  if (range === '30d') return 30;
   if (range === '6m') return 365;
   return 365;
 }

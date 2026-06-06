@@ -924,7 +924,7 @@ describe('PerformanceTab', () => {
     expect(useBotMarketCandlesMock).toHaveBeenCalledWith(
       'bot-1',
       'ETH',
-      90,
+      30,
       expect.objectContaining({
         backfill: true,
         interval: '15m',
@@ -967,7 +967,7 @@ describe('PerformanceTab', () => {
     expect(useBotMarketCandlesMock).toHaveBeenCalledWith(
       'bot-1',
       'ETH',
-      90,
+      30,
       expect.objectContaining({
         backfill: true,
         interval: '15m',
@@ -1027,7 +1027,7 @@ describe('PerformanceTab', () => {
     expect(useBotMarketCandlesMock).toHaveBeenCalledWith(
       'bot-1',
       'ETH',
-      90,
+      30,
       expect.objectContaining({
         backfill: true,
         interval: '15m',
