@@ -13,6 +13,7 @@ use crate::{MultiBotTradingState, TradingApiState};
 
 const DEFAULT_CANDLE_LIMIT: usize = 1_000;
 const MAX_CANDLE_LIMIT: usize = 10_000;
+const MAX_BLOCKING_BACKFILL_CANDLES: usize = 5_000;
 static CANDLE_REFRESHES_IN_FLIGHT: Lazy<Mutex<HashSet<String>>> =
     Lazy::new(|| Mutex::new(HashSet::new()));
 
@@ -291,10 +292,19 @@ fn backfill_decision(
     limit: usize,
     interval: trading_runtime::backtest::Interval,
 ) -> BackfillDecision {
+    let desired_count = expected_candle_count(query, interval)
+        .map(|count| count.min(limit))
+        .unwrap_or(limit);
     if existing.is_empty() {
+        if desired_count > MAX_BLOCKING_BACKFILL_CANDLES {
+            return BackfillDecision::BackgroundRefresh;
+        }
         return BackfillDecision::Blocking;
     }
     if existing.len() < limit.min(20) {
+        if desired_count > MAX_BLOCKING_BACKFILL_CANDLES {
+            return BackfillDecision::BackgroundRefresh;
+        }
         return BackfillDecision::Blocking;
     }
 
@@ -378,7 +388,7 @@ async fn fetch_and_store_candles(
         source,
         token,
         interval,
-        limit.min(5_000) as u32,
+        limit.min(MAX_CANDLE_LIMIT) as u32,
     )
     .await
     .map_err(|err| format!("Fetch failed for {token} from {}: {err}", source.name()))?;
@@ -735,6 +745,27 @@ mod tests {
         assert_eq!(
             backfill_decision(&[], &query, 8_640, interval),
             BackfillDecision::Blocking
+        );
+    }
+
+    #[test]
+    fn large_empty_cache_refreshes_in_background() {
+        let interval = trading_runtime::backtest::Interval::Min15;
+        let to = 1_700_000_000;
+        let from = to - 90 * 24 * 60 * 60;
+        let query = GetCandlesQuery {
+            token: Some("ETH".to_string()),
+            source: Some("hyperliquid".to_string()),
+            interval: Some("15m".to_string()),
+            from: Some(from),
+            to: Some(to),
+            limit: Some(8_640),
+            backfill: Some(true),
+        };
+
+        assert_eq!(
+            backfill_decision(&[], &query, 8_640, interval),
+            BackfillDecision::BackgroundRefresh
         );
     }
 
