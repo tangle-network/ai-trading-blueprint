@@ -473,8 +473,7 @@ export default function IndexPage() {
   return (
     <div className="arena-trace-terminal flex min-h-full w-full flex-col lg:h-full lg:overflow-hidden">
       <ArenaPageHeader
-        title="Tangle"
-        showTitle={false}
+        title="Home"
         metrics={[
           { value: formatNumber(leaderboardBots.length, { maximumFractionDigits: 0 }), label: 'Agents' },
           { value: formatCompactUsd(homeVolumeSeries.summary.totalUsd), label: '30D Vol' },

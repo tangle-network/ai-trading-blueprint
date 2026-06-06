@@ -66,7 +66,7 @@ const LIVE_SECTION_EXPECTATIONS = {
     ['Validation', 'Validator', 'Controls', 'Terminal', 'Envelope'],
   ],
 };
-const FIXTURE_HOME_EXPECTATIONS = ['Tangle', 'Volume', 'Fills', 'ETH Macro Scalper'];
+const FIXTURE_HOME_EXPECTATIONS = ['Home', 'Volume', 'Fills', 'ETH Macro Scalper'];
 const FIXTURE_LEADERBOARD_EXPECTATIONS = ['Agents', '24H Vol', 'Active', 'ETH Macro Scalper', 'HL Perp'];
 const FIXTURE_ACTIVITY_EXPECTATIONS = ['Activity', '24H Vol', 'Fills', 'ETH Macro Scalper', 'ETH-PERP'];
 const FIXTURE_OBSERVATORY_EXPECTATIONS = [
