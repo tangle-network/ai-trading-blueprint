@@ -1441,6 +1441,36 @@ pub async fn provision_core(
         }
     }
 
+    // Fail-closed admission control on the AUTHORITATIVE provision path.
+    //
+    // Runs only for NEW provisions — the dedup block above already returned any
+    // existing bot for this (service_id, call_id), so an operator restart that
+    // replays past on-chain events keeps serving bots it previously admitted
+    // even if the policy later tightened. A genuinely new request must satisfy
+    // the operator's own requester allowlist and advertised capacity here,
+    // independently of the off-chain operator API and the blueprint-level
+    // on-chain gate. Without this, a request reaching the job runner would
+    // provision regardless of whether the operator authorized the requester.
+    {
+        let live_bots = crate::state::bot_state_health()
+            .map(|health| health.live_bots)
+            .unwrap_or(0);
+        if let Err(reason) = crate::request_access::ensure_provision_allowed(&caller, live_bots) {
+            tracing::warn!(
+                call_id,
+                service_id,
+                caller = %caller,
+                live_bots,
+                "Provision rejected by operator admission policy: {reason}"
+            );
+            // Mirror the handler's early-failure pattern so the rejection is a
+            // visible Failed phase the UI can render as a blocked state.
+            let _ = provision_progress::start_provision(call_id);
+            mark_provision_failed(call_id, &reason);
+            return Err(reason);
+        }
+    }
+
     // Atomically claim this (service_id, call_id) slot. If another call
     // already holds it, reject as duplicate-in-progress.
     let already_inflight = {
