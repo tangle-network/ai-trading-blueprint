@@ -33,7 +33,14 @@ interface UseBotSessionStreamResult {
   messages: AppSessionMessage[];
   partMap: Record<string, SessionPart[]>;
   isStreaming: boolean;
+  /** True while the SSE stream is open. */
   connected: boolean;
+  /** True while a reconnect is scheduled/in flight after a drop. */
+  isReconnecting: boolean;
+  /** Reconnect attempt count; resets to 0 on a healthy connection. */
+  attempt: number;
+  /** Whole seconds until the next reconnect attempt (0 when not waiting). */
+  retryInSeconds: number;
   error: string | null;
   refetch: () => Promise<void>;
   send: (text: string) => Promise<void>;
@@ -51,7 +58,27 @@ const EMPTY_STATE: CachedSessionState = {
   nextInsertionIndex: 0,
 };
 
-const RECONNECT_DELAY_MS = 3_000;
+/**
+ * Reconnect backoff: 1s, 2s, 4s, … doubling per attempt, capped at 30s, with
+ * full jitter applied to the scheduled delay so a fleet of clients doesn't
+ * reconnect in lockstep (thundering herd) after a sidecar restart. The attempt
+ * counter resets to 0 once a connection is healthy again.
+ */
+const RECONNECT_BASE_DELAY_MS = 1_000;
+const RECONNECT_MAX_DELAY_MS = 30_000;
+
+/** Deterministic (un-jittered) backoff ceiling for a given attempt index. */
+function reconnectBaseDelayMs(attempt: number): number {
+  const exponential = RECONNECT_BASE_DELAY_MS * 2 ** Math.max(0, attempt);
+  return Math.min(exponential, RECONNECT_MAX_DELAY_MS);
+}
+
+/** Full-jitter delay: a random point in [base/2, base]. */
+function reconnectDelayWithJitter(attempt: number): number {
+  const base = reconnectBaseDelayMs(attempt);
+  return base / 2 + Math.random() * (base / 2);
+}
+
 const CACHE_PREFIX = "arena.bot_chat.";
 
 function getCacheStorageKey(cacheKey: string, sessionId: string): string {
@@ -474,11 +501,16 @@ export function useBotSessionStream({
   const [partMap, setPartMap] = useState<Record<string, SessionPart[]>>({});
   const [isStreaming, setIsStreaming] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [retryInSeconds, setRetryInSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const stateRef = useRef<CachedSessionState>(EMPTY_STATE);
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const attemptRef = useRef(0);
   const streamAbortRef = useRef<AbortController | null>(null);
   const historyAbortRef = useRef<AbortController | null>(null);
 
@@ -501,6 +533,27 @@ export function useBotSessionStream({
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+    if (retryCountdownRef.current) {
+      clearInterval(retryCountdownRef.current);
+      retryCountdownRef.current = null;
+    }
+    setIsReconnecting(false);
+    setRetryInSeconds(0);
+  }, []);
+
+  /**
+   * Reset the backoff after a healthy connection so the next drop starts from
+   * the 1s base again instead of inheriting the previous attempt's delay.
+   */
+  const resetReconnectBackoff = useCallback(() => {
+    attemptRef.current = 0;
+    setAttempt(0);
+    setIsReconnecting(false);
+    setRetryInSeconds(0);
+    if (retryCountdownRef.current) {
+      clearInterval(retryCountdownRef.current);
+      retryCountdownRef.current = null;
+    }
   }, []);
 
   const loadCachedSnapshot = useCallback(() => {
@@ -511,8 +564,9 @@ export function useBotSessionStream({
     setIsStreaming(false);
     setConnected(false);
     setError(null);
+    resetReconnectBackoff();
     activeAssistantMessageIdRef.current = null;
-  }, [cacheKey, sessionId]);
+  }, [cacheKey, resetReconnectBackoff, sessionId]);
 
   const refetch = useCallback(async () => {
     if (!apiUrl || !sessionId || (!token && !historyPath)) {
@@ -847,6 +901,51 @@ export function useBotSessionStream({
     [applyMessagePartUpdate, applyMessageUpdate, applyState, refetch],
   );
 
+  // Forward ref so `scheduleReconnect` can call the latest `connectStream`
+  // without a declaration cycle.
+  const connectStreamRef = useRef<() => void>(() => {});
+
+  /**
+   * Schedule the next reconnect using exponential backoff with full jitter.
+   * Increments the attempt counter and drives a 1s `retryInSeconds` countdown
+   * for the UI. A no-op if the stream is intentionally disabled.
+   */
+  const scheduleReconnect = useCallback(() => {
+    if (!enabled || !streamEnabled) {
+      return;
+    }
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (retryCountdownRef.current) {
+      clearInterval(retryCountdownRef.current);
+      retryCountdownRef.current = null;
+    }
+
+    const currentAttempt = attemptRef.current;
+    const delayMs = reconnectDelayWithJitter(currentAttempt);
+    attemptRef.current = currentAttempt + 1;
+    setAttempt(currentAttempt + 1);
+    setIsReconnecting(true);
+
+    let remaining = Math.max(1, Math.ceil(delayMs / 1_000));
+    setRetryInSeconds(remaining);
+    retryCountdownRef.current = setInterval(() => {
+      remaining -= 1;
+      setRetryInSeconds(Math.max(0, remaining));
+      if (remaining <= 0 && retryCountdownRef.current) {
+        clearInterval(retryCountdownRef.current);
+        retryCountdownRef.current = null;
+      }
+    }, 1_000);
+
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      connectStreamRef.current();
+    }, delayMs);
+  }, [enabled, streamEnabled]);
+
   const connectStream = useCallback(async () => {
     if (!enabled || !streamEnabled || !apiUrl || !token || !sessionId) {
       return;
@@ -878,7 +977,10 @@ export function useBotSessionStream({
         throw new Error("Chat stream is unavailable");
       }
 
+      // Healthy open: surface connected and reset the backoff so the next drop
+      // starts from the 1s base.
       setConnected(true);
+      resetReconnectBackoff();
       setError((current) => {
         if (current && stateRef.current.messages.length > 0) {
           return null;
@@ -904,6 +1006,9 @@ export function useBotSessionStream({
           for (const frame of frames) {
             const parsed = parseEventFrame(frame);
             if (parsed) {
+              // A delivered frame proves the connection is healthy; keep the
+              // backoff reset so a later drop restarts from the base delay.
+              resetReconnectBackoff();
               handleEvent(parsed);
             }
           }
@@ -914,9 +1019,7 @@ export function useBotSessionStream({
 
       if (!controller.signal.aborted) {
         setConnected(false);
-        reconnectTimerRef.current = setTimeout(() => {
-          void connectStream();
-        }, RECONNECT_DELAY_MS);
+        scheduleReconnect();
       }
     } catch (streamError) {
       if (controller.signal.aborted) {
@@ -931,11 +1034,25 @@ export function useBotSessionStream({
             : "SSE connection error",
         );
       }
-      reconnectTimerRef.current = setTimeout(() => {
-        void connectStream();
-      }, RECONNECT_DELAY_MS);
+      scheduleReconnect();
     }
-  }, [apiUrl, clearReconnectTimer, enabled, handleEvent, sessionId, streamEnabled, token]);
+  }, [
+    apiUrl,
+    clearReconnectTimer,
+    enabled,
+    handleEvent,
+    resetReconnectBackoff,
+    scheduleReconnect,
+    sessionId,
+    streamEnabled,
+    token,
+  ]);
+
+  useEffect(() => {
+    connectStreamRef.current = () => {
+      void connectStream();
+    };
+  }, [connectStream]);
 
   const send = useCallback(
     async (text: string) => {
@@ -1101,6 +1218,9 @@ export function useBotSessionStream({
     partMap,
     isStreaming,
     connected,
+    isReconnecting,
+    attempt,
+    retryInSeconds,
     error,
     refetch,
     send,

@@ -301,7 +301,8 @@ export default function OperatorsPage() {
         ]}
         controls={(
           <>
-            <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch" variant="primary">Request Instance</ArenaHeaderLink>
+            <ArenaHeaderLink to="/operators/register" icon="i-ph:hard-drives" variant="primary">Become an operator</ArenaHeaderLink>
+            <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch">Request Instance</ArenaHeaderLink>
             <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">New Agent</ArenaHeaderLink>
           </>
         )}
@@ -317,6 +318,19 @@ export default function OperatorsPage() {
           selected={selectedBlueprint}
           onSelect={(blueprint) => setSelectedId(blueprint.id)}
         />
+
+        <section className="flex flex-col gap-3 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] px-3 py-3 sm:flex-row sm:items-center">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
+            <span className="i-ph:hard-drives text-lg" aria-hidden="true" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Host agents on your own operator</h2>
+            <p className="mt-0.5 text-sm text-[var(--arena-terminal-muted)]">
+              Set who can launch agents, advertise capacity, and earn fees from the agents you host.
+            </p>
+          </div>
+          <ArenaHeaderLink to="/operators/register" icon="i-ph:arrow-right" variant="primary">Become an operator</ArenaHeaderLink>
+        </section>
 
         <section className="space-y-2">
           <div className="flex items-end justify-between gap-3">

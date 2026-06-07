@@ -5,6 +5,7 @@ import {
 } from '@tangle-network/sandbox-ui/hooks';
 import type { AgentBranding } from '@tangle-network/sandbox-ui/types';
 import { ChatTranscript } from '~/components/bot-detail/chat/ChatTranscript';
+import { ConnectionChip } from '~/components/ui/ConnectionChip';
 import { useBotSessionStream } from '~/lib/hooks/useBotSessionStream';
 import {
   buildBotScopedPathForDeploymentKind,
@@ -133,12 +134,21 @@ export function PerformanceCopilotPanel({
               {botName}
             </div>
           </div>
-          <span
-            className={`h-2 w-2 shrink-0 rounded-full ${
-              stream.isStreaming ? 'animate-pulse bg-amber-400' : 'bg-emerald-500'
-            }`}
-            aria-label={stream.isStreaming ? 'Copilot running' : 'Copilot idle'}
-          />
+          <div className="flex shrink-0 items-center gap-2">
+            <span
+              className={`h-2 w-2 shrink-0 rounded-full ${
+                stream.isStreaming
+                  ? 'animate-pulse bg-[var(--arena-terminal-accent)]'
+                  : 'bg-[var(--arena-terminal-success)]'
+              }`}
+              aria-label={stream.isStreaming ? 'Copilot running' : 'Copilot idle'}
+            />
+            <ConnectionChip
+              connected={stream.connected}
+              isReconnecting={stream.isReconnecting}
+              retryInSeconds={stream.retryInSeconds}
+            />
+          </div>
         </div>
         {panelError && (
           <div className="mt-2 truncate rounded-md border border-crimson-500/20 bg-crimson-500/5 px-2 py-1 text-xs text-crimson-600 dark:text-crimson-300">

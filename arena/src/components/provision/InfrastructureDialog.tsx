@@ -5,7 +5,17 @@ import {
 import type { Address } from 'viem';
 import type { DiscoveredService, ServiceInfo } from '~/routes/provision/types';
 import { formatCost } from '~/routes/provision/types';
+import type { QuoteFailure } from '~/lib/hooks/useQuotes';
 import { ServiceDropdown } from './ServiceDropdown';
+import { BlockedStatePanel } from './BlockedStatePanel';
+
+/**
+ * Operators whose quote failure means they cannot be used for this service.
+ * `unreachable` is excluded — it is transient and offered a Retry instead.
+ */
+function isUnselectableFailure(failure: QuoteFailure | undefined): boolean {
+  return failure !== undefined && failure.kind !== 'unreachable';
+}
 
 interface InfrastructureDialogProps {
   open: boolean;
@@ -34,7 +44,7 @@ interface InfrastructureDialogProps {
   // Quotes
   isQuoting: boolean;
   quotes: Array<{ operator: string; totalCost: bigint }>;
-  quoteErrors: Map<string, string>;
+  quoteErrors: Map<Address, QuoteFailure>;
   totalCost: bigint;
   refetchQuotes: () => void;
   // Deploy
@@ -166,20 +176,30 @@ export function InfrastructureDialog({
                   <div className="grid gap-1.5">
                     {discoveredOperators.map((op) => {
                       const sel = selectedOperators.has(op.address);
+                      const failure = quoteErrors.get(op.address);
+                      const unselectable = isUnselectableFailure(failure);
                       return (
                         <button
                           key={op.address}
                           type="button"
                           onClick={() => toggleOperator(op.address)}
+                          disabled={unselectable && !sel}
+                          aria-disabled={unselectable && !sel}
                           className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-all ${
                             sel
                               ? 'border-violet-500/40 bg-violet-500/5'
-                              : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/30 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
+                              : unselectable
+                                ? 'border-arena-elements-borderColor/40 bg-arena-elements-background-depth-3/40 dark:bg-arena-elements-background-depth-1/40 opacity-55 cursor-not-allowed'
+                                : 'border-arena-elements-borderColor hover:border-arena-elements-borderColorActive/30 bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-1'
                           }`}
                         >
                           <Identicon address={op.address} size={22} />
                           <span className="font-data text-sm truncate flex-1">{op.address}</span>
-                          {sel && <Badge variant="success" className="text-xs">Selected</Badge>}
+                          {sel ? (
+                            <Badge variant="success" className="text-xs">Selected</Badge>
+                          ) : unselectable ? (
+                            <Badge variant="destructive" className="text-xs">Unavailable</Badge>
+                          ) : null}
                         </button>
                       );
                     })}
@@ -234,11 +254,15 @@ export function InfrastructureDialog({
                     </div>
                   )}
                   {quoteErrors.size > 0 && (
-                    <div className="space-y-1">
-                      {Array.from(quoteErrors.entries()).map(([addr, msg]) => (
-                        <div key={addr} className="text-[11px] text-crimson-400 truncate">
-                          {addr.slice(0, 10)}...{addr.slice(-4)}: {msg}
-                        </div>
+                    <div className="space-y-1.5">
+                      {Array.from(quoteErrors.entries()).map(([addr, failure]) => (
+                        <BlockedStatePanel
+                          key={addr}
+                          operator={addr}
+                          failure={failure}
+                          onRetry={refetchQuotes}
+                          retrying={isQuoting}
+                        />
                       ))}
                     </div>
                   )}

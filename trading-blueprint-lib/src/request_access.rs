@@ -6,6 +6,7 @@ use std::path::PathBuf;
 const MODE_ENV: &str = "TRADING_REQUESTER_ACCESS_MODE";
 const ALLOWLIST_ENV: &str = "TRADING_REQUESTER_ALLOWLIST";
 const LEGACY_ALLOWLIST_ENV: &str = "TRADING_BOT_REQUESTER_ALLOWLIST";
+const CAPACITY_ENV: &str = "OPERATOR_MAX_CAPACITY";
 const POLICY_FILE: &str = "request-access-policy.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +150,46 @@ pub fn ensure_requester_allowed(requester: &str) -> Result<(), String> {
     ))
 }
 
+/// Operator-advertised maximum number of concurrently live agents this operator
+/// will serve, sourced from the same `OPERATOR_MAX_CAPACITY` env the on-chain
+/// registration payload encodes (see [`crate::registration`]). `None` (unset or
+/// `0`) means unlimited.
+pub fn operator_max_capacity() -> Option<u32> {
+    std::env::var(CAPACITY_ENV)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .filter(|cap| *cap > 0)
+}
+
+/// Pure capacity check: fails closed once live agents reach the advertised cap.
+/// Split out from env reading so the admission logic is unit-testable.
+pub fn capacity_allows(max_capacity: Option<u32>, live_bots: usize) -> Result<(), String> {
+    if let Some(cap) = max_capacity
+        && live_bots >= cap as usize
+    {
+        return Err(format!(
+            "Operator is at capacity ({live_bots}/{cap} agents). Choose another operator, or ask this operator to raise {CAPACITY_ENV}."
+        ));
+    }
+    Ok(())
+}
+
+/// Fail-closed admission control for the AUTHORITATIVE on-chain provision path.
+///
+/// The off-chain operator API already calls [`ensure_requester_allowed`], but
+/// the on-chain provision job handler must enforce the operator's own policy
+/// independently: a request that reaches the job runner (bypassing the API)
+/// must still satisfy the operator's requester allowlist and advertised
+/// capacity. This is the runtime half of defense-in-depth — the blueprint
+/// contract gates requests at the blueprint level (`onRequest`), and this gates
+/// them at the per-operator runtime level so an operator can actually refuse to
+/// serve a requester it has not authorized.
+pub fn ensure_provision_allowed(requester: &str, live_bots: usize) -> Result<(), String> {
+    ensure_requester_allowed(requester)?;
+    capacity_allows(operator_max_capacity(), live_bots)?;
+    Ok(())
+}
+
 fn env_policy() -> RequestAccessPolicy {
     let mode = std::env::var(MODE_ENV)
         .ok()
@@ -236,5 +277,18 @@ mod tests {
         };
 
         assert!(policy.allows("0x3333333333333333333333333333333333333333"));
+    }
+
+    #[test]
+    fn capacity_unlimited_when_unset() {
+        assert!(capacity_allows(None, 10_000).is_ok());
+    }
+
+    #[test]
+    fn capacity_fails_closed_at_or_above_limit() {
+        assert!(capacity_allows(Some(2), 0).is_ok());
+        assert!(capacity_allows(Some(2), 1).is_ok());
+        assert!(capacity_allows(Some(2), 2).is_err());
+        assert!(capacity_allows(Some(2), 3).is_err());
     }
 }

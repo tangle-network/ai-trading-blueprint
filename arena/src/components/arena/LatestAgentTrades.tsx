@@ -34,6 +34,7 @@ import {
   SortableHeaderButton,
   type SortState,
 } from '~/components/arena/SortableTableHeader';
+import { StatusBadge } from '~/components/ui/StatusBadge';
 
 interface LatestAgentTradesProps {
   bots: Bot[];
@@ -572,8 +573,8 @@ export function LatestAgentTrades({
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textSecondary">
                       {trade.paperTrade || trade.status === 'paper' ? 'Paper' : 'Live'}
                     </td>
-                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle font-data text-sm text-arena-elements-textSecondary">
-                      {trade.status}
+                    <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 align-middle">
+                      <StatusBadge status={trade.status} size="sm" />
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 text-right align-middle font-data text-sm text-arena-elements-textTertiary">
                       {formatReference(trade)}
