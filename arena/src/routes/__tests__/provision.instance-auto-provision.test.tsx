@@ -224,7 +224,7 @@ vi.mock('~/lib/hooks/useQuotes', () => ({
       },
     ],
     isLoading: false,
-    errors: [],
+    errors: new Map(),
     totalCost: 1n,
     refetch: vi.fn(),
   }),

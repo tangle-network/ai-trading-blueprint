@@ -51,12 +51,123 @@ export interface OperatorQuote {
   teeProvider?: string;
 }
 
+/**
+ * A quote fetch that failed, classified into an actionable category so the UI
+ * can render a designed, recoverable blocked state instead of a raw error
+ * string. `detail` preserves the original operator/transport message for
+ * debugging and the expandable affordance.
+ */
+export type QuoteFailureKind =
+  | 'unauthorized'
+  | 'at_capacity'
+  | 'cannot_price'
+  | 'unreachable'
+  | 'misconfigured';
+
+export interface QuoteFailure {
+  kind: QuoteFailureKind;
+  detail: string;
+}
+
 export interface UseQuotesResult {
   quotes: OperatorQuote[];
   isLoading: boolean;
-  errors: Map<Address, string>;
+  errors: Map<Address, QuoteFailure>;
   totalCost: bigint;
   refetch: () => void;
+}
+
+/**
+ * Map an operator quote failure (gRPC-web ConnectError, fetch/transport
+ * failure, or a thrown Error from quote decoding) onto an actionable category.
+ *
+ * Precedence is deliberate: authorization and capacity are explicit operator
+ * rejections and must win over generic transport heuristics. Network failures
+ * are next (so a `fetch failed` never gets mislabelled as a pricing bug), then
+ * pricing/decode problems, with `misconfigured` as the catch-all.
+ *
+ * Pure and dependency-free so it can be unit-tested and reused by the UI.
+ */
+export function classifyQuoteFailure(err: unknown): QuoteFailure {
+  const detail =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'string'
+        ? err
+        : String(err);
+  const text = detail.toLowerCase();
+
+  // gRPC-web (ConnectError) and HTTP errors carry a numeric status/code.
+  const status = extractStatusCode(err);
+  const code = extractConnectCode(err);
+
+  if (
+    status === 403 ||
+    code === 'permission_denied' ||
+    code === 'unauthenticated' ||
+    /not allowed|requesternotallowed|not a permitted|not permitted|unauthor|forbidden|permission denied/.test(text)
+  ) {
+    return { kind: 'unauthorized', detail };
+  }
+
+  if (
+    code === 'resource_exhausted' ||
+    /at capacity|capacity|no slots|slots are full|too many requests|rate limit/.test(text)
+  ) {
+    return { kind: 'at_capacity', detail };
+  }
+
+  if (
+    status === 0 ||
+    code === 'unavailable' ||
+    code === 'deadline_exceeded' ||
+    /failed to fetch|fetch failed|network|timeout|timed out|connect|connection|econnrefused|unreachable|no rpc address|dns|socket/.test(text)
+  ) {
+    return { kind: 'unreachable', detail };
+  }
+
+  if (
+    /price|quote|decode|parse|signature|sig|no quote details|exposure|resource kind/.test(text)
+  ) {
+    return { kind: 'cannot_price', detail };
+  }
+
+  return { kind: 'misconfigured', detail };
+}
+
+/** Best-effort extraction of an HTTP status code from a thrown error object. */
+function extractStatusCode(err: unknown): number | undefined {
+  if (!err || typeof err !== 'object') return undefined;
+  const record = err as Record<string, unknown>;
+  for (const key of ['status', 'httpStatus', 'statusCode'] as const) {
+    const value = record[key];
+    if (typeof value === 'number') return value;
+  }
+  return undefined;
+}
+
+/**
+ * Best-effort extraction of a Connect/gRPC status code label. `@connectrpc`
+ * `ConnectError` exposes a numeric `code`; we map the subset we care about so
+ * classification doesn't depend on importing the enum here.
+ */
+function extractConnectCode(err: unknown): string | undefined {
+  if (!err || typeof err !== 'object') return undefined;
+  const record = err as Record<string, unknown>;
+  const raw = record.code;
+  if (typeof raw === 'string') return raw.toLowerCase().replace(/[\s-]/g, '_');
+  if (typeof raw === 'number') {
+    // Connect numeric codes (subset relevant to quoting).
+    const CONNECT_CODE: Record<number, string> = {
+      4: 'deadline_exceeded',
+      7: 'permission_denied',
+      8: 'resource_exhausted',
+      14: 'unavailable',
+      16: 'unauthenticated',
+    };
+    return CONNECT_CODE[raw];
+  }
+  return undefined;
 }
 
 // ── PoW helpers (mirrors pricing-engine/src/pow.rs) ───────────────────────
@@ -266,7 +377,7 @@ export function useQuotes(
 ): UseQuotesResult {
   const [quotes, setQuotes] = useState<OperatorQuote[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [errors, setErrors] = useState<Map<Address, string>>(new Map());
+  const [errors, setErrors] = useState<Map<Address, QuoteFailure>>(new Map());
   const [fetchKey, setFetchKey] = useState(0);
 
   const refetch = useCallback(() => setFetchKey((k) => k + 1), []);
@@ -289,7 +400,7 @@ export function useQuotes(
 
     async function fetchQuotes() {
       const results: OperatorQuote[] = [];
-      const errs = new Map<Address, string>();
+      const errs = new Map<Address, QuoteFailure>();
 
       const promises = operators.map(async (op) => {
         try {
@@ -338,7 +449,7 @@ export function useQuotes(
           if (!cancelled) results.push(quote);
         } catch (err) {
           if (!cancelled) {
-            errs.set(op.address, err instanceof Error ? err.message : String(err));
+            errs.set(op.address, classifyQuoteFailure(err));
           }
         }
       });

@@ -16,6 +16,10 @@ const useBotSessionStreamMock = vi.hoisted(() =>
     messages: [] as Array<Record<string, unknown>>,
     partMap: {} as Record<string, Array<Record<string, unknown>>>,
     isStreaming: false,
+    connected: false,
+    isReconnecting: false,
+    attempt: 0,
+    retryInSeconds: 0,
     error: null,
   })),
 );
@@ -838,6 +842,10 @@ describe("RunsTab", () => {
         ],
       },
       isStreaming: false,
+      connected: false,
+      isReconnecting: false,
+      attempt: 0,
+      retryInSeconds: 0,
       error: null,
     });
     const result = JSON.stringify({

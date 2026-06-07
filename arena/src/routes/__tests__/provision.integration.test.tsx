@@ -86,7 +86,7 @@ vi.mock('~/lib/hooks/useQuotes', () => ({
   useQuotes: () => ({
     quotes: [],
     isLoading: false,
-    errors: [],
+    errors: new Map(),
     totalCost: 0n,
     refetch: vi.fn(),
   }),

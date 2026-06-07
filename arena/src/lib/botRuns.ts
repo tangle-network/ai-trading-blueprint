@@ -158,20 +158,6 @@ export function getWorkflowKindDescription(kind: WorkflowKind): string {
   }
 }
 
-export function getStatusBadgeClass(status: RunStatus): string {
-  switch (status) {
-    case "running":
-      return "border-amber-500/20 bg-amber-500/8 text-amber-700 dark:text-amber-300";
-    case "completed":
-      return "border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300";
-    case "interrupted":
-      return "border-slate-500/20 bg-slate-500/8 text-slate-700 dark:text-slate-300";
-    case "failed":
-    default:
-      return "border-crimson-500/20 bg-crimson-500/8 text-crimson-600 dark:text-crimson-300";
-  }
-}
-
 export function getStatusLabel(status: RunStatus): string {
   switch (status) {
     case "running":

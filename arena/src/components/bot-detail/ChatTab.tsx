@@ -8,6 +8,7 @@ import {
 import type { AgentBranding, Session } from "@tangle-network/sandbox-ui/types";
 import { Button } from "@tangle-network/blueprint-ui/components";
 import { ChatTranscript } from "~/components/bot-detail/chat/ChatTranscript";
+import { ConnectionChip } from "~/components/ui/ConnectionChip";
 import { useBotSessionStream } from "~/lib/hooks/useBotSessionStream";
 import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
 import { normalizeSessionList } from "~/lib/sandboxSessions";
@@ -946,6 +947,14 @@ export function ChatTab({
                   )}
                 </div>
               </div>
+              {canWrite && (
+                <ConnectionChip
+                  connected={stream.connected}
+                  isReconnecting={stream.isReconnecting}
+                  retryInSeconds={stream.retryInSeconds}
+                  className="mr-1"
+                />
+              )}
               {canWrite && (
                 <button
                   type="button"

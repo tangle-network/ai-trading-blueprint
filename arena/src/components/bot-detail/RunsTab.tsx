@@ -22,7 +22,6 @@ import {
   chooseDefaultRun,
   formatDuration,
   formatRunTimestamp,
-  getStatusBadgeClass,
   getStatusLabel,
   getWorkflowKindDescription,
   getWorkflowKindLabel,
@@ -44,6 +43,8 @@ import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 import { UnverifiedDataNotice } from "./shared/DataAccessNotices";
 import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
 import { DecisionInspector } from "./shared/DecisionInspector";
+import { StatusBadge } from "~/components/ui/StatusBadge";
+import { ConnectionChip } from "~/components/ui/ConnectionChip";
 import { TerminalEmptyState } from "./shared/WorkspacePrimitives";
 import {
   WorkspaceCollapsedPane,
@@ -537,11 +538,7 @@ function TraceCockpit({
       <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(330px,0.5fr)]">
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span
-              className={`shrink-0 rounded-[5px] border px-2 py-1 font-data text-[11px] font-bold uppercase tracking-[0.12em] ${getStatusBadgeClass(run.status)}`}
-            >
-              {statusLabel}
-            </span>
+            <StatusBadge status={run.status} labelOverride={statusLabel} />
             <span className="truncate font-display text-lg font-semibold text-[#f6fefd]">
               {primaryLabel}
             </span>
@@ -1138,11 +1135,18 @@ export function RunsTab({
                       <div className="truncate text-sm font-data text-arena-elements-textTertiary">
                         {headerSubtitle}
                       </div>
-                      <span
-                        className={`rounded-full border px-2 py-0.5 text-xs font-data ${getStatusBadgeClass(activeRun?.status ?? "failed")}`}
-                      >
-                        {getStatusLabel(activeRun?.status ?? "failed")}
-                      </span>
+                      <StatusBadge
+                        status={activeRun?.status ?? "failed"}
+                        labelOverride={getStatusLabel(activeRun?.status ?? "failed")}
+                        size="sm"
+                      />
+                      {canStreamTranscript && (
+                        <ConnectionChip
+                          connected={stream.connected}
+                          isReconnecting={stream.isReconnecting}
+                          retryInSeconds={stream.retryInSeconds}
+                        />
+                      )}
                     </div>
                     {activeRun && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
