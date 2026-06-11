@@ -276,6 +276,10 @@ fn self_improvement_tool_bundle() -> Vec<(&'static str, &'static str)> {
             include_str!("../prompts/tools/self_improvement_loop.ts"),
         ),
         (
+            "/home/agent/tools/trading-trace-analysts.ts",
+            include_str!("../prompts/tools/trading_trace_analysts.ts"),
+        ),
+        (
             "/home/agent/tools/self-improvement-mcp-server.ts",
             include_str!("../prompts/tools/self_improvement_mcp_server.ts"),
         ),
@@ -501,6 +505,7 @@ mod tests {
         assert!(paths.contains(&"/home/agent/tools/reflection-loop.js"));
         assert!(paths.contains(&"/home/agent/tools/usage-telemetry.js"));
         assert!(paths.contains(&"/home/agent/tools/self-improvement-loop.ts"));
+        assert!(paths.contains(&"/home/agent/tools/trading-trace-analysts.ts"));
         assert!(paths.contains(&"/home/agent/tools/self-improvement-mcp-server.ts"));
         assert!(paths.contains(&"/home/agent/tools/observatory-pressure.js"));
         assert!(paths.contains(&"/home/agent/tools/create-mcp-multishot-strategy-task.js"));

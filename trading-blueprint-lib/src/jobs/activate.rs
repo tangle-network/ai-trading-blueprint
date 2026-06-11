@@ -1279,6 +1279,13 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/trading-trace-analysts.ts",
+        include_str!("../prompts/tools/trading_trace_analysts.ts"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/observatory-loop.js",
         include_str!("../prompts/tools/observatory_loop.js"),
     )

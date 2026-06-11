@@ -632,6 +632,10 @@ fn fast_tick_tool_bundle(tool: &str) -> Option<Vec<(&'static str, &'static str)>
             include_str!("../prompts/tools/self_improvement_loop.ts"),
         ),
         (
+            "/home/agent/tools/trading-trace-analysts.ts",
+            include_str!("../prompts/tools/trading_trace_analysts.ts"),
+        ),
+        (
             "/home/agent/tools/observatory-loop.js",
             include_str!("../prompts/tools/observatory_loop.js"),
         ),

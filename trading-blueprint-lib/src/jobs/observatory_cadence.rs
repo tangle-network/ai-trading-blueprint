@@ -477,6 +477,13 @@ async fn sync_observatory_delegation_tools_to_sidecar(
     crate::jobs::activate::write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/trading-trace-analysts.ts",
+        include_str!("../prompts/tools/trading_trace_analysts.ts"),
+    )
+    .await?;
+    crate::jobs::activate::write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/observatory-pressure.js",
         include_str!("../prompts/tools/observatory_pressure.js"),
     )
