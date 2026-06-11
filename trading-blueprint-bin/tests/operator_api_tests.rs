@@ -4738,3 +4738,54 @@ async fn test_preflight_classifies_rpc_unreachable_as_5xx() {
         response.status()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Create preview tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_create_preview_unsupported_family_is_honest() {
+    let _dir = init_test_env();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/create/preview")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "strategy_type": "prediction" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["supported"], false);
+    assert!(json["summary"].is_null());
+    assert!(json["note"].as_str().unwrap().contains("paper trading"));
+}
+
+#[tokio::test]
+async fn test_create_preview_requires_strategy_type() {
+    let _dir = init_test_env();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/create/preview")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "strategy_type": "  " }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+}
