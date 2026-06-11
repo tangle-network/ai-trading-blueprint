@@ -719,10 +719,7 @@ pub fn build_operator_router() -> Router {
             "/api/bots/{bot_id}/metrics/history",
             get(get_bot_metrics_history),
         )
-        .route(
-            "/api/bots/{bot_id}/performance",
-            get(get_bot_performance),
-        )
+        .route("/api/bots/{bot_id}/performance", get(get_bot_performance))
         .route(
             "/api/bots/{bot_id}/market-data/candles",
             get(get_bot_market_candles),
@@ -6877,8 +6874,8 @@ async fn get_bot_performance(
     };
     let benchmark_asset = "WETH".to_string();
     let benchmark_return = match (parse_epoch(&window_from), parse_epoch(&window_to)) {
-        (Some(from), Some(to)) if to > from => {
-            trading_http_api::candle_store::query_candles(&trading_http_api::candle_store::CandleQuery {
+        (Some(from), Some(to)) if to > from => trading_http_api::candle_store::query_candles(
+            &trading_http_api::candle_store::CandleQuery {
                 bot_id: bot.id.clone(),
                 token: Some(benchmark_asset.clone()),
                 source: None,
@@ -6886,14 +6883,14 @@ async fn get_bot_performance(
                 from: Some(from),
                 to: Some(to),
                 limit: 10_000,
-            })
-            .ok()
-            .and_then(|candles| {
-                let first = candles.first()?.close.parse::<f64>().ok()?;
-                let last = candles.last()?.close.parse::<f64>().ok()?;
-                (first > 0.0).then_some((last / first - 1.0) * 100.0)
-            })
-        }
+            },
+        )
+        .ok()
+        .and_then(|candles| {
+            let first = candles.first()?.close.parse::<f64>().ok()?;
+            let last = candles.last()?.close.parse::<f64>().ok()?;
+            (first > 0.0).then_some((last / first - 1.0) * 100.0)
+        }),
         _ => None,
     };
     let alpha_pct = match (return_pct, benchmark_return) {
