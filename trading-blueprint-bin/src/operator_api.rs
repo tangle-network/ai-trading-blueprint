@@ -720,6 +720,10 @@ pub fn build_operator_router() -> Router {
             get(get_bot_metrics_history),
         )
         .route(
+            "/api/bots/{bot_id}/performance",
+            get(get_bot_performance),
+        )
+        .route(
             "/api/bots/{bot_id}/market-data/candles",
             get(get_bot_market_candles),
         )
@@ -6780,6 +6784,139 @@ async fn get_bot_metrics_history(
         .collect();
 
     Ok(Json(json_snapshots))
+}
+
+#[derive(Serialize)]
+struct BotPerformanceWindow {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    to: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BotPerformanceResponse {
+    bot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    initial_capital_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nav_latest_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    return_pct: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    benchmark_asset: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    benchmark_buy_hold_return_pct: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alpha_pct: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_drawdown_pct: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_drawdown_pct: Option<f64>,
+    snapshots_count: usize,
+    window: BotPerformanceWindow,
+}
+
+/// Benchmark-relative performance: the first question a serious viewer asks
+/// is "alpha over what?". Returns the bot's return against buy-and-hold of
+/// its benchmark asset over the same window, with drawdowns recomputed from
+/// the NAV series (stored drawdown on legacy fleets is unreliable).
+async fn get_bot_performance(
+    Path(bot_id): Path<String>,
+) -> Result<Json<BotPerformanceResponse>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    let query = MetricsHistoryQuery {
+        from: None,
+        to: None,
+        limit: Some(10_000),
+    };
+    let mut snapshots = resolve_metrics_history_for_bot(&bot, &query)
+        .await
+        .unwrap_or_default();
+    snapshots.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+    let initial_capital = bot
+        .strategy_config
+        .get("initial_capital_usd")
+        .and_then(|value| match value {
+            serde_json::Value::String(text) => text.parse::<f64>().ok(),
+            serde_json::Value::Number(number) => number.as_f64(),
+            _ => None,
+        })
+        .or_else(|| snapshots.first().map(|snapshot| snapshot.account_value_usd));
+
+    let nav_latest = snapshots.last().map(|snapshot| snapshot.account_value_usd);
+    let return_pct = match (initial_capital, nav_latest) {
+        (Some(baseline), Some(nav)) if baseline > 0.0 => Some((nav / baseline - 1.0) * 100.0),
+        _ => None,
+    };
+
+    // Recompute drawdown from the NAV series with the initial capital as the
+    // starting peak — legacy snapshots carry drawdown_pct 0 regardless of NAV.
+    let mut peak = initial_capital.unwrap_or(0.0);
+    let mut max_drawdown: Option<f64> = None;
+    let mut current_drawdown: Option<f64> = None;
+    for snapshot in &snapshots {
+        peak = peak.max(snapshot.account_value_usd);
+        if peak > 0.0 {
+            let drawdown = (peak - snapshot.account_value_usd) / peak * 100.0;
+            max_drawdown = Some(max_drawdown.map_or(drawdown, |best: f64| best.max(drawdown)));
+            current_drawdown = Some(drawdown);
+        }
+    }
+
+    // Buy-and-hold benchmark over the same window from the bot's own candle
+    // history (WETH is the canonical risk asset across the venue families).
+    let window_from = snapshots.first().map(|snapshot| snapshot.timestamp.clone());
+    let window_to = snapshots.last().map(|snapshot| snapshot.timestamp.clone());
+    let parse_epoch = |value: &Option<String>| {
+        value
+            .as_deref()
+            .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+            .map(|parsed| parsed.timestamp())
+    };
+    let benchmark_asset = "WETH".to_string();
+    let benchmark_return = match (parse_epoch(&window_from), parse_epoch(&window_to)) {
+        (Some(from), Some(to)) if to > from => {
+            trading_http_api::candle_store::query_candles(&trading_http_api::candle_store::CandleQuery {
+                bot_id: bot.id.clone(),
+                token: Some(benchmark_asset.clone()),
+                source: None,
+                interval: None,
+                from: Some(from),
+                to: Some(to),
+                limit: 10_000,
+            })
+            .ok()
+            .and_then(|candles| {
+                let first = candles.first()?.close.parse::<f64>().ok()?;
+                let last = candles.last()?.close.parse::<f64>().ok()?;
+                (first > 0.0).then_some((last / first - 1.0) * 100.0)
+            })
+        }
+        _ => None,
+    };
+    let alpha_pct = match (return_pct, benchmark_return) {
+        (Some(bot_return), Some(benchmark)) => Some(bot_return - benchmark),
+        _ => None,
+    };
+
+    Ok(Json(BotPerformanceResponse {
+        bot_id: bot.id,
+        initial_capital_usd: initial_capital,
+        nav_latest_usd: nav_latest,
+        return_pct,
+        benchmark_asset: benchmark_return.is_some().then_some(benchmark_asset),
+        benchmark_buy_hold_return_pct: benchmark_return,
+        alpha_pct,
+        max_drawdown_pct: max_drawdown,
+        current_drawdown_pct: current_drawdown,
+        snapshots_count: snapshots.len(),
+        window: BotPerformanceWindow {
+            from: window_from,
+            to: window_to,
+        },
+    }))
 }
 
 async fn get_bot_trades(
