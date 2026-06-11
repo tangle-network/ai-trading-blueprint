@@ -171,7 +171,16 @@ fn record_snapshot_for_bot(
     let account_value = parse_decimal(&req.account_value_usd).unwrap_or(Decimal::ZERO);
     let previous = metrics_store::latest_snapshot_for_bot(bot_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let baseline = initial_capital_usd(strategy_config).unwrap_or(account_value);
+    // The hwm floor comes from the carried risk_baseline_usd (rebased by an
+    // owner drawdown-acknowledge) and falls back to initial capital for first
+    // snapshots and legacy rows.
+    let carried_baseline = previous
+        .as_ref()
+        .and_then(|snapshot| snapshot.risk_baseline_usd.as_deref())
+        .and_then(parse_decimal);
+    let baseline = carried_baseline
+        .or_else(|| initial_capital_usd(strategy_config))
+        .unwrap_or(account_value);
     let previous_hwm = previous
         .as_ref()
         .and_then(|snapshot| parse_decimal(&snapshot.high_water_mark))
@@ -193,6 +202,7 @@ fn record_snapshot_for_bot(
         drawdown_pct: drawdown_pct.to_string(),
         positions_count: req.positions_count,
         trade_count: req.trade_count,
+        risk_baseline_usd: Some(baseline.to_string()),
     };
 
     metrics_store::record_snapshot(snapshot).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -288,6 +298,9 @@ fn build_snapshot_from_hyperliquid_nav(
         drawdown_pct: drawdown_pct.to_string(),
         positions_count: nav.position_count as u32,
         trade_count,
+        risk_baseline_usd: previous
+            .and_then(|snapshot| snapshot.risk_baseline_usd.clone())
+            .or_else(|| Some(baseline.to_string())),
     }
 }
 
@@ -340,6 +353,9 @@ fn build_snapshot_from_portfolio(
         drawdown_pct: drawdown_pct.to_string(),
         positions_count: portfolio.positions.len() as u32,
         trade_count,
+        risk_baseline_usd: previous
+            .and_then(|snapshot| snapshot.risk_baseline_usd.clone())
+            .or_else(|| Some(baseline.to_string())),
     }
 }
 

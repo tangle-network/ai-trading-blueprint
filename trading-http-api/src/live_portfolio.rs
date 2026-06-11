@@ -783,5 +783,6 @@ pub fn snapshot_to_metric(
         drawdown_pct: snapshot.drawdown_pct.to_string(),
         positions_count: snapshot.portfolio.positions.len() as u32,
         trade_count,
+        risk_baseline_usd: None,
     }
 }

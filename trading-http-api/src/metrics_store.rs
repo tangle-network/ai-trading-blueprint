@@ -16,6 +16,12 @@ pub struct MetricSnapshot {
     pub drawdown_pct: String,
     pub positions_count: u32,
     pub trade_count: u32,
+    /// Floor for high-water-mark computation, carried snapshot-to-snapshot.
+    /// Defaults to the bot's initial capital; an owner drawdown-acknowledge
+    /// rebases it to current NAV so a breached bot can resume trading without
+    /// silently erasing the loss (None on legacy rows → initial-capital fallback).
+    #[serde(default)]
+    pub risk_baseline_usd: Option<String>,
 }
 
 pub fn snapshots() -> Result<&'static PersistentStore<MetricSnapshot>, String> {
@@ -104,6 +110,7 @@ mod tests {
             drawdown_pct: "0".to_string(),
             positions_count: 0,
             trade_count: minute,
+            risk_baseline_usd: None,
         }
     }
 
@@ -123,6 +130,30 @@ mod tests {
         assert_eq!(page.snapshots[1].trade_count, 4);
         assert!(page.snapshots[0].timestamp < page.snapshots[1].timestamp);
     }
+}
+
+/// Rebase the risk baseline and high-water mark to the bot's current account
+/// value. Owner-invoked after a drawdown breach: the loss stays on the books
+/// (snapshot history is immutable) but the circuit breaker re-arms relative
+/// to today's equity instead of keeping the bot halted forever.
+pub fn acknowledge_drawdown(bot_id: &str) -> Result<Option<MetricSnapshot>, String> {
+    let Some(latest) = latest_snapshot_for_bot(bot_id)? else {
+        return Ok(None);
+    };
+    let snapshot = MetricSnapshot {
+        timestamp: Utc::now(),
+        bot_id: bot_id.to_string(),
+        account_value_usd: latest.account_value_usd.clone(),
+        unrealized_pnl: latest.unrealized_pnl.clone(),
+        realized_pnl: latest.realized_pnl.clone(),
+        high_water_mark: latest.account_value_usd.clone(),
+        drawdown_pct: "0".to_string(),
+        positions_count: latest.positions_count,
+        trade_count: latest.trade_count,
+        risk_baseline_usd: Some(latest.account_value_usd.clone()),
+    };
+    record_snapshot(snapshot.clone())?;
+    Ok(Some(snapshot))
 }
 
 pub fn latest_snapshot_for_bot(bot_id: &str) -> Result<Option<MetricSnapshot>, String> {

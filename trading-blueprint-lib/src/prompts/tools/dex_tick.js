@@ -106,12 +106,20 @@ async function decide(ctx) {
     // Thesis-invalidation exits, routed by the signal that opened the position:
     // momentum entries die with the trend; mean-reversion entries close on RSI
     // recovery. Unanchored positions (no entry record) fall back to trend+RSI.
+    // Churn guards: risk rules above fire immediately, but thesis exits wait
+    // out one full candle and require a 0.1% EMA gap — without both, an EMA
+    // pair hovering at the crossover flips the book every tick and the spread
+    // plus impact costs eat the vault.
+    const entryAgeMs = entry && Number.isFinite(entry.timestamp_ms)
+      ? Date.now() - entry.timestamp_ms
+      : null;
+    const pastMinHold = entryAgeMs === null || entryAgeMs >= t.CANDLE_INTERVAL_MS;
     const entrySignal = entry && entry.signal ? entry.signal : null;
-    const trendDown = shortEma !== null && longEma !== null && shortEma < longEma;
-    if (entrySignal === 'ema-trend-entry' && trendDown) {
+    const trendDown = shortEma !== null && longEma !== null && shortEma < longEma * 0.999;
+    if (entrySignal === 'ema-trend-entry' && trendDown && pastMinHold) {
       return exitAll('trend-breakdown-exit', { ema_12: shortEma, ema_26: longEma, price: wethPrice });
     }
-    if (entrySignal === 'rsi-oversold-entry' && currentRsi !== null && currentRsi >= 55) {
+    if (entrySignal === 'rsi-oversold-entry' && currentRsi !== null && currentRsi >= 55 && pastMinHold) {
       return exitAll('mean-reversion-target-exit', { rsi_14: currentRsi, price: wethPrice });
     }
     if (!entrySignal && trendDown && currentRsi !== null && currentRsi >= 35 && currentRsi < 45) {

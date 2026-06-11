@@ -702,6 +702,10 @@ pub fn build_operator_router() -> Router {
             post(decide_revision_candidate),
         )
         .route("/api/bots/{bot_id}/config", patch(update_config))
+        .route(
+            "/api/bots/{bot_id}/risk/acknowledge-drawdown",
+            post(acknowledge_drawdown),
+        )
         .route("/api/bots/{bot_id}/metrics", get(get_bot_metrics))
         .route(
             "/api/bots/{bot_id}/metrics/history",
@@ -3608,6 +3612,32 @@ fn caller_has_bot_command_access(bot: &TradingBotRecord, caller: &str) -> bool {
     let submitter = bot.submitter_address.trim();
     (!submitter.is_empty() && submitter.eq_ignore_ascii_case(caller))
         || strategy_config_has_permitted_caller(&bot.strategy_config, caller)
+}
+
+/// Owner acknowledgement of a drawdown breach: rebases the risk baseline to
+/// current NAV so the circuit breaker re-arms instead of halting the bot
+/// permanently (the high-water mark never decreases on its own). The loss
+/// stays in snapshot history; only the future drawdown reference moves.
+async fn acknowledge_drawdown(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> ApiResult<ConfigResponse> {
+    let bot = resolve_live_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+
+    let rebased = trading_http_api::metrics_store::acknowledge_drawdown(&bot.id)
+        .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if rebased.is_none() {
+        return Err(ApiError::message(
+            StatusCode::NOT_FOUND,
+            "no metrics snapshot to rebase".to_string(),
+        ));
+    }
+
+    tracing::info!(bot_id = %bot.id, caller = %caller, "drawdown acknowledged; risk baseline rebased to current NAV");
+    Ok(Json(ConfigResponse {
+        status: "drawdown_acknowledged".to_string(),
+    }))
 }
 
 fn verify_submitter(bot: &TradingBotRecord, caller: &str) -> Result<(), (StatusCode, String)> {

@@ -887,6 +887,7 @@ module.exports = {
   recommendSlippageBps,
   circuitBreakerTripped,
   mandateMaxDrawdownPct,
+  CANDLE_INTERVAL_MS,
   DEFAULT_EXIT_RULES,
   latestEntryFill,
   evaluateExitRules,
