@@ -296,6 +296,8 @@ elif (( DRY_RUN )); then
   plan "write $SETTINGS from $TEMPLATE_PATH (allowlist admission, paper mode, capacity=$CAPACITY, endpoint=$OPERATOR_API_ENDPOINT), chmod 600"
 else
   [[ -f "$TEMPLATE_PATH" ]] || die "settings template not found: $TEMPLATE_PATH"
+  # Stable session-auth secret: the binary refuses to start with an empty one.
+  SESSION_AUTH_SECRET="$(openssl rand -hex 32)"
   sed -e "s|@BLUEPRINT_ID@|$BLUEPRINT_ID|g" \
       -e "s|@SERVICE_ID@|$SERVICE_ID|g" \
       -e "s|@CHAIN_ID@|$CHAIN_ID|g" \
@@ -312,6 +314,7 @@ else
       -e "s|@TRADING_API_PORT@|$PORT_TRADING|g" \
       -e "s|@OPERATOR_API_ENDPOINT@|$OPERATOR_API_ENDPOINT|g" \
       -e "s|@OPERATOR_MAX_CAPACITY@|$CAPACITY|g" \
+      -e "s|@SESSION_AUTH_SECRET@|$SESSION_AUTH_SECRET|g" \
       -e "s|@DATA_DIR@|$DATA_DIR|g" \
       "$TEMPLATE_PATH" > "$SETTINGS"
   chmod 600 "$SETTINGS"
@@ -334,7 +337,7 @@ fi
 # ── Step 7: systemd unit ──────────────────────────────────────────────────────
 log "Step 7: systemd unit ($UNIT_FILE)"
 if (( DRY_RUN )); then
-  plan "write $UNIT_FILE (ExecStart=$BIN_DIR/$BINARY, EnvironmentFile=$SETTINGS), daemon-reload, enable"
+  plan "write $UNIT_FILE (ExecStart=$BIN_DIR/$BINARY run … --data-dir $DATA_DIR/bpm-data, EnvironmentFile=$SETTINGS), daemon-reload, enable"
 else
   cat > "$UNIT_FILE" <<EOF
 [Unit]
@@ -348,7 +351,7 @@ Type=simple
 User=root
 WorkingDirectory=$DATA_DIR
 EnvironmentFile=$SETTINGS
-ExecStart=$BIN_DIR/$BINARY
+ExecStart=$BIN_DIR/$BINARY run -t --pretty --http-rpc-url $RPC_URL --ws-rpc-url $WS_RPC_URL --keystore-uri $KEYSTORE_DIR --data-dir $DATA_DIR/bpm-data --chain testnet --protocol tangle
 Restart=always
 RestartSec=10
 TimeoutStopSec=60
@@ -474,9 +477,19 @@ if (( DO_REGISTER )); then
       --ws-rpc-url "$WS_RPC_URL"
       --keystore-path "$KEYSTORE_DIR"
       --tangle-contract "$TANGLE_CONTRACT"
-      --restaking-contract "$STAKING_CONTRACT"
-      --status-registry-contract "$STATUS_REGISTRY_CONTRACT"
     )
+    # cargo-tangle renamed --staking-contract ↔ --restaking-contract across
+    # releases, and older builds lack --status-registry-contract entirely.
+    # Probe the fetched binary's --help instead of assuming a version.
+    register_help="$("$CARGO_TANGLE" tangle operator register --help 2>&1 || true)"
+    if grep -q -- '--restaking-contract' <<<"$register_help"; then
+      TANGLE_ARGS+=(--restaking-contract "$STAKING_CONTRACT")
+    else
+      TANGLE_ARGS+=(--staking-contract "$STAKING_CONTRACT")
+    fi
+    if grep -q -- '--status-registry-contract' <<<"$register_help"; then
+      TANGLE_ARGS+=(--status-registry-contract "$STATUS_REGISTRY_CONTRACT")
+    fi
 
     if is_staking_operator; then
       log "already staked on $STAKING_CONTRACT — skipping operator register"
@@ -542,7 +555,7 @@ if (( DO_REQUEST_SERVICE )); then
       || die "requestService failed for blueprint $BLUEPRINT_ID"
     wait_mempool_idle
     retry_gas_race cast send "$TANGLE_CONTRACT" \
-      "approveService((uint64,(uint8,address,uint16)[],uint256[4],uint256[2],(uint8,bytes32,bytes32,uint64)[]))" \
+      "approveService((uint64,((uint8,address),uint16)[],uint256[4],uint256[2],(uint8,bytes32,bytes32,uint64)[]))" \
       "($request_id,[],[0,0,0,0],[0,0],[])" \
       --gas-limit 3000000 --private-key "$PRIVATE_KEY" --rpc-url "$RPC_URL" >/dev/null \
       || die "approveService failed for request $request_id"

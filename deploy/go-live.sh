@@ -475,7 +475,7 @@ else
 
   APPROVAL_PARAMS="($REQUEST_ID,[],[0,0,0,0],[0,0],[])"
   if ! send_operator_tx "$TANGLE_CONTRACT" \
-    "approveService((uint64,(uint8,address,uint16)[],uint256[4],uint256[2],(uint8,bytes32,bytes32,uint64)[]))" \
+    "approveService((uint64,((uint8,address),uint16)[],uint256[4],uint256[2],(uint8,bytes32,bytes32,uint64)[]))" \
     "$APPROVAL_PARAMS" \
     --gas-limit "$SERVICE_APPROVE_GAS_LIMIT"; then
     echo "ERROR: approveService failed for request $REQUEST_ID"
