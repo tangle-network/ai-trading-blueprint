@@ -98,6 +98,11 @@ pub struct ValidateResponse {
     /// The exact Unix timestamp deadline that validators signed over (needed for on-chain verification)
     pub deadline: u64,
     pub validator_responses: Vec<ValidatorResponseEntry>,
+    /// "paper_bypass" when no real validation ran. The numeric score above is
+    /// kept for score-binding compatibility, but consumers must not render a
+    /// bypass as a real validation verdict.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -159,6 +164,7 @@ fn paper_mode_bypass_response(
             verifying_contract: None,
             validated_at: Some(chrono::Utc::now().to_rfc3339()),
         }],
+        mode: Some("paper_bypass".to_string()),
     }
 }
 
@@ -684,6 +690,7 @@ fn build_validate_response(
         execution_hash: result.execution_hash.clone(),
         deadline,
         validator_responses: responses,
+        mode: None,
     }
 }
 

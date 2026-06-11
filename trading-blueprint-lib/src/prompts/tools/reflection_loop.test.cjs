@@ -278,3 +278,91 @@ test('not-required external signal evidence stays unchecked even with market sig
     restore()
   }
 })
+
+test('healthy no-signal idle produces no blocked-path or repeated-skip findings', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reflection-loop-'))
+  const { api, restore } = loadReflectionLoop(tmp)
+  try {
+    fs.mkdirSync(path.join(tmp, 'logs'), { recursive: true })
+    fs.appendFileSync(
+      path.join(tmp, 'logs', 'decisions.jsonl'),
+      [
+        JSON.stringify({ timestamp: '2026-06-04T10:00:00.000Z', action: 'skip', reason: 'no-clear-dex-setup' }),
+        JSON.stringify({ timestamp: '2026-06-04T10:05:00.000Z', action: 'skip', reason: 'no-clear-dex-setup' }),
+        JSON.stringify({ timestamp: '2026-06-04T10:10:00.000Z', action: 'skip', reason: 'no-clear-dex-setup' }),
+      ].join('\n') + '\n',
+    )
+
+    const context = api.recordDecisionContext({
+      family: 'dex',
+      run_started_at: '2026-06-04T10:15:00.000Z',
+      run_completed_at: '2026-06-04T10:15:01.000Z',
+      config: {
+        bot_id: 'bot-idle',
+        strategy_type: 'dex',
+        strategy_config: {
+          user_prompt: 'Trade ETH/USDC on Uniswap.',
+          initial_capital_usd: '10000',
+          paper_trade: true,
+        },
+      },
+      harness: { version: 1 },
+      checked_state: { total_nav_usd: 10000, weth_price: 1700, rsi_14: 50, candles: 80 },
+      decision: { action: 'skip', reason: 'no-clear-dex-setup' },
+      metrics: { portfolio_value_usd: 10000 },
+      recipe_hash: 'recipe',
+      input_hash: 'input',
+    })
+
+    const reflection = api.reflectOnDecisionContext(context)
+    assert.ok(!reflection.findings.some((finding) => finding.code === 'blocked-action-path'))
+    assert.ok(!reflection.findings.some((finding) => finding.code === 'repeated-skip'))
+    assert.ok(!reflection.findings.some((finding) => finding.code === 'negative-performance-needs-review'))
+  } finally {
+    restore()
+  }
+})
+
+test('losing bot breaching its launch-ticket drawdown mandate yields critical findings', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reflection-loop-'))
+  const { api, restore } = loadReflectionLoop(tmp)
+  try {
+    fs.mkdirSync(path.join(tmp, 'logs'), { recursive: true })
+    fs.appendFileSync(
+      path.join(tmp, 'logs', 'decisions.jsonl'),
+      JSON.stringify({ timestamp: '2026-06-04T10:10:00.000Z', action: 'hold', reason: 'holding-position-no-exit-signal' }) + '\n',
+    )
+
+    const context = api.recordDecisionContext({
+      family: 'dex',
+      run_started_at: '2026-06-04T10:15:00.000Z',
+      run_completed_at: '2026-06-04T10:15:01.000Z',
+      config: {
+        bot_id: 'bot-loser',
+        strategy_type: 'dex',
+        strategy_config: {
+          user_prompt: 'Trade ETH/USDC on Uniswap.',
+          initial_capital_usd: '10000',
+          launch_ticket: { risk: '4% max drawdown' },
+          paper_trade: true,
+        },
+      },
+      harness: { version: 1 },
+      checked_state: { total_nav_usd: 8900, weth_price: 1700, rsi_14: 50, candles: 80 },
+      decision: { action: 'hold', reason: 'holding-position-no-exit-signal' },
+      metrics: { portfolio_value_usd: 8900 },
+      recipe_hash: 'recipe',
+      input_hash: 'input',
+    })
+
+    const reflection = api.reflectOnDecisionContext(context)
+    const negative = reflection.findings.find((finding) => finding.code === 'negative-performance-needs-review')
+    assert.ok(negative, 'expected negative-performance finding for a bot down 11%')
+    assert.equal(negative.severity, 'critical')
+    const breach = reflection.findings.find((finding) => finding.code === 'mandate-drawdown-breach')
+    assert.ok(breach, 'expected mandate-drawdown-breach for 11% loss vs 4% mandate')
+    assert.equal(breach.severity, 'critical')
+  } finally {
+    restore()
+  }
+})

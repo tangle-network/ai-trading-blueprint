@@ -202,7 +202,12 @@ pub struct SelfImproveRequest {
 #[derive(Serialize)]
 pub struct SelfImproveResponse {
     pub run: evolution_store::SelfImprovementRun,
-    pub promotion: PromotionGateResponse,
+    /// Absent when the request deduplicated onto an existing run (no fresh
+    /// backtest was spent re-judging an identical candidate).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub promotion: Option<PromotionGateResponse>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deduplicated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -740,6 +745,26 @@ async fn self_improve_inner(
         )
     })?;
     let candidate_hash = hash_json(&candidate_json)?;
+
+    // Dedupe before spending a backtest: re-proposing an identical candidate
+    // that was already rejected is how the live fleet accumulated thousands
+    // of blocked runs. Within the cooldown, return the existing verdict.
+    const DEDUPE_WINDOW_SECS: i64 = 7 * 24 * 3600;
+    let now = chrono::Utc::now().timestamp();
+    if let Some(existing) = evolution_store::list_for_bot(bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .into_iter()
+        .filter(|run| run.candidate_hash == candidate_hash)
+        .filter(|run| now.saturating_sub(run.created_at) < DEDUPE_WINDOW_SECS)
+        .max_by_key(|run| run.created_at)
+    {
+        return Ok(Json(SelfImproveResponse {
+            run: existing,
+            promotion: None,
+            deduplicated: true,
+        }));
+    }
+
     let sandbox_mutation = req.sandbox_mutation;
     let run_id = format!("sir-{}", uuid::Uuid::new_v4());
     let sandbox_revision = match sandbox_mutation {
@@ -824,7 +849,11 @@ async fn self_improve_inner(
     };
     evolution_store::insert(run.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    Ok(Json(SelfImproveResponse { run, promotion }))
+    Ok(Json(SelfImproveResponse {
+        run,
+        promotion: Some(promotion),
+        deduplicated: false,
+    }))
 }
 
 async fn list_self_improvement_runs(
