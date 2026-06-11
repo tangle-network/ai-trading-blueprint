@@ -1737,7 +1737,10 @@ async fn test_two_phase_provision_e2e() {
 async fn test_provision_all_strategy_types() {
     let _dir = common::init_test_env();
 
-    for (idx, strategy) in ["dex", "yield", "perp", "prediction", "multi"].iter().enumerate() {
+    for (idx, strategy) in ["dex", "yield", "perp", "prediction", "multi"]
+        .iter()
+        .enumerate()
+    {
         let sb_id = format!("sb-strategy-{strategy}");
         let sandbox = mock_sandbox(&sb_id);
         let request = make_provision_request(&format!("{strategy}-bot"), strategy);

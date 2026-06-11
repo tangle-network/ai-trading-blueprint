@@ -132,9 +132,7 @@ pub fn agent_harness_from_strategy_config(
     };
     match obj.get("agent_harness") {
         None | Some(Value::Null) => Ok(DEFAULT_AGENT_HARNESS.to_string()),
-        Some(Value::String(raw)) if raw.trim().is_empty() => {
-            Ok(DEFAULT_AGENT_HARNESS.to_string())
-        }
+        Some(Value::String(raw)) if raw.trim().is_empty() => Ok(DEFAULT_AGENT_HARNESS.to_string()),
         Some(Value::String(raw)) => normalize_agent_harness(raw),
         Some(other) => Err(format!(
             "strategy_config_json.agent_harness must be a string (got {other})"
@@ -198,8 +196,7 @@ mod tests {
     #[test]
     fn rejects_non_string() {
         let config = json!({ "agent_harness": 42 });
-        let err =
-            agent_harness_from_strategy_config(config.as_object()).unwrap_err();
+        let err = agent_harness_from_strategy_config(config.as_object()).unwrap_err();
         assert!(err.contains("must be a string"), "{err}");
     }
 
