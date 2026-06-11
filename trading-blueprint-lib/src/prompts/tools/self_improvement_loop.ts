@@ -938,6 +938,9 @@ async function recordSelfImprove(intent, snapshot, analyst, candidateSearch) {
   validatePatchForExport(patch, files);
   const response = await apiCall('POST', '/evolution/self-improve', {
     user_intent: intent,
+    // Opts into server-side candidate dedupe: unattended generation must not
+    // re-spend backtests re-blocking an identical candidate.
+    source: 'auto-generation',
     current: candidateSearch.current,
     candidate: candidateSearch.candidate,
     token: candidateSearch.token,
