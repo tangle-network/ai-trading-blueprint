@@ -857,27 +857,7 @@ contract RegisterBlueprint is Script {
         def.requestSchema = "";
 
         // Source (Native binary — differs per variant)
-        def.sources = new Types.BlueprintSource[](1);
-        Types.BlueprintBinary[] memory bins = new Types.BlueprintBinary[](1);
-        bins[0] = Types.BlueprintBinary({
-            arch: Types.BlueprintArchitecture.Amd64,
-            os: Types.BlueprintOperatingSystem.Linux,
-            name: binaryName,
-            sha256: bytes32(uint256(0xdeadbeef))
-        });
-
-        def.sources[0] = Types.BlueprintSource({
-            kind: Types.BlueprintSourceKind.Native,
-            container: Types.ImageRegistrySource("", "", ""),
-            wasm: Types.WasmSource(Types.WasmRuntime.Unknown, Types.BlueprintFetcherKind.None, "", ""),
-            native: Types.NativeSource(
-                Types.BlueprintFetcherKind.None,
-                string(abi.encodePacked("file:///target/release/", binaryName)),
-                string(abi.encodePacked("./target/release/", binaryName))
-            ),
-            testing: Types.TestingSource(crateName, binaryName, "."),
-            binaries: bins
-        });
+        def.sources = _buildSources(crateName, binaryName);
 
         // Supported memberships
         def.supportedMemberships = new Types.MembershipModel[](1);
@@ -928,29 +908,116 @@ contract RegisterBlueprint is Script {
         def.registrationSchema = "";
         def.requestSchema = "";
 
-        def.sources = new Types.BlueprintSource[](1);
-        Types.BlueprintBinary[] memory bins = new Types.BlueprintBinary[](1);
-        bins[0] = Types.BlueprintBinary({
-            arch: Types.BlueprintArchitecture.Amd64,
-            os: Types.BlueprintOperatingSystem.Linux,
-            name: "trading-validator",
-            sha256: bytes32(uint256(0xdeadbeef))
-        });
-
-        def.sources[0] = Types.BlueprintSource({
-            kind: Types.BlueprintSourceKind.Native,
-            container: Types.ImageRegistrySource("", "", ""),
-            wasm: Types.WasmSource(Types.WasmRuntime.Unknown, Types.BlueprintFetcherKind.None, "", ""),
-            native: Types.NativeSource(
-                Types.BlueprintFetcherKind.None,
-                "file:///target/release/trading-validator",
-                "./target/release/trading-validator"
-            ),
-            testing: Types.TestingSource("trading-validator-bin", "trading-validator", "."),
-            binaries: bins
-        });
+        def.sources = _buildSources("trading-validator-bin", "trading-validator");
 
         def.supportedMemberships = new Types.MembershipModel[](1);
         def.supportedMemberships[0] = Types.MembershipModel.Fixed;
+    }
+
+    /// @notice Build the blueprint's binary sources.
+    /// @dev Two modes:
+    ///      - RELEASE_TAG set (live networks): a Native/Http source pointing at
+    ///        this repo's GitHub release for that tag, with the EXTRACTED
+    ///        binary sha256 from `<BINARY>_SHA256` env (the release's
+    ///        `.bin.sha256` asset). The stock blueprint-manager downloads,
+    ///        unpacks, and sha256-verifies — no source build. Mirrors
+    ///        deploy/publish-blueprint-sources.sh, which is the post-release
+    ///        update path for already-registered blueprints.
+    ///      - RELEASE_TAG unset (local devnet): a fetcher-less placeholder plus
+    ///        a Testing source so the manager cargo-builds from the workspace.
+    ///        NEVER register this on a live network: operators cold-starting
+    ///        through the manager get a 70-minute source build (or no boot).
+    function _buildSources(
+        string memory crateName,
+        string memory binaryName
+    )
+        internal
+        view
+        returns (Types.BlueprintSource[] memory sources)
+    {
+        sources = new Types.BlueprintSource[](1);
+        Types.BlueprintBinary[] memory bins = new Types.BlueprintBinary[](1);
+
+        string memory tag = vm.envOr("RELEASE_TAG", string(""));
+        if (bytes(tag).length == 0) {
+            require(
+                _isLocalChain(),
+                "RegisterBlueprint: set RELEASE_TAG (+ <BINARY>_SHA256) on live networks; placeholder sources force operators into cargo source builds"
+            );
+            bins[0] = Types.BlueprintBinary({
+                arch: Types.BlueprintArchitecture.Amd64,
+                os: Types.BlueprintOperatingSystem.Linux,
+                name: binaryName,
+                sha256: bytes32(uint256(0xdeadbeef))
+            });
+            sources[0] = Types.BlueprintSource({
+                kind: Types.BlueprintSourceKind.Native,
+                container: Types.ImageRegistrySource("", "", ""),
+                wasm: Types.WasmSource(Types.WasmRuntime.Unknown, Types.BlueprintFetcherKind.None, "", ""),
+                native: Types.NativeSource(
+                    Types.BlueprintFetcherKind.None,
+                    string(abi.encodePacked("file:///target/release/", binaryName)),
+                    string(abi.encodePacked("./target/release/", binaryName))
+                ),
+                testing: Types.TestingSource(crateName, binaryName, "."),
+                binaries: bins
+            });
+            return sources;
+        }
+
+        // Extracted-binary hash (NOT the tarball hash): the manager's
+        // RemoteBinaryFetcher verifies the unpacked binary against this value.
+        bytes32 sha = vm.envBytes32(string(abi.encodePacked(_envName(binaryName), "_SHA256")));
+        require(sha != bytes32(0), "RegisterBlueprint: zero sha256");
+
+        string memory base =
+            string(abi.encodePacked("https://github.com/tangle-network/ai-trading-blueprint/releases/download/", tag));
+        string memory artifactUri = string(
+            abi.encodePacked(
+                "{\"dist_url\":\"",
+                base,
+                "/dist-manifest.json\",\"archive_url\":\"",
+                base,
+                "/",
+                binaryName,
+                "-x86_64-unknown-linux-gnu.tar.xz\",\"binaries\":[]}"
+            )
+        );
+
+        bins[0] = Types.BlueprintBinary({
+            arch: Types.BlueprintArchitecture.Amd64,
+            os: Types.BlueprintOperatingSystem.Linux,
+            name: binaryName,
+            sha256: sha
+        });
+        sources[0] = Types.BlueprintSource({
+            kind: Types.BlueprintSourceKind.Native,
+            container: Types.ImageRegistrySource("", "", ""),
+            wasm: Types.WasmSource(Types.WasmRuntime.Unknown, Types.BlueprintFetcherKind.None, "", ""),
+            native: Types.NativeSource(Types.BlueprintFetcherKind.Http, artifactUri, binaryName),
+            // No testing fallback on live networks: download failures must
+            // surface as errors, not silent multi-hour source builds.
+            testing: Types.TestingSource("", "", ""),
+            binaries: bins
+        });
+    }
+
+    /// @notice "trading-blueprint" -> "TRADING_BLUEPRINT" for env lookups.
+    /// @dev Copies the bytes: `bytes(name)` aliases the caller's string, and
+    ///      mutating it in place would uppercase `binaryName` everywhere it is
+    ///      used afterwards (artifactUri, on-chain binary name).
+    function _envName(string memory name) internal pure returns (string memory) {
+        bytes memory src = bytes(name);
+        bytes memory b = new bytes(src.length);
+        for (uint256 i = 0; i < src.length; i++) {
+            if (src[i] == "-") {
+                b[i] = "_";
+            } else if (src[i] >= "a" && src[i] <= "z") {
+                b[i] = bytes1(uint8(src[i]) - 32);
+            } else {
+                b[i] = src[i];
+            }
+        }
+        return string(b);
     }
 }

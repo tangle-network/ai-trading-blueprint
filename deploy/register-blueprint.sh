@@ -14,6 +14,17 @@
 # Optional environment:
 #   TARGET_NETWORK — override block.chainid detection. Values:
 #                    "local" | "base-sepolia" | "mainnet"
+#   RELEASE_TAG    — GitHub release tag (e.g. v0.1.35) whose binaries become the
+#                    blueprints' on-chain Native/Http sources. REQUIRED on live
+#                    networks: without it the script registers fetcher-less
+#                    placeholder sources and operators fall back to a cargo
+#                    source build (RegisterBlueprint.s.sol reverts to prevent
+#                    this). Each binary also needs its extracted-binary hash
+#                    (the release's `.bin.sha256` asset, NOT the tarball hash):
+#                      TRADING_BLUEPRINT_SHA256, TRADING_INSTANCE_BLUEPRINT_SHA256,
+#                      TRADING_TEE_INSTANCE_BLUEPRINT_SHA256, TRADING_VALIDATOR_SHA256
+#                    To roll sources forward on ALREADY-registered blueprints,
+#                    use deploy/publish-blueprint-sources.sh instead.
 #   RESTAKING      — exposed for parity with future scripts; unused by
 #                    RegisterBlueprint.s.sol today.
 #   BROADCAST      — set to "true" to actually send transactions.
