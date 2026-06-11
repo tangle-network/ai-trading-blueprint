@@ -200,7 +200,10 @@ fn persist_executed_run_history(response: &Value) {
             error: workflow_result_text(task, "error"),
             loop_mode: Some({
                 let tokens = task.get("inputTokens").and_then(Value::as_u64).unwrap_or(0)
-                    + task.get("outputTokens").and_then(Value::as_u64).unwrap_or(0);
+                    + task
+                        .get("outputTokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
                 if tokens > 0 {
                     "agentic".to_string()
                 } else {

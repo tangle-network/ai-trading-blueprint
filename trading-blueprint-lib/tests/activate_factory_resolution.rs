@@ -177,6 +177,8 @@ async fn test_activate_paper_trade_bot_allows_unresolved_factory_vault() {
     let _dir = common::init_test_env();
     unsafe {
         std::env::set_var("ALLOW_LOOPBACK_RPC_URLS", "true");
+        std::env::set_var("TRADING_REQUESTER_ACCESS_MODE", "public");
+        std::env::set_var("TRADING_REQUESTER_ACCESS_MODE", "public");
     }
 
     let rpc_url = spawn_mock_factory_rpc().await;
@@ -220,6 +222,8 @@ async fn test_activate_live_bot_still_fails_with_unresolved_factory_vault() {
     let _dir = common::init_test_env();
     unsafe {
         std::env::set_var("ALLOW_LOOPBACK_RPC_URLS", "true");
+        std::env::set_var("TRADING_REQUESTER_ACCESS_MODE", "public");
+        std::env::set_var("TRADING_REQUESTER_ACCESS_MODE", "public");
     }
 
     let rpc_url = spawn_mock_factory_rpc().await;
@@ -258,6 +262,8 @@ async fn test_activate_live_bot_rejects_factory_placeholder_that_is_really_a_vau
     let _dir = common::init_test_env();
     unsafe {
         std::env::set_var("ALLOW_LOOPBACK_RPC_URLS", "true");
+        std::env::set_var("TRADING_REQUESTER_ACCESS_MODE", "public");
+        std::env::set_var("TRADING_REQUESTER_ACCESS_MODE", "public");
         std::env::remove_var("TRADING_BLUEPRINT_ADDRESS");
         std::env::remove_var("TRADING_BLUEPRINT");
         std::env::remove_var("BLUEPRINT_CONTRACT");
@@ -303,6 +309,8 @@ async fn test_activate_live_bot_accepts_explicit_direct_vault_binding() {
     let _dir = common::init_test_env();
     unsafe {
         std::env::set_var("ALLOW_LOOPBACK_RPC_URLS", "true");
+        std::env::set_var("TRADING_REQUESTER_ACCESS_MODE", "public");
+        std::env::set_var("TRADING_REQUESTER_ACCESS_MODE", "public");
         std::env::remove_var("TRADING_BLUEPRINT_ADDRESS");
         std::env::remove_var("TRADING_BLUEPRINT");
         std::env::remove_var("BLUEPRINT_CONTRACT");
@@ -355,6 +363,8 @@ async fn test_activate_paper_trade_bot_allows_reverting_factory_lookup() {
     let _dir = common::init_test_env();
     unsafe {
         std::env::set_var("ALLOW_LOOPBACK_RPC_URLS", "true");
+        std::env::set_var("TRADING_REQUESTER_ACCESS_MODE", "public");
+        std::env::set_var("TRADING_REQUESTER_ACCESS_MODE", "public");
     }
 
     let rpc_url = spawn_reverting_factory_rpc().await;

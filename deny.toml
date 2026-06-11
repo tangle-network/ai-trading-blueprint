@@ -114,6 +114,7 @@ ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste unmaintained — pervasive transitive in Solana proc-macros; no exploitable runtime path" },
     { id = "RUSTSEC-2025-0010", reason = "ring 0.16 unmaintained — transitive via rustls 0.21 in Solana stack; covered by RUSTSEC-2025-0009 mitigation note" },
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained — transitive via webpki / reqwest; covered by rustls migration plan" },
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained — proc-macro transitive via alloy-sol-macro (blueprint-sdk); compile-time only, no runtime path" },
 ]
 
 # ── Licences ────────────────────────────────────────────────────────────────

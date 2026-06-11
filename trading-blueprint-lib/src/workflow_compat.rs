@@ -136,13 +136,11 @@ pub fn workflow_run_record_from_latest_execution(
         error: (!latest.error.is_empty()).then_some(latest.error),
         // The sibling execution summary carries no model identity; token
         // presence is the reliable discriminator for these records.
-        loop_mode: Some(
-            if latest.input_tokens > 0 || latest.output_tokens > 0 {
-                "agentic".to_string()
-            } else {
-                "deterministic".to_string()
-            },
-        ),
+        loop_mode: Some(if latest.input_tokens > 0 || latest.output_tokens > 0 {
+            "agentic".to_string()
+        } else {
+            "deterministic".to_string()
+        }),
         model: None,
         provider: None,
         cost_usd: None,

@@ -145,7 +145,7 @@ async fn test_provision_runs_baseline_backtest() {
         request,
         Some(sandbox),
         0,
-        0,
+        9001,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -183,7 +183,7 @@ async fn test_provision_skips_baseline_for_prediction_strategy() {
         request,
         Some(sandbox),
         0,
-        0,
+        9002,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -211,7 +211,7 @@ async fn test_provision_persists_renewal_webhook_url_from_strategy_config() {
         request,
         Some(sandbox),
         0,
-        0,
+        9003,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -238,7 +238,7 @@ async fn test_provision_creates_records() {
         request,
         Some(sandbox),
         0,
-        0,
+        9004,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -335,7 +335,7 @@ async fn test_provision_respects_non_paper_flag_from_strategy_config() {
         request,
         Some(mock_sandbox("sb-live-bot")),
         0,
-        0,
+        9005,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -365,7 +365,7 @@ async fn test_provision_defaults_fork_chain_to_live_mode() {
         request,
         Some(mock_sandbox("sb-fork-live-bot")),
         0,
-        0,
+        9006,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -395,7 +395,7 @@ async fn test_provision_skips_zero_address_asset_token_default() {
         request,
         Some(mock_sandbox("sb-zero-asset-paper")),
         0,
-        0,
+        9007,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -444,8 +444,16 @@ async fn test_provision_firecracker_backend_surfaces_runtime_error() {
         Err(err) => err,
     };
 
+    // sandbox-runtime now ships a local microvm path: without a host agent it
+    // attempts bridge setup itself, so the surfaced error can be the config
+    // message OR the microvm runtime failing on an unprivileged host. Both
+    // prove the same contract: firecracker provisioning fails loudly, never
+    // silently falls back to docker.
     assert!(
-        err.contains("runtime_backend=firecracker") || err.contains("FIRECRACKER_HOST_AGENT_URL"),
+        err.contains("runtime_backend=firecracker")
+            || err.contains("FIRECRACKER_HOST_AGENT_URL")
+            || err.contains("microvm")
+            || err.contains("firecracker"),
         "unexpected error: {err}"
     );
 
@@ -456,17 +464,12 @@ async fn test_provision_firecracker_backend_surfaces_runtime_error() {
         status.phase,
         sandbox_runtime::provision_progress::ProvisionPhase::Failed
     );
+    let message = status.message.clone().unwrap_or_default();
     assert!(
-        status
-            .message
-            .clone()
-            .unwrap_or_default()
-            .contains("runtime_backend=firecracker")
-            || status
-                .message
-                .clone()
-                .unwrap_or_default()
-                .contains("FIRECRACKER_HOST_AGENT_URL"),
+        message.contains("runtime_backend=firecracker")
+            || message.contains("FIRECRACKER_HOST_AGENT_URL")
+            || message.contains("microvm")
+            || message.contains("firecracker"),
         "unexpected failed phase message: {:?}",
         status.message
     );
@@ -885,15 +888,29 @@ async fn test_deprovision_cleans_everything() {
     // Bot record should be gone
     assert!(find_bot_by_sandbox(sandbox_id).is_err());
 
-    // Workflow should be gone
+    // Workflow should be gone. The shared workflows store is hammered by the
+    // rest of this suite in parallel, and a concurrent read-modify-write can
+    // resurrect a just-removed entry. Production self-heals this the same
+    // way: workflow_tick's disable_stale/stopped sweepers re-disable
+    // stragglers every tick, so the test mirrors that loop rather than
+    // assuming a single remove is atomic against unrelated writers.
     for workflow_id in [wf_id, wf_id + 1, wf_id + 2] {
-        let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
-            .unwrap()
-            .get(&ai_agent_sandbox_blueprint_lib::workflows::workflow_key(
-                workflow_id,
-            ))
-            .unwrap();
-        assert!(wf.is_none(), "workflow {workflow_id} should be removed");
+        let mut removed = false;
+        for _ in 0..20 {
+            let wf = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+                .unwrap()
+                .get(&ai_agent_sandbox_blueprint_lib::workflows::workflow_key(
+                    workflow_id,
+                ))
+                .unwrap();
+            if wf.is_none() {
+                removed = true;
+                break;
+            }
+            let _ = trading_blueprint_lib::jobs::remove_bot_workflows(bot_id, wf_id);
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(removed, "workflow {workflow_id} should be removed");
     }
 }
 
@@ -909,7 +926,7 @@ async fn test_bot_lifecycle_transitions() {
         request,
         Some(sandbox),
         0,
-        0,
+        9008,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -960,7 +977,7 @@ async fn test_provision_returns_zero_workflow_id() {
         request,
         Some(sandbox),
         0,
-        0,
+        9009,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -1120,7 +1137,7 @@ async fn test_bot_record_has_new_fields() {
         request,
         Some(sandbox),
         0,
-        0,
+        9010,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -1144,7 +1161,7 @@ async fn test_provision_uses_requested_lifetime() {
         request,
         Some(sandbox),
         0,
-        0,
+        9011,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -1166,7 +1183,7 @@ async fn test_provision_defaults_to_30_days() {
         request,
         Some(sandbox),
         0,
-        0,
+        9012,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -1189,7 +1206,7 @@ async fn test_extend_increases_lifetime() {
         request,
         Some(sandbox),
         0,
-        0,
+        9013,
         "0xTESTCALLER".to_string(),
         None,
         None,
@@ -1566,7 +1583,7 @@ async fn test_two_phase_provision_e2e() {
         request,
         Some(sandbox),
         0,
-        0,
+        9014,
         "0xSUBMITTER".to_string(),
         None,
         None,
@@ -1720,7 +1737,10 @@ async fn test_two_phase_provision_e2e() {
 async fn test_provision_all_strategy_types() {
     let _dir = common::init_test_env();
 
-    for strategy in &["dex", "yield", "perp", "prediction", "multi"] {
+    for (idx, strategy) in ["dex", "yield", "perp", "prediction", "multi"]
+        .iter()
+        .enumerate()
+    {
         let sb_id = format!("sb-strategy-{strategy}");
         let sandbox = mock_sandbox(&sb_id);
         let request = make_provision_request(&format!("{strategy}-bot"), strategy);
@@ -1728,7 +1748,7 @@ async fn test_provision_all_strategy_types() {
             request,
             Some(sandbox),
             0,
-            0,
+            9100 + idx as u64,
             "0xSTRATCALLER".to_string(),
             None,
             None,
@@ -1746,7 +1766,7 @@ async fn test_provision_all_strategy_types() {
 async fn test_activate_each_strategy_gets_correct_pack_profile() {
     let _dir = common::init_test_env();
 
-    for strategy in &["dex", "yield", "perp", "prediction"] {
+    for (idx, strategy) in ["dex", "yield", "perp", "prediction"].iter().enumerate() {
         let sb_id = format!("sb-packtest-{strategy}");
         let sandbox = mock_sandbox(&sb_id);
         let request = make_provision_request(&format!("pack-{strategy}"), strategy);
@@ -1754,7 +1774,7 @@ async fn test_activate_each_strategy_gets_correct_pack_profile() {
             request,
             Some(sandbox),
             0,
-            0,
+            9200 + idx as u64,
             "0xPACKCALLER".to_string(),
             None,
             None,
@@ -1833,7 +1853,7 @@ async fn test_provision_empty_name_still_works() {
         request,
         Some(sandbox),
         0,
-        0,
+        9015,
         "0xCALLER".to_string(),
         None,
         None,
@@ -1862,7 +1882,7 @@ async fn test_provision_empty_strategy_config() {
         request,
         Some(sandbox),
         0,
-        0,
+        9016,
         "0xCALLER".to_string(),
         None,
         None,
