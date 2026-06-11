@@ -159,6 +159,16 @@ let mockMarketCandles: Array<{
 }> = [];
 let metricsIsLoading = false;
 let metricsIsError = false;
+let mockPerformanceSummary: {
+  returnPct: number | null;
+  benchmarkBuyHoldReturnPct: number | null;
+  alphaPct: number | null;
+  maxDrawdownPct: number | null;
+  navLatestUsd: number | null;
+  initialCapitalUsd: number | null;
+  windowFromMs: number | null;
+  windowToMs: number | null;
+} | null = null;
 
 vi.mock('~/lib/hooks/useBotApi', () => ({
   useBotMetrics: () => ({
@@ -168,6 +178,9 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
   }),
   useBotMetricsSummary: () => ({
     data: mockMetricsSummary,
+  }),
+  useBotPerformanceSummary: () => ({
+    data: mockPerformanceSummary,
   }),
   useBotTrades: () => ({
     data: mockTrades,
@@ -316,6 +329,7 @@ describe('PerformanceTab', () => {
     };
     metricsIsLoading = false;
     metricsIsError = false;
+    mockPerformanceSummary = null;
     mockPortfolio = undefined;
     mockTrades = [];
     mockLatestTrades = null;
@@ -395,6 +409,37 @@ describe('PerformanceTab', () => {
 
     expect(screen.getByText('Operator verification pending')).toBeInTheDocument();
     expect(screen.getByText('No performance snapshots available yet.')).toBeInTheDocument();
+  });
+
+  it('renders the benchmark strip when the operator reports performance vs buy-and-hold', () => {
+    mockPerformanceSummary = {
+      returnPct: 4.21,
+      benchmarkBuyHoldReturnPct: 2.1,
+      alphaPct: 2.11,
+      maxDrawdownPct: 3.4,
+      navLatestUsd: 10421,
+      initialCapitalUsd: 10000,
+      windowFromMs: Date.parse('2026-05-01T00:00:00.000Z'),
+      windowToMs: Date.parse('2026-06-01T00:00:00.000Z'),
+    };
+
+    render(<PerformanceTab bot={makeBot()} isLive />);
+
+    const strip = screen.getByRole('region', { name: /performance vs benchmark/i });
+    expect(within(strip).getByText('+4.21%')).toBeInTheDocument();
+    expect(within(strip).getByText('+2.11%')).toBeInTheDocument();
+    expect(within(strip).getByText('B&H +2.10%')).toBeInTheDocument();
+    expect(within(strip).getByText('-3.40%')).toBeInTheDocument();
+  });
+
+  it('hides the benchmark strip when the performance endpoint is absent', () => {
+    mockPerformanceSummary = null;
+
+    render(<PerformanceTab bot={makeBot()} isLive />);
+
+    expect(
+      screen.queryByRole('region', { name: /performance vs benchmark/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('calculates total return from configured initial capital when available', () => {

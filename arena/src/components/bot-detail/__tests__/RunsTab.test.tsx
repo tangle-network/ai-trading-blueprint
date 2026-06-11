@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createWrapper } from "~/test/mocks";
@@ -208,6 +208,136 @@ describe("RunsTab", () => {
     });
     expect(await screen.findByText("Research Trace")).toBeInTheDocument();
     expect(screen.getAllByText("latest result").length).toBeGreaterThan(0);
+  });
+
+  it("defaults to agent runs when loop modes are reported and rolls up loaded LLM spend", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-agentic",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_824_500,
+              completed_at: 1_775_824_560,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 60_000,
+              input_tokens: 900,
+              output_tokens: 100,
+              result: "agentic result",
+              error: null,
+              model: "glm-5.1",
+              provider: "zai",
+              cost_usd: 0.0421,
+              loop_mode: "agentic",
+            },
+            {
+              run_id: "run-tick",
+              workflow_id: 102,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_824_000,
+              completed_at: 1_775_824_002,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 2_000,
+              input_tokens: 0,
+              output_tokens: 0,
+              result: "tick result",
+              error: null,
+              model: null,
+              provider: null,
+              cost_usd: null,
+              loop_mode: "deterministic",
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    // Defaults to the agent-run filter: the deterministic tick is not listed.
+    const sidebar = await screen.findByLabelText("Autonomous runs");
+    expect(within(sidebar).getAllByText("glm-5.1").length).toBeGreaterThan(0);
+    expect(within(sidebar).getAllByText("$0.042").length).toBeGreaterThan(0);
+    expect(screen.getByText("1 entry")).toBeInTheDocument();
+
+    expect(screen.getByText("LLM spend (loaded window)")).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /filter runs by loop mode/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agent runs" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(await screen.findByText("2 entries")).toBeInTheDocument();
+  });
+
+  it("hides the loop-mode filter when the operator does not report loop modes", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-legacy",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_824_500,
+              completed_at: 1_775_824_560,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 60_000,
+              input_tokens: 10,
+              output_tokens: 6,
+              result: "legacy result",
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect((await screen.findAllByText("legacy result")).length).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("group", { name: /filter runs by loop mode/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("LLM spend (loaded window)")).not.toBeInTheDocument();
   });
 
   it("loads public fleet run summaries without wallet authentication", async () => {

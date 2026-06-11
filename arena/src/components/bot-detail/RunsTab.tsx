@@ -21,6 +21,7 @@ import {
   buildRunReplaySessionId,
   chooseDefaultRun,
   formatDuration,
+  formatRunCostUsd,
   formatRunTimestamp,
   getStatusLabel,
   getWorkflowKindDescription,
@@ -28,8 +29,11 @@ import {
   hasReplayableRunTrace,
   parseRunsResponse,
   resolveTranscriptSessionId,
+  runMatchesLoopFilter,
+  summarizeAgenticSpend,
   type BotRun,
   type BotRunsResponse,
+  type RunLoopFilter,
   type RunStatus,
 } from "~/lib/botRuns";
 import {
@@ -73,6 +77,8 @@ interface RunItem {
   durationLabel: string;
   tokenLabel: string;
   signalLabel: string;
+  modelLabel: string | null;
+  costLabel: string | null;
 }
 
 interface RunsSummary {
@@ -81,6 +87,12 @@ interface RunsSummary {
   completed: number;
   failed: number;
 }
+
+const RUN_LOOP_FILTERS: Array<{ value: RunLoopFilter; label: string }> = [
+  { value: "agentic", label: "Agent runs" },
+  { value: "deterministic", label: "Ticks" },
+  { value: "all", label: "All" },
+];
 
 interface RunsWorkspaceLayout {
   sidebarWidth: number;
@@ -154,11 +166,14 @@ function getRunSubtitle(run: BotRun): string {
   return formatRunTimestamp(run.startedAt);
 }
 
-function getRunTokenLabel(run: BotRun): string {
-  const total = run.inputTokens + run.outputTokens;
+function formatTokenTotal(total: number): string {
   if (total <= 0) return "tokens n/a";
   if (total >= 1_000) return `${(total / 1_000).toFixed(total >= 10_000 ? 0 : 1)}k tok`;
   return `${total} tok`;
+}
+
+function getRunTokenLabel(run: BotRun): string {
+  return formatTokenTotal(run.inputTokens + run.outputTokens);
 }
 
 function RunsBanner({
@@ -243,6 +258,11 @@ function RunsSidebar({
   hasOlderRuns,
   isLoadingOlderRuns,
   width,
+  loopFilter,
+  showLoopFilter,
+  spendLabel,
+  spendDetail,
+  onLoopFilterChange,
   onSelect,
   onLoadOlder,
   onToggleCollapsed,
@@ -259,6 +279,11 @@ function RunsSidebar({
   hasOlderRuns: boolean;
   isLoadingOlderRuns: boolean;
   width: number;
+  loopFilter: RunLoopFilter;
+  showLoopFilter: boolean;
+  spendLabel: string | null;
+  spendDetail: string | null;
+  onLoopFilterChange: (filter: RunLoopFilter) => void;
   onSelect: (id: string) => void;
   onLoadOlder: () => void;
   onToggleCollapsed: () => void;
@@ -310,6 +335,38 @@ function RunsSidebar({
             <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.completed}</b> done</span>
             <span aria-hidden="true">/</span>
             <span className="truncate"><b className="font-semibold text-arena-elements-textPrimary">{summary.failed}</b> fail</span>
+          </div>
+        )}
+        {!collapsed && showLoopFilter && (
+          <div
+            className="mt-2 grid grid-cols-3 gap-0.5 rounded-[5px] bg-arena-elements-background-depth-2/70 p-0.5"
+            role="group"
+            aria-label="Filter runs by loop mode"
+          >
+            {RUN_LOOP_FILTERS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={loopFilter === option.value}
+                className={`h-6 truncate rounded-[4px] px-1.5 font-data text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)] ${
+                  loopFilter === option.value
+                    ? "bg-arena-elements-item-backgroundActive text-arena-elements-textPrimary"
+                    : "text-arena-elements-textTertiary hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary"
+                }`}
+                onClick={() => onLoopFilterChange(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {!collapsed && spendLabel && (
+          <div
+            className="mt-1.5 truncate font-data text-[10px] text-arena-elements-textTertiary"
+            title={spendDetail ?? undefined}
+          >
+            LLM spend (loaded window){" "}
+            <b className="font-semibold text-arena-elements-textPrimary">{spendLabel}</b>
           </div>
         )}
       </div>
@@ -414,6 +471,22 @@ function RunsSidebar({
                       <span className="shrink-0">
                         {run.tokenLabel}
                       </span>
+                      {run.costLabel && (
+                        <>
+                          <span aria-hidden="true">/</span>
+                          <span className="shrink-0">
+                            {run.costLabel}
+                          </span>
+                        </>
+                      )}
+                      {run.modelLabel && (
+                        <>
+                          <span aria-hidden="true">/</span>
+                          <span className="min-w-0 truncate" title={run.modelLabel}>
+                            {run.modelLabel}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </button>
@@ -694,9 +767,17 @@ function RunDetailPanel({
                 Evidence Record
               </div>
               <div className="divide-y divide-[var(--arena-terminal-border)]">
-                {[
+                {([
                   ["Run ID", run.runId],
                   ["Workflow", getWorkflowKindLabel(run.workflowKind)],
+                  ...(run.loopMode
+                    ? [["Loop", run.loopMode === "agentic" ? "Agentic" : "Deterministic tick"]]
+                    : []),
+                  ...(run.model ? [["Model", run.model]] : []),
+                  ...(run.provider ? [["Provider", run.provider]] : []),
+                  ...(run.costUsd != null
+                    ? [["Cost", formatRunCostUsd(run.costUsd) ?? "n/a"]]
+                    : []),
                   ["Transcript", transcriptLabel],
                   ["Trace", run.traceId ?? "n/a"],
                   ["Session", run.sessionId ?? "n/a"],
@@ -704,7 +785,7 @@ function RunDetailPanel({
                   ["Completed", run.completedAt ? formatRunTimestamp(run.completedAt) : "Still running"],
                   ["Input tok", run.inputTokens.toString()],
                   ["Output tok", run.outputTokens.toString()],
-                ].map(([label, value]) => (
+                ] as Array<[string, string]>).map(([label, value]) => (
                   <div key={label} className="grid min-w-0 grid-cols-[7.25rem_minmax(0,1fr)] gap-3 px-3 py-2 font-data text-xs">
                     <span className="truncate uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
                       {label}
@@ -768,6 +849,7 @@ export function RunsTab({
   } = useOperatorAuth(baseApiUrl);
 
   const [activeRunId, setActiveRunId] = useState("");
+  const [loopFilterChoice, setLoopFilterChoice] = useState<RunLoopFilter | null>(null);
   const [isStackedLayout, setIsStackedLayout] = useState(() =>
     typeof window === "undefined"
       ? false
@@ -861,21 +943,37 @@ export function RunsTab({
     );
   }, [runsQuery.data]);
 
+  // Loop-mode filter is only offered when the operator reports loop_mode;
+  // older operators fall back to the unfiltered list.
+  const hasLoopModeData = runs.some((run) => run.loopMode != null);
+  const hasAgenticRuns = runs.some((run) => run.loopMode === "agentic");
+  const loopFilter: RunLoopFilter =
+    loopFilterChoice ?? (hasAgenticRuns ? "agentic" : "all");
+  const visibleRuns = useMemo(
+    () =>
+      hasLoopModeData
+        ? runs.filter((run) => runMatchesLoopFilter(run, loopFilter))
+        : runs,
+    [hasLoopModeData, loopFilter, runs],
+  );
+  const agenticSpend = useMemo(() => summarizeAgenticSpend(runs), [runs]);
+
   useEffect(() => {
-    if (runs.length === 0) {
+    if (visibleRuns.length === 0) {
       if (activeRunId) {
         setActiveRunId("");
       }
       return;
     }
 
-    if (!activeRunId || !runs.some((run) => run.runId === activeRunId)) {
-      setActiveRunId(chooseDefaultRun(runs)?.runId ?? "");
+    if (!activeRunId || !visibleRuns.some((run) => run.runId === activeRunId)) {
+      setActiveRunId(chooseDefaultRun(visibleRuns)?.runId ?? "");
     }
-  }, [activeRunId, runs]);
+  }, [activeRunId, visibleRuns]);
 
   const activeRun =
-    runs.find((run) => run.runId === activeRunId) ?? chooseDefaultRun(runs);
+    visibleRuns.find((run) => run.runId === activeRunId)
+    ?? chooseDefaultRun(visibleRuns);
   const rawTranscriptSessionId = resolveTranscriptSessionId(botId, activeRun);
   const hasExplicitTranscriptSession = Boolean(activeRun?.sessionId);
   const canStreamTranscript = Boolean(
@@ -903,7 +1001,7 @@ export function RunsTab({
 
   const runItems: RunItem[] = useMemo(
     () =>
-      runs.map((run) => ({
+      visibleRuns.map((run) => ({
         id: run.runId,
         title: getRunTitle(run),
         subtitle: getRunSubtitle(run),
@@ -911,19 +1009,35 @@ export function RunsTab({
         durationLabel: formatDuration(run.durationMs),
         tokenLabel: getRunTokenLabel(run),
         signalLabel: getRunSignalLabel(run),
+        modelLabel: run.loopMode === "agentic" ? run.model : null,
+        costLabel: run.loopMode === "agentic" ? formatRunCostUsd(run.costUsd) : null,
       })),
-    [runs],
+    [visibleRuns],
   );
   const decisionItems = useMemo(
-    () => buildDecisionItemsFromRuns(runs),
-    [runs],
+    () => buildDecisionItemsFromRuns(visibleRuns),
+    [visibleRuns],
   );
   const runSummary = useMemo<RunsSummary>(() => ({
-    total: runs.length,
-    running: runs.filter((run) => run.status === "running").length,
-    completed: runs.filter((run) => run.status === "completed").length,
-    failed: runs.filter((run) => run.status === "failed" || run.status === "interrupted").length,
-  }), [runs]);
+    total: visibleRuns.length,
+    running: visibleRuns.filter((run) => run.status === "running").length,
+    completed: visibleRuns.filter((run) => run.status === "completed").length,
+    failed: visibleRuns.filter((run) => run.status === "failed" || run.status === "interrupted").length,
+  }), [visibleRuns]);
+  const spendLabel = agenticSpend.agenticRunCount > 0
+    ? agenticSpend.costUsd != null
+      ? `${formatRunCostUsd(agenticSpend.costUsd)} · ${formatTokenTotal(agenticSpend.totalTokens)}`
+      : agenticSpend.totalTokens > 0
+        ? formatTokenTotal(agenticSpend.totalTokens)
+        : null
+    : null;
+  const spendDetail = agenticSpend.agenticRunCount > 0
+    ? `Sum over the ${agenticSpend.agenticRunCount.toLocaleString()} loaded agent runs`
+      + (agenticSpend.costUsd != null && agenticSpend.costKnownRunCount < agenticSpend.agenticRunCount
+        ? ` (${agenticSpend.costKnownRunCount.toLocaleString()} report cost)`
+        : "")
+      + ", not lifetime spend"
+    : null;
   const showRunsSidebar =
     immersive || runs.length > 1 || Boolean(runsQuery.hasNextPage);
   const showDecisionActivityStrip = decisionItems.length > 0 && !showRunsSidebar;
@@ -1097,8 +1211,17 @@ export function RunsTab({
               summary={runSummary}
               activeRunId={activeRun?.runId ?? ""}
               surfaceLabel={surfaceCopy.label}
-              emptyLabel={surfaceCopy.emptyLabel}
+              emptyLabel={
+                runs.length > 0 && visibleRuns.length === 0
+                  ? "No runs match this filter"
+                  : surfaceCopy.emptyLabel
+              }
               ariaLabel={surfaceCopy.ariaLabel}
+              loopFilter={loopFilter}
+              showLoopFilter={hasLoopModeData}
+              spendLabel={spendLabel}
+              spendDetail={spendDetail}
+              onLoopFilterChange={setLoopFilterChoice}
               stacked={isStackedLayout}
               compactStacked={immersive}
               collapsed={!isStackedLayout && runsSidebarCollapsed}
@@ -1154,6 +1277,15 @@ export function RunsTab({
                         <RunMetricPill label="Cycle" value={activeRun.runId} />
                         <RunMetricPill label="Duration" value={formatDuration(activeRun.durationMs)} />
                         <RunMetricPill label="Tokens" value={getRunTokenLabel(activeRun)} />
+                        {activeRun.model && (
+                          <RunMetricPill label="Model" value={activeRun.model} />
+                        )}
+                        {activeRun.costUsd != null && (
+                          <RunMetricPill
+                            label="Cost"
+                            value={formatRunCostUsd(activeRun.costUsd) ?? "n/a"}
+                          />
+                        )}
                         <RunMetricPill label="Trace" value={activeRun.traceId ? "captured" : "summary"} />
                       </div>
                     )}
