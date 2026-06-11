@@ -370,13 +370,79 @@ fn records_with_queued_agentic_reflection(mut records: Value, session_id: &str) 
     })
 }
 
-fn truncate_result(value: &Value) -> String {
-    let mut text = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
-    if text.len() > 20_000 {
-        text.truncate(20_000);
-        text.push_str("...");
+/// First scalar string under `key` (or first element of the plural array
+/// form, e.g. "models") anywhere in a usage event payload.
+fn usage_event_string(usage: &Value, key: &str) -> Option<String> {
+    fn lookup(value: &Value, key: &str, plural: &str, depth: u8) -> Option<String> {
+        if depth == 0 {
+            return None;
+        }
+        let object = value.as_object()?;
+        if let Some(found) = object.get(key).and_then(Value::as_str) {
+            if !found.is_empty() {
+                return Some(found.to_string());
+            }
+        }
+        if let Some(found) = object
+            .get(plural)
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(Value::as_str)
+        {
+            if !found.is_empty() {
+                return Some(found.to_string());
+            }
+        }
+        object
+            .values()
+            .find_map(|nested| lookup(nested, key, plural, depth - 1))
     }
-    text
+    lookup(usage, key, &format!("{key}s"), 4)
+}
+
+/// Bound a run result for storage WITHOUT breaking JSON validity. The old
+/// implementation cut the serialized string at 20k bytes, which left every
+/// large result unparseable downstream (UI cost display, eval capture).
+fn truncate_result(value: &Value) -> String {
+    const MAX_BYTES: usize = 20_000;
+    let text = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
+    if text.len() <= MAX_BYTES {
+        return text;
+    }
+    let mut shrunk = value.clone();
+    shrink_string_leaves(&mut shrunk, 2_000);
+    let text = serde_json::to_string(&shrunk).unwrap_or_else(|_| "{}".to_string());
+    if text.len() <= MAX_BYTES {
+        return text;
+    }
+    json!({
+        "truncated": true,
+        "original_bytes": text.len(),
+        "top_level_keys": value
+            .as_object()
+            .map(|object| object.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default(),
+    })
+    .to_string()
+}
+
+fn shrink_string_leaves(value: &mut Value, max_chars: usize) {
+    match value {
+        Value::String(text) => {
+            if text.chars().count() > max_chars {
+                let mut shortened: String = text.chars().take(max_chars).collect();
+                shortened.push_str("…[truncated]");
+                *text = shortened;
+            }
+        }
+        Value::Array(items) => items
+            .iter_mut()
+            .for_each(|item| shrink_string_leaves(item, max_chars)),
+        Value::Object(object) => object
+            .values_mut()
+            .for_each(|item| shrink_string_leaves(item, max_chars)),
+        _ => {}
+    }
 }
 
 async fn sync_observatory_tool_to_sidecar(sidecar_url: &str, token: &str) -> Result<(), String> {
@@ -492,6 +558,10 @@ pub async fn trigger_observatory_for_bot(
             output_tokens: 0,
             result: None,
             error: Some(error.clone()),
+            loop_mode: Some("deterministic".to_string()),
+            model: None,
+            provider: None,
+            cost_usd: None,
         });
         return Err(error);
     };
@@ -526,6 +596,14 @@ pub async fn trigger_observatory_for_bot(
         output_tokens: 0,
         result: Some(truncate_result(&result_records)),
         error: None,
+        loop_mode: Some(if agentic_enabled {
+            "agentic".to_string()
+        } else {
+            "deterministic".to_string()
+        }),
+        model: None,
+        provider: None,
+        cost_usd: None,
     })
     .map_err(|e| format!("persist observatory run history: {e}"))?;
 
@@ -630,6 +708,14 @@ pub async fn trigger_observatory_for_bot(
                         .unwrap_or(0),
                     result: Some(truncate_result(&result_records)),
                     error: None,
+                    loop_mode: Some("agentic".to_string()),
+                    model: agentic
+                        .as_ref()
+                        .and_then(|agentic| usage_event_string(&agentic.usage_event, "model")),
+                    provider: agentic
+                        .as_ref()
+                        .and_then(|agentic| usage_event_string(&agentic.usage_event, "provider")),
+                    cost_usd: agentic.as_ref().and_then(|agentic| agentic.cost_usd),
                 })
             {
                 tracing::warn!(

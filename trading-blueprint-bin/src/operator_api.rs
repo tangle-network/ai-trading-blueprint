@@ -629,6 +629,14 @@ struct BotRunResponse {
     result: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    loop_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cost_usd: Option<f64>,
 }
 
 // ── Session auth types ──────────────────────────────────────────────────
@@ -2673,6 +2681,17 @@ fn map_bot_run(bot: &TradingBotRecord, run: WorkflowRunRecord) -> BotRunResponse
         duration_ms: run.duration_ms,
         input_tokens: run.input_tokens,
         output_tokens: run.output_tokens,
+        // Legacy rows carry no loop_mode; token presence is the discriminator.
+        loop_mode: run.loop_mode.or_else(|| {
+            Some(if run.input_tokens > 0 || run.output_tokens > 0 {
+                "agentic".to_string()
+            } else {
+                "deterministic".to_string()
+            })
+        }),
+        model: run.model,
+        provider: run.provider,
+        cost_usd: run.cost_usd,
         result: run.result,
         error: run.error,
     }

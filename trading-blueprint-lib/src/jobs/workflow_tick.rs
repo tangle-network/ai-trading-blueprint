@@ -198,6 +198,18 @@ fn persist_executed_run_history(response: &Value) {
                 .unwrap_or(0) as u32,
             result: workflow_result_text(task, "result"),
             error: workflow_result_text(task, "error"),
+            loop_mode: Some({
+                let tokens = task.get("inputTokens").and_then(Value::as_u64).unwrap_or(0)
+                    + task.get("outputTokens").and_then(Value::as_u64).unwrap_or(0);
+                if tokens > 0 {
+                    "agentic".to_string()
+                } else {
+                    "deterministic".to_string()
+                }
+            }),
+            model: workflow_result_text(task, "model"),
+            provider: workflow_result_text(task, "provider"),
+            cost_usd: task.get("costUsd").and_then(Value::as_f64),
         };
 
         if let Err(err) = crate::workflow_compat::persist_workflow_run_record(record) {
