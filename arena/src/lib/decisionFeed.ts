@@ -5,6 +5,7 @@ import {
   type BotRun,
 } from './botRuns';
 import { formatNumber } from './format';
+import { isExplicitPaperValidationBypass } from './tradeValidation';
 import {
   getTradePairLabel,
   VENUE_CONFIG,
@@ -605,15 +606,18 @@ function formatRunnerSignal(signal: unknown): string | null {
 export function buildDecisionItemFromTrade(trade: Trade): DecisionFeedItem {
   const actionLabel = formatTradeAction(trade.action);
   const instrumentLabel = getTradePairLabel(trade);
+  const isPaperBypass = isExplicitPaperValidationBypass(trade.validation, trade.paperTrade);
   const validationScore =
     trade.validation?.aggregateScore ??
     trade.validatorScore ??
     null;
-  const validationLabel = trade.validation
-    ? `${trade.validation.approved ? 'Approved' : 'Rejected'} · ${formatNumber(validationScore ?? 0, { maximumFractionDigits: 2 })}`
-    : validationScore != null
-      ? `Score ${formatNumber(validationScore, { maximumFractionDigits: 2 })}`
-      : undefined;
+  const validationLabel = isPaperBypass
+    ? 'Paper — validation bypassed'
+    : trade.validation
+      ? `${trade.validation.approved ? 'Approved' : 'Rejected'} · ${formatNumber(validationScore ?? 0, { maximumFractionDigits: 2 })}`
+      : validationScore != null
+        ? `Score ${formatNumber(validationScore, { maximumFractionDigits: 2 })}`
+        : undefined;
   const executionLabel = trade.execution?.status
     ? humanize(trade.execution.status)
     : humanize(trade.status);
@@ -661,14 +665,23 @@ export function buildDecisionItemFromTrade(trade: Trade): DecisionFeedItem {
     stages: [
       makeStage('state', 'Source', trade.decisionSource, venueLabel, 'neutral', 'i-ph:activity'),
       makeStage('decision', 'Decision', trade.action, reason, 'success', 'i-ph:brain'),
-      makeStage(
-        'validation',
-        'Validation',
-        trade.validation ? (trade.validation.approved ? 'approved' : 'rejected') : validationLabel,
-        trade.validation?.responses[0]?.reasoning ?? trade.validatorReasoning,
-        'neutral',
-        'i-ph:shield-check',
-      ),
+      isPaperBypass
+        ? {
+            key: 'validation' as const,
+            label: 'Validation',
+            value: 'Paper — validation bypassed',
+            detail: undefined,
+            tone: 'neutral' as const,
+            iconClass: 'i-ph:shield-check',
+          }
+        : makeStage(
+            'validation',
+            'Validation',
+            trade.validation ? (trade.validation.approved ? 'approved' : 'rejected') : validationLabel,
+            trade.validation?.responses[0]?.reasoning ?? trade.validatorReasoning,
+            'neutral',
+            'i-ph:shield-check',
+          ),
       makeStage('execution', 'Execution', trade.execution?.status ?? trade.status, trade.execution?.reason, 'neutral', 'i-ph:lightning'),
     ],
   };

@@ -8,13 +8,16 @@ import {
   useBotMarketCandles,
   useBotMetrics,
   useBotMetricsSummary,
+  useBotPerformanceSummary,
   useBotPortfolio,
   useBotTradePage,
+  type BotPerformanceSummary,
 } from '~/lib/hooks/useBotApi';
 import { Skeleton } from '~/components/ui/Skeleton';
 import { formatNumber } from '~/lib/format';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { readStrategyNumber } from '~/lib/utils/botStrategy';
+import { isExplicitPaperValidationBypass } from '~/lib/tradeValidation';
 import { buildPerformanceChartPoints } from './performanceChart';
 import type { Trade } from '~/lib/types/trade';
 import {
@@ -527,7 +530,10 @@ function formatTradeMicrostructure(trade: Trade): string {
     return `${formatNumber(trade.execution.slippageBps, { maximumFractionDigits: 1 })} bps slip`;
   }
   if (trade.gasUsed) return `Gas ${trade.gasUsed}`;
-  if (trade.validatorScore != null) {
+  if (
+    trade.validatorScore != null
+    && !isExplicitPaperValidationBypass(trade.validation, trade.paperTrade)
+  ) {
     return `Score ${formatNumber(trade.validatorScore, { maximumFractionDigits: 0 })}`;
   }
   return trade.paperTrade ? 'Paper fill' : formatTradeStatus(trade.execution?.status ?? trade.status);
@@ -563,6 +569,89 @@ function buildTradeMarkers(
       text: formatTradeMarkerText(trade),
     }))
     .sort((left, right) => left.timestampMs - right.timestampMs);
+}
+
+function hasBenchmarkData(summary: BotPerformanceSummary | null | undefined): summary is BotPerformanceSummary {
+  return Boolean(
+    summary
+    && (
+      summary.returnPct != null
+      || summary.alphaPct != null
+      || summary.benchmarkBuyHoldReturnPct != null
+      || summary.maxDrawdownPct != null
+    ),
+  );
+}
+
+function signedPercentTone(value: number | null): string {
+  if (value == null || !Number.isFinite(value) || value === 0) return 'text-[#d2dad7]';
+  return value > 0
+    ? 'text-[var(--arena-terminal-success)]'
+    : 'text-[var(--arena-terminal-danger)]';
+}
+
+function BenchmarkStrip({ summary }: { summary: BotPerformanceSummary }) {
+  const windowLabel = summary.windowFromMs != null && summary.windowToMs != null
+    ? `${freshnessTimestampFormatter.format(new Date(summary.windowFromMs))} – ${freshnessTimestampFormatter.format(new Date(summary.windowToMs))}`
+    : null;
+  const capitalLabel = summary.initialCapitalUsd != null && summary.navLatestUsd != null
+    ? `${formatChartCurrency(summary.initialCapitalUsd)} → ${formatChartCurrency(summary.navLatestUsd)}`
+    : null;
+  const maxDrawdownValue = summary.maxDrawdownPct == null
+    ? '—'
+    : summary.maxDrawdownPct === 0
+      ? formatChartPercent(0)
+      : `-${formatChartPercent(Math.abs(summary.maxDrawdownPct))}`;
+  const cells = [
+    {
+      label: 'Return',
+      value: formatSignedChartPercent(summary.returnPct),
+      tone: signedPercentTone(summary.returnPct),
+      subvalue: capitalLabel ?? windowLabel,
+    },
+    {
+      label: 'vs Buy & Hold',
+      value: formatSignedChartPercent(summary.alphaPct),
+      tone: signedPercentTone(summary.alphaPct),
+      subvalue: summary.benchmarkBuyHoldReturnPct != null
+        ? `B&H ${formatSignedChartPercent(summary.benchmarkBuyHoldReturnPct)}`
+        : null,
+    },
+    {
+      label: 'Max DD',
+      value: maxDrawdownValue,
+      tone: summary.maxDrawdownPct != null && summary.maxDrawdownPct !== 0
+        ? 'text-[var(--arena-terminal-danger)]'
+        : 'text-[#d2dad7]',
+      subvalue: windowLabel,
+    },
+  ];
+
+  return (
+    <section
+      aria-label="Performance vs benchmark"
+      className="grid shrink-0 grid-cols-3 gap-px border-b border-[#273035] bg-[#273035]"
+    >
+      {cells.map((cell) => (
+        <div key={cell.label} className="min-w-0 bg-[#0f1a1f] px-3 py-2">
+          <div className="truncate font-data text-[11px] uppercase tracking-[0.12em] text-[#697371] min-[1440px]:text-xs">
+            {cell.label}
+          </div>
+          <div className={`mt-1 truncate font-data text-base font-semibold tabular-nums min-[1440px]:text-lg ${cell.tone}`}>
+            {cell.value}
+          </div>
+          {cell.subvalue && (
+            <div
+              className="mt-0.5 truncate font-data text-[11px] text-[#949e9c] min-[1440px]:text-xs"
+              title={cell.subvalue}
+            >
+              {cell.subvalue}
+            </div>
+          )}
+        </div>
+      ))}
+    </section>
+  );
 }
 
 interface PerformanceTabProps {
@@ -699,6 +788,11 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 30_000 : false,
+  });
+  const { data: performanceSummary } = useBotPerformanceSummary(bot.id, {
+    operatorApiUrl: bot.operatorApiUrl,
+    operatorKind: bot.operatorKind,
+    refetchInterval: isLive ? 60_000 : false,
   });
   const { data: livePortfolio } = useBotPortfolio(bot.id, {
     operatorApiUrl: bot.operatorApiUrl,
@@ -1295,6 +1389,10 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                 </div>
               ))}
             </section>
+          )}
+
+          {hasBenchmarkData(performanceSummary) && (
+            <BenchmarkStrip summary={performanceSummary} />
           )}
 
           <div className="min-h-0 flex-1 bg-[#0f1a1f]">

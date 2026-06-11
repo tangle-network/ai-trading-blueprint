@@ -197,12 +197,22 @@ pub struct SelfImproveRequest {
     pub risk_budget: risk_budget::RiskBudgetRequest,
     #[serde(default)]
     pub sandbox_mutation: Option<SandboxMutationRequest>,
+    /// "auto-generation" opts the request into candidate dedupe: the unattended
+    /// generation loop must not re-spend backtests re-blocking an identical
+    /// candidate. Explicit/manual submissions always get a fresh judgment.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Serialize)]
 pub struct SelfImproveResponse {
     pub run: evolution_store::SelfImprovementRun,
-    pub promotion: PromotionGateResponse,
+    /// Absent when the request deduplicated onto an existing run (no fresh
+    /// backtest was spent re-judging an identical candidate).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub promotion: Option<PromotionGateResponse>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deduplicated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -740,6 +750,41 @@ async fn self_improve_inner(
         )
     })?;
     let candidate_hash = hash_json(&candidate_json)?;
+
+    // Dedupe before spending a backtest — but ONLY for the unattended
+    // generation loop (source: "auto-generation"), which is how the live
+    // fleet accumulated thousands of re-blocked identical candidates.
+    // Explicit submissions always re-judge (a caller may legitimately
+    // resubmit to pick up fresh paper evidence), and even auto-generation
+    // re-judges once new paper trades exist for the candidate hash.
+    const DEDUPE_WINDOW_SECS: i64 = 7 * 24 * 3600;
+    if req.source.as_deref() == Some("auto-generation") {
+        let now = chrono::Utc::now().timestamp();
+        let existing = evolution_store::list_for_bot(bot_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+            .into_iter()
+            .filter(|run| run.candidate_hash == candidate_hash)
+            .filter(|run| run.status == "blocked")
+            .filter(|run| now.saturating_sub(run.created_at) < DEDUPE_WINDOW_SECS)
+            .max_by_key(|run| run.created_at);
+        if let Some(existing) = existing {
+            let has_new_evidence = trade_store::paper_trades_for_candidate(bot_id, &candidate_hash)
+                .map(|trades| {
+                    trades
+                        .iter()
+                        .any(|trade| trade.timestamp.timestamp() > existing.created_at)
+                })
+                .unwrap_or(true);
+            if !has_new_evidence {
+                return Ok(Json(SelfImproveResponse {
+                    run: existing,
+                    promotion: None,
+                    deduplicated: true,
+                }));
+            }
+        }
+    }
+
     let sandbox_mutation = req.sandbox_mutation;
     let run_id = format!("sir-{}", uuid::Uuid::new_v4());
     let sandbox_revision = match sandbox_mutation {
@@ -824,7 +869,11 @@ async fn self_improve_inner(
     };
     evolution_store::insert(run.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    Ok(Json(SelfImproveResponse { run, promotion }))
+    Ok(Json(SelfImproveResponse {
+        run,
+        promotion: Some(promotion),
+        deduplicated: false,
+    }))
 }
 
 async fn list_self_improvement_runs(

@@ -21,6 +21,7 @@ import {
 } from '~/lib/operator/meta';
 import { useOperatorAuth } from './useOperatorAuth';
 import { operatorJsonWithAuth } from '~/lib/operator/fetch';
+import { OperatorRequestError } from '~/lib/operator/errors';
 import type { Bot, BotOperatorKind } from '~/lib/types/bot';
 import { tokenMetadataFromStrategyConfig } from '~/lib/assetUniverse';
 import {
@@ -1915,6 +1916,96 @@ export function useBotMetricsSummary(botId: string, options: BotApiQueryOptions 
       );
     },
     staleTime: 15_000,
+    refetchOnMount: false,
+    refetchInterval: options.refetchInterval,
+    enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
+  });
+}
+
+interface ApiBotPerformanceSummary {
+  bot_id?: string;
+  return_pct?: number | null;
+  benchmark_buy_hold_return_pct?: number | null;
+  alpha_pct?: number | null;
+  max_drawdown_pct?: number | null;
+  nav_latest_usd?: number | null;
+  initial_capital_usd?: number | null;
+  window?: { from?: string | number | null; to?: string | number | null } | null;
+}
+
+export interface BotPerformanceSummary {
+  returnPct: number | null;
+  benchmarkBuyHoldReturnPct: number | null;
+  alphaPct: number | null;
+  maxDrawdownPct: number | null;
+  navLatestUsd: number | null;
+  initialCapitalUsd: number | null;
+  windowFromMs: number | null;
+  windowToMs: number | null;
+}
+
+function readFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function readWindowEdgeMs(value: string | number | null | undefined): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    // Epoch seconds vs milliseconds.
+    return value > 10_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === 'string' && value.length > 0) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function mapApiBotPerformanceSummary(data: ApiBotPerformanceSummary): BotPerformanceSummary {
+  return {
+    returnPct: readFiniteNumber(data.return_pct),
+    benchmarkBuyHoldReturnPct: readFiniteNumber(data.benchmark_buy_hold_return_pct),
+    alphaPct: readFiniteNumber(data.alpha_pct),
+    maxDrawdownPct: readFiniteNumber(data.max_drawdown_pct),
+    navLatestUsd: readFiniteNumber(data.nav_latest_usd),
+    initialCapitalUsd: readFiniteNumber(data.initial_capital_usd),
+    windowFromMs: readWindowEdgeMs(data.window?.from),
+    windowToMs: readWindowEdgeMs(data.window?.to),
+  };
+}
+
+export function useBotPerformanceSummary(botId: string, options: BotApiQueryOptions = {}) {
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
+  const enabled = options.enabled ?? true;
+  const needsAuth = fleetReadRequiresAuth(deploymentKind);
+  const authKey = needsAuth ? auth.authCacheKey : 'public';
+
+  return useQuery<BotPerformanceSummary | null>({
+    queryKey: ['bot-performance-summary', apiUrl, botId, deploymentKind, authKey],
+    queryFn: async () => {
+      const path = buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/performance');
+      try {
+        const data = await fetchOperatorBotApi<ApiBotPerformanceSummary>(
+          apiUrl,
+          auth,
+          path,
+          { auth: needsAuth },
+        );
+        return mapApiBotPerformanceSummary(data);
+      } catch (error) {
+        // Older operators do not expose /performance; callers hide the strip.
+        if (
+          error instanceof OperatorRequestError
+          && (error.status === 404 || error.status === 405 || error.status === 501)
+        ) {
+          return null;
+        }
+        throw error;
+      }
+    },
+    staleTime: 30_000,
+    retry: false,
     refetchOnMount: false,
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),

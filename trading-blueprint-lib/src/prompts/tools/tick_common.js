@@ -12,6 +12,7 @@
 // the canonical runtime for every other family so the four tools never diverge.
 
 const fs = require('fs');
+const path = require('path');
 const { spawnSync } = require('child_process');
 
 const DECISION_LOG = '/home/agent/logs/decisions.jsonl';
@@ -167,6 +168,13 @@ function requiresExternalSignals(config, family) {
   return /news|headline|sentiment|event|catalyst|prediction|polymarket|volatility|macro|election|politic/.test(text);
 }
 
+// The default no-key provider (signals-provider.js: Fear & Greed + CoinGecko
+// global/trending) ships with every sandbox, so external signals work out of
+// the box unless explicitly disabled.
+function defaultSignalProviderEnabled() {
+  return !process.env.EXTERNAL_SIGNALS_DISABLED;
+}
+
 function externalSignalProviderConfigured(config) {
   const strategy = isRecord(config && config.strategy_config) ? config.strategy_config : {};
   return Boolean(
@@ -176,29 +184,110 @@ function externalSignalProviderConfigured(config) {
       || process.env.EXTERNAL_SIGNAL_API_URL
       || strategy.news_endpoint
       || strategy.external_signal_endpoint
-      || strategy.sentiment_endpoint,
+      || strategy.sentiment_endpoint
+      || defaultSignalProviderEnabled(),
   );
+}
+
+function resolveSignalsProviderPath() {
+  // In-sandbox name uses dashes; the repo source uses underscores (local tests).
+  const candidates = [
+    process.env.SIGNALS_PROVIDER_PATH,
+    path.join(__dirname, 'signals-provider.js'),
+    path.join(__dirname, 'signals_provider.js'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate)) return candidate;
+    } catch {
+      // keep scanning
+    }
+  }
+  return null;
+}
+
+// Memoized per-process so repeated evidence builds within one tick don't
+// respawn the provider. The provider itself caches to disk for 10 minutes,
+// so the spawn is cheap on cache hits and rate-limit-safe across ticks.
+let signalSnapshotCache = null;
+let signalSnapshotCachedAtMs = 0;
+const SIGNAL_SNAPSHOT_MEMO_MS = 60 * 1000;
+
+function loadExternalSignalSnapshot() {
+  if (!defaultSignalProviderEnabled()) return null;
+  const now = Date.now();
+  if (signalSnapshotCache && now - signalSnapshotCachedAtMs < SIGNAL_SNAPSHOT_MEMO_MS) {
+    return signalSnapshotCache;
+  }
+  let snapshot = null;
+  const providerPath = resolveSignalsProviderPath();
+  if (providerPath) {
+    const run = spawnSync(process.execPath, [providerPath], {
+      encoding: 'utf8',
+      timeout: asNumber(process.env.SIGNALS_PROVIDER_TIMEOUT_MS, 20000),
+    });
+    if (run.status === 0 && run.stdout) {
+      try {
+        const parsed = JSON.parse(run.stdout);
+        if (isRecord(parsed)) snapshot = parsed;
+      } catch {
+        // fall through to the on-disk snapshot
+      }
+    }
+  }
+  if (!snapshot) {
+    const stateFile = process.env.SIGNALS_STATE_FILE || '/home/agent/state/external-signals.json';
+    const cached = readJson(stateFile, null);
+    if (isRecord(cached)) snapshot = cached;
+  }
+  signalSnapshotCache = snapshot;
+  signalSnapshotCachedAtMs = now;
+  return snapshot;
+}
+
+function compactExternalSignals(snapshot, limit = 5) {
+  if (!isRecord(snapshot) || !Array.isArray(snapshot.signals)) return [];
+  return snapshot.signals.slice(0, limit).map((signal) => ({
+    source: String((signal && signal.source) || 'unknown'),
+    kind: String((signal && signal.kind) || 'unknown'),
+    value: signal && signal.value !== undefined ? signal.value : null,
+    label: String((signal && signal.label) || ''),
+    observed_at: String((signal && signal.observed_at) || ''),
+  }));
 }
 
 function buildExternalSignalEvidence({ config, family, checkedState, metrics }) {
   const required = requiresExternalSignals(config, family);
   const providerConfigured = externalSignalProviderConfigured(config);
+  const snapshot = loadExternalSignalSnapshot();
+  const snapshotSignals = isRecord(snapshot) && Array.isArray(snapshot.signals) ? snapshot.signals : [];
+  const snapshotStatus = isRecord(snapshot) && typeof snapshot.source_status === 'string'
+    ? snapshot.source_status
+    : null;
   const marketSignalCount =
     countSignalKeys(checkedState, /price|funding|rsi|ema|candle|volatility|spread|liquidity|market|reserve|apy|yield|probability/i)
     + countSignalKeys(metrics, /price|funding|rsi|ema|candle|volatility|spread|liquidity|market|reserve|apy|yield|probability/i);
-  const externalObservationCount =
+  const stateObservationCount =
     countSignalKeys(checkedState, /headline|sentiment|catalyst|polymarket|gamma|clob|election|politic|macro|event/i)
     + countSignalKeys(metrics, /headline|sentiment|catalyst|polymarket|gamma|clob|election|politic|macro|event/i);
+  const externalObservationCount = stateObservationCount + snapshotSignals.length;
   const existingSignals = asNumber(metrics && metrics.signals_generated, 0);
   const generatedSignalCount = Math.max(existingSignals, marketSignalCount + externalObservationCount);
   const checked = required || externalObservationCount > 0 || providerConfigured;
-  const sourceStatus = externalObservationCount > 0
-    ? 'observed'
-    : !required
-      ? 'not_required'
-      : providerConfigured
-        ? 'checked_no_items'
-        : 'unavailable_no_provider';
+  // Snapshot-backed runs report the provider's own status (ok|degraded|
+  // unavailable); the legacy statuses remain for endpoint-only and disabled
+  // configurations so downstream readers keep working unchanged.
+  const sourceStatus = snapshotSignals.length > 0
+    ? snapshotStatus || 'ok'
+    : stateObservationCount > 0
+      ? 'observed'
+      : !required
+        ? 'not_required'
+        : snapshotStatus
+          ? snapshotStatus
+          : providerConfigured
+            ? 'checked_no_items'
+            : 'unavailable_no_provider';
 
   return {
     schema_version: 1,
@@ -206,10 +295,11 @@ function buildExternalSignalEvidence({ config, family, checkedState, metrics }) 
     required,
     provider_configured: providerConfigured,
     source_status: sourceStatus,
-    unavailable: sourceStatus === 'unavailable_no_provider',
+    unavailable: sourceStatus === 'unavailable_no_provider' || sourceStatus === 'unavailable',
     market_signal_count: marketSignalCount,
     external_observation_count: externalObservationCount,
     generated_signal_count: generatedSignalCount,
+    external_signals: compactExternalSignals(snapshot),
   };
 }
 
@@ -569,6 +659,108 @@ async function circuitBreakerTripped(api, maxDrawdownPct) {
   }
 }
 
+// Candle interval used by fetchCandles ('1h'); anchors time-based exit rules.
+const CANDLE_INTERVAL_MS = 60 * 60 * 1000;
+
+// The risk limit the user actually agreed to. Launch tickets carry it as free
+// text ("4% max drawdown") that historically never reached harness.risk — the
+// mandate was cosmetic. Resolution order: harness.risk.max_drawdown_pct →
+// strategy_config.max_drawdown_pct → parsed launch_ticket.risk → fallback.
+function mandateMaxDrawdownPct(config, harness, fallback = 10) {
+  const harnessValue = asNumber(((harness || {}).risk || {}).max_drawdown_pct, null);
+  if (harnessValue !== null && harnessValue > 0) return harnessValue;
+  const strategy = (config && config.strategy_config) || {};
+  const explicit = asNumber(strategy.max_drawdown_pct, null);
+  if (explicit !== null && explicit > 0) return explicit;
+  const ticketRisk = String(((strategy.launch_ticket || {}).risk) || '');
+  const match = ticketRisk.match(/(\d+(?:\.\d+)?)\s*%\s*max\s*drawdown/i);
+  if (match) {
+    const parsed = Number(match[1]);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return fallback;
+}
+
+// Applied when the harness carries no exit_rules. A position with no exit plan
+// is how paper bots rode -20% drawdowns while skipping every tick.
+const DEFAULT_EXIT_RULES = [{ type: 'stop_loss', pct: 5 }];
+
+// Most recent entry fill for `token` from the bot's trade history (newest
+// first): the latest executed swap that BOUGHT the token. Returns
+// { price, timestamp_ms, signal } or null when no anchored entry exists.
+// `signal` is the entry rationale persisted via intent metadata.runner_signal,
+// so exits can be routed by the thesis that opened the position.
+async function latestEntryFill(api, token) {
+  try {
+    const response = body(await api.apiCall('GET', '/trades?limit=100'));
+    const trades = Array.isArray(response.trades) ? response.trades : [];
+    const addr = String(token || '').toLowerCase();
+    for (const trade of trades) {
+      if (String(trade?.token_out || '').toLowerCase() !== addr) continue;
+      const status = String(trade?.execution_status || '').toLowerCase();
+      if (status === 'failed' || status === 'rejected') continue;
+      const price = asNumber(trade.filled_price_usd ?? trade.entry_price_usd, null);
+      if (!Number.isFinite(price) || price <= 0) return null;
+      const ts = Date.parse(trade.timestamp);
+      const signal = trade.runner_signal && typeof trade.runner_signal === 'object'
+        ? String(trade.runner_signal.signal || '')
+        : String(trade.runner_signal || '');
+      return {
+        price,
+        timestamp_ms: Number.isFinite(ts) ? ts : null,
+        signal: signal || null,
+      };
+    }
+  } catch {
+    // Trade history unavailable: callers fall back to unanchored exits.
+  }
+  return null;
+}
+
+// Evaluate harness exit_rules (the backtester's ExitRule schema: stop_loss /
+// take_profit / trailing_stop / time_limit) against a held spot position.
+// The live tick MUST honor the same rules the backtest scores, or promotion
+// evidence is generated by a simulator production cannot reproduce.
+// Returns { exit: boolean, reason? }.
+function evaluateExitRules({ rules, entryPrice, currentPrice, closes, entryTimestampMs }) {
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0) return { exit: false };
+  const anchored = Number.isFinite(entryPrice) && entryPrice > 0;
+  const candlesSinceEntry = Number.isFinite(entryTimestampMs)
+    ? Math.floor((Date.now() - entryTimestampMs) / CANDLE_INTERVAL_MS)
+    : null;
+  for (const rule of Array.isArray(rules) ? rules : []) {
+    const type = String(rule?.type || '').toLowerCase();
+    if (type === 'stop_loss' && anchored) {
+      const pct = asNumber(rule.pct, null);
+      if (pct !== null && pct > 0 && currentPrice <= entryPrice * (1 - pct / 100)) {
+        return { exit: true, reason: `stop-loss-${pct}pct` };
+      }
+    } else if (type === 'take_profit' && anchored) {
+      const pct = asNumber(rule.pct, null);
+      if (pct !== null && pct > 0 && currentPrice >= entryPrice * (1 + pct / 100)) {
+        return { exit: true, reason: `take-profit-${pct}pct` };
+      }
+    } else if (type === 'trailing_stop' && anchored) {
+      const activation = asNumber(rule.activation_pct, null);
+      const trail = asNumber(rule.trail_pct, null);
+      if (activation === null || trail === null || trail <= 0) continue;
+      const window = candlesSinceEntry !== null && Array.isArray(closes)
+        ? closes.slice(Math.max(0, closes.length - candlesSinceEntry))
+        : [];
+      const peak = Math.max(currentPrice, ...window.filter((n) => Number.isFinite(n)));
+      if (peak >= entryPrice * (1 + activation / 100) && currentPrice <= peak * (1 - trail / 100)) {
+        return { exit: true, reason: 'trailing-stop-exit' };
+      }
+    } else if (type === 'time_limit') {
+      const maxCandles = asNumber(rule.max_candles, null);
+      if (maxCandles !== null && candlesSinceEntry !== null && candlesSinceEntry >= maxCandles) {
+        return { exit: true, reason: 'time-limit-exit' };
+      }
+    }
+  }
+  return { exit: false };
+}
+
 // Build a vault-backed swap intent in base units, with `min_amount_out` derived
 // from the supplied USD price map and slippage bps. Returns null when pricing or
 // sizing is infeasible. Matches the proven qa_stochastic_dex.js intent shape.
@@ -606,7 +798,13 @@ function buildSwapIntent({
     amount_format: 'base_units',
     target_protocol: protocol || 'uniswap_v3',
     deadline_secs: 300,
-    metadata: metadata || {},
+    // Mirror the rationale into metadata.runner_signal: the execute route
+    // persists exactly that key onto the TradeRecord, which is what lets the
+    // next tick anchor exits to the thesis that opened the position.
+    metadata: {
+      ...(metadata || {}),
+      runner_signal: (metadata && (metadata.runner_signal ?? metadata.signal)) || null,
+    },
   };
 }
 
@@ -749,6 +947,8 @@ module.exports = {
   countSignalKeys,
   requiresExternalSignals,
   externalSignalProviderConfigured,
+  defaultSignalProviderEnabled,
+  loadExternalSignalSnapshot,
   buildExternalSignalEvidence,
   enrichSignalEvidence,
   isPaperShowcaseMode,
@@ -778,6 +978,11 @@ module.exports = {
   writeMetrics,
   recommendSlippageBps,
   circuitBreakerTripped,
+  mandateMaxDrawdownPct,
+  CANDLE_INTERVAL_MS,
+  DEFAULT_EXIT_RULES,
+  latestEntryFill,
+  evaluateExitRules,
   buildSwapIntent,
   isEnvelopeMode,
   submitIntent,

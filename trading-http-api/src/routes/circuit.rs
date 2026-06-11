@@ -23,7 +23,30 @@ pub fn router() -> Router<Arc<TradingApiState>> {
 }
 
 pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
-    Router::new().route("/circuit-breaker/check", post(check_multi_bot))
+    Router::new()
+        .route("/circuit-breaker/check", post(check_multi_bot))
+        .route("/circuit-breaker/acknowledge", post(acknowledge_multi_bot))
+}
+
+/// Re-arm a tripped drawdown breaker by rebasing the risk baseline to current
+/// NAV. The realized loss remains in snapshot history; only the reference
+/// point for future drawdown moves. Without this, a breached bot is halted
+/// permanently because the high-water mark never decreases.
+async fn acknowledge_multi_bot(
+    Extension(bot): Extension<crate::BotContext>,
+) -> Result<Json<CircuitBreakerResponse>, (axum::http::StatusCode, String)> {
+    let rebased = metrics_store::acknowledge_drawdown(&bot.bot_id)
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    if rebased.is_none() {
+        return Err((
+            axum::http::StatusCode::NOT_FOUND,
+            "no metrics snapshot to rebase".to_string(),
+        ));
+    }
+    Ok(Json(CircuitBreakerResponse {
+        should_break: false,
+        current_drawdown_pct: "0".to_string(),
+    }))
 }
 
 fn parse_max_drawdown_pct(value: &Value) -> Result<Decimal, (axum::http::StatusCode, String)> {

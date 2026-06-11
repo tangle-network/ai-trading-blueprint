@@ -30,7 +30,7 @@ async function decide(ctx) {
   const sizing = harness.position_sizing || {};
   const fraction = t.asNumber(sizing.fraction, 0.1);
   const minOrderUsd = t.asNumber(harness.min_order_usd, 10);
-  const maxDrawdownPct = t.asNumber((harness.risk || {}).max_drawdown_pct, 10);
+  const maxDrawdownPct = t.mandateMaxDrawdownPct(config, harness, 10);
 
   const closes = await t.fetchCandles(api, 'WETH');
   const currentRsi = t.rsi(closes, 14);
@@ -50,26 +50,84 @@ async function decide(ctx) {
   };
   const metrics = { portfolio_value_usd: totalNav, positions_count: t.positionsOf(portfolio).length };
 
-  if (await t.circuitBreakerTripped(api, maxDrawdownPct)) {
-    return { decision: { action: 'skip', reason: 'circuit-breaker-triggered' }, checkedState, metrics };
-  }
   if (!Number.isFinite(wethPrice) || wethPrice <= 0) {
     return { decision: { action: 'skip', reason: 'pricing-unavailable' }, checkedState, metrics };
   }
 
-  // Exit: trim a held WETH position on overbought RSI (take profit / de-risk).
-  if (wethHeld > 0 && currentRsi !== null && currentRsi >= 70) {
-    return submit(ctx, {
-      tokenIn: weth,
-      tokenOut: usdc,
-      amountHuman: wethHeld,
-      prices,
-      protocol,
-      rationale: 'rsi-overbought-exit',
-      signals: { rsi_14: currentRsi, price: wethPrice },
-      checkedState,
-      metrics,
+  const positionUsd = wethHeld * wethPrice;
+  const holding = positionUsd >= minOrderUsd;
+  const exitAll = (rationale, signals) => submit(ctx, {
+    tokenIn: weth,
+    tokenOut: usdc,
+    amountHuman: wethHeld,
+    prices,
+    protocol,
+    rationale,
+    signals,
+    checkedState,
+    metrics,
+  });
+
+  // A tripped drawdown breaker must flatten, not freeze: skipping while fully
+  // exposed leaves the vault riding the same drawdown that tripped the breaker.
+  if (await t.circuitBreakerTripped(api, maxDrawdownPct)) {
+    if (holding) {
+      return exitAll('drawdown-derisk-exit', { max_drawdown_pct: maxDrawdownPct, price: wethPrice });
+    }
+    return { decision: { action: 'skip', reason: 'circuit-breaker-triggered' }, checkedState, metrics };
+  }
+
+  if (holding) {
+    // Take profit on overbought RSI regardless of entry thesis.
+    if (currentRsi !== null && currentRsi >= 70) {
+      return exitAll('rsi-overbought-exit', { rsi_14: currentRsi, price: wethPrice });
+    }
+
+    const entry = await t.latestEntryFill(api, weth);
+    checkedState.entry_price_usd = entry ? entry.price : null;
+    checkedState.entry_signal = entry ? entry.signal : null;
+
+    // Harness exit rules — the same schema the backtester scores. Honoring
+    // them live is what keeps promotion evidence reproducible in production.
+    const exitRules = Array.isArray(harness.exit_rules) && harness.exit_rules.length
+      ? harness.exit_rules
+      : t.DEFAULT_EXIT_RULES;
+    const ruled = t.evaluateExitRules({
+      rules: exitRules,
+      entryPrice: entry ? entry.price : null,
+      currentPrice: wethPrice,
+      closes,
+      entryTimestampMs: entry ? entry.timestamp_ms : null,
     });
+    if (ruled.exit) {
+      return exitAll(ruled.reason, { entry_price: entry ? entry.price : null, price: wethPrice, rsi_14: currentRsi });
+    }
+
+    // Thesis-invalidation exits, routed by the signal that opened the position:
+    // momentum entries die with the trend; mean-reversion entries close on RSI
+    // recovery. Unanchored positions (no entry record) fall back to trend+RSI.
+    // Churn guards: risk rules above fire immediately, but thesis exits wait
+    // out one full candle and require a 0.1% EMA gap — without both, an EMA
+    // pair hovering at the crossover flips the book every tick and the spread
+    // plus impact costs eat the vault.
+    const entryAgeMs = entry && Number.isFinite(entry.timestamp_ms)
+      ? Date.now() - entry.timestamp_ms
+      : null;
+    const pastMinHold = entryAgeMs === null || entryAgeMs >= t.CANDLE_INTERVAL_MS;
+    const entrySignal = entry && entry.signal ? entry.signal : null;
+    const trendDown = shortEma !== null && longEma !== null && shortEma < longEma * 0.999;
+    if (entrySignal === 'ema-trend-entry' && trendDown && pastMinHold) {
+      return exitAll('trend-breakdown-exit', { ema_12: shortEma, ema_26: longEma, price: wethPrice });
+    }
+    if (entrySignal === 'rsi-oversold-entry' && currentRsi !== null && currentRsi >= 55 && pastMinHold) {
+      return exitAll('mean-reversion-target-exit', { rsi_14: currentRsi, price: wethPrice });
+    }
+    if (!entrySignal && trendDown && currentRsi !== null && currentRsi >= 35 && currentRsi < 45) {
+      return exitAll('trend-breakdown-exit', { ema_12: shortEma, ema_26: longEma, rsi_14: currentRsi, price: wethPrice });
+    }
+
+    // Position open, no exit fired: that is the decision, not an entry miss.
+    return { decision: { action: 'hold', reason: 'holding-position-no-exit-signal', checkedState }, checkedState, metrics };
   }
 
   // Entry: deploy idle USDC on oversold RSI or a confirmed up-trend.

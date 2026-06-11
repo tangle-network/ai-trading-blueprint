@@ -20,16 +20,34 @@ export function countUsableValidatorSignatures(
   return responses.filter((response) => hasUsableValidatorSignature(response.signature)).length;
 }
 
+/**
+ * A synthetic response emitted when paper mode skips real validators. Its
+ * score (typically 100) is not a validator signal and must not be rendered
+ * as one.
+ */
+export function isPaperBypassResponse(response: ValidatorResponseDetail): boolean {
+  return (
+    response.validator === PAPER_MODE_VALIDATOR
+    || /bypassed/i.test(response.reasoning ?? '')
+  );
+}
+
 export function isExplicitPaperValidationBypass(
   validation?: TradeValidation,
   paperTrade?: boolean,
 ): boolean {
-  return Boolean(
+  if (!validation || validation.responses.length === 0) return false;
+  // Legacy shape: paper trade with the single synthetic paper-mode response.
+  if (
     paperTrade
-      && validation
-      && validation.responses.length === 1
-      && validation.responses[0]?.validator === PAPER_MODE_VALIDATOR,
-  );
+    && validation.responses.length === 1
+    && validation.responses[0]?.validator === PAPER_MODE_VALIDATOR
+  ) {
+    return true;
+  }
+  // General shape: every response is a synthetic bypass record. A mixed set
+  // with at least one real validator is never treated as bypassed.
+  return validation.responses.every(isPaperBypassResponse);
 }
 
 export function getTradeValidationDisplay(
@@ -54,9 +72,9 @@ export function getTradeValidationDisplay(
   if (isExplicitPaperValidationBypass(validation, trade.paperTrade)) {
     return {
       state: 'paper_bypassed',
-      label: 'BYPASSED',
+      label: 'Paper — validation bypassed',
       badgeVariant: 'secondary',
-      helperText: 'Paper mode bypassed validator signing because no validators were configured.',
+      helperText: 'Paper mode bypassed validator signing; no real validator scored this trade.',
     };
   }
 

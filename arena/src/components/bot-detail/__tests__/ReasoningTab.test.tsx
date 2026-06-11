@@ -184,10 +184,12 @@ describe('ReasoningTab', () => {
     ];
     render(<ReasoningTab botId="bot-1" botName="Test Bot" />);
 
-    expect(screen.getByText('BYPASSED')).toBeInTheDocument();
+    expect(screen.getAllByText('Paper — validation bypassed').length).toBeGreaterThan(0);
     expect(
-      screen.getByText('Paper mode bypassed validator signing because no validators were configured.'),
+      screen.getByText('Paper mode bypassed validator signing; no real validator scored this trade.'),
     ).toBeInTheDocument();
+    // The synthetic 100/100 score must not be rendered as a validator signal.
+    expect(screen.queryByText('100')).not.toBeInTheDocument();
   });
 
   it('renders pending trade from recent validations', () => {

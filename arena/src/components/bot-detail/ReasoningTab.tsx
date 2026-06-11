@@ -54,6 +54,7 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
   const responses = trade.validation?.responses ?? [];
   const signedCount = countUsableValidatorSignatures(responses);
   const validationDisplay = getTradeValidationDisplay(trade);
+  const isBypassed = validationDisplay?.state === 'paper_bypassed';
   const isPending = trade.status === 'pending';
   const elapsed = Math.floor((Date.now() - trade.timestamp) / 1000);
   const timeLabel = elapsed < 5 ? 'just now' : elapsed < 60 ? `${elapsed}s ago` : `${Math.floor(elapsed / 60)}m ago`;
@@ -79,11 +80,13 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
         <CardContent className="pt-4 pb-4">
           {/* Header */}
           <div className="flex items-center gap-3 mb-3">
-            <ScoreRing
-              score={trade.validatorScore ?? 0}
-              size={40}
-              indeterminate={isPending && responses.length === 0}
-            />
+            {!isBypassed && (
+              <ScoreRing
+                score={trade.validatorScore ?? 0}
+                size={40}
+                indeterminate={isPending && responses.length === 0}
+              />
+            )}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <Badge variant={trade.action === 'buy' ? 'success' : 'destructive'} className="text-xs">
@@ -112,7 +115,7 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
           </div>
 
           {/* Validator slots grid */}
-          {responses.length > 0 && (
+          {!isBypassed && responses.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
               {responses.map((r, vi) => {
                 const hasSig = hasUsableValidatorSignature(r.signature);
@@ -160,12 +163,12 @@ function PendingValidationCard({ trade, index }: { trade: Trade; index: number }
 
           {/* Summary row */}
           <div className="flex items-center gap-3 text-xs">
-            {responses.length > 0 && (
+            {!isBypassed && responses.length > 0 && (
               <span className="font-data text-arena-elements-textTertiary">
                 {signedCount}/{responses.length} produced signatures
               </span>
             )}
-            {trade.validatorScore != null && (
+            {!isBypassed && trade.validatorScore != null && (
               <span className="font-data text-arena-elements-textTertiary">
                 Aggregate: <span className="font-bold text-arena-elements-textPrimary">{trade.validatorScore}</span>
               </span>
@@ -183,6 +186,7 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
   const responses = trade.validation?.responses ?? [];
   const signedCount = countUsableValidatorSignatures(responses);
   const validationDisplay = getTradeValidationDisplay(trade);
+  const isBypassed = validationDisplay?.state === 'paper_bypassed';
 
   return (
     <m.div
@@ -195,7 +199,7 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
         <CardContent className="pt-5 pb-5">
           {/* Trade header */}
           <div className="flex items-start gap-4 mb-4">
-            <ScoreRing score={trade.validatorScore ?? 0} />
+            {!isBypassed && <ScoreRing score={trade.validatorScore ?? 0} />}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <Badge variant={trade.action === 'buy' ? 'success' : 'destructive'}>
@@ -214,14 +218,16 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
 
               {/* Validation summary */}
               <div className="flex items-center gap-3 mt-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
-                    Validators
-                  </span>
-                  <Badge variant={signedCount === responses.length && signedCount > 0 ? 'success' : 'amber'}>
-                    {signedCount}/{responses.length} produced signatures
-                  </Badge>
-                </div>
+                {!isBypassed && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+                      Validators
+                    </span>
+                    <Badge variant={signedCount === responses.length && signedCount > 0 ? 'success' : 'amber'}>
+                      {signedCount}/{responses.length} produced signatures
+                    </Badge>
+                  </div>
+                )}
                 {trade.validation?.intentHash && (
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">

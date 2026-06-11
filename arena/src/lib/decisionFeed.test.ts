@@ -61,6 +61,10 @@ describe('decisionFeed', () => {
         },
       }),
       error: null,
+      model: null,
+      provider: null,
+      costUsd: null,
+      loopMode: null,
     };
 
     const item = buildDecisionItemFromRun(run);
@@ -168,6 +172,10 @@ describe('decisionFeed', () => {
       outputTokens: 6,
       result: 'Placed a bounded ETH breakout probe after fast replay and liquidity check.',
       error: null,
+      model: null,
+      provider: null,
+      costUsd: null,
+      loopMode: null,
     };
 
     expect(buildDecisionItemFromRun(run).reason).toBe(
@@ -240,6 +248,10 @@ describe('decisionFeed', () => {
         },
       }),
       error: null,
+      model: null,
+      provider: null,
+      costUsd: null,
+      loopMode: null,
     };
 
     const item = buildDecisionItemFromRun(run);

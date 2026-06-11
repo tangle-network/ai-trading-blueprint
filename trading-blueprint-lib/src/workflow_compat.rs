@@ -50,6 +50,17 @@ pub struct WorkflowRunRecord {
     pub output_tokens: u32,
     pub result: Option<String>,
     pub error: Option<String>,
+    /// "deterministic" (cron tick, no LLM) or "agentic" (model-driven run).
+    /// First-class so UIs can stop rendering 5-minute cron ticks as agent
+    /// activity. None on legacy rows.
+    #[serde(default)]
+    pub loop_mode: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
 }
 
 /// Per-run transcript record. Same shape the bin's tests already construct.
@@ -123,6 +134,18 @@ pub fn workflow_run_record_from_latest_execution(
         output_tokens: latest.output_tokens,
         result: (!latest.result.is_empty()).then_some(latest.result),
         error: (!latest.error.is_empty()).then_some(latest.error),
+        // The sibling execution summary carries no model identity; token
+        // presence is the reliable discriminator for these records.
+        loop_mode: Some(
+            if latest.input_tokens > 0 || latest.output_tokens > 0 {
+                "agentic".to_string()
+            } else {
+                "deterministic".to_string()
+            },
+        ),
+        model: None,
+        provider: None,
+        cost_usd: None,
     }
 }
 

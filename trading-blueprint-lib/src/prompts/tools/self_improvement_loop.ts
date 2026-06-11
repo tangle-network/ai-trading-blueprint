@@ -654,6 +654,41 @@ async function selectCandidate(runId, intent, current) {
   };
 }
 
+async function loadTraceAnalysts() {
+  // Sidecar deploys use the hyphenated path; the repo checkout uses the
+  // underscored module name (same fallback contract as requireTool above).
+  let lastError = null;
+  for (const specifier of ['./trading-trace-analysts.ts', './trading_trace_analysts.ts']) {
+    try {
+      return await import(specifier);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+// One analyst profile per generation run (rotating), so genuine trajectory
+// critique — not regex tick-skip noise — becomes the user_intent evidence for
+// candidate generation. Budget-aware: the module skips without a model call
+// when OPENCODE_MODEL_* env is absent, and never blocks candidate search.
+async function runTraceAnalystRotation(runId, intent, config) {
+  try {
+    const analysts = await loadTraceAnalysts();
+    return await analysts.runTradingTraceAnalyst({ runId, intent, config });
+  } catch (error) {
+    return { skipped: true, reason: 'analyst-module-error', error: String(error.message || error) };
+  }
+}
+
+function analystGroundedIntent(intent, traceAnalysis) {
+  const finding = traceAnalysis?.finding;
+  if (!finding?.claim) return intent;
+  const action = finding.proposed_action || finding.recommended_action || '';
+  const evidence = `${finding.claim} ${action}`.trim().slice(0, 420);
+  return `${intent} Trace-analyst (${traceAnalysis.profile_id}, ${finding.severity}): ${evidence}`;
+}
+
 async function loadTanglePackages() {
   const result = { available: false, missing: [], modules: {} };
   for (const [key, specifier] of [
@@ -903,6 +938,9 @@ async function recordSelfImprove(intent, snapshot, analyst, candidateSearch) {
   validatePatchForExport(patch, files);
   const response = await apiCall('POST', '/evolution/self-improve', {
     user_intent: intent,
+    // Opts into server-side candidate dedupe: unattended generation must not
+    // re-spend backtests re-blocking an identical candidate.
+    source: 'auto-generation',
     current: candidateSearch.current,
     candidate: candidateSearch.candidate,
     token: candidateSearch.token,
@@ -951,14 +989,18 @@ async function run(intent) {
   }
   const config = loadConfig();
   const packageStatus = await loadTanglePackages();
-  const analyst = await runPackageAnalystLoop(runId, intent, config, packageStatus);
-  const candidateSearch = await selectCandidate(runId, intent, defaultBacktestConfig());
-  const snapshot = await createSnapshot(intent);
-  const selfImprove = await recordSelfImprove(intent, snapshot, analyst, candidateSearch);
+  const traceAnalysis = await runTraceAnalystRotation(runId, intent, config);
+  const generationIntent = analystGroundedIntent(intent, traceAnalysis);
+  const analyst = await runPackageAnalystLoop(runId, generationIntent, config, packageStatus);
+  const candidateSearch = await selectCandidate(runId, generationIntent, defaultBacktestConfig());
+  const snapshot = await createSnapshot(generationIntent);
+  const selfImprove = await recordSelfImprove(generationIntent, snapshot, analyst, candidateSearch);
   const report = {
     run_id: runId,
     created_at: nowIso(),
     intent,
+    generation_intent: generationIntent,
+    trace_analysis: traceAnalysis,
     delegation_pressure: delegationPressure,
     package_status: { available: packageStatus.available, missing: packageStatus.missing },
     analyst,

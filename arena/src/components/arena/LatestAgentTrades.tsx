@@ -17,6 +17,7 @@ import {
   getTradeMarketLabel,
 } from '~/lib/tradeDisplay';
 import { formatNumber } from '~/lib/format';
+import { isExplicitPaperValidationBypass } from '~/lib/tradeValidation';
 import {
   WorkspaceCollapsedPane,
   WorkspaceControlButton,
@@ -682,9 +683,11 @@ function FillInspector({
           {trade.decisionSource && (
             <InspectorRow label="Source" value={trade.decisionSource} />
           )}
-          {trade.validatorScore != null && (
+          {isExplicitPaperValidationBypass(trade.validation, trade.paperTrade) ? (
+            <InspectorRow label="Validation" value="Paper — bypassed" />
+          ) : trade.validatorScore != null ? (
             <InspectorRow label="Score" value={`${trade.validatorScore}`} />
-          )}
+          ) : null}
         </section>
 
         {(reasoning || identifiers.length > 0) && (

@@ -4802,6 +4802,72 @@ async fn test_multi_bot_metrics_snapshot_and_history() {
 }
 
 #[tokio::test]
+async fn test_metrics_snapshot_drawdown_is_server_authoritative() {
+    let state = multi_bot_state_with_strategy_config(
+        "http://localhost:1234",
+        serde_json::json!({ "initial_capital_usd": "10000" }),
+    );
+    let app = build_multi_bot_router(state);
+
+    // Tick tools historically stamped high_water_mark = current NAV and
+    // drawdown_pct = 0 on every snapshot, which made the drawdown circuit
+    // breaker unreachable. The server must ignore those client fields.
+    let snap_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/metrics/snapshot")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "account_value_usd": "9000",
+                        "unrealized_pnl": "-1000",
+                        "realized_pnl": "0",
+                        "high_water_mark": "9000",
+                        "drawdown_pct": "0",
+                        "positions_count": 1,
+                        "trade_count": 4
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snap_response.status(), 200);
+
+    let hist_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics/history?limit=10")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hist_response.status(), 200);
+    let hist_body = hist_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let hist_json: serde_json::Value = serde_json::from_slice(&hist_body).unwrap();
+    let snapshots = hist_json["snapshots"].as_array().unwrap();
+    let snap = snapshots.last().unwrap();
+
+    assert_eq!(snap["high_water_mark"], "10000");
+    let drawdown: f64 = snap["drawdown_pct"].as_str().unwrap().parse().unwrap();
+    assert!(
+        (drawdown - 10.0).abs() < 0.01,
+        "expected ~10% drawdown from the 10000 baseline, got {drawdown}"
+    );
+}
+
+#[tokio::test]
 async fn test_multi_bot_execute_paper_trade() {
     let state = multi_bot_state();
     let app = build_multi_bot_router(state);
@@ -5311,6 +5377,7 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
             drawdown_pct: "0".to_string(),
             positions_count: 1,
             trade_count: 1,
+            risk_baseline_usd: None,
         },
     )
     .expect("record snapshot");
@@ -10805,4 +10872,96 @@ async fn test_concurrent_put_envelope_is_atomic_and_monotonic() {
         stored_nonce, max_accepted,
         "stored nonce must equal max accepted nonce; accepted={accepted_nonces:?}"
     );
+}
+
+#[tokio::test]
+async fn test_self_improve_auto_generation_dedupes_identical_blocked_candidate() {
+    let mock = MockServer::start().await;
+    let bot_id = format!("evo-dedupe-{}", uuid::Uuid::new_v4());
+    let state = test_state_with_bot_id(&mock.uri(), &bot_id).await;
+    let app = build_router(state);
+
+    let mut candles = Vec::new();
+    for i in 0..60 {
+        let base = 100.0 + (i as f64) * 0.1;
+        candles.push(serde_json::json!({
+            "timestamp": i * 3600,
+            "token": "ETH",
+            "open": format!("{base:.2}"),
+            "high": format!("{:.2}", base + 1.0),
+            "low": format!("{:.2}", base - 0.5),
+            "close": format!("{:.2}", base + 0.4),
+            "volume": "100000"
+        }));
+    }
+    let record_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/market-data/candles")
+                .header("authorization", &format!("Bearer {bot_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"candles": candles}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_resp.status(), 200);
+
+    let submit = |source: Option<&str>| {
+        let mut body = serde_json::json!({
+            "user_intent": "Auto-generation dedupe probe: identical candidate twice.",
+            "current": backtest_config(),
+            "candidate": backtest_config(),
+            "token": "ETH",
+            "train_pct": 0.7
+        });
+        if let Some(source) = source {
+            body["source"] = serde_json::json!(source);
+        }
+        body
+    };
+
+    let post = |body: serde_json::Value| {
+        let app = app.clone();
+        let bot_id = bot_id.clone();
+        async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/evolution/self-improve")
+                        .header("authorization", &format!("Bearer {bot_id}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_string(&body).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = resp.status();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(status, 200, "{}", String::from_utf8_lossy(&bytes));
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+        }
+    };
+
+    let first = post(submit(Some("auto-generation"))).await;
+    assert_eq!(first["run"]["status"], "blocked");
+    assert_eq!(first["deduplicated"], serde_json::Value::Null);
+    let first_run_id = first["run"]["run_id"].as_str().unwrap().to_string();
+
+    // Identical auto-generation candidate with no new paper evidence: no
+    // fresh backtest, the existing blocked run is returned.
+    let second = post(submit(Some("auto-generation"))).await;
+    assert_eq!(second["deduplicated"], true);
+    assert_eq!(second["run"]["run_id"].as_str().unwrap(), first_run_id);
+    assert!(second.get("promotion").is_none() || second["promotion"].is_null());
+
+    // Explicit (no source) submission of the same candidate still re-judges.
+    let third = post(submit(None)).await;
+    assert_eq!(third["deduplicated"], serde_json::Value::Null);
+    assert!(third["run"]["run_id"].as_str().unwrap() != first_run_id);
 }

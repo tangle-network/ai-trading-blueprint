@@ -1,5 +1,7 @@
 export type RunStatus = "running" | "completed" | "failed" | "interrupted";
 export type WorkflowKind = "trading" | "research" | "conversation" | "unknown";
+export type RunLoopMode = "deterministic" | "agentic";
+export type RunLoopFilter = "agentic" | "deterministic" | "all";
 
 export interface BotRun {
   runId: string;
@@ -16,6 +18,11 @@ export interface BotRun {
   outputTokens: number;
   result: string | null;
   error: string | null;
+  /** Optional fields newer operators report; null on older operators. */
+  model: string | null;
+  provider: string | null;
+  costUsd: number | null;
+  loopMode: RunLoopMode | null;
 }
 
 export interface BotRunsResponse {
@@ -63,6 +70,10 @@ function parseWorkflowKind(value: unknown): WorkflowKind {
   }
 }
 
+function parseLoopMode(value: unknown): RunLoopMode | null {
+  return value === "deterministic" || value === "agentic" ? value : null;
+}
+
 export function parseRunsResponse(payload: unknown): BotRunsResponse {
   const root = asRecord(payload);
   const rawRuns = Array.isArray(root?.runs) ? root.runs : [];
@@ -93,6 +104,10 @@ export function parseRunsResponse(payload: unknown): BotRunsResponse {
           outputTokens: asNumber(run?.output_tokens) ?? 0,
           result: asString(run?.result),
           error: asString(run?.error),
+          model: asString(run?.model),
+          provider: asString(run?.provider),
+          costUsd: asNumber(run?.cost_usd),
+          loopMode: parseLoopMode(run?.loop_mode),
         } satisfies BotRun;
       })
       .filter((run): run is BotRun => run !== null),
@@ -231,4 +246,55 @@ export function buildRunReplaySessionId(run: BotRun | null): string {
 
 export function buildRunReplayHistoryPath(run: BotRun | null): string | undefined {
   return run ? `/runs/${encodeURIComponent(run.runId)}/messages?limit=200` : undefined;
+}
+
+export function runMatchesLoopFilter(run: BotRun, filter: RunLoopFilter): boolean {
+  // Strict on named filters: runs without loop_mode only appear under "all".
+  // Callers hide the filter UI entirely when no loaded run carries loop_mode,
+  // so old-operator histories are never filtered away.
+  return filter === "all" || run.loopMode === filter;
+}
+
+export function formatRunCostUsd(costUsd: number | null): string | null {
+  if (costUsd == null || !Number.isFinite(costUsd) || costUsd < 0) {
+    return null;
+  }
+  if (costUsd === 0) return "$0";
+  if (costUsd < 0.01) return `$${costUsd.toFixed(4)}`;
+  if (costUsd < 1) return `$${costUsd.toFixed(3)}`;
+  return `$${costUsd.toFixed(2)}`;
+}
+
+export interface AgenticSpendSummary {
+  /** Count of loaded runs explicitly marked agentic. */
+  agenticRunCount: number;
+  /** Sum of cost_usd over agentic runs that reported it; null if none did. */
+  costUsd: number | null;
+  /** Count of agentic runs that reported cost_usd. */
+  costKnownRunCount: number;
+  totalTokens: number;
+}
+
+export function summarizeAgenticSpend(runs: BotRun[]): AgenticSpendSummary {
+  let agenticRunCount = 0;
+  let costKnownRunCount = 0;
+  let costUsd = 0;
+  let totalTokens = 0;
+
+  for (const run of runs) {
+    if (run.loopMode !== "agentic") continue;
+    agenticRunCount += 1;
+    totalTokens += run.inputTokens + run.outputTokens;
+    if (run.costUsd != null && Number.isFinite(run.costUsd)) {
+      costKnownRunCount += 1;
+      costUsd += run.costUsd;
+    }
+  }
+
+  return {
+    agenticRunCount,
+    costUsd: costKnownRunCount > 0 ? costUsd : null,
+    costKnownRunCount,
+    totalTokens,
+  };
 }

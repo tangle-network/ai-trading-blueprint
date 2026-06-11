@@ -3,7 +3,7 @@ import { m, AnimatePresence } from 'framer-motion';
 import { Badge } from '@tangle-network/blueprint-ui/components';
 import { useThemeValue } from '@tangle-network/blueprint-ui';
 import type { TradeSimulation, ValidatorResponseDetail } from '~/lib/types/trade';
-import { hasUsableValidatorSignature } from '~/lib/tradeValidation';
+import { hasUsableValidatorSignature, isPaperBypassResponse } from '~/lib/tradeValidation';
 
 // ── Utilities ───────────────────────────────────────────────────────────
 
@@ -96,6 +96,7 @@ export function ValidatorCard({ response, index }: { response: ValidatorResponse
   const [expanded, setExpanded] = useState(false);
   const hasSignature = hasUsableValidatorSignature(response.signature);
   const hasEip712Domain = response.chainId != null && response.verifyingContract;
+  const isBypass = isPaperBypassResponse(response);
 
   return (
     <m.div
@@ -109,13 +110,15 @@ export function ValidatorCard({ response, index }: { response: ValidatorResponse
           onClick={() => setExpanded(!expanded)}
           className="w-full flex items-center gap-3 px-4 py-3 hover:bg-arena-elements-background-depth-3 transition-colors cursor-pointer"
         >
-          <ScoreRing score={response.score} size={36} />
+          {!isBypass && <ScoreRing score={response.score} size={36} />}
           <div className="flex-1 min-w-0 text-left">
             <div className="flex items-center gap-2">
               <span className="text-xs font-data font-medium text-arena-elements-textPrimary">
                 {truncateAddress(response.validator)}
               </span>
-              {hasSignature ? (
+              {isBypass ? (
+                <Badge variant="secondary" className="text-xs py-0">Paper — validation bypassed</Badge>
+              ) : hasSignature ? (
                 <Badge variant="success" className="text-xs py-0">SIGNED</Badge>
               ) : (
                 <Badge variant="secondary" className="text-xs py-0">NO SIG</Badge>
