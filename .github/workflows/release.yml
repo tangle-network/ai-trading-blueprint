@@ -237,7 +237,7 @@ jobs:
             done
             test -n "$RUN_ID" || { echo "::error::dispatched run for $BIN not found"; exit 1; }
 
-            if gh run watch "$RUN_ID" --repo "$REPO" --exit-status; then
+            if timeout 1800 gh run watch "$RUN_ID" --repo "$REPO" --exit-status; then
               echo "published $BIN@$TAG -> blueprint $ID (run $RUN_ID)"
             else
               echo "::error::on-chain publish failed for $BIN (run $RUN_ID)"

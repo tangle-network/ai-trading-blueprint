@@ -6954,6 +6954,9 @@ static CREATE_PREVIEW_CACHE: std::sync::LazyLock<
     >,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 const CREATE_PREVIEW_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+// Hard bound for the public-endpoint cache. With quantized keys the legit
+// key space is small; this cap is the backstop against adversarial growth.
+const CREATE_PREVIEW_CACHE_MAX: usize = 512;
 
 /// Pre-creation evidence: replay the mandate's strategy class over recent
 /// market history so launching is a decision made on evidence, not hope.
@@ -6967,14 +6970,19 @@ async fn create_preview(
         return Err((StatusCode::BAD_REQUEST, "strategy_type required".into()));
     }
     let lookback = req.lookback_days.unwrap_or(30).clamp(7, 90);
+    // Quantize to 0.5% steps: this is a public endpoint, and continuous f64
+    // params would otherwise give attackers unbounded cache-key cardinality
+    // (1.001, 1.002, …) — and the backtest doesn't meaningfully change at
+    // sub-half-percent sizing granularity anyway.
+    let quantize = |p: f64| (p * 2.0).round() / 2.0;
     let sizing_pct = req
         .position_size_pct
         .filter(|p| p.is_finite())
-        .map(|p| p.clamp(1.0, 100.0));
+        .map(|p| quantize(p.clamp(1.0, 100.0)));
     let stop_pct = req
         .max_drawdown_pct
         .filter(|p| p.is_finite())
-        .map(|p| p.clamp(1.0, 20.0));
+        .map(|p| quantize(p.clamp(1.0, 20.0)));
 
     if !trading_runtime::backtest::strategy_supports_baseline(&strategy_type) {
         return Ok(Json(CreatePreviewResponse {
@@ -7033,10 +7041,18 @@ async fn create_preview(
             },
         };
 
-    CREATE_PREVIEW_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(cache_key, (std::time::Instant::now(), response.clone()));
+    {
+        let mut cache = CREATE_PREVIEW_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Evict on insert: expired entries first, then (if an adversary
+        // somehow still filled it) the whole map rather than unbounded growth.
+        cache.retain(|_, (at, _)| at.elapsed() < CREATE_PREVIEW_TTL);
+        if cache.len() >= CREATE_PREVIEW_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(cache_key, (std::time::Instant::now(), response.clone()));
+    }
     Ok(Json(response))
 }
 

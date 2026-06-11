@@ -106,7 +106,9 @@ curl -fsSL --retry 3 -o "$DIST_MANIFEST" "$BASE_URL/dist-manifest.json" \
 
 if [[ "$BROADCAST" == "true" ]]; then
   : "${BLUEPRINT_OWNER_PRIVATE_KEY:?ERROR: BLUEPRINT_OWNER_PRIVATE_KEY required with BROADCAST=true}"
-  SENDER="$(cast wallet address --private-key "$BLUEPRINT_OWNER_PRIVATE_KEY")"
+  # Keep the key out of argv (/proc-visible): cast honors ETH_PRIVATE_KEY.
+  export ETH_PRIVATE_KEY="$BLUEPRINT_OWNER_PRIVATE_KEY"
+  SENDER="$(cast wallet address)"
   echo "  Sender:      $SENDER"
   echo
 fi
@@ -175,7 +177,7 @@ publish_one() {
 
   if [[ "$BROADCAST" != "true" ]]; then
     echo "  DRY-RUN would send:"
-    echo "    cast send $TANGLE_CORE '$SET_SIG' $id '$sources' --rpc-url $RPC_URL --private-key <owner>"
+    echo "    ETH_PRIVATE_KEY=<owner> cast send $TANGLE_CORE '$SET_SIG' $id '$sources' --rpc-url $RPC_URL"
     return 0
   fi
 
@@ -187,17 +189,31 @@ publish_one() {
     return 1
   fi
 
-  cast send "$TANGLE_CORE" "$SET_SIG" "$id" "$sources" \
-    --rpc-url "$RPC_URL" --private-key "$BLUEPRINT_OWNER_PRIVATE_KEY" \
-    | grep -E 'transactionHash|status|gasUsed' || true
+  # Capture output first so a cast failure (revert, RPC error, nonce race)
+  # cannot be masked by the cosmetic grep; then require an explicit success
+  # status in the receipt. A failed publish must fail the release.
+  local send_out
+  if ! send_out="$(cast send "$TANGLE_CORE" "$SET_SIG" "$id" "$sources" \
+    --rpc-url "$RPC_URL")"; then
+    echo "ERROR: setBlueprintSources tx failed for blueprint $id" >&2
+    return 1
+  fi
+  grep -E 'transactionHash|status|gasUsed' <<<"$send_out" || true
+  if ! grep -qE 'status[[:space:]]+1' <<<"$send_out"; then
+    echo "ERROR: setBlueprintSources reverted on-chain for blueprint $id" >&2
+    return 1
+  fi
   echo "  published $bin@$TAG -> blueprint $id"
 }
 
-FAILED=0
+# Fail fast: a failed publish means the chain/nonce state is unknown —
+# continuing could land later blueprints against a stale nonce.
 for bin in trading-blueprint trading-instance-blueprint trading-tee-instance-blueprint trading-validator; do
   [[ -n "$ONLY" && "$ONLY" != "$bin" ]] && continue
-  publish_one "$bin" "${BLUEPRINT_IDS[$bin]}" || FAILED=1
+  publish_one "$bin" "${BLUEPRINT_IDS[$bin]}" \
+    || { echo "ERROR: aborting after blueprint $bin failure (remaining blueprints not attempted)" >&2; exit 1; }
   echo
 done
+FAILED=0
 
 exit "$FAILED"

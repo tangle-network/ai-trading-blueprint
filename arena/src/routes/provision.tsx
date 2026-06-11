@@ -3840,6 +3840,14 @@ export default function ProvisionPage() {
       setServiceDiscoverySettled(true);
     }
     prevDiscoveryLoadingRef.current = discoveryLoading;
+    // Discovery that never starts (e.g. wallet not connected on mount) would
+    // otherwise leave quick launch stuck on "Resolving the runtime service…"
+    // forever — treat a quiet 8s as settled so the no-service fallback runs.
+    if (!discoveryLoading) {
+      const settle = window.setTimeout(() => setServiceDiscoverySettled(true), 8_000);
+      return () => window.clearTimeout(settle);
+    }
+    return undefined;
   }, [discoveryLoading]);
 
   const fallbackToWizard = useCallback(

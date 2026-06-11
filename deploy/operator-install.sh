@@ -140,7 +140,7 @@ STAKING_CONTRACT="${STAKING_CONTRACT:-$(jq -r '.staking' "$MANIFEST_PATH")}"
 STATUS_REGISTRY_CONTRACT="${STATUS_REGISTRY_CONTRACT:-$(jq -r '.statusRegistry' "$MANIFEST_PATH")}"
 TNT_TOKEN="${TNT_TOKEN:-$(jq -r '.tntToken' "$MANIFEST_PATH")}"
 CHAIN_ID="${CHAIN_ID:-$(jq -r '.chainId' "$MANIFEST_PATH")}"
-for v in TANGLE_CONTRACT STAKING_CONTRACT STATUS_REGISTRY_CONTRACT CHAIN_ID; do
+for v in TANGLE_CONTRACT STAKING_CONTRACT STATUS_REGISTRY_CONTRACT TNT_TOKEN CHAIN_ID; do
   [[ -n "${!v}" && "${!v}" != "null" ]] || die "$v missing from manifest $MANIFEST_PATH"
 done
 log "Tangle=$TANGLE_CONTRACT staking=$STAKING_CONTRACT chain=$CHAIN_ID blueprint=$BLUEPRINT_ID binary=$BINARY"
@@ -244,7 +244,10 @@ fi
 
 if (( ! DRY_RUN )); then
   ensure_cast
-  derived="$(cast wallet address --private-key "$PRIVATE_KEY" 2>/dev/null)" || die "operator private key is invalid (source: ${OPERATOR_PRIVATE_KEY:+OPERATOR_PRIVATE_KEY env}${OPERATOR_PRIVATE_KEY:-settings.env/generated})"
+  # The key reaches cast via ETH_PRIVATE_KEY (env), never argv — a raw
+  # --private-key flag is readable by any local user via /proc/*/cmdline.
+  export ETH_PRIVATE_KEY="$PRIVATE_KEY"
+  derived="$(cast wallet address 2>/dev/null)" || die "operator private key is invalid (source: ${OPERATOR_PRIVATE_KEY:+OPERATOR_PRIVATE_KEY env}${OPERATOR_PRIVATE_KEY:-settings.env/generated})"
   if [[ -n "$OPERATOR_ADDRESS" && "${OPERATOR_ADDRESS,,}" != "${derived,,}" ]]; then
     die "settings.env OPERATOR_ADDRESS ($OPERATOR_ADDRESS) does not match PRIVATE_KEY-derived address ($derived) — fix settings.env before continuing"
   fi
@@ -386,21 +389,31 @@ if [[ "$TLS" == "1" ]]; then
       apt-get update -qq
       apt-get install -y -qq caddy >/dev/null || die "caddy install failed — rerun with --no-tls and front the API yourself"
     fi
-    if [[ -f /etc/caddy/Caddyfile ]] && ! grep -q "$CADDY_MARKER" /etc/caddy/Caddyfile; then
-      cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.pre-trading-operator.bak"
-      warn "existing /etc/caddy/Caddyfile backed up to Caddyfile.pre-trading-operator.bak"
-    fi
-    cat > /etc/caddy/Caddyfile <<EOF
-$CADDY_MARKER
+    DESIRED_CADDYFILE="$CADDY_MARKER
 $DOMAIN {
 	encode gzip
 	request_body {
 		max_size 5MB
 	}
-	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	header Strict-Transport-Security \"max-age=31536000; includeSubDomains\"
 	reverse_proxy 127.0.0.1:$PORT_API
-}
-EOF
+}"
+    if [[ -f /etc/caddy/Caddyfile ]]; then
+      if [[ "$(cat /etc/caddy/Caddyfile)" == "$DESIRED_CADDYFILE" ]]; then
+        log "Caddyfile already current — leaving it untouched"
+      elif grep -q "$CADDY_MARKER" /etc/caddy/Caddyfile; then
+        # Marker present but content drifted: the operator may have added
+        # their own site blocks. Never clobber those silently.
+        cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak.$(date +%s)"
+        warn "Caddyfile differs from the managed config (operator edits?) — backed up; NOT overwriting. Merge manually if the proxy block needs updating."
+      else
+        cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.pre-trading-operator.bak"
+        warn "existing /etc/caddy/Caddyfile backed up to Caddyfile.pre-trading-operator.bak"
+        printf '%s\n' "$DESIRED_CADDYFILE" > /etc/caddy/Caddyfile
+      fi
+    else
+      printf '%s\n' "$DESIRED_CADDYFILE" > /etc/caddy/Caddyfile
+    fi
     systemctl enable caddy >/dev/null 2>&1 || true
     systemctl restart caddy || die "caddy failed to start — journalctl -u caddy"
   fi
@@ -502,7 +515,7 @@ if (( DO_REGISTER )); then
       if decimal_lt "${allowance:-0}" "$STAKE_AMOUNT"; then
         log "approving $STAKE_AMOUNT TNT to staking contract"
         retry_gas_race cast send "$TNT_TOKEN" "approve(address,uint256)" "$STAKING_CONTRACT" "$STAKE_AMOUNT" \
-          --private-key "$PRIVATE_KEY" --rpc-url "$RPC_URL" >/dev/null
+          --rpc-url "$RPC_URL" >/dev/null
         wait_mempool_idle
       fi
       log "staking $STAKE_AMOUNT wei TNT"
@@ -551,13 +564,13 @@ if (( DO_REQUEST_SERVICE )); then
       "requestService(uint64,address[],bytes,address[],uint64,address,uint256,uint8)" \
       "$BLUEPRINT_ID" "[$OPERATOR_ADDRESS]" "0x" "[$OPERATOR_ADDRESS]" 0 \
       "0x0000000000000000000000000000000000000000" 0 0 \
-      --gas-limit 3000000 --private-key "$PRIVATE_KEY" --rpc-url "$RPC_URL" >/dev/null \
+      --gas-limit 3000000 --rpc-url "$RPC_URL" >/dev/null \
       || die "requestService failed for blueprint $BLUEPRINT_ID"
     wait_mempool_idle
     retry_gas_race cast send "$TANGLE_CONTRACT" \
       "approveService((uint64,((uint8,address),uint16)[],uint256[4],uint256[2],(uint8,bytes32,bytes32,uint64)[]))" \
       "($request_id,[],[0,0,0,0],[0,0],[])" \
-      --gas-limit 3000000 --private-key "$PRIVATE_KEY" --rpc-url "$RPC_URL" >/dev/null \
+      --gas-limit 3000000 --rpc-url "$RPC_URL" >/dev/null \
       || die "approveService failed for request $request_id"
     deadline=$(( $(date +%s) + 60 ))
     SERVICE_ID=""
