@@ -427,6 +427,7 @@ mod tests {
             drawdown_pct: "0".to_string(),
             positions_count: 1,
             trade_count: 1,
+            risk_baseline_usd: None,
         };
 
         let snapshot = build_snapshot_from_portfolio(
