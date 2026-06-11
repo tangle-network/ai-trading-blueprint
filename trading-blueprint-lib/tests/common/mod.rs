@@ -29,6 +29,11 @@ static SHARED_STATE_DIR: Lazy<tempfile::TempDir> = Lazy::new(|| {
     // SAFETY: called once before any test accesses the stores.
     unsafe {
         std::env::set_var("BLUEPRINT_STATE_DIR", dir.path());
+        // Integration fixtures exercise provisioning/activation mechanics,
+        // not requester admission (covered by its own suite) — opt into
+        // public mode so the admission policy added on the provision path
+        // does not reject the synthetic test callers.
+        std::env::set_var("TRADING_REQUESTER_ACCESS_MODE", "public");
     }
     dir
 });
