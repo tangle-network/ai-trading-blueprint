@@ -10,6 +10,12 @@ import {
 } from '~/lib/agentProfile'
 import { ALL_TRADING_OPERATOR_API_URLS } from '~/lib/operator/meta'
 import {
+  parseMandatePercent,
+  toCreateStrategyEvidence,
+  useCreatePreview,
+} from '~/lib/createPreview'
+import { EvidenceCard } from '~/components/create/EvidenceCard'
+import {
   WorkspaceCollapsedPane,
   WorkspaceControlButton,
   WorkspaceResizeHandle,
@@ -555,12 +561,13 @@ export default function CreateAgent() {
     ].map((item) => item.trim()).filter(Boolean),
     [detectedProfile.envelope, draft.drawdown, draft.sizing],
   )
-  const runtimePlanRows = useMemo(() => [
-    ['Focus', selectedCapabilityLabels.join(', ')],
-    ['Venues', `${ALL_WIRED_PROTOCOLS.length} wired / ${primaryRuntimeLabel}`],
-    ['Paper', `$${Number(DEFAULT_PAPER_INITIAL_CAPITAL_USD).toLocaleString()} paper / evidence first`],
-    ['Next', 'Wallet -> operator quote'],
-  ], [primaryRuntimeLabel, selectedCapabilityLabels])
+  const sizingPct = useMemo(() => parseMandatePercent(draft.sizing), [draft.sizing])
+  const drawdownPct = useMemo(() => parseMandatePercent(draft.drawdown), [draft.drawdown])
+  const preview = useCreatePreview({
+    strategyType: draftStrategyType,
+    positionSizePct: sizingPct,
+    maxDrawdownPct: drawdownPct,
+  })
   const readinessRows = useMemo(() => [
     ['Operator', operatorLabel],
     ['Focus', selectedCapabilityLabels.join(', ')],
@@ -637,9 +644,10 @@ export default function CreateAgent() {
     saveCreateStrategyDraft({
       ...attachCapabilityFields(cleanDraft, selectedCapabilityIds, agentProfile),
       prompt: createPrompt,
+      evidence: preview.status === 'ready' ? toCreateStrategyEvidence(preview.response) : undefined,
     })
     navigate('/provision?draft=create')
-  }, [draft, draftStrategyType, prompt, navigate, selectedCapabilityIds, selectedHint.label])
+  }, [draft, draftStrategyType, preview, prompt, navigate, selectedCapabilityIds, selectedHint.label])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -844,7 +852,7 @@ export default function CreateAgent() {
               onClick={() => setLayout((current) => ({ ...current, railCollapsed: false }))}
             />
           ) : (
-          <aside className="grid overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:grid-rows-[auto_auto_auto_auto]">
+          <aside className="grid overflow-hidden border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] lg:col-start-3 lg:row-start-1 lg:min-h-0 lg:grid-rows-[auto_auto_auto]">
             <section className="grid overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
               <div className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
                 <span className="flex h-[34px] w-[34px] items-center justify-center border border-[var(--arena-terminal-border-hover)] bg-[var(--arena-terminal-accent-soft)] text-[var(--arena-terminal-accent)]">
@@ -880,17 +888,6 @@ export default function CreateAgent() {
             </section>
 
             <section className="overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
-              <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2">
-                <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Runtime Plan</h2>
-              </div>
-              <div>
-                {runtimePlanRows.map(([label, value]) => (
-                  <PlanRow key={label} label={label} value={value} />
-                ))}
-              </div>
-            </section>
-
-            <section className="overflow-hidden border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2">
                 <h2 className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">Execution</h2>
                 <span className="font-mono text-xs text-[var(--arena-terminal-text-secondary)]">Paper</span>
@@ -902,7 +899,8 @@ export default function CreateAgent() {
               </div>
             </section>
 
-            <section className="grid gap-2 overflow-hidden bg-[var(--arena-terminal-panel)] p-2.5">
+            <section className="grid content-start gap-2 overflow-hidden bg-[var(--arena-terminal-panel)] p-2.5 lg:min-h-0 lg:overflow-auto lg:[scrollbar-gutter:stable]">
+              <EvidenceCard state={preview} drawdownLimitPct={drawdownPct} />
               <div
                 id="agent-create-status"
                 aria-live="polite"
@@ -1069,21 +1067,6 @@ function RouteChip({
         <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">{label}</span>
       </span>
       <span className="line-clamp-2 font-mono text-[11px] leading-4 text-[var(--arena-terminal-text-secondary)]">{value}</span>
-    </div>
-  )
-}
-
-function PlanRow({
-  label,
-  value,
-}: {
-  label: string
-  value: string
-}) {
-  return (
-    <div className="grid grid-cols-[6.25rem_minmax(0,1fr)] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2 last:border-b-0">
-      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">{label}</span>
-      <span className="min-w-0 truncate text-right font-mono text-xs text-[var(--arena-terminal-text-secondary)]">{value}</span>
     </div>
   )
 }

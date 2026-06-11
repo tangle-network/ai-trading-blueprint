@@ -220,7 +220,7 @@ export function ServiceCard({
 
               {/* Meta */}
               <div className="flex items-center gap-3 text-[10px] font-data text-arena-elements-textTertiary pt-1">
-                <span>Blueprint #{service.blueprintId}</span>
+                <span>Runtime #{service.blueprintId}</span>
                 <span>Owner: {truncateAddress(service.owner)}</span>
               </div>
             </div>

@@ -720,6 +720,7 @@ pub fn build_operator_router() -> Router {
             get(get_bot_metrics_history),
         )
         .route("/api/bots/{bot_id}/performance", get(get_bot_performance))
+        .route("/api/create/preview", post(create_preview))
         .route(
             "/api/bots/{bot_id}/market-data/candles",
             get(get_bot_market_candles),
@@ -6914,6 +6915,145 @@ async fn get_bot_performance(
             to: window_to,
         },
     }))
+}
+
+#[derive(Deserialize)]
+struct CreatePreviewRequest {
+    strategy_type: String,
+    #[serde(default)]
+    lookback_days: Option<u32>,
+    /// Per-trade position size as % of capital (mandate "Sizing" line).
+    #[serde(default)]
+    position_size_pct: Option<f64>,
+    /// Mandate max drawdown %, applied as the per-position stop-loss.
+    #[serde(default)]
+    max_drawdown_pct: Option<f64>,
+}
+
+#[derive(Serialize, Clone)]
+struct CreatePreviewResponse {
+    strategy_type: String,
+    supported: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<trading_runtime::backtest::BacktestSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    /// Honest framing the UI must render with the evidence: this is the
+    /// baseline strategy class replayed over a trailing window, not a
+    /// promise about forward performance.
+    note: String,
+}
+
+const CREATE_PREVIEW_NOTE: &str = "Baseline strategy class replayed over the trailing window with the \
+     mandate's sizing and stop applied. Historical evidence, not a forecast; \
+     the live agent adapts this harness over time.";
+
+static CREATE_PREVIEW_CACHE: std::sync::LazyLock<
+    std::sync::Mutex<
+        std::collections::HashMap<String, (std::time::Instant, CreatePreviewResponse)>,
+    >,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+const CREATE_PREVIEW_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+// Hard bound for the public-endpoint cache. With quantized keys the legit
+// key space is small; this cap is the backstop against adversarial growth.
+const CREATE_PREVIEW_CACHE_MAX: usize = 512;
+
+/// Pre-creation evidence: replay the mandate's strategy class over recent
+/// market history so launching is a decision made on evidence, not hope.
+/// Public (pre-wallet); cached per parameter set so the create page stays
+/// snappy and the kline source isn't hammered.
+async fn create_preview(
+    Json(req): Json<CreatePreviewRequest>,
+) -> Result<Json<CreatePreviewResponse>, (StatusCode, String)> {
+    let strategy_type = req.strategy_type.trim().to_lowercase();
+    if strategy_type.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "strategy_type required".into()));
+    }
+    let lookback = req.lookback_days.unwrap_or(30).clamp(7, 90);
+    // Quantize to 0.5% steps: this is a public endpoint, and continuous f64
+    // params would otherwise give attackers unbounded cache-key cardinality
+    // (1.001, 1.002, …) — and the backtest doesn't meaningfully change at
+    // sub-half-percent sizing granularity anyway.
+    let quantize = |p: f64| (p * 2.0).round() / 2.0;
+    let sizing_pct = req
+        .position_size_pct
+        .filter(|p| p.is_finite())
+        .map(|p| quantize(p.clamp(1.0, 100.0)));
+    let stop_pct = req
+        .max_drawdown_pct
+        .filter(|p| p.is_finite())
+        .map(|p| quantize(p.clamp(1.0, 20.0)));
+
+    if !trading_runtime::backtest::strategy_supports_baseline(&strategy_type) {
+        return Ok(Json(CreatePreviewResponse {
+            strategy_type,
+            supported: false,
+            summary: None,
+            error: None,
+            note: "This strategy family has no public kline source for a preview; it launches straight into paper trading.".into(),
+        }));
+    }
+
+    let cache_key = format!("{strategy_type}:{lookback}:{sizing_pct:?}:{stop_pct:?}");
+    if let Some(cached) = CREATE_PREVIEW_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&cache_key)
+        .filter(|(at, _)| at.elapsed() < CREATE_PREVIEW_TTL)
+        .map(|(_, response)| response.clone())
+    {
+        return Ok(Json(cached));
+    }
+
+    let mut harness = trading_runtime::backtest::HarnessConfig::default();
+    if let Some(pct) = sizing_pct {
+        harness.position_sizing = trading_runtime::backtest::PositionSizing::FixedFraction {
+            fraction: pct / 100.0,
+        };
+    }
+    if let Some(pct) = stop_pct {
+        for rule in &mut harness.exit_rules {
+            if let trading_runtime::backtest::ExitRule::StopLoss { pct: stop } = rule {
+                *stop = pct;
+            }
+        }
+    }
+
+    let response =
+        match trading_runtime::backtest::run_baseline_backtest(&strategy_type, harness, lookback)
+            .await
+        {
+            Ok(summary) => CreatePreviewResponse {
+                strategy_type,
+                supported: true,
+                summary: Some(summary),
+                error: None,
+                note: CREATE_PREVIEW_NOTE.into(),
+            },
+            Err(error) => CreatePreviewResponse {
+                strategy_type,
+                supported: true,
+                summary: None,
+                error: Some(format!("preview unavailable: {error}")),
+                note:
+                    "The kline source was unreachable; launch proceeds without historical evidence."
+                        .into(),
+            },
+        };
+
+    {
+        let mut cache = CREATE_PREVIEW_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Evict on insert: expired entries first, then (if an adversary
+        // somehow still filled it) the whole map rather than unbounded growth.
+        cache.retain(|_, (at, _)| at.elapsed() < CREATE_PREVIEW_TTL);
+        if cache.len() >= CREATE_PREVIEW_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(cache_key, (std::time::Instant::now(), response.clone()));
+    }
+    Ok(Json(response))
 }
 
 async fn get_bot_trades(

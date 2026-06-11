@@ -61,15 +61,24 @@ import {
   buildFullInstructions,
   type TradingBlueprintDef,
 } from '~/lib/blueprints';
+import { instanceFraming } from '~/lib/blueprints/framing';
+import {
+  operatorRpcHost,
+  type OperatorPickerOption,
+} from '~/components/provision/OperatorPicker';
 import { BlueprintSelector } from '~/components/provision/BlueprintSelector';
 import { ConfigureStep } from '~/components/provision/ConfigureStep';
 import { DeployStep } from '~/components/provision/DeployStep';
 import { SecretsStep } from '~/components/provision/SecretsStep';
 import { InfrastructureDialog } from '~/components/provision/InfrastructureDialog';
 import { AdvancedSettingsDialog } from '~/components/provision/AdvancedSettingsDialog';
+import { QuickLaunch } from '~/components/provision/QuickLaunch';
 import { ConnectWalletPanel } from '~/components/layout/ConnectWalletPanel';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
-import { safeLoadStoredCreateStrategyDraft } from '~/lib/createStrategyDraft';
+import {
+  safeLoadStoredCreateStrategyDraft,
+  type CreateStrategyDraft,
+} from '~/lib/createStrategyDraft';
 import type { TradingAgentProfile } from '~/lib/agentProfile';
 import { resolveBotId as resolveBot } from '~/lib/utils/resolveBotId';
 import {
@@ -1075,11 +1084,6 @@ function compactHeaderChainName(name: string): string {
     .trim() || name;
 }
 
-function compactHeaderBlueprintName(name: string | undefined): string {
-  if (!name) return 'Blueprint';
-  return name.replace(/^Trading\s+/i, '').trim() || name;
-}
-
 function ProvisionStageBar({
   step,
   stepIndex,
@@ -1180,6 +1184,39 @@ export function defaultExecutionTargetIdForStrategy(
   );
   if (enabledTarget) return enabledTarget.id;
   return import.meta.env.VITE_FORK_MODE === 'true' ? 'ethereum' : 'base';
+}
+
+/**
+ * Quick launch pins the runtime decision instead of asking the user: paper
+ * drafts from /create run on the fleet (cloud) blueprint, the same default the
+ * deploy step would reach with zero changes.
+ */
+export function defaultQuickLaunchBlueprint(
+  blueprints: TradingBlueprintDef[],
+): TradingBlueprintDef | undefined {
+  return blueprints.find((blueprint) => blueprint.isFleet) ?? blueprints[0];
+}
+
+/** Resolve a /create draft to a known strategy pack id, or null when stale. */
+export function resolveDraftStrategyType(draft: {
+  provisionStrategyType: string;
+  strategyType: string;
+}): string | null {
+  const candidate = strategyPacks.some(
+    (pack) => pack.id === draft.provisionStrategyType,
+  )
+    ? draft.provisionStrategyType
+    : draft.strategyType;
+  return strategyPacks.some((pack) => pack.id === candidate) ? candidate : null;
+}
+
+export function selectCheapestQuoteOperator(
+  quotes: ReadonlyArray<{ operator: Address; totalCost: bigint }>,
+): Address | undefined {
+  if (quotes.length === 0) return undefined;
+  return quotes.reduce((best, quote) =>
+    quote.totalCost < best.totalCost ? quote : best,
+  ).operator;
 }
 
 export function availableProtocolsForStrategyTarget(
@@ -1498,12 +1535,39 @@ export default function ProvisionPage() {
   const targetSandboxId = searchParams.get('sandboxId');
   const createDraftRequested = searchParams.get('draft') === 'create';
 
+  // Quick launch: a valid /create draft collapses the wizard into a single
+  // confirm screen. The draft is read synchronously so the blueprint default
+  // is pinned before first render; "Advanced setup" or any unresolvable
+  // decision drops back to the full wizard with the draft still applied.
+  const [quickDraft] = useState<CreateStrategyDraft | null>(() => {
+    if (!createDraftRequested) return null;
+    const draft = safeLoadStoredCreateStrategyDraft();
+    if (!draft || !resolveDraftStrategyType(draft)) return null;
+    return draft;
+  });
+  const [flowMode, setFlowMode] = useState<'quick' | 'wizard'>(
+    quickDraft ? 'quick' : 'wizard',
+  );
+  const quickActive = flowMode === 'quick';
+  const [quickFallbackNotice, setQuickFallbackNotice] = useState<string | null>(
+    null,
+  );
+  const [quickLaunchRunning, setQuickLaunchRunning] = useState(false);
+  const [quickLaunchError, setQuickLaunchError] = useState<string | null>(null);
+  // User override from the operator picker; cheapest quote stays the default.
+  const [quickOperatorChoice, setQuickOperatorChoice] =
+    useState<Address | null>(null);
+  const quickJobSubmittedRef = useRef(false);
+  const quickSecretsSubmittedRef = useRef(false);
+
   // Blueprint selection state
-  const initialBlueprint = preselectedBlueprintId
-    ? (getBlueprint(preselectedBlueprintId) ?? TRADING_BLUEPRINTS[0])
-    : TRADING_BLUEPRINTS.length === 1
-      ? TRADING_BLUEPRINTS[0]
-      : undefined;
+  const initialBlueprint = quickDraft
+    ? defaultQuickLaunchBlueprint(TRADING_BLUEPRINTS)
+    : preselectedBlueprintId
+      ? (getBlueprint(preselectedBlueprintId) ?? TRADING_BLUEPRINTS[0])
+      : TRADING_BLUEPRINTS.length === 1
+        ? TRADING_BLUEPRINTS[0]
+        : undefined;
   const skipBlueprintStep =
     TRADING_BLUEPRINTS.length <= 1 || !!preselectedBlueprintId;
 
@@ -1630,8 +1694,11 @@ export default function ProvisionPage() {
     () => BigInt(blueprintId || '0'),
     [blueprintId],
   );
-  const { operators: discoveredOperators, operatorCount } =
-    useOperators(blueprintIdBig);
+  const {
+    operators: discoveredOperators,
+    operatorCount,
+    isLoading: operatorsLoading,
+  } = useOperators(blueprintIdBig);
 
   // Quotes for new service mode
   const selectedOps = useMemo(
@@ -1978,16 +2045,12 @@ export default function ProvisionPage() {
 
   useEffect(() => {
     if (!createDraftRequested || createDraftAppliedRef.current) return;
-    const draft = safeLoadStoredCreateStrategyDraft();
+    const draft = quickDraft ?? safeLoadStoredCreateStrategyDraft();
     createDraftAppliedRef.current = true;
     if (!draft) return;
 
-    const draftStrategy = strategyPacks.some(
-      (pack) => pack.id === draft.provisionStrategyType,
-    )
-      ? draft.provisionStrategyType
-      : draft.strategyType;
-    if (!strategyPacks.some((pack) => pack.id === draftStrategy)) return;
+    const draftStrategy = resolveDraftStrategyType(draft);
+    if (!draftStrategy) return;
 
     prevStrategyRef.current = draftStrategy;
     setName(draft.name);
@@ -2004,8 +2067,11 @@ export default function ProvisionPage() {
       protocolChainIds: draft.protocolChainIds,
     });
     setProvisionPaperTrade(draft.mode.toLowerCase().includes('paper'));
+    // Quick launch activates through the operator-provided key path; the
+    // wizard keeps manual provider/key entry.
+    if (quickDraft) setUseOperatorKey(true);
     setStep('configure');
-  }, [createDraftRequested, executionTargets]);
+  }, [createDraftRequested, executionTargets, quickDraft]);
 
   // Reset customizations when strategy changes
   useEffect(() => {
@@ -2788,20 +2854,31 @@ export default function ProvisionPage() {
 
   // ── Submit job ─────────────────────────────────────────────────────────
 
-  const handleSubmit = async () => {
-    if (!(await ensureCorrectChain()) || !userAddress) return;
+  const handleSubmit = async (opts?: {
+    onFailure?: (message: string) => void;
+  }) => {
+    const fail = (message: string) => {
+      toast.error(message);
+      opts?.onFailure?.(message);
+    };
+    if (!(await ensureCorrectChain()) || !userAddress) {
+      opts?.onFailure?.(
+        'Switch the wallet to the requested network to launch.',
+      );
+      return;
+    }
     if (!name.trim()) {
-      toast.error('Enter agent name');
+      fail('Enter agent name');
       return;
     }
     if (!serviceInfo?.isActive) {
-      toast.error(
+      fail(
         'Service is not active. Select an active service in Infrastructure Settings',
       );
       return;
     }
     if (!serviceInfo?.isPermitted) {
-      toast.error('Your wallet is not a permitted caller on this service');
+      fail('Your wallet is not a permitted caller on this service');
       return;
     }
 
@@ -2811,7 +2888,7 @@ export default function ProvisionPage() {
       provisionPaperTrade,
     );
     if (!strategyExecution.ok) {
-      toast.error(strategyExecution.message);
+      fail(strategyExecution.message);
       return;
     }
 
@@ -2824,7 +2901,7 @@ export default function ProvisionPage() {
       selectedExecutionTarget,
     );
     if (requiresExecutionTarget && !executionConfig) {
-      toast.error(
+      fail(
         'Execution target is incomplete. Select a valid execution target in Advanced Settings',
       );
       return;
@@ -2832,7 +2909,7 @@ export default function ProvisionPage() {
     if (strategyType === 'hyperliquid_perp') {
       const parsedPositionSize = parsePositionSizePct(positionSizePct);
       if (!parsedPositionSize.ok) {
-        toast.error(parsedPositionSize.message);
+        fail(parsedPositionSize.message);
         return;
       }
     }
@@ -2867,7 +2944,7 @@ export default function ProvisionPage() {
       defaultValidatorServiceId: import.meta.env.VITE_VALIDATOR_SERVICE_ID,
     });
     if (!resolvedValidatorIds.ok) {
-      toast.error(resolvedValidatorIds.message);
+      fail(resolvedValidatorIds.message);
       return;
     }
 
@@ -2895,7 +2972,7 @@ export default function ProvisionPage() {
           }
         }
         if (vaultSigners.length === 0) {
-          toast.error(
+          fail(
             'Selected validator services have no operators. Cannot create vault signers',
           );
           return;
@@ -2905,7 +2982,7 @@ export default function ProvisionPage() {
           '[provision] Failed to resolve validator operators:',
           err,
         );
-        toast.error('Failed to query validator service operators from chain');
+        fail('Failed to query validator service operators from chain');
         return;
       }
     }
@@ -2925,7 +3002,7 @@ export default function ProvisionPage() {
       }
       const signerValidation = validateFactoryVaultSignerConfig(vaultSigners.length);
       if (!signerValidation.ok) {
-        toast.error(signerValidation.message);
+        fail(signerValidation.message);
         return;
       }
     }
@@ -2981,13 +3058,13 @@ export default function ProvisionPage() {
           const msg = err.message || '';
           const shortName = (err as any).shortMessage || '';
           if (msg.includes('NotPermittedCaller') || msg.includes('d5dd5b44')) {
-            toast.error(
+            fail(
               'Not permitted. Your wallet is not a permitted caller for this service',
             );
           } else if (shortName) {
-            toast.error(`Transaction failed: ${shortName.slice(0, 150)}`);
+            fail(`Transaction failed: ${shortName.slice(0, 150)}`);
           } else {
-            toast.error(`Transaction failed: ${msg.slice(0, 150)}`);
+            fail(`Transaction failed: ${msg.slice(0, 150)}`);
           }
           console.error('[provision] submitJob error:', err);
         },
@@ -3016,19 +3093,37 @@ export default function ProvisionPage() {
     }
   }, [manualOperator]);
 
-  const handleDeployNewService = async () => {
-    if (!(await ensureCorrectChain()) || !userAddress) return;
+  const handleDeployNewService = async (opts?: {
+    onFailure?: (message: string) => void;
+    /** Bind the new service to a single operator's signed quote (quick launch). */
+    operator?: Address;
+  }) => {
+    const fail = (message: string) => {
+      toast.error(message);
+      opts?.onFailure?.(message);
+    };
+    if (!(await ensureCorrectChain()) || !userAddress) {
+      opts?.onFailure?.(
+        'Switch the wallet to the requested network to launch.',
+      );
+      return;
+    }
     const strategyExecution = validateStrategyExecutionSelection(
       strategyType,
       selectedExecutionTarget,
       provisionPaperTrade,
     );
     if (!strategyExecution.ok) {
-      toast.error(strategyExecution.message);
+      fail(strategyExecution.message);
       return;
     }
-    if (quotes.length === 0) {
-      toast.error('No quotes available. Select operators first');
+    const launchQuotes = opts?.operator
+      ? quotes.filter(
+          (q) => q.operator.toLowerCase() === opts.operator!.toLowerCase(),
+        )
+      : quotes;
+    if (launchQuotes.length === 0) {
+      fail('No quotes available. Select operators first');
       return;
     }
 
@@ -3041,7 +3136,7 @@ export default function ProvisionPage() {
         defaultValidatorServiceId: import.meta.env.VITE_VALIDATOR_SERVICE_ID,
       });
       if (!resolvedValidatorIds.ok) {
-        toast.error(resolvedValidatorIds.message);
+        fail(resolvedValidatorIds.message);
         return;
       }
       instanceValidatorIds = resolvedValidatorIds.ids;
@@ -3126,7 +3221,7 @@ export default function ProvisionPage() {
       validationTrust,
     });
 
-    const quoteTuples = quotes.map((q) => ({
+    const quoteTuples = launchQuotes.map((q) => ({
       details: {
         // tnt-core v0.13.0: `requester` is the FIRST field of the on-chain
         // tuple. Must match `msg.sender` and the operator's signed value.
@@ -3162,7 +3257,9 @@ export default function ProvisionPage() {
           [userAddress],
           ttlBlocks,
         ],
-        value: totalCost,
+        // Pay exactly the quotes being submitted (a single one on the quick
+        // path, all selected on the wizard path).
+        value: launchQuotes.reduce((sum, q) => sum + q.totalCost, 0n),
         ...localFeeOverrides,
       },
       {
@@ -3172,7 +3269,7 @@ export default function ProvisionPage() {
           setNewServiceDeploying(true);
         },
         onError(err) {
-          toast.error(`New service failed: ${err.message.slice(0, 120)}`);
+          fail(`New service failed: ${err.message.slice(0, 120)}`);
           resetServiceActivationGuard(undefined);
           setNewServiceDeploying(false);
         },
@@ -3443,19 +3540,30 @@ export default function ProvisionPage() {
     [latestDeployment, operatorApiUrl],
   );
 
-  const handleSubmitSecrets = async () => {
-    if (!latestDeployment) return;
+  const handleSubmitSecrets = async (opts?: {
+    onFailure?: (message: string) => void;
+  }) => {
+    if (!latestDeployment) {
+      opts?.onFailure?.('No provision is available to activate.');
+      return;
+    }
     const canResumeInstanceProvision =
       isInstance && latestDeployment.serviceId != null;
     if (
       !canResumeInstanceProvision &&
       !latestDeployment.sandboxId &&
       latestDeployment.callId == null
-    )
+    ) {
+      opts?.onFailure?.('The provisioned bot cannot be resolved yet.');
       return;
-    if (!useOperatorKey && !apiKey.trim()) return;
+    }
+    if (!useOperatorKey && !apiKey.trim()) {
+      opts?.onFailure?.('An AI provider key is required to activate.');
+      return;
+    }
     if (operatorRouteMismatchMessage) {
       setSecretsLookupError(operatorRouteMismatchMessage);
+      opts?.onFailure?.(operatorRouteMismatchMessage);
       return;
     }
 
@@ -3470,6 +3578,7 @@ export default function ProvisionPage() {
         setSecretsLookupError(
           'Wallet authentication required to load bot data.',
         );
+        opts?.onFailure?.('Wallet authentication required to load bot data.');
         setIsSubmittingSecrets(false);
         return;
       }
@@ -3487,6 +3596,7 @@ export default function ProvisionPage() {
           setSecretsLookupError(
             'Wallet authentication required to load bot data.',
           );
+          opts?.onFailure?.('Wallet authentication required to load bot data.');
           setIsSubmittingSecrets(false);
           return;
         }
@@ -3495,6 +3605,7 @@ export default function ProvisionPage() {
 
       if (reconciled.kind === 'missing') {
         setSecretsLookupError(reconciled.message);
+        opts?.onFailure?.(reconciled.message);
         setStep('configure');
         setIsSubmittingSecrets(false);
         return;
@@ -3502,6 +3613,7 @@ export default function ProvisionPage() {
 
       if (reconciled.kind === 'error') {
         setSecretsLookupError(reconciled.message);
+        opts?.onFailure?.(reconciled.message);
         setIsSubmittingSecrets(false);
         return;
       }
@@ -3510,6 +3622,7 @@ export default function ProvisionPage() {
         setSecretsLookupError(
           'Wallet authentication required to load bot data.',
         );
+        opts?.onFailure?.('Wallet authentication required to load bot data.');
         setIsSubmittingSecrets(false);
         return;
       }
@@ -3531,6 +3644,7 @@ export default function ProvisionPage() {
           setSecretsLookupError(
             'Wallet authentication required to load bot data.',
           );
+          opts?.onFailure?.('Wallet authentication required to load bot data.');
           setIsSubmittingSecrets(false);
           return;
         }
@@ -3547,6 +3661,7 @@ export default function ProvisionPage() {
           removeProvision(latestDeployment.id);
           setStep('configure');
         }
+        opts?.onFailure?.(botLookup.error);
         setIsSubmittingSecrets(false);
         return;
       }
@@ -3693,14 +3808,281 @@ export default function ProvisionPage() {
         setSecretsLookupError(err.message);
         setStep('configure');
       }
-      toast.error(
-        `Configuration failed: ${err instanceof Error ? err.message.slice(0, 200) : 'Unknown error'}`,
-      );
+      const failureMessage = `Configuration failed: ${err instanceof Error ? err.message.slice(0, 200) : 'Unknown error'}`;
+      toast.error(failureMessage);
+      opts?.onFailure?.(failureMessage);
     } finally {
       clearInterval(pollInterval);
       setIsSubmittingSecrets(false);
       setActivationPhase(null);
     }
+  };
+
+  // ── Quick launch orchestration ─────────────────────────────────────────
+  // Auto-resolves the decisions the wizard would ask for (service, operators,
+  // quote, keys) and chains the existing submit → provision → activate
+  // handlers behind a single Launch click. Every dead end falls back to the
+  // wizard step that needs the human, with a visible notice.
+
+  const serviceReady = Boolean(
+    serviceInfo?.isActive &&
+    serviceInfo.isPermitted &&
+    !serviceInfo.blueprintMismatch,
+  );
+  const [quickLaunchStarted, setQuickLaunchStarted] = useState(false);
+
+  // Service discovery completion is observable only as a loading-flag
+  // transition; track it so quick mode doesn't conclude "no service" early.
+  const prevDiscoveryLoadingRef = useRef(false);
+  const [serviceDiscoverySettled, setServiceDiscoverySettled] = useState(false);
+  useEffect(() => {
+    if (prevDiscoveryLoadingRef.current && !discoveryLoading) {
+      setServiceDiscoverySettled(true);
+    }
+    prevDiscoveryLoadingRef.current = discoveryLoading;
+    // Discovery that never starts (e.g. wallet not connected on mount) would
+    // otherwise leave quick launch stuck on "Resolving the runtime service…"
+    // forever — treat a quiet 8s as settled so the no-service fallback runs.
+    if (!discoveryLoading) {
+      const settle = window.setTimeout(() => setServiceDiscoverySettled(true), 8_000);
+      return () => window.clearTimeout(settle);
+    }
+    return undefined;
+  }, [discoveryLoading]);
+
+  const fallbackToWizard = useCallback(
+    (target: WizardStep, message: string) => {
+      setFlowMode('wizard');
+      setQuickFallbackNotice(message);
+      setQuickLaunchRunning(false);
+      setStep(target);
+    },
+    [],
+  );
+
+  const quickLaunchFail = useCallback((message: string) => {
+    setQuickLaunchError(message);
+    setQuickLaunchRunning(false);
+  }, []);
+
+  // The draft's strategy cannot run on any enabled execution target → the
+  // human has to pick one in the configure step.
+  useEffect(() => {
+    if (!quickActive || !quickDraft) return;
+    if (resolveDraftStrategyType(quickDraft) !== strategyType) return;
+    if (strategyExecutionValidation.ok && hasEnabledExecutionTarget) return;
+    fallbackToWizard(
+      'configure',
+      strategyExecutionNotice ??
+        'This strategy needs manual execution configuration before launch.',
+    );
+  }, [
+    quickActive,
+    quickDraft,
+    strategyType,
+    strategyExecutionValidation.ok,
+    hasEnabledExecutionTarget,
+    strategyExecutionNotice,
+    fallbackToWizard,
+  ]);
+
+  // No usable on-chain service after discovery settles → price a new one
+  // from operator quotes instead of asking the user to pick infrastructure.
+  useEffect(() => {
+    if (!quickActive || isInstance || serviceMode !== 'existing') return;
+    if (newServiceTxHash || quickLaunchRunning) return;
+    if (serviceReady || serviceLoading || discoveryLoading) return;
+    if (!serviceDiscoverySettled) return;
+    if (discoveredServices.some((s) => s.isActive && s.isPermitted)) return;
+    setServiceMode('new');
+  }, [
+    quickActive,
+    isInstance,
+    serviceMode,
+    newServiceTxHash,
+    quickLaunchRunning,
+    serviceReady,
+    serviceLoading,
+    discoveryLoading,
+    serviceDiscoverySettled,
+    discoveredServices,
+  ]);
+
+  // Quote path: select every discovered operator to collect signed quotes…
+  useEffect(() => {
+    if (!quickActive || serviceMode !== 'new') return;
+    if (selectedOperators.size > 0 || discoveredOperators.length === 0) return;
+    setSelectedOperators(
+      new Set(discoveredOperators.map((op) => op.address)),
+    );
+  }, [quickActive, serviceMode, selectedOperators.size, discoveredOperators]);
+
+  // …keeping every quote alive so the operator picker can re-target the
+  // launch. The launch itself binds a single operator via `handleDeployNewService`.
+
+  // No operators discovered at all → the deploy step is the recovery surface.
+  useEffect(() => {
+    if (!quickActive || serviceMode !== 'new') return;
+    if (operatorsLoading || discoveredOperators.length > 0) return;
+    fallbackToWizard(
+      'deploy',
+      'No operators are discoverable for this runtime right now. Select infrastructure manually to continue.',
+    );
+  }, [
+    quickActive,
+    serviceMode,
+    operatorsLoading,
+    discoveredOperators.length,
+    fallbackToWizard,
+  ]);
+
+  // Operators exist but none returned a signed quote → same recovery surface.
+  useEffect(() => {
+    if (!quickActive || serviceMode !== 'new' || quickLaunchRunning) return;
+    if (selectedOperators.size === 0 || isQuoting || quotes.length > 0) return;
+    if (quoteErrors.size < selectedOperators.size) return;
+    fallbackToWizard(
+      'deploy',
+      'No operator returned a signed quote. Review infrastructure manually to continue.',
+    );
+  }, [
+    quickActive,
+    serviceMode,
+    quickLaunchRunning,
+    selectedOperators.size,
+    isQuoting,
+    quotes.length,
+    quoteErrors,
+    fallbackToWizard,
+  ]);
+
+  const quickCheapestOperator = selectCheapestQuoteOperator(quotes);
+  // The picker override only holds while the chosen operator still has a live
+  // signed quote; otherwise the default (cheapest) takes back over.
+  const quickQuoteOperator =
+    quickOperatorChoice != null &&
+    quotes.some(
+      (q) => q.operator.toLowerCase() === quickOperatorChoice.toLowerCase(),
+    )
+      ? quickOperatorChoice
+      : quickCheapestOperator;
+  const quickQuote = quotes.find(
+    (q) => q.operator.toLowerCase() === quickQuoteOperator?.toLowerCase(),
+  );
+  const quickOperatorOptions = useMemo<OperatorPickerOption[]>(() => {
+    if (!quickActive || serviceMode !== 'new') return [];
+    const options = discoveredOperators.map((op) => {
+      const quote = quotes.find(
+        (q) => q.operator.toLowerCase() === op.address.toLowerCase(),
+      );
+      const failure = quoteErrors.get(op.address);
+      return {
+        address: op.address,
+        rpcHost: operatorRpcHost(op.rpcAddress),
+        quoteCost: quote?.totalCost,
+        failure: failure?.kind,
+        pending: quote == null && failure == null && isQuoting,
+      };
+    });
+    // Price decides: quoted operators first (ascending), unavailable last.
+    return options.sort((a, b) => {
+      if (a.quoteCost != null && b.quoteCost != null)
+        return a.quoteCost < b.quoteCost ? -1 : a.quoteCost > b.quoteCost ? 1 : 0;
+      if (a.quoteCost != null) return -1;
+      if (b.quoteCost != null) return 1;
+      return 0;
+    });
+  }, [quickActive, serviceMode, discoveredOperators, quotes, quoteErrors, isQuoting]);
+  const quickServicePathReady = !isInstance && serviceReady;
+  const quickQuotePathReady = serviceMode === 'new' && quickQuote != null;
+  const quickLaunchReady = quickServicePathReady || quickQuotePathReady;
+  const quickResolutionDetail = quickLaunchReady
+    ? null
+    : serviceMode === 'new'
+      ? discoveredOperators.length === 0 && operatorsLoading
+        ? 'Discovering operators…'
+        : 'Pricing the operator quote…'
+      : !isInstance &&
+          (discoveryLoading || serviceLoading || !serviceDiscoverySettled)
+        ? 'Resolving the runtime service…'
+        : null;
+
+  const handleQuickLaunch = () => {
+    setQuickLaunchError(null);
+    quickJobSubmittedRef.current = false;
+    quickSecretsSubmittedRef.current = false;
+    setQuickLaunchStarted(true);
+    setQuickLaunchRunning(true);
+    if (quickServicePathReady) {
+      quickJobSubmittedRef.current = true;
+      void handleSubmit({ onFailure: quickLaunchFail });
+    } else {
+      void handleDeployNewService({
+        onFailure: quickLaunchFail,
+        operator: quickQuoteOperator,
+      });
+    }
+  };
+
+  // Cold-start fleet path: once the freshly created service validates as
+  // active and permitted, chain the job submission automatically.
+  // No dep array: the chained handlers are recreated every render, so this
+  // effect is guarded by refs/flags instead of dependency identity.
+  useEffect(() => {
+    if (!quickActive || !quickLaunchRunning || isInstance) return;
+    if (quickJobSubmittedRef.current) return;
+    if (!serviceReady || txHash || isPending) return;
+    quickJobSubmittedRef.current = true;
+    void handleSubmit({ onFailure: quickLaunchFail });
+  });
+
+  // Infrastructure is provisioned → activate with operator-managed keys.
+  useEffect(() => {
+    if (!quickActive || !quickLaunchRunning) return;
+    if (latestDeployment?.phase !== 'awaiting_secrets') return;
+    if (isSubmittingSecrets || quickSecretsSubmittedRef.current) return;
+    quickSecretsSubmittedRef.current = true;
+    void handleSubmitSecrets({ onFailure: quickLaunchFail });
+  });
+
+  useEffect(() => {
+    if (!quickLaunchRunning) return;
+    if (
+      latestDeployment?.phase === 'active' ||
+      latestDeployment?.phase === 'failed'
+    ) {
+      setQuickLaunchRunning(false);
+    }
+  }, [latestDeployment?.phase, quickLaunchRunning]);
+
+  // Resume a stalled launch: re-arm whichever chained step has not completed
+  // (job submission only when no tx exists yet) and let the effects refire.
+  const handleQuickResume = () => {
+    setQuickLaunchError(null);
+    if (!txHash) quickJobSubmittedRef.current = false;
+    quickSecretsSubmittedRef.current = false;
+    setQuickLaunchRunning(true);
+  };
+
+  const handleQuickReset = () => {
+    if (latestDeployment) removeProvision(latestDeployment.id);
+    resetTx();
+    setQuickLaunchError(null);
+    quickJobSubmittedRef.current = false;
+    quickSecretsSubmittedRef.current = false;
+    setQuickLaunchStarted(false);
+    setQuickLaunchRunning(false);
+  };
+
+  const handleQuickAdvanced = () => {
+    // Quick mode selects every operator to collect quotes; the wizard treats
+    // selection as "operators this service binds", so carry over the single
+    // operator the picker resolved to.
+    if (serviceMode === 'new' && quickQuoteOperator) {
+      setSelectedOperators(new Set([quickQuoteOperator]));
+    }
+    setFlowMode('wizard');
+    setStep(txHash || latestDeployment ? 'deploy' : 'configure');
   };
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -3739,11 +4121,13 @@ export default function ProvisionPage() {
           metrics={[
             { label: 'Network', value: compactHeaderChainName(targetChain.name), title: targetChain.name },
             {
-              label: 'Runtime',
-              value: compactHeaderBlueprintName(selectedBlueprint?.name),
-              title: selectedBlueprint?.name ?? 'Blueprint',
+              label: 'Instance',
+              value: selectedBlueprint
+                ? instanceFraming(selectedBlueprint).shortLabel
+                : '—',
+              title: selectedBlueprint?.name ?? 'Instance type',
             },
-            { label: 'Step', value: STEP_LABELS[step] },
+            ...(quickActive ? [] : [{ label: 'Step', value: STEP_LABELS[step] }]),
           ]}
           controls={(
             <>
@@ -3755,15 +4139,31 @@ export default function ProvisionPage() {
           )}
         />
 
-        <ProvisionStageBar
-          step={step}
-          stepIndex={stepIndex}
-          txHash={txHash}
-          canConfigure={!!selectedBlueprint}
-          setStep={setStep}
-        />
+        {!quickActive && (
+          <ProvisionStageBar
+            step={step}
+            stepIndex={stepIndex}
+            txHash={txHash}
+            canConfigure={!!selectedBlueprint}
+            setStep={setStep}
+          />
+        )}
 
         <div className="min-h-0 flex-1 overflow-y-auto">
+        {!quickActive && quickFallbackNotice && (
+          <div className="flex items-start gap-3 rounded-[7px] border border-[color-mix(in_srgb,var(--arena-terminal-warning)_42%,var(--arena-terminal-border))] bg-[color-mix(in_srgb,var(--arena-terminal-warning)_10%,var(--arena-terminal-panel))] p-4">
+            <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--arena-terminal-warning)]" />
+            <div>
+              <div className="font-display text-sm font-semibold text-[var(--arena-terminal-warning)]">
+                Quick Launch Needs Input
+              </div>
+              <div className="mt-0.5 font-mono text-xs text-[var(--arena-terminal-text-secondary)]">
+                {quickFallbackNotice}
+              </div>
+            </div>
+          </div>
+        )}
+
         {ambiguousInstanceProvisionMessage && (
           <div className="flex items-start gap-3 rounded-[7px] border border-[color-mix(in_srgb,var(--arena-terminal-warning)_42%,var(--arena-terminal-border))] bg-[color-mix(in_srgb,var(--arena-terminal-warning)_10%,var(--arena-terminal-panel))] p-4">
             <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--arena-terminal-warning)]" />
@@ -3807,8 +4207,43 @@ export default function ProvisionPage() {
           </div>
         )}
 
+        {quickActive && quickDraft && (
+          <QuickLaunch
+            draft={quickDraft}
+            packName={selectedPack.name}
+            instanceLabel={
+              selectedBlueprint ? instanceFraming(selectedBlueprint).label : undefined
+            }
+            executionTargetLabel={selectedExecutionTarget?.label}
+            serviceReady={serviceReady}
+            serviceId={serviceId}
+            serviceOperators={serviceInfo?.operators ?? []}
+            quoteOperator={quickQuoteOperator}
+            quoteCost={quickQuote?.totalCost}
+            operatorOptions={quickOperatorOptions}
+            cheapestOperator={quickCheapestOperator}
+            onSelectOperator={setQuickOperatorChoice}
+            resolving={quickResolutionDetail != null}
+            resolutionDetail={quickResolutionDetail}
+            launchReady={quickLaunchReady}
+            running={quickLaunchRunning}
+            error={quickLaunchError}
+            isWalletPending={isPending || isNewServicePending}
+            newServiceDeploying={newServiceDeploying}
+            instanceProvisioning={instanceProvisioning}
+            isSubmittingSecrets={isSubmittingSecrets}
+            activationPhase={activationPhase}
+            latestDeployment={quickLaunchStarted ? latestDeployment : undefined}
+            txHash={txHash ?? newServiceTxHash}
+            onLaunch={handleQuickLaunch}
+            onAdvanced={handleQuickAdvanced}
+            onRetry={handleQuickResume}
+            onReset={handleQuickReset}
+          />
+        )}
+
         {/* Step 0: Blueprint Selection */}
-        {step === 'blueprint' && (
+        {!quickActive && step === 'blueprint' && (
           <div className="space-y-6">
             <BlueprintSelector
               blueprints={TRADING_BLUEPRINTS}
@@ -3834,7 +4269,7 @@ export default function ProvisionPage() {
         )}
 
         {/* Step 1: Configure */}
-        {step === 'configure' && (
+        {!quickActive && step === 'configure' && (
           <ConfigureStep
             name={name}
             setName={setName}
@@ -3874,7 +4309,7 @@ export default function ProvisionPage() {
         )}
 
         {/* Step 2: Deploy */}
-        {step === 'deploy' && (
+        {!quickActive && step === 'deploy' && (
           <DeployStep
             isInstance={isInstance}
             latestDeployment={latestDeployment}
@@ -3909,7 +4344,7 @@ export default function ProvisionPage() {
         )}
 
         {/* Step 3: Activate */}
-        {step === 'secrets' && latestDeployment && (
+        {!quickActive && step === 'secrets' && latestDeployment && (
           <SecretsStep
             latestDeployment={latestDeployment}
             isInstance={isInstance}

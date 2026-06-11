@@ -175,24 +175,74 @@ jobs:
   # when the active binary version points at a multi-arch manifest, so publish
   # the concrete x86_64 archive as the active operator binary and update
   # cold-start sources to the same tag.
+  #
+  # update_sources_version drives setBlueprintSources for EVERY blueprint this
+  # repo ships — without it a stock blueprint-manager has no usable fetcher and
+  # falls back to a 70-minute cargo source build on operator boxes.
+  # Local/manual equivalent: deploy/publish-blueprint-sources.sh <tag>.
+  #
+  # Dispatches are SEQUENTIAL on purpose: every tnt-core publish run signs with
+  # the same blueprint-owner key, and concurrent runs nonce-race ("replacement
+  # transaction underpriced"). Each dispatch waits for the remote run to finish
+  # before the next one starts.
   publish-onchain:
     needs: [release, manifest]
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger tnt-core binary publish
+      - name: Trigger tnt-core binary publish (all blueprints, serialized)
         env:
           GH_TOKEN: ${{ secrets.TNT_CORE_PUBLISH_TOKEN }}
         run: |
+          set -euo pipefail
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          gh workflow run publish-blueprint-binary.yml \
-            --repo tangle-network/tnt-core \
-            --ref main \
-            -f blueprint_repo=tangle-network/ai-trading-blueprint \
-            -f tag="$TAG" \
-            -f blueprint_id=13 \
-            -f binary_name=trading-blueprint \
-            -f network=base-sepolia \
-            -f target=x86_64-unknown-linux-gnu \
-            -f manifest=false \
-            -f set_active=true \
-            -f update_sources_version="$TAG"
+          REPO=tangle-network/tnt-core
+          WORKFLOW=publish-blueprint-binary.yml
+
+          # Blueprint ids: tnt-core deployments/base-sepolia/blueprints.tsv.
+          PUBLISHES="
+          trading-blueprint:13
+          trading-instance-blueprint:14
+          trading-tee-instance-blueprint:15
+          trading-validator:16
+          "
+
+          FAILED=0
+          for entry in $PUBLISHES; do
+            BIN="${entry%%:*}"
+            ID="${entry##*:}"
+            SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "::group::publish $BIN -> blueprint $ID"
+            gh workflow run "$WORKFLOW" \
+              --repo "$REPO" \
+              --ref main \
+              -f blueprint_repo=tangle-network/ai-trading-blueprint \
+              -f tag="$TAG" \
+              -f blueprint_id="$ID" \
+              -f binary_name="$BIN" \
+              -f network=base-sepolia \
+              -f target=x86_64-unknown-linux-gnu \
+              -f manifest=false \
+              -f set_active=true \
+              -f update_sources_version="$TAG"
+
+            # Resolve the run we just dispatched, then block until it finishes
+            # so the next dispatch never races the owner key's nonce.
+            RUN_ID=""
+            for _ in $(seq 1 12); do
+              sleep 5
+              RUN_ID="$(gh run list --repo "$REPO" --workflow "$WORKFLOW" \
+                --created ">$SINCE" --limit 1 --json databaseId \
+                --jq '.[0].databaseId // empty')"
+              [ -n "$RUN_ID" ] && break
+            done
+            test -n "$RUN_ID" || { echo "::error::dispatched run for $BIN not found"; exit 1; }
+
+            if timeout 1800 gh run watch "$RUN_ID" --repo "$REPO" --exit-status; then
+              echo "published $BIN@$TAG -> blueprint $ID (run $RUN_ID)"
+            else
+              echo "::error::on-chain publish failed for $BIN (run $RUN_ID)"
+              FAILED=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$FAILED"

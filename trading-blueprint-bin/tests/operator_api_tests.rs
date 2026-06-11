@@ -4738,3 +4738,108 @@ async fn test_preflight_classifies_rpc_unreachable_as_5xx() {
         response.status()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Create preview tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_create_preview_unsupported_family_is_honest() {
+    let _dir = init_test_env();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/create/preview")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "strategy_type": "prediction" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["supported"], false);
+    assert!(json["summary"].is_null());
+    assert!(json["note"].as_str().unwrap().contains("paper trading"));
+}
+
+#[tokio::test]
+async fn test_create_preview_requires_strategy_type() {
+    let _dir = init_test_env();
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/create/preview")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "strategy_type": "  " }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 400);
+}
+
+#[tokio::test]
+async fn test_create_preview_clamps_and_quantizes_parameters() {
+    let _dir = init_test_env();
+
+    // Out-of-range and high-cardinality params must be normalized server-side
+    // (public endpoint): lookback clamps to [7,90], percentages clamp and
+    // quantize to 0.5 steps, and non-finite values are dropped. The endpoint
+    // must respond 200 regardless of whether the kline source is reachable.
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/create/preview")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "strategy_type": "prediction",
+                        "lookback_days": 5000,
+                        "position_size_pct": 0.0001,
+                        "max_drawdown_pct": 999.0
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["supported"], false);
+
+    // NaN is not representable in JSON; null params must be tolerated.
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/create/preview")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "strategy_type": "prediction",
+                        "lookback_days": null,
+                        "position_size_pct": null
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+}

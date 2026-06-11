@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # go-live.sh — Deploy AI Trading Blueprint via the Blueprint Manager (BPM).
 #
+# OWNERSHIP NOTE (2026-06-11): operator-side steps (keystore, staking +
+# blueprint registration, service request/approve, systemd unit, start) are
+# now owned by deploy/operator-install.sh, which runs ON the target box and
+# is the third-party path. This script remains for owner-side actions
+# (contract deploys) and our push-over-SSH box flow, but DO NOT extend the
+# duplicated operator steps here — extend operator-install.sh and fold this
+# script into a thin wrapper around it. The source-build path (step 2) is
+# obsolete now that blueprint sources are published on-chain
+# (deploy/publish-blueprint-sources.sh) and managers fetch release binaries.
+#
 # Steps:
 #   1. Bootstrap the server (Rust, swap, data dirs).
 #   2. Build the trading blueprint binary + install cargo-tangle (BPM).
@@ -475,7 +485,7 @@ else
 
   APPROVAL_PARAMS="($REQUEST_ID,[],[0,0,0,0],[0,0],[])"
   if ! send_operator_tx "$TANGLE_CONTRACT" \
-    "approveService((uint64,(uint8,address,uint16)[],uint256[4],uint256[2],(uint8,bytes32,bytes32,uint64)[]))" \
+    "approveService((uint64,((uint8,address),uint16)[],uint256[4],uint256[2],(uint8,bytes32,bytes32,uint64)[]))" \
     "$APPROVAL_PARAMS" \
     --gas-limit "$SERVICE_APPROVE_GAS_LIMIT"; then
     echo "ERROR: approveService failed for request $REQUEST_ID"
