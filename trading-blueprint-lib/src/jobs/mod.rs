@@ -17,6 +17,7 @@ mod webhook_event;
 mod workflow_tick;
 
 pub use activate::{activate_bot_with_secrets, remove_bot_workflows, wipe_bot_secrets};
+pub(crate) use activate::OPERATOR_AGENTS_MD;
 pub use configure::configure;
 pub use configure::configure_core;
 pub use deprovision::deprovision;
