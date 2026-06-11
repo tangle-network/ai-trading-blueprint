@@ -167,6 +167,17 @@ function arrayStrings(value) {
     .filter(Boolean);
 }
 
+// Launch tickets carry the agreed risk limit as free text ("4% max drawdown").
+// Parsing it here is what makes mandate-drawdown-breach findings possible for
+// bots whose harness never received an explicit max_drawdown_pct.
+function launchTicketMaxDrawdownPct(strategy) {
+  const ticketRisk = String(((strategy.launch_ticket || {}).risk) || '');
+  const match = ticketRisk.match(/(\d+(?:\.\d+)?)\s*%\s*max\s*drawdown/i);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 function extractMandate(config, family) {
   const strategy = strategyConfig(config);
   const userPrompt = pickFirst(strategy.user_prompt, config.user_prompt, config.prompt, strategy.prompt, null);
@@ -182,7 +193,12 @@ function extractMandate(config, family) {
     user_prompt: typeof userPrompt === 'string' ? userPrompt : null,
     available_protocols: availableProtocols,
     symbols,
-    max_drawdown_pct: primitive(pickFirst(strategy.max_drawdown_pct, config.max_drawdown_pct, null)),
+    max_drawdown_pct: pickFirst(
+      primitive(pickFirst(strategy.max_drawdown_pct, config.max_drawdown_pct, null)),
+      launchTicketMaxDrawdownPct(strategy),
+      null,
+    ),
+    initial_capital_usd: asNumber(pickFirst(strategy.initial_capital_usd, strategy.initial_capital, config.initial_capital_usd, null), null),
     risk_profile: primitive(pickFirst(strategy.risk_profile, config.risk_profile, null)),
   };
 }
@@ -430,10 +446,18 @@ function recentContexts(max = 12) {
   return readJsonl(DECISION_CONTEXTS_FILE, max);
 }
 
+// A flat book with no signal ("no-clear-*") and an open position with no exit
+// trigger ("holding-position-*") are healthy strategy states, not defects.
+// Counting them as skips made the improvement loop generate thousands of
+// candidates against bots that were behaving exactly as designed.
+const HEALTHY_IDLE_REASON = /^no-clear|^holding-position/;
+
 function findRepeatedSkip(contexts) {
   const last = contexts.slice(-5);
   if (last.length < 3) return null;
-  const skips = last.filter((ctx) => decisionAction(ctx.decision) === 'skip');
+  const skips = last.filter((ctx) =>
+    decisionAction(ctx.decision) === 'skip'
+    && !HEALTHY_IDLE_REASON.test(decisionReason(ctx.decision) || ''));
   if (skips.length < 3) return null;
   const reasons = [...new Set(skips.map((ctx) => decisionReason(ctx.decision)).filter(Boolean))].slice(0, 4);
   return {
@@ -446,7 +470,9 @@ function findRepeatedSkip(contexts) {
 function findRepeatedSkipFromDecisions(decisions) {
   const last = asArray(decisions).slice(-5);
   if (last.length < 3) return null;
-  const skips = last.filter((decision) => decisionAction(decision) === 'skip');
+  const skips = last.filter((decision) =>
+    decisionAction(decision) === 'skip'
+    && !HEALTHY_IDLE_REASON.test(decisionReason(decision) || ''));
   if (skips.length < 3) return null;
   const reasons = [...new Set(skips.map((decision) => decisionReason(decision)).filter(Boolean))].slice(0, 4);
   return {
@@ -537,18 +563,41 @@ function buildReflectionFindings(context, contexts) {
   if (repeatedSkip) findings.push(repeatedSkip);
 
   const reason = lowerText(decisionReason(context.decision));
-  if (/validation-rejected|approval-not-verified|insufficient|incomplete|coverage|no-clear/.test(reason)) {
+  // "no-clear-*" is deliberately NOT a blocked path: it is the strategy
+  // correctly staying flat without a signal.
+  if (/validation-rejected|approval-not-verified|insufficient|incomplete|coverage/.test(reason)) {
     findings.push({ code: 'blocked-action-path', severity: 'high', detail: `Current decision is blocked by ${decisionReason(context.decision) || 'unknown reason'}.` });
   }
 
   const drawdown = metricNumber(context, ['drawdown_pct', 'max_drawdown_pct', 'current_drawdown_pct']);
-  const pnlPct = metricNumber(context, ['pnl_pct', 'return_pct', 'unrealized_pnl_pct']);
+  let pnlPct = metricNumber(context, ['pnl_pct', 'return_pct', 'unrealized_pnl_pct']);
   const pnlUsd = metricNumber(context, ['pnl_usd', 'unrealized_pnl', 'realized_pnl']);
+  // Tick metrics rarely carry pnl keys; derive return from NAV against the
+  // mandate's initial capital so losing bots actually produce findings.
+  const mandate = isRecord(context.mandate) ? context.mandate : {};
+  const nav = metricNumber(context, ['total_nav_usd', 'portfolio_value_usd', 'account_value_usd']);
+  const initialCapital = asNumber(mandate.initial_capital_usd, null);
+  if (pnlPct === null && nav !== null && initialCapital !== null && initialCapital > 0) {
+    pnlPct = ((nav - initialCapital) / initialCapital) * 100;
+  }
   if ((drawdown !== null && drawdown > 2) || (pnlPct !== null && pnlPct < -1) || (pnlUsd !== null && pnlUsd < -25)) {
     findings.push({
       code: 'negative-performance-needs-review',
-      severity: drawdown !== null && drawdown > 5 ? 'critical' : 'high',
-      detail: `Performance/risk metric crossed review threshold (drawdown=${drawdown ?? 'n/a'}, pnl_pct=${pnlPct ?? 'n/a'}, pnl_usd=${pnlUsd ?? 'n/a'}).`,
+      severity: (drawdown !== null && drawdown > 5) || (pnlPct !== null && pnlPct < -5) ? 'critical' : 'high',
+      detail: `Performance/risk metric crossed review threshold (drawdown=${drawdown ?? 'n/a'}, pnl_pct=${pnlPct !== null ? pnlPct.toFixed(2) : 'n/a'}, pnl_usd=${pnlUsd ?? 'n/a'}).`,
+    });
+  }
+
+  // Loss beyond the mandate's max drawdown is the single most important
+  // finding the loop can raise: the bot is operating outside its contract.
+  const mandateMaxDrawdown = asNumber(mandate.max_drawdown_pct, null);
+  const lossPct = pnlPct !== null && pnlPct < 0 ? -pnlPct : null;
+  const breachPct = drawdown !== null ? drawdown : lossPct;
+  if (mandateMaxDrawdown !== null && mandateMaxDrawdown > 0 && breachPct !== null && breachPct >= mandateMaxDrawdown) {
+    findings.push({
+      code: 'mandate-drawdown-breach',
+      severity: 'critical',
+      detail: `Drawdown ${breachPct.toFixed(2)}% breaches the mandate max of ${mandateMaxDrawdown}%. De-risking should already have triggered; verify the circuit breaker fired and the position was flattened.`,
     });
   }
 
