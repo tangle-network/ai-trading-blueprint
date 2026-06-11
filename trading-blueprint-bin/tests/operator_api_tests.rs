@@ -1690,6 +1690,10 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
                 output_tokens: 48,
                 result: Some("No trade placed".to_string()),
                 error: None,
+                loop_mode: None,
+                model: None,
+                provider: None,
+                cost_usd: None,
             },
         )
         .expect("insert successful run");
@@ -1710,6 +1714,10 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
                 output_tokens: 0,
                 result: None,
                 error: Some("AGENT_EXECUTION_FAILED".to_string()),
+                loop_mode: None,
+                model: None,
+                provider: None,
+                cost_usd: None,
             },
         )
         .expect("insert failed run");
@@ -1877,6 +1885,10 @@ async fn test_run_transcript_fallback_replays_json_results_as_chat_parts() {
                 output_tokens: 0,
                 result: Some(result),
                 error: None,
+                loop_mode: None,
+                model: None,
+                provider: None,
+                cost_usd: None,
             },
         )
         .expect("insert JSON run");
@@ -1990,6 +2002,10 @@ async fn test_public_run_messages_replay_json_result_without_auth() {
                 output_tokens: 0,
                 result: Some(result),
                 error: None,
+                loop_mode: None,
+                model: None,
+                provider: None,
+                cost_usd: None,
             },
         )
         .expect("insert JSON run");
@@ -2042,6 +2058,10 @@ async fn test_public_run_messages_redact_stored_transcript_secrets() {
                 output_tokens: 0,
                 result: Some("summary".to_string()),
                 error: None,
+                loop_mode: None,
+                model: None,
+                provider: None,
+                cost_usd: None,
             },
         )
         .expect("insert transcript run");
@@ -2123,6 +2143,10 @@ async fn test_running_autonomous_sessions_preserve_live_message_errors() {
                 output_tokens: 21,
                 result: None,
                 error: None,
+                loop_mode: None,
+                model: None,
+                provider: None,
+                cost_usd: None,
             },
         )
         .expect("insert running run");
@@ -2641,6 +2665,10 @@ async fn test_archived_transcript_replay_honors_limit_and_cursor() {
                 output_tokens: 18,
                 result: Some("Replay finished".to_string()),
                 error: None,
+                loop_mode: None,
+                model: None,
+                provider: None,
+                cost_usd: None,
             },
         )
         .expect("insert completed run");
@@ -2739,6 +2767,10 @@ async fn test_archived_run_messages_synthesize_summary_when_alias_unavailable() 
                 output_tokens: 0,
                 result: Some("summary only".to_string()),
                 error: None,
+                loop_mode: None,
+                model: None,
+                provider: None,
+                cost_usd: None,
             },
         )
         .expect("insert completed run");

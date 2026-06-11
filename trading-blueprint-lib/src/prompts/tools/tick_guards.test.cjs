@@ -217,3 +217,100 @@ test('recordCoverageFinding never throws even when the log dir is unwritable', (
   assert.equal(f.finding, 'insufficient_coverage')
   assert.equal(f.have, 5)
 })
+
+test('evaluateExitRules enforces the backtest ExitRule schema live', () => {
+  const t = loadCjs('tick_common.js')
+  const hourMs = 60 * 60 * 1000
+
+  assert.deepEqual(
+    t.evaluateExitRules({
+      rules: [{ type: 'stop_loss', pct: 5 }],
+      entryPrice: 100,
+      currentPrice: 94,
+      closes: [],
+      entryTimestampMs: Date.now() - 2 * hourMs,
+    }),
+    { exit: true, reason: 'stop-loss-5pct' },
+  )
+  assert.equal(
+    t.evaluateExitRules({
+      rules: [{ type: 'stop_loss', pct: 5 }],
+      entryPrice: 100,
+      currentPrice: 96,
+      closes: [],
+    }).exit,
+    false,
+  )
+  assert.deepEqual(
+    t.evaluateExitRules({
+      rules: [{ type: 'take_profit', pct: 3 }],
+      entryPrice: 100,
+      currentPrice: 103.5,
+      closes: [],
+    }),
+    { exit: true, reason: 'take-profit-3pct' },
+  )
+  assert.deepEqual(
+    t.evaluateExitRules({
+      rules: [{ type: 'time_limit', max_candles: 24 }],
+      entryPrice: 100,
+      currentPrice: 100,
+      closes: [],
+      entryTimestampMs: Date.now() - 25 * hourMs,
+    }),
+    { exit: true, reason: 'time-limit-exit' },
+  )
+  assert.deepEqual(
+    t.evaluateExitRules({
+      rules: [{ type: 'trailing_stop', activation_pct: 2, trail_pct: 1 }],
+      entryPrice: 100,
+      currentPrice: 103,
+      closes: Array(10).fill(105),
+      entryTimestampMs: Date.now() - 10 * hourMs,
+    }),
+    { exit: true, reason: 'trailing-stop-exit' },
+  )
+  // Without an entry anchor, price-based rules must not fire blind.
+  assert.equal(
+    t.evaluateExitRules({
+      rules: [{ type: 'stop_loss', pct: 5 }],
+      entryPrice: null,
+      currentPrice: 50,
+      closes: [],
+    }).exit,
+    false,
+  )
+})
+
+test('mandateMaxDrawdownPct resolves harness, explicit config, then launch-ticket text', () => {
+  const t = loadCjs('tick_common.js')
+  const ticketOnly = { strategy_config: { launch_ticket: { risk: '4% max drawdown' } } }
+  assert.equal(t.mandateMaxDrawdownPct(ticketOnly, {}, 10), 4)
+  assert.equal(t.mandateMaxDrawdownPct(ticketOnly, { risk: { max_drawdown_pct: 6 } }, 10), 6)
+  assert.equal(
+    t.mandateMaxDrawdownPct({ strategy_config: { max_drawdown_pct: 3 } }, {}, 10),
+    3,
+  )
+  assert.equal(t.mandateMaxDrawdownPct({}, {}, 10), 10)
+})
+
+test('buildSwapIntent persists the entry signal as runner_signal metadata', () => {
+  const t = loadCjs('tick_common.js')
+  const usdc = '0x036cbd53842c5426634e7929541ec2318f3dcf7e'
+  const weth = '0x4200000000000000000000000000000000000006'
+  const intent = t.buildSwapIntent({
+    config: { bot_id: 'bot-x' },
+    strategyId: 'dex-bot-x',
+    tokenIn: usdc,
+    tokenOut: weth,
+    amountInUnits: 1_000_000n,
+    prices: new Map([
+      [usdc, 1],
+      [weth, 2000],
+    ]),
+    slippageBps: 100,
+    protocol: 'uniswap_v3',
+    metadata: { signal: 'ema-trend-entry', signals: { rsi_14: 40 } },
+  })
+  assert.equal(intent.metadata.runner_signal, 'ema-trend-entry')
+})

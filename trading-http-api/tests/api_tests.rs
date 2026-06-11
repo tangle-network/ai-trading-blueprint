@@ -5377,6 +5377,7 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
             drawdown_pct: "0".to_string(),
             positions_count: 1,
             trade_count: 1,
+            risk_baseline_usd: None,
         },
     )
     .expect("record snapshot");
