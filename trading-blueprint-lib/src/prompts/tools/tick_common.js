@@ -12,6 +12,7 @@
 // the canonical runtime for every other family so the four tools never diverge.
 
 const fs = require('fs');
+const path = require('path');
 const { spawnSync } = require('child_process');
 
 const DECISION_LOG = '/home/agent/logs/decisions.jsonl';
@@ -167,6 +168,13 @@ function requiresExternalSignals(config, family) {
   return /news|headline|sentiment|event|catalyst|prediction|polymarket|volatility|macro|election|politic/.test(text);
 }
 
+// The default no-key provider (signals-provider.js: Fear & Greed + CoinGecko
+// global/trending) ships with every sandbox, so external signals work out of
+// the box unless explicitly disabled.
+function defaultSignalProviderEnabled() {
+  return !process.env.EXTERNAL_SIGNALS_DISABLED;
+}
+
 function externalSignalProviderConfigured(config) {
   const strategy = isRecord(config && config.strategy_config) ? config.strategy_config : {};
   return Boolean(
@@ -176,29 +184,110 @@ function externalSignalProviderConfigured(config) {
       || process.env.EXTERNAL_SIGNAL_API_URL
       || strategy.news_endpoint
       || strategy.external_signal_endpoint
-      || strategy.sentiment_endpoint,
+      || strategy.sentiment_endpoint
+      || defaultSignalProviderEnabled(),
   );
+}
+
+function resolveSignalsProviderPath() {
+  // In-sandbox name uses dashes; the repo source uses underscores (local tests).
+  const candidates = [
+    process.env.SIGNALS_PROVIDER_PATH,
+    path.join(__dirname, 'signals-provider.js'),
+    path.join(__dirname, 'signals_provider.js'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate)) return candidate;
+    } catch {
+      // keep scanning
+    }
+  }
+  return null;
+}
+
+// Memoized per-process so repeated evidence builds within one tick don't
+// respawn the provider. The provider itself caches to disk for 10 minutes,
+// so the spawn is cheap on cache hits and rate-limit-safe across ticks.
+let signalSnapshotCache = null;
+let signalSnapshotCachedAtMs = 0;
+const SIGNAL_SNAPSHOT_MEMO_MS = 60 * 1000;
+
+function loadExternalSignalSnapshot() {
+  if (!defaultSignalProviderEnabled()) return null;
+  const now = Date.now();
+  if (signalSnapshotCache && now - signalSnapshotCachedAtMs < SIGNAL_SNAPSHOT_MEMO_MS) {
+    return signalSnapshotCache;
+  }
+  let snapshot = null;
+  const providerPath = resolveSignalsProviderPath();
+  if (providerPath) {
+    const run = spawnSync(process.execPath, [providerPath], {
+      encoding: 'utf8',
+      timeout: asNumber(process.env.SIGNALS_PROVIDER_TIMEOUT_MS, 20000),
+    });
+    if (run.status === 0 && run.stdout) {
+      try {
+        const parsed = JSON.parse(run.stdout);
+        if (isRecord(parsed)) snapshot = parsed;
+      } catch {
+        // fall through to the on-disk snapshot
+      }
+    }
+  }
+  if (!snapshot) {
+    const stateFile = process.env.SIGNALS_STATE_FILE || '/home/agent/state/external-signals.json';
+    const cached = readJson(stateFile, null);
+    if (isRecord(cached)) snapshot = cached;
+  }
+  signalSnapshotCache = snapshot;
+  signalSnapshotCachedAtMs = now;
+  return snapshot;
+}
+
+function compactExternalSignals(snapshot, limit = 5) {
+  if (!isRecord(snapshot) || !Array.isArray(snapshot.signals)) return [];
+  return snapshot.signals.slice(0, limit).map((signal) => ({
+    source: String((signal && signal.source) || 'unknown'),
+    kind: String((signal && signal.kind) || 'unknown'),
+    value: signal && signal.value !== undefined ? signal.value : null,
+    label: String((signal && signal.label) || ''),
+    observed_at: String((signal && signal.observed_at) || ''),
+  }));
 }
 
 function buildExternalSignalEvidence({ config, family, checkedState, metrics }) {
   const required = requiresExternalSignals(config, family);
   const providerConfigured = externalSignalProviderConfigured(config);
+  const snapshot = loadExternalSignalSnapshot();
+  const snapshotSignals = isRecord(snapshot) && Array.isArray(snapshot.signals) ? snapshot.signals : [];
+  const snapshotStatus = isRecord(snapshot) && typeof snapshot.source_status === 'string'
+    ? snapshot.source_status
+    : null;
   const marketSignalCount =
     countSignalKeys(checkedState, /price|funding|rsi|ema|candle|volatility|spread|liquidity|market|reserve|apy|yield|probability/i)
     + countSignalKeys(metrics, /price|funding|rsi|ema|candle|volatility|spread|liquidity|market|reserve|apy|yield|probability/i);
-  const externalObservationCount =
+  const stateObservationCount =
     countSignalKeys(checkedState, /headline|sentiment|catalyst|polymarket|gamma|clob|election|politic|macro|event/i)
     + countSignalKeys(metrics, /headline|sentiment|catalyst|polymarket|gamma|clob|election|politic|macro|event/i);
+  const externalObservationCount = stateObservationCount + snapshotSignals.length;
   const existingSignals = asNumber(metrics && metrics.signals_generated, 0);
   const generatedSignalCount = Math.max(existingSignals, marketSignalCount + externalObservationCount);
   const checked = required || externalObservationCount > 0 || providerConfigured;
-  const sourceStatus = externalObservationCount > 0
-    ? 'observed'
-    : !required
-      ? 'not_required'
-      : providerConfigured
-        ? 'checked_no_items'
-        : 'unavailable_no_provider';
+  // Snapshot-backed runs report the provider's own status (ok|degraded|
+  // unavailable); the legacy statuses remain for endpoint-only and disabled
+  // configurations so downstream readers keep working unchanged.
+  const sourceStatus = snapshotSignals.length > 0
+    ? snapshotStatus || 'ok'
+    : stateObservationCount > 0
+      ? 'observed'
+      : !required
+        ? 'not_required'
+        : snapshotStatus
+          ? snapshotStatus
+          : providerConfigured
+            ? 'checked_no_items'
+            : 'unavailable_no_provider';
 
   return {
     schema_version: 1,
@@ -206,10 +295,11 @@ function buildExternalSignalEvidence({ config, family, checkedState, metrics }) 
     required,
     provider_configured: providerConfigured,
     source_status: sourceStatus,
-    unavailable: sourceStatus === 'unavailable_no_provider',
+    unavailable: sourceStatus === 'unavailable_no_provider' || sourceStatus === 'unavailable',
     market_signal_count: marketSignalCount,
     external_observation_count: externalObservationCount,
     generated_signal_count: generatedSignalCount,
+    external_signals: compactExternalSignals(snapshot),
   };
 }
 
@@ -857,6 +947,8 @@ module.exports = {
   countSignalKeys,
   requiresExternalSignals,
   externalSignalProviderConfigured,
+  defaultSignalProviderEnabled,
+  loadExternalSignalSnapshot,
   buildExternalSignalEvidence,
   enrichSignalEvidence,
   isPaperShowcaseMode,

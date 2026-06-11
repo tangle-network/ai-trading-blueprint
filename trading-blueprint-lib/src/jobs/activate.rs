@@ -1116,6 +1116,16 @@ pub(crate) async fn write_prebuilt_tools(
         include_str!("../prompts/tools/tick_common.js"),
     )
     .await?;
+    // Default no-API-key external signal provider (Fear & Greed + CoinGecko
+    // global/trending). tick-common spawns it from the same directory so
+    // external_signal_evidence carries real observations out of the box.
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/signals-provider.js",
+        include_str!("../prompts/tools/signals_provider.js"),
+    )
+    .await?;
     write_file_to_sidecar(
         sidecar_url,
         token,
