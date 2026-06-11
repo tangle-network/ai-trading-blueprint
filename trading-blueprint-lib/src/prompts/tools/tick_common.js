@@ -647,8 +647,12 @@ async function recommendSlippageBps(api, tokenIn, tokenOut, fallbackBps) {
 async function circuitBreakerTripped(api, maxDrawdownPct) {
   try {
     const response = body(await api.checkCircuitBreaker(maxDrawdownPct));
+    // The server's CircuitBreakerResponse field is `should_break`. The legacy
+    // aliases never existed server-side — checking only them meant the
+    // breaker could trip on the server while the tick kept trading.
     return Boolean(
-      response.triggered
+      response.should_break
+        ?? response.triggered
         ?? response.tripped
         ?? response.circuit_breaker_triggered
         ?? response.breached

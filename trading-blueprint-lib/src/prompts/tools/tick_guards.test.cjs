@@ -314,3 +314,14 @@ test('buildSwapIntent persists the entry signal as runner_signal metadata', () =
   })
   assert.equal(intent.metadata.runner_signal, 'ema-trend-entry')
 })
+
+test('circuitBreakerTripped honors the server should_break field', async () => {
+  const t = loadCjs('tick_common.js')
+  const api = (payload) => ({ checkCircuitBreaker: async () => ({ data: payload }) })
+  assert.equal(await t.circuitBreakerTripped(api({ should_break: true, current_drawdown_pct: '9.1' }), 4), true)
+  assert.equal(await t.circuitBreakerTripped(api({ should_break: false, current_drawdown_pct: '1.2' }), 4), false)
+  // Fail-open on transport errors is intentional (a dead metrics endpoint
+  // must not halt trading) — but a present should_break must win.
+  const broken = { checkCircuitBreaker: async () => { throw new Error('down') } }
+  assert.equal(await t.circuitBreakerTripped(broken, 4), false)
+})
