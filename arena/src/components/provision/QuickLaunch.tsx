@@ -7,21 +7,28 @@ import type { CreateStrategyDraft } from '~/lib/createStrategyDraft';
 import { ACTIVATION_LABELS } from '~/lib/config/aiProviders';
 import { PROVISION_PROGRESS_LABELS, formatCost } from '~/routes/provision/types';
 import { TimelineStage, ElapsedTime } from './TimelineStage';
+import { OperatorPicker, type OperatorPickerOption } from './OperatorPicker';
 import { truncateAddress } from '~/lib/format';
 import { getProvisionBotRouteId } from '~/lib/utils/provisionBotRoute';
 
 export interface QuickLaunchProps {
   draft: CreateStrategyDraft;
   packName: string;
-  blueprintName?: string;
+  /** Plain-language instance framing (shared / dedicated / dedicated + TEE). */
+  instanceLabel?: string;
   executionTargetLabel?: string;
   /** Service path: an active, permitted service was discovered on-chain. */
   serviceReady: boolean;
   serviceId: string;
   serviceOperators: Address[];
-  /** Quote path: the auto-picked operator and its signed quote total. */
+  /** Quote path: the effective operator and its signed quote total. */
   quoteOperator?: Address;
   quoteCost?: bigint;
+  /** Every discovered operator for the runtime, priced where quoted. */
+  operatorOptions?: OperatorPickerOption[];
+  /** Cheapest quoted operator — the default pick. */
+  cheapestOperator?: Address;
+  onSelectOperator?: (address: Address) => void;
   /** Pre-launch auto-resolution still in flight (discovery/quoting). */
   resolving: boolean;
   resolutionDetail: string | null;
@@ -55,13 +62,16 @@ function ContractRow({ label, value }: { label: string; value: ReactNode }) {
 export function QuickLaunch({
   draft,
   packName,
-  blueprintName,
+  instanceLabel,
   executionTargetLabel,
   serviceReady,
   serviceId,
   serviceOperators,
   quoteOperator,
   quoteCost,
+  operatorOptions,
+  cheapestOperator,
+  onSelectOperator,
   resolving,
   resolutionDetail,
   launchReady,
@@ -95,22 +105,33 @@ export function QuickLaunch({
     ? getProvisionBotRouteId(latestDeployment)
     : undefined;
 
+  // The operator line is the picker while the launch is still re-targetable;
+  // once launched (or on the existing-service path) it collapses back into a
+  // static contract row.
+  const showOperatorPicker =
+    !launched &&
+    !serviceReady &&
+    onSelectOperator != null &&
+    (operatorOptions?.some((option) => option.quoteCost != null) ?? false);
+
   const operatorValue = serviceReady
     ? serviceOperators.length > 0
       ? serviceOperators.length === 1
         ? truncateAddress(serviceOperators[0])
         : `${truncateAddress(serviceOperators[0])} +${serviceOperators.length - 1}`
       : `Service #${serviceId}`
-    : quoteOperator
+    : !showOperatorPicker && quoteOperator
       ? truncateAddress(quoteOperator)
       : null;
   const costValue = serviceReady
     ? 'Network fee only'
-    : quoteCost != null && quoteCost > 0n
-      ? `${formatCost(quoteCost)} runtime quote`
-      : quoteCost === 0n && quoteOperator
-        ? 'Free runtime quote'
-        : null;
+    : showOperatorPicker
+      ? null
+      : quoteCost != null && quoteCost > 0n
+        ? `${formatCost(quoteCost)} runtime quote`
+        : quoteCost === 0n && quoteOperator
+          ? 'Free runtime quote'
+          : null;
   const launchLabel = running
     ? 'Launching…'
     : serviceReady
@@ -129,10 +150,10 @@ export function QuickLaunch({
     draft.sizing ? { label: 'Sizing', value: draft.sizing } : null,
     draft.drawdown ? { label: 'Risk', value: draft.drawdown } : null,
     draft.mode ? { label: 'Mode', value: draft.mode } : null,
-    blueprintName || executionTargetLabel
+    instanceLabel || executionTargetLabel
       ? {
-          label: 'Runtime',
-          value: [blueprintName, executionTargetLabel].filter(Boolean).join(' · '),
+          label: 'Instance',
+          value: [instanceLabel, executionTargetLabel].filter(Boolean).join(' · '),
         }
       : null,
     operatorValue ? { label: 'Operator', value: operatorValue } : null,
@@ -180,6 +201,14 @@ export function QuickLaunch({
 
             {!launched && (
               <div className="space-y-3">
+                {showOperatorPicker && operatorOptions && onSelectOperator && (
+                  <OperatorPicker
+                    options={operatorOptions}
+                    selected={quoteOperator}
+                    cheapest={cheapestOperator}
+                    onSelect={onSelectOperator}
+                  />
+                )}
                 {resolving && resolutionDetail && (
                   <div
                     className="flex items-center gap-2 text-sm text-arena-elements-textTertiary"

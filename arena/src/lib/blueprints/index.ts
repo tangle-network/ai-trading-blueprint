@@ -1,4 +1,6 @@
 export type { TradingBlueprintDef, ProvisionParams, StrategyPackDef } from './types';
+export type { InstanceFraming } from './framing';
+export { instanceFraming, instanceLabelForOperatorKind } from './framing';
 export { strategyPacks, buildFullInstructions } from './strategy-packs';
 export { tradingCloud } from './trading-cloud';
 export { tradingInstance } from './trading-instance';

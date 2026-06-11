@@ -224,6 +224,28 @@ vi.mock('~/lib/utils/resolveBotId', () => ({
 }));
 
 const OPERATOR = '0x00000000000000000000000000000000000000aa';
+const OPERATOR_2 = '0x00000000000000000000000000000000000000bb';
+const OPERATOR_3 = '0x00000000000000000000000000000000000000cc';
+
+function buildQuote(operator: string, totalCost: bigint) {
+  return {
+    operator,
+    signature: '0xsig',
+    totalCost,
+    costRate: Number(totalCost) / 1e9,
+    details: {
+      requester: '0x0000000000000000000000000000000000000001',
+      blueprintId: 1n,
+      ttlBlocks: 216000n,
+      totalCost,
+      timestamp: 1n,
+      expiry: 2n,
+      confidentiality: 0,
+      securityCommitments: [],
+      resourceCommitments: [{ kind: 0, count: 1n }],
+    },
+  };
+}
 
 function seedDraft() {
   window.localStorage.setItem(
@@ -246,26 +268,26 @@ function seedDraft() {
 function seedQuotedOperator() {
   shared.operators = [{ address: OPERATOR, rpcAddress: 'http://op' }];
   shared.operatorsLoading = false;
-  shared.quotes = [
-    {
-      operator: OPERATOR,
-      signature: '0xsig',
-      totalCost: 5_000_000_000n,
-      costRate: 5,
-      details: {
-        requester: '0x0000000000000000000000000000000000000001',
-        blueprintId: 1n,
-        ttlBlocks: 216000n,
-        totalCost: 5_000_000_000n,
-        timestamp: 1n,
-        expiry: 2n,
-        confidentiality: 0,
-        securityCommitments: [],
-        resourceCommitments: [{ kind: 0, count: 1n }],
-      },
-    },
-  ];
+  shared.quotes = [buildQuote(OPERATOR, 5_000_000_000n)];
   shared.totalCost = 5_000_000_000n;
+}
+
+/** Three discovered operators: two quoted ($5 / $7) and one unreachable. */
+function seedOperatorRoster() {
+  shared.operators = [
+    { address: OPERATOR, rpcAddress: 'http://op-one.example' },
+    { address: OPERATOR_2, rpcAddress: 'http://op-two.example' },
+    { address: OPERATOR_3, rpcAddress: 'http://op-three.example' },
+  ];
+  shared.operatorsLoading = false;
+  shared.quotes = [
+    buildQuote(OPERATOR, 5_000_000_000n),
+    buildQuote(OPERATOR_2, 7_000_000_000n),
+  ];
+  shared.quoteErrors = new Map([
+    [OPERATOR_3, { kind: 'unreachable', detail: 'fetch failed' }],
+  ]);
+  shared.totalCost = 12_000_000_000n;
 }
 
 describe('provision quick launch (draft=create)', () => {
@@ -296,9 +318,13 @@ describe('provision quick launch (draft=create)', () => {
     expect(screen.getByText('Paper start')).toBeInTheDocument();
 
     // The 4-step wizard chrome must not render on the quick path.
-    expect(screen.queryByRole('button', { name: /Blueprint/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Instance/ })).not.toBeInTheDocument();
     expect(screen.queryByTestId('configure-step')).not.toBeInTheDocument();
     expect(screen.queryByTestId('deploy-step')).not.toBeInTheDocument();
+
+    // The contract line frames the runtime in plain language, not blueprint jargon.
+    expect(screen.getByText(/Shared instance/)).toBeInTheDocument();
+    expect(screen.queryByText(/Trading Cloud/)).not.toBeInTheDocument();
 
     // Auto-resolution converges on the cheapest quote and prices the button.
     await waitFor(() => {
@@ -326,6 +352,84 @@ describe('provision quick launch (draft=create)', () => {
     expect(writeConfig.functionName).toBe('createServiceFromQuotes');
     expect(writeConfig.args[1]).toHaveLength(1);
     expect(writeConfig.args[1][0].operator).toBe(OPERATOR);
+    expect(writeConfig.value).toBe(5_000_000_000n);
+  });
+
+  it('defaults to the cheapest quote and lists every discovered operator, quoted or not', async () => {
+    seedDraft();
+    seedOperatorRoster();
+    const { default: ProvisionPage } = await import('../provision');
+    const user = userEvent.setup();
+    render(<ProvisionPage />);
+
+    // Cheapest signed quote prices the button by default.
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: 'Launch · $5.00' }),
+      ).toBeEnabled();
+    });
+
+    // Collapsed operator line: identity + price + change affordance.
+    const toggle = screen.getByRole('button', { name: /op-one\.example.*\$5\.00.*Change/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+
+    const group = screen.getByRole('radiogroup', { name: 'Operator' });
+    expect(group).toBeInTheDocument();
+
+    const cheapestRow = screen.getByRole('radio', { name: /op-one\.example/ });
+    expect(cheapestRow).toHaveAttribute('aria-checked', 'true');
+    expect(cheapestRow).toHaveTextContent('$5.00');
+    expect(cheapestRow).toHaveTextContent('cheapest');
+
+    const pricierRow = screen.getByRole('radio', { name: /op-two\.example/ });
+    expect(pricierRow).toHaveAttribute('aria-checked', 'false');
+    expect(pricierRow).toHaveTextContent('$7.00');
+
+    // The operator without a signed quote stays visible but disabled.
+    const unavailableRow = screen.getByRole('radio', { name: /op-three\.example/ });
+    expect(unavailableRow).toBeDisabled();
+    expect(unavailableRow).toHaveTextContent('Unreachable');
+  });
+
+  it('re-targets the launch when a different operator is selected', async () => {
+    seedDraft();
+    seedOperatorRoster();
+    const { default: ProvisionPage } = await import('../provision');
+    const user = userEvent.setup();
+    render(<ProvisionPage />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: 'Launch · $5.00' }),
+      ).toBeEnabled();
+    });
+
+    await user.click(
+      screen.getByRole('button', { name: /op-one\.example.*Change/ }),
+    );
+    await user.click(screen.getByRole('radio', { name: /op-two\.example/ }));
+
+    // Selection collapses the list and reprices the collapsed line + button.
+    expect(
+      screen.queryByRole('radiogroup', { name: 'Operator' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /op-two\.example.*\$7\.00.*Change/ }),
+    ).toBeInTheDocument();
+
+    const launch = screen.getByRole('button', { name: 'Launch · $7.00' });
+    await user.click(launch);
+
+    await waitFor(() => {
+      expect(shared.newServiceWriteContract).toHaveBeenCalledTimes(1);
+    });
+    const [writeConfig] = shared.newServiceWriteContract.mock.calls[0];
+    expect(writeConfig.functionName).toBe('createServiceFromQuotes');
+    // Launch binds exactly the chosen operator's signed quote and pays it.
+    expect(writeConfig.args[1]).toHaveLength(1);
+    expect(writeConfig.args[1][0].operator).toBe(OPERATOR_2);
+    expect(writeConfig.value).toBe(7_000_000_000n);
   });
 
   it('keeps the wizard reachable through the Advanced setup escape hatch with the draft applied', async () => {
@@ -343,7 +447,7 @@ describe('provision quick launch (draft=create)', () => {
       );
     });
     // Wizard chrome is back.
-    expect(screen.getByRole('button', { name: /Blueprint/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Instance/ })).toBeInTheDocument();
   });
 
   it('falls back to the deploy step with a visible notice when no operators are discoverable', async () => {
@@ -367,7 +471,7 @@ describe('provision quick launch (draft=create)', () => {
 
     // Wizard chrome (stage bar) renders from the first step.
     expect(
-      await screen.findByRole('button', { name: /Blueprint/ }),
+      await screen.findByRole('button', { name: /Instance/ }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Advanced setup' }),

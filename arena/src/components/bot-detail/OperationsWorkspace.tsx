@@ -4,6 +4,7 @@ import type { Bot } from '~/lib/types/bot';
 import type { TokenMetadata } from '~/lib/tradeTokenMetadata';
 import { ErrorBoundary } from '~/components/ErrorBoundary';
 import { botStatusBadgeVariant, botStatusLabel, formatNumber } from '~/lib/format';
+import { instanceLabelForOperatorKind } from '~/lib/blueprints/framing';
 import {
   WorkspaceCollapsedPane,
   WorkspaceControlButton,
@@ -134,18 +135,7 @@ function validationTrustLabel(value: Bot['validationTrust']): string {
 }
 
 function operatorKindLabel(value: Bot['operatorKind']): string {
-  switch (value) {
-    case 'cloud':
-      return 'Fleet';
-    case 'instance':
-      return 'Instance';
-    case 'tee':
-      return 'TEE';
-    case null:
-    case undefined:
-    default:
-      return 'Unknown';
-  }
+  return instanceLabelForOperatorKind(value);
 }
 
 function runtimeModeLabel(bot: Bot): string {

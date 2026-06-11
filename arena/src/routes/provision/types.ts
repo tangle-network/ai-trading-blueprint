@@ -7,7 +7,9 @@ export type WizardStep = 'blueprint' | 'configure' | 'deploy' | 'secrets';
 
 export const STEP_ORDER: WizardStep[] = ['blueprint', 'configure', 'deploy', 'secrets'];
 export const STEP_LABELS: Record<WizardStep, string> = {
-  blueprint: 'Blueprint',
+  // The step picks where the bot runs (shared vs dedicated instance); the
+  // underlying blueprint stays a technical detail.
+  blueprint: 'Instance',
   configure: 'Agent',
   deploy: 'Provision',
   secrets: 'Run',

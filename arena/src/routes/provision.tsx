@@ -61,6 +61,11 @@ import {
   buildFullInstructions,
   type TradingBlueprintDef,
 } from '~/lib/blueprints';
+import { instanceFraming } from '~/lib/blueprints/framing';
+import {
+  operatorRpcHost,
+  type OperatorPickerOption,
+} from '~/components/provision/OperatorPicker';
 import { BlueprintSelector } from '~/components/provision/BlueprintSelector';
 import { ConfigureStep } from '~/components/provision/ConfigureStep';
 import { DeployStep } from '~/components/provision/DeployStep';
@@ -1079,11 +1084,6 @@ function compactHeaderChainName(name: string): string {
     .trim() || name;
 }
 
-function compactHeaderBlueprintName(name: string | undefined): string {
-  if (!name) return 'Blueprint';
-  return name.replace(/^Trading\s+/i, '').trim() || name;
-}
-
 function ProvisionStageBar({
   step,
   stepIndex,
@@ -1554,6 +1554,9 @@ export default function ProvisionPage() {
   );
   const [quickLaunchRunning, setQuickLaunchRunning] = useState(false);
   const [quickLaunchError, setQuickLaunchError] = useState<string | null>(null);
+  // User override from the operator picker; cheapest quote stays the default.
+  const [quickOperatorChoice, setQuickOperatorChoice] =
+    useState<Address | null>(null);
   const quickJobSubmittedRef = useRef(false);
   const quickSecretsSubmittedRef = useRef(false);
 
@@ -3092,6 +3095,8 @@ export default function ProvisionPage() {
 
   const handleDeployNewService = async (opts?: {
     onFailure?: (message: string) => void;
+    /** Bind the new service to a single operator's signed quote (quick launch). */
+    operator?: Address;
   }) => {
     const fail = (message: string) => {
       toast.error(message);
@@ -3112,7 +3117,12 @@ export default function ProvisionPage() {
       fail(strategyExecution.message);
       return;
     }
-    if (quotes.length === 0) {
+    const launchQuotes = opts?.operator
+      ? quotes.filter(
+          (q) => q.operator.toLowerCase() === opts.operator!.toLowerCase(),
+        )
+      : quotes;
+    if (launchQuotes.length === 0) {
       fail('No quotes available. Select operators first');
       return;
     }
@@ -3211,7 +3221,7 @@ export default function ProvisionPage() {
       validationTrust,
     });
 
-    const quoteTuples = quotes.map((q) => ({
+    const quoteTuples = launchQuotes.map((q) => ({
       details: {
         // tnt-core v0.13.0: `requester` is the FIRST field of the on-chain
         // tuple. Must match `msg.sender` and the operator's signed value.
@@ -3247,7 +3257,9 @@ export default function ProvisionPage() {
           [userAddress],
           ttlBlocks,
         ],
-        value: totalCost,
+        // Pay exactly the quotes being submitted (a single one on the quick
+        // path, all selected on the wizard path).
+        value: launchQuotes.reduce((sum, q) => sum + q.totalCost, 0n),
         ...localFeeOverrides,
       },
       {
@@ -3897,20 +3909,8 @@ export default function ProvisionPage() {
     );
   }, [quickActive, serviceMode, selectedOperators.size, discoveredOperators]);
 
-  // …then narrow to the cheapest quote so launch binds a single operator.
-  useEffect(() => {
-    if (!quickActive || serviceMode !== 'new' || quickLaunchRunning) return;
-    if (isQuoting || quotes.length === 0 || selectedOperators.size <= 1) return;
-    const cheapest = selectCheapestQuoteOperator(quotes);
-    if (cheapest) setSelectedOperators(new Set([cheapest]));
-  }, [
-    quickActive,
-    serviceMode,
-    quickLaunchRunning,
-    isQuoting,
-    quotes,
-    selectedOperators.size,
-  ]);
+  // …keeping every quote alive so the operator picker can re-target the
+  // launch. The launch itself binds a single operator via `handleDeployNewService`.
 
   // No operators discovered at all → the deploy step is the recovery surface.
   useEffect(() => {
@@ -3948,11 +3948,45 @@ export default function ProvisionPage() {
     fallbackToWizard,
   ]);
 
-  const quickQuoteOperator = selectCheapestQuoteOperator(quotes);
-  const quickQuote = quotes.find((q) => q.operator === quickQuoteOperator);
+  const quickCheapestOperator = selectCheapestQuoteOperator(quotes);
+  // The picker override only holds while the chosen operator still has a live
+  // signed quote; otherwise the default (cheapest) takes back over.
+  const quickQuoteOperator =
+    quickOperatorChoice != null &&
+    quotes.some(
+      (q) => q.operator.toLowerCase() === quickOperatorChoice.toLowerCase(),
+    )
+      ? quickOperatorChoice
+      : quickCheapestOperator;
+  const quickQuote = quotes.find(
+    (q) => q.operator.toLowerCase() === quickQuoteOperator?.toLowerCase(),
+  );
+  const quickOperatorOptions = useMemo<OperatorPickerOption[]>(() => {
+    if (!quickActive || serviceMode !== 'new') return [];
+    const options = discoveredOperators.map((op) => {
+      const quote = quotes.find(
+        (q) => q.operator.toLowerCase() === op.address.toLowerCase(),
+      );
+      const failure = quoteErrors.get(op.address);
+      return {
+        address: op.address,
+        rpcHost: operatorRpcHost(op.rpcAddress),
+        quoteCost: quote?.totalCost,
+        failure: failure?.kind,
+        pending: quote == null && failure == null && isQuoting,
+      };
+    });
+    // Price decides: quoted operators first (ascending), unavailable last.
+    return options.sort((a, b) => {
+      if (a.quoteCost != null && b.quoteCost != null)
+        return a.quoteCost < b.quoteCost ? -1 : a.quoteCost > b.quoteCost ? 1 : 0;
+      if (a.quoteCost != null) return -1;
+      if (b.quoteCost != null) return 1;
+      return 0;
+    });
+  }, [quickActive, serviceMode, discoveredOperators, quotes, quoteErrors, isQuoting]);
   const quickServicePathReady = !isInstance && serviceReady;
-  const quickQuotePathReady =
-    serviceMode === 'new' && quotes.length === 1 && selectedOperators.size === 1;
+  const quickQuotePathReady = serviceMode === 'new' && quickQuote != null;
   const quickLaunchReady = quickServicePathReady || quickQuotePathReady;
   const quickResolutionDetail = quickLaunchReady
     ? null
@@ -3975,7 +4009,10 @@ export default function ProvisionPage() {
       quickJobSubmittedRef.current = true;
       void handleSubmit({ onFailure: quickLaunchFail });
     } else {
-      void handleDeployNewService({ onFailure: quickLaunchFail });
+      void handleDeployNewService({
+        onFailure: quickLaunchFail,
+        operator: quickQuoteOperator,
+      });
     }
   };
 
@@ -4030,6 +4067,12 @@ export default function ProvisionPage() {
   };
 
   const handleQuickAdvanced = () => {
+    // Quick mode selects every operator to collect quotes; the wizard treats
+    // selection as "operators this service binds", so carry over the single
+    // operator the picker resolved to.
+    if (serviceMode === 'new' && quickQuoteOperator) {
+      setSelectedOperators(new Set([quickQuoteOperator]));
+    }
     setFlowMode('wizard');
     setStep(txHash || latestDeployment ? 'deploy' : 'configure');
   };
@@ -4070,9 +4113,11 @@ export default function ProvisionPage() {
           metrics={[
             { label: 'Network', value: compactHeaderChainName(targetChain.name), title: targetChain.name },
             {
-              label: 'Runtime',
-              value: compactHeaderBlueprintName(selectedBlueprint?.name),
-              title: selectedBlueprint?.name ?? 'Blueprint',
+              label: 'Instance',
+              value: selectedBlueprint
+                ? instanceFraming(selectedBlueprint).shortLabel
+                : '—',
+              title: selectedBlueprint?.name ?? 'Instance type',
             },
             ...(quickActive ? [] : [{ label: 'Step', value: STEP_LABELS[step] }]),
           ]}
@@ -4158,13 +4203,18 @@ export default function ProvisionPage() {
           <QuickLaunch
             draft={quickDraft}
             packName={selectedPack.name}
-            blueprintName={selectedBlueprint?.name}
+            instanceLabel={
+              selectedBlueprint ? instanceFraming(selectedBlueprint).label : undefined
+            }
             executionTargetLabel={selectedExecutionTarget?.label}
             serviceReady={serviceReady}
             serviceId={serviceId}
             serviceOperators={serviceInfo?.operators ?? []}
             quoteOperator={quickQuoteOperator}
             quoteCost={quickQuote?.totalCost}
+            operatorOptions={quickOperatorOptions}
+            cheapestOperator={quickCheapestOperator}
+            onSelectOperator={setQuickOperatorChoice}
             resolving={quickResolutionDetail != null}
             resolutionDetail={quickResolutionDetail}
             launchReady={quickLaunchReady}

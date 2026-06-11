@@ -4,6 +4,7 @@ import { Button, Card, CardContent } from '@tangle-network/blueprint-ui/componen
 import { zeroAddress } from 'viem';
 import { removeProvision, type TrackedProvision } from '~/lib/stores/provisions';
 import type { TradingBlueprintDef, StrategyPackDef } from '~/lib/blueprints';
+import { instanceFraming } from '~/lib/blueprints/framing';
 import type { ServiceInfo } from '~/routes/provision/types';
 import { PROVISION_PROGRESS_LABELS, cronToHuman, formatCost } from '~/routes/provision/types';
 import { TimelineStage, ElapsedTime } from './TimelineStage';
@@ -183,7 +184,14 @@ export function DeployStep({
                 Request summary
               </div>
               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm font-data">
-                <SummaryRow label="Blueprint" value={selectedBlueprint?.name ?? 'Instance'} />
+                <SummaryRow
+                  label="Instance"
+                  value={
+                    selectedBlueprint
+                      ? instanceFraming(selectedBlueprint).label
+                      : 'Dedicated instance'
+                  }
+                />
                 <SummaryRow label="Agent" value={name} />
                 <SummaryRow label="Focus" value={focusLabel} valueClassName="text-arena-elements-textPrimary text-right" />
                 <SummaryRow label="Access" value={accessLabel} valueClassName="text-arena-elements-textPrimary text-right" />
