@@ -29,6 +29,10 @@ pub(crate) const SIDECAR_PROFILE_INSTRUCTIONS_PATH: &str =
 /// so the trading-operator identity must live here or the agent falls back to
 /// opencode's default "I'm a coding assistant" persona.
 pub(crate) const SIDECAR_AGENTS_MD_PATH: &str = "/home/agent/AGENTS.md";
+
+/// Same charter, claude-code's auto-loaded filename. The claude CLI reads
+/// `CLAUDE.md` (not `AGENTS.md`) from its working directory.
+pub(crate) const SIDECAR_CLAUDE_MD_PATH: &str = "/home/agent/CLAUDE.md";
 const TRADING_AGENT_AGENT_EVAL_VERSION: &str = "^0.70.0";
 const TRADING_AGENT_AGENT_KNOWLEDGE_VERSION: &str = "^1.5.0";
 const TRADING_AGENT_AGENT_RUNTIME_VERSION: &str = "^0.36.0";
@@ -411,7 +415,7 @@ pub(crate) fn resolve_sidecar_rpc_url(rpc_url: &str) -> String {
 #[tracing::instrument(name = "activate_bot", skip_all, fields(bot_id = %bot_id))]
 pub async fn activate_bot_with_secrets(
     bot_id: &str,
-    user_env: serde_json::Map<String, serde_json::Value>,
+    mut user_env: serde_json::Map<String, serde_json::Value>,
     mock_sandbox: Option<sandbox_runtime::SandboxRecord>,
 ) -> Result<ActivateResult, String> {
     // Acquire per-bot lifecycle lock to prevent RACE-3 (concurrent activation)
@@ -500,6 +504,20 @@ pub async fn activate_bot_with_secrets(
     }
 
     // 2. Inject user secrets into sandbox (sandbox-runtime merges base + user internally)
+    //
+    // Merge the per-bot agent-harness env first: AGENT_BACKEND sets the
+    // sidecar's default backend for every run (chat + cron workflow ticks),
+    // and the harness auth vars (ANTHROPIC_API_KEY / OPENAI_API_KEY +
+    // OPENAI_BASE_URL …) authenticate the selected CLI. inject_secrets
+    // recreates the container, so the server picks these up at startup.
+    // Caller-supplied env wins on key collisions.
+    let agent_harness = crate::harness::agent_harness_for_bot(&bot.strategy_config);
+    let harness_env = crate::operator_credentials::harness_ai_env(&agent_harness)
+        .map_err(|e| format!("Activation blocked: {e}"))?;
+    for (key, value) in harness_env {
+        user_env.entry(key).or_insert(value);
+    }
+
     update_activation_progress(
         bot_id,
         "recreating_sidecar",
@@ -928,6 +946,16 @@ pub(crate) async fn sync_profile_instructions(
         sidecar_url,
         token,
         SIDECAR_AGENTS_MD_PATH,
+        OPERATOR_AGENTS_MD,
+    )
+    .await?;
+    // CLAUDE.md is the equivalent auto-loaded seam for the claude-code
+    // harness (codex reads AGENTS.md natively). Written unconditionally so a
+    // post-activation harness switch doesn't strand the operator identity.
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        SIDECAR_CLAUDE_MD_PATH,
         OPERATOR_AGENTS_MD,
     )
     .await

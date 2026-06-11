@@ -22,6 +22,21 @@ pub async fn configure_core(
     };
     let next_harness_json = if let Some(config) = parsed_strategy_config.as_ref() {
         if let Some(obj) = config.as_object() {
+            // Reject unsupported agent harnesses (and harnesses the operator
+            // env cannot authenticate) before persisting the new config.
+            let agent_harness = crate::harness::agent_harness_from_strategy_config(Some(obj))?;
+            crate::operator_credentials::harness_ai_env(&agent_harness)?;
+            // The chat path picks the new harness up immediately
+            // (backend.type per request); cron workflow ticks read the
+            // AGENT_BACKEND container env, which only changes when secrets are
+            // re-injected (container recreate).
+            if agent_harness != crate::harness::agent_harness_for_bot(&bot.strategy_config) {
+                tracing::info!(
+                    bot_id = %bot_id,
+                    %agent_harness,
+                    "agent_harness changed; workflow ticks adopt it after the next secret re-injection"
+                );
+            }
             Some(super::provision::harness_json_for_strategy_config(obj)?)
         } else {
             None
