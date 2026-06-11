@@ -99,7 +99,7 @@ async fn post_snapshot(
     State(state): State<Arc<TradingApiState>>,
     Json(req): Json<SnapshotRequest>,
 ) -> Result<Json<SnapshotResponse>, (StatusCode, String)> {
-    record_snapshot_for_bot(&state.bot_id, req)
+    record_snapshot_for_bot(&state.bot_id, &state.strategy_config, req)
 }
 
 async fn get_metrics_multi_bot(
@@ -155,14 +155,33 @@ async fn post_snapshot_multi_bot(
     axum::Extension(bot): axum::Extension<crate::BotContext>,
     Json(req): Json<SnapshotRequest>,
 ) -> Result<Json<SnapshotResponse>, (StatusCode, String)> {
-    record_snapshot_for_bot(&bot.bot_id, req)
+    record_snapshot_for_bot(&bot.bot_id, &bot.strategy_config, req)
 }
 
 fn record_snapshot_for_bot(
     bot_id: &str,
+    strategy_config: &serde_json::Value,
     req: SnapshotRequest,
 ) -> Result<Json<SnapshotResponse>, (StatusCode, String)> {
     let now = Utc::now();
+
+    // High-water mark and drawdown are server-authoritative. Tick tools used
+    // to stamp `high_water_mark = current NAV` on every snapshot, which pinned
+    // drawdown at 0 and made the drawdown circuit breaker unreachable.
+    let account_value = parse_decimal(&req.account_value_usd).unwrap_or(Decimal::ZERO);
+    let previous = metrics_store::latest_snapshot_for_bot(bot_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let baseline = initial_capital_usd(strategy_config).unwrap_or(account_value);
+    let previous_hwm = previous
+        .as_ref()
+        .and_then(|snapshot| parse_decimal(&snapshot.high_water_mark))
+        .unwrap_or_else(|| baseline.max(account_value));
+    let high_water_mark = previous_hwm.max(account_value).max(baseline);
+    let drawdown_pct = if high_water_mark > Decimal::ZERO {
+        ((high_water_mark - account_value) / high_water_mark) * Decimal::new(100, 0)
+    } else {
+        Decimal::ZERO
+    };
 
     let snapshot = MetricSnapshot {
         timestamp: now,
@@ -170,8 +189,8 @@ fn record_snapshot_for_bot(
         account_value_usd: req.account_value_usd,
         unrealized_pnl: req.unrealized_pnl,
         realized_pnl: req.realized_pnl,
-        high_water_mark: req.high_water_mark,
-        drawdown_pct: req.drawdown_pct,
+        high_water_mark: high_water_mark.to_string(),
+        drawdown_pct: drawdown_pct.to_string(),
         positions_count: req.positions_count,
         trade_count: req.trade_count,
     };

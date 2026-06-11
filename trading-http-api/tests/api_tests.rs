@@ -4802,6 +4802,72 @@ async fn test_multi_bot_metrics_snapshot_and_history() {
 }
 
 #[tokio::test]
+async fn test_metrics_snapshot_drawdown_is_server_authoritative() {
+    let state = multi_bot_state_with_strategy_config(
+        "http://localhost:1234",
+        serde_json::json!({ "initial_capital_usd": "10000" }),
+    );
+    let app = build_multi_bot_router(state);
+
+    // Tick tools historically stamped high_water_mark = current NAV and
+    // drawdown_pct = 0 on every snapshot, which made the drawdown circuit
+    // breaker unreachable. The server must ignore those client fields.
+    let snap_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/metrics/snapshot")
+                .header("authorization", "Bearer bot-token-abc")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&serde_json::json!({
+                        "account_value_usd": "9000",
+                        "unrealized_pnl": "-1000",
+                        "realized_pnl": "0",
+                        "high_water_mark": "9000",
+                        "drawdown_pct": "0",
+                        "positions_count": 1,
+                        "trade_count": 4
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snap_response.status(), 200);
+
+    let hist_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics/history?limit=10")
+                .header("authorization", "Bearer bot-token-abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hist_response.status(), 200);
+    let hist_body = hist_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let hist_json: serde_json::Value = serde_json::from_slice(&hist_body).unwrap();
+    let snapshots = hist_json["snapshots"].as_array().unwrap();
+    let snap = snapshots.last().unwrap();
+
+    assert_eq!(snap["high_water_mark"], "10000");
+    let drawdown: f64 = snap["drawdown_pct"].as_str().unwrap().parse().unwrap();
+    assert!(
+        (drawdown - 10.0).abs() < 0.01,
+        "expected ~10% drawdown from the 10000 baseline, got {drawdown}"
+    );
+}
+
+#[tokio::test]
 async fn test_multi_bot_execute_paper_trade() {
     let state = multi_bot_state();
     let app = build_multi_bot_router(state);
