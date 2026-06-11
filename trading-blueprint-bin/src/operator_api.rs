@@ -6949,7 +6949,9 @@ const CREATE_PREVIEW_NOTE: &str = "Baseline strategy class replayed over the tra
      the live agent adapts this harness over time.";
 
 static CREATE_PREVIEW_CACHE: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, CreatePreviewResponse)>>,
+    std::sync::Mutex<
+        std::collections::HashMap<String, (std::time::Instant, CreatePreviewResponse)>,
+    >,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 const CREATE_PREVIEW_TTL: std::time::Duration = std::time::Duration::from_secs(600);
 
@@ -6997,10 +6999,9 @@ async fn create_preview(
 
     let mut harness = trading_runtime::backtest::HarnessConfig::default();
     if let Some(pct) = sizing_pct {
-        harness.position_sizing =
-            trading_runtime::backtest::PositionSizing::FixedFraction {
-                fraction: pct / 100.0,
-            };
+        harness.position_sizing = trading_runtime::backtest::PositionSizing::FixedFraction {
+            fraction: pct / 100.0,
+        };
     }
     if let Some(pct) = stop_pct {
         for rule in &mut harness.exit_rules {
@@ -7010,28 +7011,27 @@ async fn create_preview(
         }
     }
 
-    let response = match trading_runtime::backtest::run_baseline_backtest(
-        &strategy_type,
-        harness,
-        lookback,
-    )
-    .await
-    {
-        Ok(summary) => CreatePreviewResponse {
-            strategy_type,
-            supported: true,
-            summary: Some(summary),
-            error: None,
-            note: CREATE_PREVIEW_NOTE.into(),
-        },
-        Err(error) => CreatePreviewResponse {
-            strategy_type,
-            supported: true,
-            summary: None,
-            error: Some(format!("preview unavailable: {error}")),
-            note: "The kline source was unreachable; launch proceeds without historical evidence.".into(),
-        },
-    };
+    let response =
+        match trading_runtime::backtest::run_baseline_backtest(&strategy_type, harness, lookback)
+            .await
+        {
+            Ok(summary) => CreatePreviewResponse {
+                strategy_type,
+                supported: true,
+                summary: Some(summary),
+                error: None,
+                note: CREATE_PREVIEW_NOTE.into(),
+            },
+            Err(error) => CreatePreviewResponse {
+                strategy_type,
+                supported: true,
+                summary: None,
+                error: Some(format!("preview unavailable: {error}")),
+                note:
+                    "The kline source was unreachable; launch proceeds without historical evidence."
+                        .into(),
+            },
+        };
 
     CREATE_PREVIEW_CACHE
         .lock()
