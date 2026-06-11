@@ -2,6 +2,12 @@ import {
   readStoredTradingAgentProfile,
   type TradingAgentProfile,
 } from './agentProfile'
+import {
+  readStoredCreateStrategyEvidence,
+  type CreateStrategyEvidence,
+} from './createPreview'
+
+export type { CreateStrategyEvidence } from './createPreview'
 
 export interface CreateStrategyDraft {
   name: string
@@ -18,6 +24,8 @@ export interface CreateStrategyDraft {
   drawdown: string
   mode: string
   prompt: string
+  /** Trailing-window preview captured at launch time, if the operator had one. */
+  evidence?: CreateStrategyEvidence
   updatedAt: number
 }
 
@@ -66,6 +74,7 @@ export function safeLoadStoredCreateStrategyDraft(): CreateStrategyDraft | null 
       drawdown: readString(parsed.drawdown),
       mode: readString(parsed.mode),
       prompt: readString(parsed.prompt),
+      evidence: readStoredCreateStrategyEvidence(parsed.evidence),
       updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
     }
 
