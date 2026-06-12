@@ -866,6 +866,7 @@ async fn self_improve_inner(
             .map(|revision| revision.revision_id.clone()),
         trial_deadline,
         trades_target,
+        shadow_trial_started_at: None,
     };
     evolution_store::insert(run.clone()).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 

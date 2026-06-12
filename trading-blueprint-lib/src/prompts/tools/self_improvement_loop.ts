@@ -167,6 +167,14 @@ function jitter(rng, range) {
   return (rng() * 2 - 1) * range;
 }
 
+// Snap a mutated value onto a coarse grid. Continuous random floats (e.g. RSI
+// threshold 24.286512076854702) made every candidate_hash unique, so the
+// 7-day auto-generation dedupe never fired. Quantizing the OUTPUT keeps the
+// mutation ranges unchanged while making re-derived candidates hash-identical.
+function quantize(value, step) {
+  return Number((Math.round(value / step) * step).toFixed(6));
+}
+
 function seedFor(runId, intent, index) {
   const hex = createHash('sha256').update(`${runId}|${intent}|${index}`).digest('hex').slice(0, 8);
   return Number.parseInt(hex, 16) >>> 0;
@@ -333,14 +341,14 @@ function mutateHarness(parent, seed, intent) {
 
   if (kind === 'entry_threshold') {
     const direction = conservative ? 1 : aggressive ? -1 : 0;
-    child.entry_threshold = clamp(child.entry_threshold + direction * 0.03 + jitter(rng, 0.12), 0.05, 0.95);
+    child.entry_threshold = clamp(quantize(child.entry_threshold + direction * 0.03 + jitter(rng, 0.12), 0.05), 0.05, 0.95);
   } else if (kind === 'rsi_threshold') {
     for (const rule of child.entry_rules) {
       if (rule.signal?.type !== 'rsi') continue;
       if (rule.condition?.type === 'below') {
-        rule.condition.threshold = clamp(Number(rule.condition.threshold) + jitter(rng, 8), 5, 45);
+        rule.condition.threshold = clamp(quantize(Number(rule.condition.threshold) + jitter(rng, 8), 1), 5, 45);
       } else if (rule.condition?.type === 'above') {
-        rule.condition.threshold = clamp(Number(rule.condition.threshold) + jitter(rng, 8), 55, 95);
+        rule.condition.threshold = clamp(quantize(Number(rule.condition.threshold) + jitter(rng, 8), 1), 55, 95);
       }
       break;
     }
@@ -365,22 +373,22 @@ function mutateHarness(parent, seed, intent) {
     for (const exit of child.exit_rules) {
       if (exit.type !== 'stop_loss') continue;
       const bias = conservative ? -0.4 : aggressive ? 0.4 : 0;
-      exit.pct = clamp(Number(exit.pct) + bias + jitter(rng, 2), 1, 15);
+      exit.pct = clamp(quantize(Number(exit.pct) + bias + jitter(rng, 2), 0.5), 1, 15);
       break;
     }
   } else if (kind === 'take_profit') {
     for (const exit of child.exit_rules) {
       if (exit.type !== 'take_profit') continue;
       const bias = conservative ? -0.8 : aggressive ? 1.2 : 0;
-      exit.pct = clamp(Number(exit.pct) + bias + jitter(rng, 4), 2, 30);
+      exit.pct = clamp(quantize(Number(exit.pct) + bias + jitter(rng, 4), 0.5), 2, 30);
       break;
     }
   } else if (kind === 'position_size' && child.position_sizing.method === 'fixed_fraction') {
     const bias = conservative ? -0.02 : aggressive ? 0.02 : 0;
-    child.position_sizing.fraction = clamp(Number(child.position_sizing.fraction) + bias + jitter(rng, 0.04), 0.02, 0.4);
+    child.position_sizing.fraction = clamp(quantize(Number(child.position_sizing.fraction) + bias + jitter(rng, 0.04), 0.05), 0.02, 0.4);
   } else if (kind === 'rule_weight' && child.entry_rules.length > 0) {
     const rule = child.entry_rules[Math.floor(rng() * child.entry_rules.length)];
-    if (rule) rule.weight = clamp(Number(rule.weight || 0.1) + jitter(rng, 0.3), 0.05, 1.0);
+    if (rule) rule.weight = clamp(quantize(Number(rule.weight || 0.1) + jitter(rng, 0.3), 0.05), 0.05, 1.0);
   } else if (kind === 'max_positions') {
     const bias = conservative ? -1 : aggressive ? 1 : 0;
     child.max_positions = Math.round(clamp(Number(child.max_positions) + bias + Math.round(jitter(rng, 2)), 1, 10));
@@ -1031,6 +1039,8 @@ export {
   hasHyperliquidOutcomeMandate,
   hasHyperliquidPerpMandate,
   hasPredictionMarketMandate,
+  mutateHarness,
+  quantize,
   riskBudgetRequest,
 };
 

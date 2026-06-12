@@ -17,9 +17,12 @@ const REFLECTIONS_FILE = process.env.AGENT_REFLECTIONS_FILE || path.join(MEMORY_
 const IMPROVEMENT_INTENTS_FILE = process.env.AGENT_IMPROVEMENT_INTENTS_FILE || path.join(MEMORY_DIR, 'improvement-intents.jsonl');
 const IMPROVEMENT_DISPATCHES_FILE = process.env.AGENT_IMPROVEMENT_DISPATCHES_FILE || path.join(MEMORY_DIR, 'improvement-dispatches.jsonl');
 const DECISION_LOG = process.env.AGENT_DECISION_LOG || path.join(AGENT_ROOT, 'logs', 'decisions.jsonl');
+const REFLECTION_STATE_FILE = process.env.AGENT_REFLECTION_STATE_FILE || path.join(MEMORY_DIR, 'reflection-state.json');
+const INTENT_DEDUPE_FILE = process.env.AGENT_INTENT_DEDUPE_FILE || path.join(MEMORY_DIR, 'intent-dedupe.json');
 
 const INTENT_COOLDOWN_MS = Number(process.env.AGENT_IMPROVEMENT_INTENT_COOLDOWN_MS || 60 * 60 * 1000);
 const DISPATCH_COOLDOWN_MS = Number(process.env.AGENT_IMPROVEMENT_DISPATCH_COOLDOWN_MS || 2 * 60 * 60 * 1000);
+const REFLECTION_REPEAT_MARKER_INTERVAL_MS = Number(process.env.AGENT_REFLECTION_REPEAT_MARKER_INTERVAL_MS || 60 * 60 * 1000);
 
 function nowIso() {
   return new Date().toISOString();
@@ -41,6 +44,16 @@ function readJson(file, fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+function writeJson(file, value) {
+  ensureParentDir(file);
+  // tmp+rename: other sandbox processes (cadence launcher, verifier) read
+  // these state files concurrently and must never see a torn write.
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value));
+  fs.renameSync(tmp, file);
+  return value;
 }
 
 function readJsonl(file, max = 50) {
@@ -649,10 +662,39 @@ function shouldEmitIntent(cooldownKey) {
   );
 }
 
+// One pending intent per cooldown_key. The intent file is append-only, so the
+// standing pending intent IS the queue entry; appending another identical one
+// only multiplies generation work (a halted bot accumulated 22 copies). Repeats
+// bump a counter in INTENT_DEDUPE_FILE instead of growing the queue.
+function pendingIntentForCooldownKey(cooldownKey) {
+  if (!cooldownKey) return null;
+  const pending = readJsonl(IMPROVEMENT_INTENTS_FILE, 500).filter((intent) =>
+    intent.cooldown_key === cooldownKey && (intent.status ?? 'pending') === 'pending'
+  );
+  return pending.at(-1) ?? null;
+}
+
+function recordSuppressedIntentRepeat(cooldownKey, pendingIntent) {
+  const state = readJson(INTENT_DEDUPE_FILE, {}) || {};
+  const entry = isRecord(state[cooldownKey]) ? state[cooldownKey] : {};
+  state[cooldownKey] = {
+    intent_id: pendingIntent.intent_id ?? entry.intent_id ?? null,
+    repeat_count: (Number(entry.repeat_count) || 0) + 1,
+    last_seen: nowIso(),
+  };
+  writeJson(INTENT_DEDUPE_FILE, state);
+}
+
 function buildImprovementIntent(context, reflection, findings) {
   const highFindings = findings.filter((finding) => ['critical', 'high'].includes(finding.severity));
   const cooldownKey = intentCooldownKey(findings);
-  if (!highFindings.length || !shouldEmitIntent(cooldownKey)) return null;
+  if (!highFindings.length || !cooldownKey) return null;
+  const pendingDuplicate = pendingIntentForCooldownKey(cooldownKey);
+  if (pendingDuplicate) {
+    recordSuppressedIntentRepeat(cooldownKey, pendingDuplicate);
+    return null;
+  }
+  if (!shouldEmitIntent(cooldownKey)) return null;
   const mandate = context.mandate || {};
   const findingText = highFindings.map((finding) => `${finding.code}: ${finding.detail}`).join(' ');
   const botLabel = mandate.bot_id || context.family || 'trading bot';
@@ -691,6 +733,35 @@ function buildImprovementIntent(context, reflection, findings) {
   return appendJsonl(IMPROVEMENT_INTENTS_FILE, intent);
 }
 
+// Signature of what the reflection actually concluded. When consecutive ticks
+// produce the same verdict + finding codes, appending another full reflection
+// is pure noise (a frozen bot produced 200 byte-identical halt-and-investigate
+// records) and is what fed candidate-generation spam downstream.
+function reflectionSignature(verdict, findings) {
+  const codes = [...new Set(findings.map((finding) => finding.code).filter(Boolean))].sort();
+  return `${verdict}|${codes.join('+')}`;
+}
+
+function reflectionRepeatRecord(context, verdict, signature, repeatCount, lastFullReflectionId) {
+  return {
+    schema_version: 1,
+    type: 'reflection-repeat',
+    reflection_id: `refl_${hash({ signature, context_id: context.context_id }).slice(0, 18)}`,
+    timestamp: nowIso(),
+    mode: 'deterministic-runtime-reflection',
+    decision_context_id: context.context_id,
+    bot_id: context.bot?.id ?? context.mandate?.bot_id ?? null,
+    family: context.family,
+    verdict,
+    signature,
+    repeat_count: repeatCount,
+    repeat_of_reflection_id: lastFullReflectionId ?? null,
+    repeat_suppressed: true,
+    summary: `Reflection signature unchanged for ${repeatCount} consecutive tick${repeatCount === 1 ? '' : 's'}; duplicate findings and improvement intents suppressed.`,
+    findings: [],
+  };
+}
+
 function reflectOnDecisionContext(contextInput) {
   const context = isRecord(contextInput) ? contextInput : recordDecisionContext(contextInput || {});
   const contexts = recentContexts(12);
@@ -706,6 +777,29 @@ function reflectOnDecisionContext(contextInput) {
       : findings.some((finding) => finding.severity === 'medium')
         ? 'watch'
         : 'continue';
+  const signature = reflectionSignature(verdict, findings);
+  const state = readJson(REFLECTION_STATE_FILE, null) || {};
+  if (state.last_signature === signature) {
+    const repeatCount = (Number(state.repeat_count) || 0) + 1;
+    const markerDue = !state.last_repeat_marker_at
+      || Date.now() - parseMs(state.last_repeat_marker_at) >= REFLECTION_REPEAT_MARKER_INTERVAL_MS;
+    const repeat = reflectionRepeatRecord(context, verdict, signature, repeatCount, state.last_full_reflection_id);
+    if (markerDue) {
+      appendJsonl(REFLECTIONS_FILE, repeat);
+    }
+    // The verifier (workflow_tick.rs) accepts this state file as proof the
+    // reflection ran on suppressed ticks, so updated_at must always move.
+    writeJson(REFLECTION_STATE_FILE, {
+      schema_version: 1,
+      last_signature: signature,
+      last_full_reflection_id: state.last_full_reflection_id ?? null,
+      last_decision_context_id: context.context_id,
+      repeat_count: repeatCount,
+      last_repeat_marker_at: markerDue ? repeat.timestamp : (state.last_repeat_marker_at ?? null),
+      updated_at: repeat.timestamp,
+    });
+    return repeat;
+  }
   const reflection = {
     schema_version: 1,
     reflection_id: `refl_${hash({ context_id: context.context_id, findings, scores }).slice(0, 18)}`,
@@ -727,6 +821,15 @@ function reflectOnDecisionContext(contextInput) {
     reflection.emitted_improvement_intent_id = intent.intent_id;
   }
   appendJsonl(REFLECTIONS_FILE, reflection);
+  writeJson(REFLECTION_STATE_FILE, {
+    schema_version: 1,
+    last_signature: signature,
+    last_full_reflection_id: reflection.reflection_id,
+    last_decision_context_id: context.context_id,
+    repeat_count: 0,
+    last_repeat_marker_at: null,
+    updated_at: reflection.timestamp,
+  });
   return reflection;
 }
 
@@ -824,6 +927,8 @@ module.exports = {
   REFLECTIONS_FILE,
   IMPROVEMENT_INTENTS_FILE,
   IMPROVEMENT_DISPATCHES_FILE,
+  REFLECTION_STATE_FILE,
+  INTENT_DEDUPE_FILE,
   appendJsonl,
   readJson,
   readJsonl,

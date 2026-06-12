@@ -31,6 +31,11 @@ const PAPER_TRIAL_WINDOW_SECS: i64 = 7 * 24 * 60 * 60;
 const DEFAULT_TRADES_TARGET: u64 = 20;
 const TRAIN_PCT: f64 = 0.7;
 const MAX_PAPER_DRAWDOWN_PCT: f64 = 10.0;
+/// At most one blocked-but-best candidate per bot per day may enter a shadow
+/// paper trial. Without this escape hatch the gate dead-ends: a blocked
+/// candidate can never gain paper evidence, and "missing persisted paper
+/// trading evidence" blocks it forever (385 candidates / 0 trials in 17h live).
+const SHADOW_TRIAL_RATE_LIMIT_SECS: i64 = 24 * 60 * 60;
 
 /// Run one conductor pass over the fleet. Called once per workflow tick. Each bot
 /// advances at most one lifecycle step per tick (evaluate an active trial, or activate
@@ -113,14 +118,63 @@ fn trial_trades(
 
 /// No active trial: pick the oldest queued `backtest_pass` candidate for this bot and
 /// activate it — swap the bot to the candidate's harness in paper mode, tag its trades,
-/// and advance the run to `paper_trial`.
+/// and advance the run to `paper_trial`. If nothing is queued, fall back to a shadow
+/// trial of the day's best blocked candidate (rate-limited to one per bot per day).
 async fn activate_next_candidate(bot: &TradingBotRecord) -> Result<(), String> {
     let mut runs = evolution_store::list_for_bot(&bot.id)?;
     runs.reverse(); // list_for_bot is newest-first; take the oldest queued candidate.
-    let Some(run) = runs.into_iter().find(|r| r.status == status::BACKTEST_PASS) else {
+    if let Some(run) = runs.iter().find(|r| r.status == status::BACKTEST_PASS) {
+        return activate_trial(bot, run.clone(), false).await;
+    }
+    let Some(run) = shadow_trial_candidate(&runs, chrono::Utc::now().timestamp()) else {
         return Ok(());
     };
+    activate_trial(bot, run, true).await
+}
 
+/// Walk-forward composite for ranking blocked candidates: the persisted
+/// evidence report's confidence score (built from should_promote / overfit /
+/// sharpe decay), tie-broken by out-of-sample sharpe improvement. Runs without
+/// a persisted report can't be ranked and are skipped.
+fn walk_forward_composite(run: &SelfImprovementRun) -> Option<(f64, f64)> {
+    let report = run
+        .evidence_report_id
+        .as_deref()
+        .and_then(|id| trading_http_api::risk_budget::get_report(id).ok().flatten())?;
+    Some((report.confidence_score, report.test_sharpe_delta))
+}
+
+/// The best blocked candidate of the last day, eligible for a shadow paper
+/// trial. Returns `None` when a shadow trial already started within the
+/// rate-limit window (tabled shadow runs keep their timestamp, so they count).
+fn shadow_trial_candidate(runs: &[SelfImprovementRun], now: i64) -> Option<SelfImprovementRun> {
+    let recently_shadow_trialed = runs.iter().any(|run| {
+        run.shadow_trial_started_at
+            .is_some_and(|started| now.saturating_sub(started) < SHADOW_TRIAL_RATE_LIMIT_SECS)
+    });
+    if recently_shadow_trialed {
+        return None;
+    }
+    runs.iter()
+        .filter(|run| run.status == "blocked")
+        .filter(|run| run.shadow_trial_started_at.is_none())
+        .filter(|run| now.saturating_sub(run.created_at) < SHADOW_TRIAL_RATE_LIMIT_SECS)
+        .filter_map(|run| walk_forward_composite(run).map(|score| (score, run)))
+        .max_by(|(a, _), (b, _)| a.0.total_cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)))
+        .map(|(_, run)| run.clone())
+}
+
+/// Activate a candidate as the bot's paper trial. A normal trial swaps the
+/// bot onto the candidate harness so the evidence is honest forward
+/// performance. A shadow trial leaves the live config untouched — it only
+/// occupies the trial slot and tags the bot's paper trades to the candidate
+/// so the gate finally has persisted evidence to judge; promotion still
+/// requires the full gate (which re-runs the walk-forward backtest).
+async fn activate_trial(
+    bot: &TradingBotRecord,
+    run: SelfImprovementRun,
+    shadow: bool,
+) -> Result<(), String> {
     let candidate: BacktestConfig = serde_json::from_value(run.candidate_config.clone())
         .map_err(|e| format!("deserialize candidate_config for {}: {e}", run.run_id))?;
     let new_harness = serde_json::to_value(&candidate.harness)
@@ -131,8 +185,10 @@ async fn activate_next_candidate(bot: &TradingBotRecord) -> Result<(), String> {
 
     bots()?
         .update(&bot_key(&bot.id), |b| {
-            b.pre_trial_harness_json = Some(prev_harness.clone());
-            b.harness_json = new_harness.clone();
+            if !shadow {
+                b.pre_trial_harness_json = Some(prev_harness.clone());
+                b.harness_json = new_harness.clone();
+            }
             b.active_trial_run_id = Some(run_id.clone());
             b.active_trial_candidate_hash = Some(candidate_hash.clone());
         })
@@ -145,12 +201,16 @@ async fn activate_next_candidate(bot: &TradingBotRecord) -> Result<(), String> {
         run_id: run_id.clone(),
     })?;
 
-    let deadline = chrono::Utc::now().timestamp() + PAPER_TRIAL_WINDOW_SECS;
+    let now = chrono::Utc::now().timestamp();
+    let deadline = now + PAPER_TRIAL_WINDOW_SECS;
     evolution_store::update(&bot.id, &run_id, |r| {
         r.status = status::PAPER_TRIAL.to_string();
         r.trial_deadline = Some(deadline);
         if r.trades_target.is_none() {
             r.trades_target = Some(DEFAULT_TRADES_TARGET);
+        }
+        if shadow {
+            r.shadow_trial_started_at = Some(now);
         }
     })?;
 
@@ -158,18 +218,39 @@ async fn activate_next_candidate(bot: &TradingBotRecord) -> Result<(), String> {
         bot_id = %bot.id,
         run_id = %run_id,
         candidate_hash = %candidate_hash,
-        "promotion conductor: activated paper trial (candidate harness now live in paper mode)"
+        shadow,
+        "promotion conductor: activated paper trial{}",
+        if shadow {
+            " (shadow: live config untouched; accruing evidence for a blocked candidate)"
+        } else {
+            " (candidate harness now live in paper mode)"
+        }
     );
     Ok(())
 }
 
 /// Promote: the candidate already proved out in forward paper trading and is already the
 /// bot's live harness, so promotion just marks the run promoted and frees the slot.
+/// A shadow trial never made the candidate harness live, so it is applied here —
+/// promotion is the first (gate-approved) moment a shadow candidate touches config.
 /// (`autoOnPromote` invariant: paper-bot self-improvement promotes autonomously; real
 /// funds never promote here.)
 async fn promote(bot: &TradingBotRecord, run: &SelfImprovementRun) -> Result<(), String> {
+    let shadow_harness = if run.shadow_trial_started_at.is_some() {
+        let candidate: BacktestConfig = serde_json::from_value(run.candidate_config.clone())
+            .map_err(|e| format!("deserialize candidate_config for {}: {e}", run.run_id))?;
+        Some(
+            serde_json::to_value(&candidate.harness)
+                .map_err(|e| format!("serialize candidate harness: {e}"))?,
+        )
+    } else {
+        None
+    };
     bots()?
         .update(&bot_key(&bot.id), |b| {
+            if let Some(harness) = shadow_harness.clone() {
+                b.harness_json = harness;
+            }
             b.active_trial_run_id = None;
             b.active_trial_candidate_hash = None;
             b.pre_trial_harness_json = None;
