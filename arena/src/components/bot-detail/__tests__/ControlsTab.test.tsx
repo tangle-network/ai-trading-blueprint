@@ -21,7 +21,17 @@ const mocks = vi.hoisted(() => ({
       base_url: 'https://api.z.ai/api/coding/paas/v4',
       api_key_set: true,
     },
-  },
+  } as
+    | {
+        agent_harness: string;
+        model: {
+          provider: string;
+          name: string;
+          base_url: string;
+          api_key_set: boolean;
+        };
+      }
+    | undefined,
   detail: {
     id: 'bot-1',
     operator_address: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
@@ -236,10 +246,13 @@ describe('ControlsTab', () => {
     await user.type(screen.getByLabelText('Model name'), 'gpt-5.1');
     await user.click(screen.getByRole('button', { name: 'Save Runtime' }));
 
-    expect(mocks.updateAgentRuntimeMutate).toHaveBeenCalledWith({
-      agent_harness: 'codex',
-      model_name: 'gpt-5.1',
-    });
+    expect(mocks.updateAgentRuntimeMutate).toHaveBeenCalledWith(
+      {
+        agent_harness: 'codex',
+        model_name: 'gpt-5.1',
+      },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
   });
 
   it('sends the selected provider base URL instead of leaving a stale runtime endpoint', async () => {
@@ -258,11 +271,72 @@ describe('ControlsTab', () => {
     await user.selectOptions(screen.getByLabelText('Model preset'), 'zai');
     await user.click(screen.getByRole('button', { name: 'Save Runtime' }));
 
-    expect(mocks.updateAgentRuntimeMutate).toHaveBeenCalledWith({
-      model_provider: 'zai-coding-plan',
-      model_name: 'glm-4.7',
-      model_base_url: 'https://api.z.ai/api/coding/paas/v4',
-    });
+    expect(mocks.updateAgentRuntimeMutate).toHaveBeenCalledWith(
+      {
+        model_provider: 'zai-coding-plan',
+        model_name: 'glm-4.7',
+        model_base_url: 'https://api.z.ai/api/coding/paas/v4',
+      },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it('clears the API key draft after a successful save so the same key cannot be resubmitted', async () => {
+    const user = userEvent.setup();
+    mocks.updateAgentRuntimeMutate.mockImplementation(
+      (_payload: unknown, options?: { onSuccess?: () => void }) => {
+        options?.onSuccess?.();
+      },
+    );
+    render(<ControlsTab bot={makeBot()} />);
+
+    const keyInput = screen.getByLabelText('Model API key');
+    await user.type(keyInput, 'sk-test-123');
+    const saveButton = screen.getByRole('button', { name: 'Save Runtime' });
+    expect(saveButton).toBeEnabled();
+    await user.click(saveButton);
+
+    expect(mocks.updateAgentRuntimeMutate).toHaveBeenCalledTimes(1);
+    expect(keyInput).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Save Runtime' })).toBeDisabled();
+  });
+
+  it('does not clobber an in-progress draft when the runtime query resolves', async () => {
+    const user = userEvent.setup();
+    mocks.agentRuntime = undefined;
+    const { rerender } = render(<ControlsTab bot={makeBot()} />);
+
+    const keyInput = screen.getByLabelText('Model API key');
+    await user.type(keyInput, 'sk-mid-edit');
+
+    mocks.agentRuntime = {
+      agent_harness: 'opencode',
+      model: {
+        provider: 'zai-coding-plan',
+        name: 'glm-4.7',
+        base_url: 'https://api.z.ai/api/coding/paas/v4',
+        api_key_set: true,
+      },
+    };
+    rerender(<ControlsTab bot={makeBot()} />);
+
+    expect(screen.getByLabelText('Model API key')).toHaveValue('sk-mid-edit');
+  });
+
+  it('reports every invalid cadence cron at once instead of only the first', async () => {
+    const user = userEvent.setup();
+    render(<ControlsTab bot={makeBot()} />);
+
+    const tradingInput = screen.getByLabelText('Trading cron');
+    await user.clear(tradingInput);
+    await user.type(tradingInput, 'bad');
+    const researchInput = screen.getByLabelText('Research cron');
+    await user.clear(researchInput);
+    await user.type(researchInput, 'also-bad');
+
+    const message = screen.getByText(/Trading cron/);
+    expect(message.textContent).toContain('Trading cron');
+    expect(message.textContent).toContain('Research cron');
   });
 
   it('saves trading, research, and conversation cadence without dropping strategy config', async () => {

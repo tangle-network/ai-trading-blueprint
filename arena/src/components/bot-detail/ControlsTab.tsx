@@ -1033,29 +1033,6 @@ function RuntimeSettingsCard({
   const [conversationEnabled, setConversationEnabled] = useState(savedConversationEnabled);
   const [researchEnabled, setResearchEnabled] = useState(savedResearchEnabled);
 
-  useEffect(() => {
-    setAgentHarness(savedHarness);
-    setModelProvider(savedModelProvider);
-    setModelName(savedModelName);
-    setModelBaseUrl(savedModelBaseUrl);
-    setModelApiKey('');
-    setSelectedPreset(modelPreset);
-  }, [modelPreset, savedHarness, savedModelBaseUrl, savedModelName, savedModelProvider]);
-
-  useEffect(() => {
-    setTradingCron(savedTradingCron);
-    setConversationCron(savedConversationCron);
-    setResearchCron(savedResearchCron);
-    setConversationEnabled(savedConversationEnabled);
-    setResearchEnabled(savedResearchEnabled);
-  }, [
-    savedConversationCron,
-    savedConversationEnabled,
-    savedResearchCron,
-    savedResearchEnabled,
-    savedTradingCron,
-  ]);
-
   const runtimeChanged =
     agentHarness !== savedHarness ||
     modelProvider.trim() !== savedModelProvider ||
@@ -1073,10 +1050,54 @@ function RuntimeSettingsCard({
     researchCron.trim() !== savedResearchCron ||
     conversationEnabled !== savedConversationEnabled ||
     researchEnabled !== savedResearchEnabled;
-  const scheduleError =
-    validateCronDraft('Trading', tradingCron)
-    ?? validateCronDraft('Conversation', conversationCron)
-    ?? validateCronDraft('Research', researchCron);
+
+  // Sync drafts from saved values only while the user has no edits: a
+  // background refetch or late-arriving runtime query must not clobber an
+  // in-progress draft (e.g. wipe a half-typed API key when the GET resolves).
+  // The API key is never echoed back by the server, so it has nothing to sync
+  // from — it is cleared on successful save instead.
+  useEffect(() => {
+    if (runtimeChanged) {
+      return;
+    }
+    setAgentHarness(savedHarness);
+    setModelProvider(savedModelProvider);
+    setModelName(savedModelName);
+    setModelBaseUrl(savedModelBaseUrl);
+    setSelectedPreset(modelPreset);
+  }, [
+    modelPreset,
+    runtimeChanged,
+    savedHarness,
+    savedModelBaseUrl,
+    savedModelName,
+    savedModelProvider,
+  ]);
+
+  useEffect(() => {
+    if (scheduleChanged) {
+      return;
+    }
+    setTradingCron(savedTradingCron);
+    setConversationCron(savedConversationCron);
+    setResearchCron(savedResearchCron);
+    setConversationEnabled(savedConversationEnabled);
+    setResearchEnabled(savedResearchEnabled);
+  }, [
+    savedConversationCron,
+    savedConversationEnabled,
+    savedResearchCron,
+    savedResearchEnabled,
+    savedTradingCron,
+    scheduleChanged,
+  ]);
+
+  const scheduleErrors = [
+    validateCronDraft('Trading', tradingCron),
+    validateCronDraft('Conversation', conversationCron),
+    validateCronDraft('Research', researchCron),
+  ].filter((error): error is string => Boolean(error));
+  const scheduleError = scheduleErrors.length > 0 ? scheduleErrors.join(' ') : null;
   const modelMissing = modelChanged && (!modelProvider.trim() || !modelName.trim());
   const modelBlocked = modelChanged && !detail.secrets_configured;
 
@@ -1105,7 +1126,12 @@ function RuntimeSettingsCard({
     if (modelBaseUrl.trim() !== savedModelBaseUrl) payload.model_base_url = modelBaseUrl.trim();
     if (modelApiKey.trim()) payload.model_api_key = modelApiKey.trim();
     if (Object.keys(payload).length === 0) return;
-    updateAgentRuntime.mutate(payload);
+    updateAgentRuntime.mutate(payload, {
+      // The key is write-only (the GET only reports api_key_set), so saved
+      // state can never disable the button — clear the draft here or the same
+      // key stays submittable forever.
+      onSuccess: () => setModelApiKey(''),
+    });
   };
 
   const saveSchedules = () => {
@@ -1246,8 +1272,18 @@ function RuntimeSettingsCard({
           )}
 
           <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-arena-elements-textTertiary">
-              {runtimeChanged ? 'Unsaved runtime changes.' : 'Runtime matches operator state.'}
+            <span
+              className="text-xs text-arena-elements-textTertiary"
+              role="status"
+            >
+              {runtimeChanged
+                ? 'Unsaved runtime changes.'
+                : updateAgentRuntime.isSuccess
+                  ? (updateAgentRuntime.data as { restart?: string } | undefined)?.restart ===
+                    'container_recreated'
+                    ? 'Runtime saved — agent container restarted.'
+                    : 'Runtime saved.'
+                  : 'Runtime matches operator state.'}
             </span>
             <Button
               size="sm"
@@ -1321,8 +1357,15 @@ function RuntimeSettingsCard({
           )}
 
           <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-arena-elements-textTertiary">
-              {scheduleChanged ? 'Unsaved cadence changes.' : 'Cadence matches bot config.'}
+            <span
+              className="text-xs text-arena-elements-textTertiary"
+              role="status"
+            >
+              {scheduleChanged
+                ? 'Unsaved cadence changes.'
+                : updateConfig.isSuccess
+                  ? 'Cadence saved.'
+                  : 'Cadence matches bot config.'}
             </span>
             <Button
               size="sm"
