@@ -287,6 +287,27 @@ pub fn bot_key(id: &str) -> String {
     format!("bot:{id}")
 }
 
+#[cfg(test)]
+pub(crate) fn init_test_state_dir() {
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let tmp = tempfile::TempDir::new().expect("create test state dir");
+        // SAFETY: unit tests share crate-global OnceCell stores, so the state
+        // directory must be fixed before any store is initialized.
+        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+        std::mem::forget(tmp);
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn bot_store_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+    LOCK.lock().expect("bot store test lock poisoned")
+}
+
 /// Find a bot record by sandbox_id.
 pub fn find_bot_by_sandbox(sandbox_id: &str) -> Result<TradingBotRecord, String> {
     let sid = sandbox_id.to_string();
@@ -628,14 +649,7 @@ mod tests {
     use super::*;
 
     fn setup_test_env() {
-        use std::sync::Once;
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            let tmp = tempfile::TempDir::new().unwrap();
-            // SAFETY: called once before store init
-            unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
-            std::mem::forget(tmp);
-        });
+        init_test_state_dir();
     }
 
     fn make_bot(id: &str, operator: &str, strategy: &str, created_at: u64) -> TradingBotRecord {
@@ -677,9 +691,13 @@ mod tests {
     /// Single test to avoid shared-OnceCell ordering issues.
     #[test]
     fn test_state_queries() {
+        let _bot_store_guard = bot_store_test_lock();
         setup_test_env();
 
         let store = bots().unwrap();
+        for key in ["b1", "b2", "b3", "alice1", "bob1"] {
+            let _ = store.remove(&bot_key(key));
+        }
         store
             .insert(bot_key("b1"), make_bot("b1", "0xOp1", "defi_yield", 1000))
             .unwrap();
@@ -767,5 +785,9 @@ mod tests {
         assert!(bot_visible_to("0xABC", None)); // admin → all
         assert!(bot_visible_to("0xabc", Some("0xABC"))); // case-insensitive self
         assert!(!bot_visible_to("0xabc", Some("0xdef"))); // not yours
+
+        for key in ["b1", "b2", "b3", "alice1", "bob1"] {
+            let _ = store.remove(&bot_key(key));
+        }
     }
 }

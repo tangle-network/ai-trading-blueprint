@@ -2,6 +2,8 @@ export type AiProvider = 'anthropic' | 'gemini' | 'zai' | 'tangle-router';
 
 export const DEFAULT_AI_PROVIDER = import.meta.env.VITE_DEFAULT_AI_PROVIDER ?? '';
 export const DEFAULT_AI_API_KEY = import.meta.env.VITE_DEFAULT_AI_API_KEY ?? '';
+export const DEFAULT_ZAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4';
+export const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com/v1';
 export const DEFAULT_TANGLE_ROUTER_BASE_URL =
   import.meta.env.VITE_TANGLE_ROUTER_BASE_URL ?? 'https://router.tangle.tools/v1';
 
@@ -12,6 +14,7 @@ export const AI_PROVIDERS: {
   envKey: string;
   modelProvider: string;
   modelName: string;
+  baseUrl?: string;
 }[] = [
   {
     id: 'zai',
@@ -20,6 +23,7 @@ export const AI_PROVIDERS: {
     envKey: 'ZAI_API_KEY',
     modelProvider: 'zai-coding-plan',
     modelName: 'glm-4.7',
+    baseUrl: DEFAULT_ZAI_BASE_URL,
   },
   {
     id: 'gemini',
@@ -36,6 +40,7 @@ export const AI_PROVIDERS: {
     envKey: 'ANTHROPIC_API_KEY',
     modelProvider: 'anthropic',
     modelName: 'claude-sonnet-4-6',
+    baseUrl: DEFAULT_ANTHROPIC_BASE_URL,
   },
   {
     id: 'tangle-router',
@@ -44,6 +49,7 @@ export const AI_PROVIDERS: {
     envKey: 'TANGLE_API_KEY',
     modelProvider: 'openrouter',
     modelName: 'anthropic/claude-sonnet-4-6',
+    baseUrl: DEFAULT_TANGLE_ROUTER_BASE_URL,
   },
 ];
 
@@ -54,6 +60,9 @@ export function buildEnvForProvider(provider: AiProvider, key: string): Record<s
     OPENCODE_MODEL_NAME: config.modelName,
     OPENCODE_MODEL_API_KEY: key,
   };
+  if (config.baseUrl) {
+    env.OPENCODE_MODEL_BASE_URL = config.baseUrl;
+  }
   // Also set the provider-native key so inner session reads it
   env[config.envKey] = key;
   if (provider === 'gemini') {
@@ -62,7 +71,6 @@ export function buildEnvForProvider(provider: AiProvider, key: string): Record<s
   }
   if (provider === 'tangle-router') {
     env.TANGLE_ROUTER_BASE_URL = DEFAULT_TANGLE_ROUTER_BASE_URL;
-    env.OPENCODE_MODEL_BASE_URL = DEFAULT_TANGLE_ROUTER_BASE_URL;
   }
   return env;
 }

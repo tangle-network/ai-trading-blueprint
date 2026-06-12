@@ -856,6 +856,7 @@ async fn execute_agent_run_turn(
         "timeout": request.timeout_ms,
         "backend": backend
     });
+    let started_at_unix = chrono::Utc::now().timestamp().max(0) as u64;
     let started_at = Instant::now();
     let result = send_chat_request(
         &request.target,
@@ -918,6 +919,7 @@ async fn execute_agent_run_turn(
     } else {
         assistant_text
     };
+    let duration_ms = started_at.elapsed().as_millis() as u64;
     let usage_event = build_agent_run_usage_event_for(
         &request.target,
         &request.session_id,
@@ -925,14 +927,14 @@ async fn execute_agent_run_turn(
         &text,
         status,
         &payload,
-        started_at.elapsed().as_millis() as u64,
+        duration_ms,
         &request.surface,
         &request.operation,
         request.bot_id.as_deref(),
         request.run_id.as_deref(),
     );
     append_usage_event_to_sidecar(&request.target, usage_event.clone()).await;
-    let mut assistant_metadata = request.assistant_metadata;
+    let mut assistant_metadata = request.assistant_metadata.clone();
     merge_metadata_fields(
         &mut assistant_metadata,
         json!({
@@ -950,6 +952,7 @@ async fn execute_agent_run_turn(
     );
 
     let messages = transcript_messages_for_session(&request.target, &request.session_id);
+    let completed_at_unix = chrono::Utc::now().timestamp().max(0) as u64;
     let trace_id = usage_event
         .get("trace_id")
         .and_then(Value::as_str)
@@ -966,6 +969,16 @@ async fn execute_agent_run_turn(
         .unwrap_or(0)
         .min(u64::from(u32::MAX)) as u32;
     let cost_usd = usage_event.get("cost_usd").and_then(Value::as_f64);
+    persist_operator_chat_run_record(
+        &request,
+        started_at_unix,
+        completed_at_unix,
+        duration_ms,
+        status,
+        &text,
+        &usage_event,
+        &messages,
+    );
 
     Ok(AgenticChatTurnResult {
         session_id: request.session_id,
@@ -979,6 +992,97 @@ async fn execute_agent_run_turn(
         payload,
         messages,
     })
+}
+
+fn usage_event_string(event: &Value, key: &str) -> Option<String> {
+    event
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn usage_event_u32(event: &Value, key: &str) -> u32 {
+    event
+        .get(key)
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(u64::from(u32::MAX)) as u32
+}
+
+fn persist_operator_chat_run_record(
+    request: &AgentRunTurnRequest,
+    started_at: u64,
+    completed_at: u64,
+    duration_ms: u64,
+    status: StatusCode,
+    assistant_text: &str,
+    usage_event: &Value,
+    messages: &Value,
+) {
+    if request.surface != "operator-chat" {
+        return;
+    }
+    let Ok(bot) = crate::state::find_bot_by_sandbox(&request.target.sandbox_id) else {
+        return;
+    };
+    let Some(base_workflow_id) = bot.workflow_id else {
+        return;
+    };
+    let workflow_id = base_workflow_id + 2;
+    let run_id = usage_event_string(usage_event, "event_id").unwrap_or_else(|| {
+        format!(
+            "operator-chat-{}-{}",
+            request.session_id,
+            chrono::Utc::now().timestamp_millis()
+        )
+    });
+    let run = crate::workflow_compat::WorkflowRunRecord {
+        run_id: run_id.clone(),
+        workflow_id,
+        status: if status.is_success() {
+            crate::workflow_compat::WorkflowRunStatus::Completed
+        } else {
+            crate::workflow_compat::WorkflowRunStatus::Failed
+        },
+        started_at,
+        completed_at: Some(completed_at),
+        session_id: Some(request.session_id.clone()),
+        trace_id: usage_event_string(usage_event, "trace_id"),
+        duration_ms,
+        input_tokens: usage_event_u32(usage_event, "input_tokens"),
+        output_tokens: usage_event_u32(usage_event, "output_tokens"),
+        result: status.is_success().then(|| assistant_text.to_string()),
+        error: (!status.is_success()).then(|| assistant_text.to_string()),
+        loop_mode: Some("agentic".to_string()),
+        model: usage_event_string(usage_event, "model"),
+        provider: usage_event_string(usage_event, "provider"),
+        cost_usd: usage_event.get("cost_usd").and_then(Value::as_f64),
+        harness: Some(crate::harness::agent_harness_for_bot(&bot.strategy_config)),
+    };
+    if let Err(error) = crate::workflow_compat::persist_workflow_run_record(run) {
+        tracing::warn!(
+            sandbox_id = %request.target.sandbox_id,
+            session_id = %request.session_id,
+            "failed to persist operator-chat run record: {error}"
+        );
+        return;
+    }
+    let transcript = crate::workflow_compat::WorkflowRunTranscriptRecord {
+        run_id: run_id.clone(),
+        session_id: request.session_id.clone(),
+        captured_at: completed_at,
+        messages: messages.clone(),
+    };
+    if let Err(error) = crate::workflow_compat::persist_workflow_run_transcript(transcript) {
+        tracing::warn!(
+            sandbox_id = %request.target.sandbox_id,
+            session_id = %request.session_id,
+            run_id = %run_id,
+            "failed to persist operator-chat run transcript: {error}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1885,7 +1989,6 @@ mod tests {
         Json, Router,
         routing::{get, post},
     };
-    use tempfile::tempdir;
 
     #[test]
     fn transcript_revision_moves_only_when_transcript_changes() {
@@ -2250,12 +2353,45 @@ mod tests {
         );
     }
 
-    fn init_test_env() -> tempfile::TempDir {
-        let dir = tempdir().expect("create temp state dir");
-        unsafe {
-            std::env::set_var("BLUEPRINT_STATE_DIR", dir.path());
+    fn init_test_env() {
+        crate::state::init_test_state_dir();
+    }
+
+    struct ChatLedgerCleanup {
+        bot_id: String,
+        sandbox_id: String,
+        run_id: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    }
+
+    impl ChatLedgerCleanup {
+        fn new(bot_id: String, sandbox_id: String) -> Self {
+            Self {
+                bot_id,
+                sandbox_id,
+                run_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            }
         }
-        dir
+
+        fn track_run_id(&self, run_id: &str) {
+            *self.run_id.lock().expect("run cleanup lock poisoned") = Some(run_id.to_string());
+        }
+    }
+
+    impl Drop for ChatLedgerCleanup {
+        fn drop(&mut self) {
+            if let Ok(store) = crate::state::bots() {
+                let _ = store.remove(&crate::state::bot_key(&self.bot_id));
+            }
+            if let Ok(store) = sandbox_runtime::runtime::sandboxes() {
+                let _ = store.remove(&self.sandbox_id);
+            }
+            if let Ok(mut run_id) = self.run_id.lock()
+                && let Some(run_id) = run_id.take()
+            {
+                let _ = crate::workflow_compat::remove_workflow_run_for_testing(&run_id);
+                let _ = crate::workflow_compat::remove_workflow_run_transcript_for_testing(&run_id);
+            }
+        }
     }
 
     fn seed_sandbox_record(id: &str, sidecar_url: &str, token: &str) {
@@ -2305,6 +2441,46 @@ mod tests {
             .expect("insert sandbox record");
     }
 
+    fn seed_chat_ledger_bot(bot_id: &str, sandbox_id: &str, workflow_id: u64) {
+        let record = crate::state::TradingBotRecord {
+            id: bot_id.to_string(),
+            name: format!("Bot {bot_id}"),
+            sandbox_id: sandbox_id.to_string(),
+            vault_address: "0xCHATLEDGER".to_string(),
+            share_token: String::new(),
+            strategy_type: "dex".to_string(),
+            strategy_config: serde_json::json!({"agent_harness": "opencode"}),
+            risk_params: serde_json::json!({"max_drawdown_pct": 5.0}),
+            chain_id: 31337,
+            rpc_url: "http://localhost:8545".to_string(),
+            trading_api_url: "http://localhost:9100".to_string(),
+            trading_api_token: "test-token".to_string(),
+            workflow_id: Some(workflow_id),
+            trading_active: true,
+            created_at: chrono::Utc::now().timestamp() as u64,
+            operator_address: String::new(),
+            validator_service_ids: vec![],
+            max_lifetime_days: 30,
+            paper_trade: true,
+            wind_down_started_at: None,
+            submitter_address: String::new(),
+            trading_loop_cron: "0 */5 * * * *".to_string(),
+            call_id: 0,
+            service_id: 0,
+            harness_json: serde_json::Value::default(),
+            validation_trust: trading_runtime::ValidationTrust::default(),
+            baseline_backtest: None,
+            renewal_webhook_url: None,
+            active_trial_run_id: None,
+            active_trial_candidate_hash: None,
+            pre_trial_harness_json: None,
+        };
+        crate::state::bots()
+            .expect("bots store")
+            .insert(crate::state::bot_key(bot_id), record)
+            .expect("insert chat ledger bot");
+    }
+
     async fn spawn_mock_chat_sidecar() -> String {
         let app = Router::new()
             .route(
@@ -2313,7 +2489,20 @@ mod tests {
             )
             .route(
                 "/agents/run",
-                post(|| async { Json(serde_json::json!({ "success": true, "response": "ok" })) }),
+                post(|| async {
+                    Json(serde_json::json!({
+                        "success": true,
+                        "response": "ok",
+                        "usage": {
+                            "provider": "zai-coding-plan",
+                            "model": "glm-4.7",
+                            "input_tokens": 42,
+                            "output_tokens": 7,
+                            "cost_usd": 0.0123,
+                            "trace_id": "trace-chat-ledger"
+                        }
+                    }))
+                }),
             );
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -2330,7 +2519,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_request_retries_with_latest_sandbox_target() {
-        let _dir = init_test_env();
+        init_test_env();
         let sandbox_id = "sandbox-chat-retry";
         let fresh_url = spawn_mock_chat_sidecar().await;
         seed_sandbox_record(sandbox_id, &fresh_url, "test-token");
@@ -2354,5 +2543,65 @@ mod tests {
         assert!(response.status().is_success());
         let payload: serde_json::Value = response.json().await.expect("json payload");
         assert_eq!(payload["response"], "ok");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn operator_chat_turn_persists_run_record_and_transcript() {
+        init_test_env();
+        let _bot_store_guard = crate::state::bot_store_test_lock();
+        let sidecar_url = spawn_mock_chat_sidecar().await;
+        let suffix = chrono::Utc::now().timestamp_millis();
+        let sandbox_id = format!("sandbox-chat-ledger-{suffix}");
+        let bot_id = format!("bot-chat-ledger-{suffix}");
+        let cleanup = ChatLedgerCleanup::new(bot_id.clone(), sandbox_id.clone());
+        let workflow_id = 9_200_000 + (suffix as u64 % 100_000);
+        seed_sandbox_record(&sandbox_id, &sidecar_url, "test-token");
+        seed_chat_ledger_bot(&bot_id, &sandbox_id, workflow_id);
+
+        let target = SidecarChatTarget {
+            sandbox_id: sandbox_id.clone(),
+            sidecar_url,
+            sidecar_token: "test-token".to_string(),
+        };
+        let result = run_agentic_chat_turn(
+            target,
+            AgenticChatTurnOptions {
+                session_id: format!("manual-chat-ledger-{suffix}"),
+                message: "summarize this setup".to_string(),
+                user_metadata: json!({ "transport": "operator-chat", "source": "owner" }),
+                assistant_metadata: json!({ "transport": "agents/run" }),
+                timeout_ms: 30_000,
+                surface: "operator-chat".to_string(),
+                operation: "agents-run".to_string(),
+                bot_id: Some(bot_id),
+                run_id: None,
+            },
+        )
+        .await
+        .expect("chat turn succeeds");
+
+        let run_id = result
+            .usage_event
+            .get("event_id")
+            .and_then(Value::as_str)
+            .expect("usage event id");
+        cleanup.track_run_id(run_id);
+        let run = crate::workflow_compat::get_workflow_run(run_id)
+            .expect("run store")
+            .expect("persisted run");
+        assert_eq!(run.workflow_id, workflow_id + 2);
+        assert_eq!(run.session_id.as_deref(), Some(result.session_id.as_str()));
+        assert_eq!(run.input_tokens, 42);
+        assert_eq!(run.output_tokens, 7);
+        assert_eq!(run.provider.as_deref(), Some("zai-coding-plan"));
+        assert_eq!(run.model.as_deref(), Some("glm-4.7"));
+        assert_eq!(run.cost_usd, Some(0.0123));
+
+        let transcript = crate::workflow_compat::get_workflow_run_transcript(run_id)
+            .expect("transcript store")
+            .expect("persisted transcript");
+        let serialized = transcript.messages.to_string();
+        assert!(serialized.contains("summarize this setup"), "{serialized}");
+        assert!(serialized.contains("ok"), "{serialized}");
     }
 }

@@ -29,11 +29,22 @@ import { BinaryUpdatesPanel } from '~/components/operator/BinaryUpdatesPanel';
 import { botStatusBadgeVariant, botStatusLabel, normalizeDisplayNumber } from '~/lib/format';
 import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 import { getTradeValidationDisplay } from '~/lib/tradeValidation';
+import { AI_PROVIDERS } from '~/lib/config/aiProviders';
+import {
+  CONVERSATION_CRON_5_MIN,
+  RESEARCH_CRON_2_HOURS,
+  strategyPacks,
+} from '~/lib/blueprints/strategy-packs';
 
 const JOB_EXTEND = 6;
 const DEFAULT_POSITION_SIZE_PCT = '10';
 const MIN_POSITION_SIZE_PCT = 1;
 const MAX_POSITION_SIZE_PCT = 100;
+const AGENT_HARNESSES = [
+  { value: 'opencode', label: 'OpenCode' },
+  { value: 'claude-code', label: 'Claude Code' },
+  { value: 'codex', label: 'Codex' },
+] as const;
 const usdFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -90,6 +101,45 @@ function validatePositionSizePct(value: string): string | null {
     return `Position size must be between ${MIN_POSITION_SIZE_PCT}% and ${MAX_POSITION_SIZE_PCT}%`;
   }
   return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function configBool(config: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  const value = config[key];
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function cronFieldCount(value: string): number {
+  return value.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function validateCronDraft(label: string, value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return `${label} cron is required`;
+  const fields = cronFieldCount(trimmed);
+  if (fields < 5 || fields > 7) return `${label} cron must have 5-7 fields`;
+  return null;
+}
+
+function workflowSchedules(config: Record<string, unknown>): Record<string, unknown> {
+  const schedules = config.workflow_schedules;
+  return isRecord(schedules) ? schedules : {};
+}
+
+function defaultScheduleFor(detail: NonNullable<ReturnType<typeof useBotDetail>['data']>) {
+  const pack = strategyPacks.find((candidate) => candidate.id === detail.strategy_type);
+  return {
+    tradingCron:
+      detail.trading_loop_cron?.trim()
+      || readConfigString(detail.strategy_config ?? {}, 'trading_loop_cron')
+      || pack?.cron
+      || '0 */5 * * * *',
+    conversationCron: pack?.conversationCron ?? CONVERSATION_CRON_5_MIN,
+    researchCron: pack?.researchCron ?? RESEARCH_CRON_2_HOURS,
+  };
 }
 
 function formatOptionalConfigValue(value: string, emptyLabel = 'Not set'): string {
@@ -184,11 +234,16 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
     operatorKind: bot.operatorKind,
     chainId: bot.chainId,
   });
-  const { startBot, stopBot, runNow, updateConfig, isAuthenticated, authenticate } = useBotControl(
-    bot.id,
-    bot.operatorApiUrl,
-    bot.operatorKind,
-  );
+  const {
+    startBot,
+    stopBot,
+    runNow,
+    agentRuntime,
+    updateConfig,
+    updateAgentRuntime,
+    isAuthenticated,
+    authenticate,
+  } = useBotControl(bot.id, bot.operatorApiUrl, bot.operatorKind);
   const { service, remainingSeconds: serviceRemainingSeconds } = useServiceInfo(bot.serviceId || undefined);
 
   const ownerAddress = address ?? operatorAuth.accountAddress;
@@ -260,6 +315,14 @@ export function ControlsTab({ bot, onConfigureSecrets }: ControlsTabProps) {
         runNow={runNow}
         onConfigureSecrets={onConfigureSecrets}
       />
+      {isOwner && (
+        <RuntimeSettingsCard
+          detail={detail}
+          agentRuntime={agentRuntime}
+          updateAgentRuntime={updateAgentRuntime}
+          updateConfig={updateConfig}
+        />
+      )}
       {isOwner && (
         <ProvisionedSettingsCard detail={detail} />
       )}
@@ -925,6 +988,356 @@ function StrategyCard({
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function RuntimeSettingsCard({
+  detail,
+  agentRuntime,
+  updateAgentRuntime,
+  updateConfig,
+}: {
+  detail: NonNullable<ReturnType<typeof useBotDetail>['data']>;
+  agentRuntime: ReturnType<typeof useBotControl>['agentRuntime'];
+  updateAgentRuntime: ReturnType<typeof useBotControl>['updateAgentRuntime'];
+  updateConfig: ReturnType<typeof useBotControl>['updateConfig'];
+}) {
+  const strategyConfig = detail.strategy_config ?? {};
+  const runtime = agentRuntime.data;
+  const defaults = defaultScheduleFor(detail);
+  const schedules = workflowSchedules(strategyConfig);
+  const savedHarness =
+    runtime?.agent_harness ?? (readConfigString(strategyConfig, 'agent_harness') || 'opencode');
+  const savedModelProvider = runtime?.model.provider ?? '';
+  const savedModelName = runtime?.model.name ?? '';
+  const savedModelBaseUrl = runtime?.model.base_url ?? '';
+  const savedTradingCron = defaults.tradingCron;
+  const savedConversationCron = readConfigString(schedules, 'conversation_cron') || defaults.conversationCron;
+  const savedResearchCron = readConfigString(schedules, 'research_cron') || defaults.researchCron;
+  const savedConversationEnabled = configBool(schedules, 'conversation_enabled', true);
+  const savedResearchEnabled = configBool(schedules, 'research_enabled', true);
+  const modelPreset = AI_PROVIDERS.find((provider) =>
+    provider.modelProvider === savedModelProvider && provider.modelName === savedModelName,
+  )?.id ?? 'custom';
+
+  const [agentHarness, setAgentHarness] = useState(savedHarness);
+  const [modelProvider, setModelProvider] = useState(savedModelProvider);
+  const [modelName, setModelName] = useState(savedModelName);
+  const [modelBaseUrl, setModelBaseUrl] = useState(savedModelBaseUrl);
+  const [modelApiKey, setModelApiKey] = useState('');
+  const [selectedPreset, setSelectedPreset] = useState(modelPreset);
+  const [tradingCron, setTradingCron] = useState(savedTradingCron);
+  const [conversationCron, setConversationCron] = useState(savedConversationCron);
+  const [researchCron, setResearchCron] = useState(savedResearchCron);
+  const [conversationEnabled, setConversationEnabled] = useState(savedConversationEnabled);
+  const [researchEnabled, setResearchEnabled] = useState(savedResearchEnabled);
+
+  useEffect(() => {
+    setAgentHarness(savedHarness);
+    setModelProvider(savedModelProvider);
+    setModelName(savedModelName);
+    setModelBaseUrl(savedModelBaseUrl);
+    setModelApiKey('');
+    setSelectedPreset(modelPreset);
+  }, [modelPreset, savedHarness, savedModelBaseUrl, savedModelName, savedModelProvider]);
+
+  useEffect(() => {
+    setTradingCron(savedTradingCron);
+    setConversationCron(savedConversationCron);
+    setResearchCron(savedResearchCron);
+    setConversationEnabled(savedConversationEnabled);
+    setResearchEnabled(savedResearchEnabled);
+  }, [
+    savedConversationCron,
+    savedConversationEnabled,
+    savedResearchCron,
+    savedResearchEnabled,
+    savedTradingCron,
+  ]);
+
+  const runtimeChanged =
+    agentHarness !== savedHarness ||
+    modelProvider.trim() !== savedModelProvider ||
+    modelName.trim() !== savedModelName ||
+    modelBaseUrl.trim() !== savedModelBaseUrl ||
+    modelApiKey.trim().length > 0;
+  const modelChanged =
+    modelProvider.trim() !== savedModelProvider ||
+    modelName.trim() !== savedModelName ||
+    modelBaseUrl.trim() !== savedModelBaseUrl ||
+    modelApiKey.trim().length > 0;
+  const scheduleChanged =
+    tradingCron.trim() !== savedTradingCron ||
+    conversationCron.trim() !== savedConversationCron ||
+    researchCron.trim() !== savedResearchCron ||
+    conversationEnabled !== savedConversationEnabled ||
+    researchEnabled !== savedResearchEnabled;
+  const scheduleError =
+    validateCronDraft('Trading', tradingCron)
+    ?? validateCronDraft('Conversation', conversationCron)
+    ?? validateCronDraft('Research', researchCron);
+  const modelMissing = modelChanged && (!modelProvider.trim() || !modelName.trim());
+  const modelBlocked = modelChanged && !detail.secrets_configured;
+
+  const applyPreset = (value: string) => {
+    setSelectedPreset(value);
+    const preset = AI_PROVIDERS.find((provider) => provider.id === value);
+    if (!preset) return;
+    setModelProvider(preset.modelProvider);
+    setModelName(preset.modelName);
+    setModelBaseUrl(preset.baseUrl ?? '');
+  };
+
+  const saveRuntime = () => {
+    if (modelMissing) {
+      toast.error('Model provider and name are required.');
+      return;
+    }
+    if (modelBlocked) {
+      toast.error('Configure bot secrets before changing model overrides.');
+      return;
+    }
+    const payload: Record<string, string> = {};
+    if (agentHarness !== savedHarness) payload.agent_harness = agentHarness;
+    if (modelProvider.trim() !== savedModelProvider) payload.model_provider = modelProvider.trim();
+    if (modelName.trim() !== savedModelName) payload.model_name = modelName.trim();
+    if (modelBaseUrl.trim() !== savedModelBaseUrl) payload.model_base_url = modelBaseUrl.trim();
+    if (modelApiKey.trim()) payload.model_api_key = modelApiKey.trim();
+    if (Object.keys(payload).length === 0) return;
+    updateAgentRuntime.mutate(payload);
+  };
+
+  const saveSchedules = () => {
+    if (scheduleError) {
+      toast.error(scheduleError);
+      return;
+    }
+    const nextStrategyConfig: Record<string, unknown> = { ...strategyConfig };
+    nextStrategyConfig.workflow_schedules = {
+      ...workflowSchedules(nextStrategyConfig),
+      conversation_cron: conversationCron.trim(),
+      research_cron: researchCron.trim(),
+      conversation_enabled: conversationEnabled,
+      research_enabled: researchEnabled,
+    };
+    updateConfig.mutate({
+      strategyConfigJson: JSON.stringify(nextStrategyConfig),
+      tradingLoopCron: tradingCron.trim(),
+    });
+  };
+
+  return (
+    <div className="glass-card rounded-xl p-5 xl:col-span-2">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-display font-bold text-lg">Runtime Settings</h3>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-arena-elements-textTertiary">
+            <span className="font-data">{savedHarness}</span>
+            <span>/</span>
+            <span className="font-data">{savedModelProvider && savedModelName ? `${savedModelProvider}/${savedModelName}` : 'model not reported'}</span>
+            {runtime?.model.api_key_set && (
+              <Badge variant="success" className="py-0 text-[10px]">Key stored</Badge>
+            )}
+          </div>
+        </div>
+        {agentRuntime.isFetching && (
+          <span className="font-data text-xs text-arena-elements-textTertiary">Syncing</span>
+        )}
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-4">
+          <div>
+            <span className="mb-2 block text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+              Harness
+            </span>
+            <div className="grid grid-cols-3 gap-1 rounded-lg bg-arena-elements-background-depth-2 p-1">
+              {AGENT_HARNESSES.map((harness) => (
+                <button
+                  key={harness.value}
+                  type="button"
+                  aria-pressed={agentHarness === harness.value}
+                  onClick={() => setAgentHarness(harness.value)}
+                  className={`h-9 truncate rounded-md px-2 text-xs font-display transition-colors ${
+                    agentHarness === harness.value
+                      ? 'bg-violet-500 text-white'
+                      : 'text-arena-elements-textSecondary hover:bg-arena-elements-background-depth-3'
+                  }`}
+                >
+                  {harness.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+              Preset
+              <select
+                aria-label="Model preset"
+                value={selectedPreset}
+                onChange={(event) => applyPreset(event.target.value)}
+                className="mt-1 h-9 w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 font-display text-sm normal-case tracking-normal text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+              >
+                <option value="custom">Custom</option>
+                {AI_PROVIDERS.map((provider) => (
+                  <option key={provider.id} value={provider.id}>{provider.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+              Provider
+              <input
+                aria-label="Model provider"
+                value={modelProvider}
+                onChange={(event) => {
+                  setSelectedPreset('custom');
+                  setModelProvider(event.target.value);
+                }}
+                className="mt-1 h-9 w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 font-data text-sm normal-case tracking-normal text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+                placeholder="zai-coding-plan"
+              />
+            </label>
+            <label className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+              Model
+              <input
+                aria-label="Model name"
+                value={modelName}
+                onChange={(event) => {
+                  setSelectedPreset('custom');
+                  setModelName(event.target.value);
+                }}
+                className="mt-1 h-9 w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 font-data text-sm normal-case tracking-normal text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+                placeholder="glm-4.7"
+              />
+            </label>
+            <label className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+              Base URL
+              <input
+                aria-label="Model base URL"
+                value={modelBaseUrl}
+                onChange={(event) => {
+                  setSelectedPreset('custom');
+                  setModelBaseUrl(event.target.value);
+                }}
+                className="mt-1 h-9 w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 font-data text-sm normal-case tracking-normal text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+                placeholder="https://router.tangle.tools/v1"
+              />
+            </label>
+          </div>
+
+          <label className="block text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+            API Key
+            <input
+              aria-label="Model API key"
+              type="password"
+              value={modelApiKey}
+              onChange={(event) => setModelApiKey(event.target.value)}
+              className="mt-1 h-9 w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 font-data text-sm normal-case tracking-normal text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+              placeholder={runtime?.model.api_key_set ? 'Leave blank to keep stored key' : 'Required for model overrides'}
+            />
+          </label>
+
+          {modelBlocked && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Configure secrets before changing provider, model, base URL, or key.
+            </p>
+          )}
+
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-arena-elements-textTertiary">
+              {runtimeChanged ? 'Unsaved runtime changes.' : 'Runtime matches operator state.'}
+            </span>
+            <Button
+              size="sm"
+              disabled={!runtimeChanged || updateAgentRuntime.isPending || modelMissing || modelBlocked}
+              onClick={saveRuntime}
+            >
+              {updateAgentRuntime.isPending ? 'Saving...' : 'Save Runtime'}
+            </Button>
+          </div>
+          {updateAgentRuntime.error && (
+            <p className="text-xs text-crimson-500">{(updateAgentRuntime.error as Error).message}</p>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          <div className="grid gap-3">
+            <label className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+              Trading
+              <input
+                aria-label="Trading cron"
+                value={tradingCron}
+                onChange={(event) => setTradingCron(event.target.value)}
+                className="mt-1 h-9 w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 font-data text-sm normal-case tracking-normal text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+              />
+            </label>
+            <label className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+              Research
+              <input
+                aria-label="Research cron"
+                value={researchCron}
+                onChange={(event) => setResearchCron(event.target.value)}
+                className="mt-1 h-9 w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 font-data text-sm normal-case tracking-normal text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+              />
+            </label>
+            <label className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
+              Conversation
+              <input
+                aria-label="Conversation cron"
+                value={conversationCron}
+                onChange={(event) => setConversationCron(event.target.value)}
+                className="mt-1 h-9 w-full rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 font-data text-sm normal-case tracking-normal text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/60"
+              />
+            </label>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 py-2 text-sm">
+              <span>Research</span>
+              <input
+                aria-label="Research workflow enabled"
+                type="checkbox"
+                checked={researchEnabled}
+                onChange={(event) => setResearchEnabled(event.target.checked)}
+                className="h-4 w-4 accent-violet-500"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-1 px-3 py-2 text-sm">
+              <span>Conversation</span>
+              <input
+                aria-label="Conversation workflow enabled"
+                type="checkbox"
+                checked={conversationEnabled}
+                onChange={(event) => setConversationEnabled(event.target.checked)}
+                className="h-4 w-4 accent-violet-500"
+              />
+            </label>
+          </div>
+
+          {scheduleError && (
+            <p className="text-xs text-crimson-500">{scheduleError}.</p>
+          )}
+
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-arena-elements-textTertiary">
+              {scheduleChanged ? 'Unsaved cadence changes.' : 'Cadence matches bot config.'}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!scheduleChanged || updateConfig.isPending || Boolean(scheduleError)}
+              onClick={saveSchedules}
+            >
+              {updateConfig.isPending ? 'Saving...' : 'Save Cadence'}
+            </Button>
+          </div>
+          {updateConfig.error && (
+            <p className="text-xs text-crimson-500">{(updateConfig.error as Error).message}</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
