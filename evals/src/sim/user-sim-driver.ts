@@ -27,8 +27,14 @@ import type { UserPersona } from './user-personas.js'
 
 /** After a session ends, poll the bot's tick-artifacts up to this long for the
  *  first deterministic tick to land (a fresh bot ticks on a cron, not instantly),
- *  so the captured cell carries real decisions instead of an empty payload. */
-const TICK_CAPTURE_WAIT_MS = 90_000
+ *  so the captured cell carries real decisions instead of an empty payload.
+ *
+ *  Eval-provisioned bots run a 1-minute fast-tick cron (operator-client.ts sets
+ *  `strategy_config.trading_loop_cron = '0 * * * * *'`, #122). Worst case the
+ *  next cron firing is 60s out, plus tick execution (~30s budgeted) and the
+ *  scheduler's own sweep interval — 150s guarantees ≥1 full tick cycle is
+ *  capturable; the old 90s window only covered a lucky cron phase. */
+const TICK_CAPTURE_WAIT_MS = 150_000
 const TICK_CAPTURE_POLL_MS = 5_000
 
 export interface UserIntent {
