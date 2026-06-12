@@ -67,6 +67,27 @@ const EMPTY_STATE: CachedSessionState = {
 const RECONNECT_BASE_DELAY_MS = 1_000;
 const RECONNECT_MAX_DELAY_MS = 30_000;
 
+/**
+ * How long a drop may last before the UI repaints to "Reconnecting"/offline.
+ * Drops are silent inside the grace window — the cached transcript is still on
+ * screen and a short outage isn't actionable, so flipping the connection chip
+ * for it is pure flicker. Two windows by failure shape:
+ *  - a failed connect (server unreachable) becomes visible after 5s;
+ *  - a clean EOF after a healthy open gets 45s, which covers a full
+ *    backoff-capped reconnect cycle against legacy operators that end the SSE
+ *    response after one event (their reconnect loop is silent by design).
+ */
+const STREAM_ERROR_GRACE_MS = 5_000;
+const STREAM_EOF_GRACE_MS = 45_000;
+
+/**
+ * A connection that dies sooner than this after opening is "flapping" (e.g. a
+ * legacy operator that ends the SSE response after one event). Flapping opens
+ * do not reset the backoff, so retries decay to the 30s cap instead of
+ * hammering the operator once a second.
+ */
+const CONNECTION_HEALTHY_AFTER_MS = 5_000;
+
 /** Deterministic (un-jittered) backoff ceiling for a given attempt index. */
 function reconnectBaseDelayMs(attempt: number): number {
   const exponential = RECONNECT_BASE_DELAY_MS * 2 ** Math.max(0, attempt);
@@ -510,7 +531,11 @@ export function useBotSessionStream({
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const graceKindRef = useRef<"eof" | "error">("eof");
   const attemptRef = useRef(0);
+  const connectionOpenedAtRef = useRef(0);
+  const lastSyncRevisionRef = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const historyAbortRef = useRef<AbortController | null>(null);
 
@@ -528,7 +553,10 @@ export function useBotSessionStream({
     [cacheKey, sessionId],
   );
 
-  const clearReconnectTimer = useCallback(() => {
+  const visibleDownRef = useRef(false);
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearRetrySchedule = useCallback(() => {
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -537,8 +565,59 @@ export function useBotSessionStream({
       clearInterval(retryCountdownRef.current);
       retryCountdownRef.current = null;
     }
+  }, []);
+
+  const clearGraceAndSettleTimers = useCallback(() => {
+    if (graceTimerRef.current) {
+      clearTimeout(graceTimerRef.current);
+      graceTimerRef.current = null;
+    }
+    if (settleTimerRef.current) {
+      clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    }
+  }, []);
+
+  const clearReconnectTimer = useCallback(() => {
+    clearRetrySchedule();
+    clearGraceAndSettleTimers();
+    visibleDownRef.current = false;
     setIsReconnecting(false);
     setRetryInSeconds(0);
+  }, [clearGraceAndSettleTimers, clearRetrySchedule]);
+
+  /**
+   * The stream dropped. Reconnection is scheduled separately; this only
+   * decides when the drop becomes *visible*. Inside the grace window the UI
+   * stays untouched so blips and clean-EOF reconnect cycles run silently; only
+   * a sustained outage repaints the chip.
+   */
+  const markStreamDown = useCallback((kind: "eof" | "error") => {
+    if (settleTimerRef.current) {
+      clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    }
+    if (visibleDownRef.current) {
+      return;
+    }
+    if (graceTimerRef.current) {
+      // An error tightens a pending EOF deadline; nothing extends a pending
+      // deadline (repeated drops must not keep pushing it out).
+      if (kind !== "error" || graceKindRef.current === "error") {
+        return;
+      }
+      clearTimeout(graceTimerRef.current);
+    }
+    graceKindRef.current = kind;
+    graceTimerRef.current = setTimeout(
+      () => {
+        graceTimerRef.current = null;
+        visibleDownRef.current = true;
+        setConnected(false);
+        setIsReconnecting(true);
+      },
+      kind === "error" ? STREAM_ERROR_GRACE_MS : STREAM_EOF_GRACE_MS,
+    );
   }, []);
 
   /**
@@ -566,6 +645,7 @@ export function useBotSessionStream({
     setError(null);
     resetReconnectBackoff();
     activeAssistantMessageIdRef.current = null;
+    lastSyncRevisionRef.current = null;
   }, [cacheKey, resetReconnectBackoff, sessionId]);
 
   const refetch = useCallback(async () => {
@@ -819,6 +899,30 @@ export function useBotSessionStream({
       const details =
         (payload.properties as Record<string, unknown> | undefined) ?? payload;
 
+      if (event.type === "sync") {
+        // Change-notification channel: the event carries a transcript revision
+        // fingerprint, not message bodies (the sidecar-backed history endpoint
+        // stays the single source of truth). The first sync after mount or
+        // reconnect primes the cursor; a moved revision means the transcript
+        // changed server-side, so refetch.
+        const revision =
+          typeof details.revision === "string"
+            ? details.revision
+            : typeof details.revision === "number"
+              ? String(details.revision)
+              : null;
+        if (revision !== null) {
+          if (
+            lastSyncRevisionRef.current !== null &&
+            lastSyncRevisionRef.current !== revision
+          ) {
+            void refetch();
+          }
+          lastSyncRevisionRef.current = revision;
+        }
+        return;
+      }
+
       if (event.type === "message.updated") {
         applyMessageUpdate(details);
         return;
@@ -914,20 +1018,12 @@ export function useBotSessionStream({
     if (!enabled || !streamEnabled) {
       return;
     }
-    if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-    if (retryCountdownRef.current) {
-      clearInterval(retryCountdownRef.current);
-      retryCountdownRef.current = null;
-    }
+    clearRetrySchedule();
 
     const currentAttempt = attemptRef.current;
     const delayMs = reconnectDelayWithJitter(currentAttempt);
     attemptRef.current = currentAttempt + 1;
     setAttempt(currentAttempt + 1);
-    setIsReconnecting(true);
 
     let remaining = Math.max(1, Math.ceil(delayMs / 1_000));
     setRetryInSeconds(remaining);
@@ -944,14 +1040,17 @@ export function useBotSessionStream({
       reconnectTimerRef.current = null;
       connectStreamRef.current();
     }, delayMs);
-  }, [enabled, streamEnabled]);
+  }, [clearRetrySchedule, enabled, streamEnabled]);
 
   const connectStream = useCallback(async () => {
     if (!enabled || !streamEnabled || !apiUrl || !token || !sessionId) {
       return;
     }
 
-    clearReconnectTimer();
+    // Clear only the retry schedule: an in-flight grace timer must survive a
+    // failed reconnect attempt or a sustained outage would never become
+    // visible.
+    clearRetrySchedule();
     streamAbortRef.current?.abort();
 
     const controller = new AbortController();
@@ -977,10 +1076,21 @@ export function useBotSessionStream({
         throw new Error("Chat stream is unavailable");
       }
 
-      // Healthy open: surface connected and reset the backoff so the next drop
-      // starts from the 1s base.
+      // Healthy open: cancel any pending visibility flip and surface the
+      // connection. The backoff attempt counter resets only after the
+      // connection has stayed open past the flap window, so a server that
+      // closes the stream right after opening decays to the 30s retry cap
+      // instead of looping every second.
+      connectionOpenedAtRef.current = Date.now();
+      clearGraceAndSettleTimers();
+      visibleDownRef.current = false;
       setConnected(true);
-      resetReconnectBackoff();
+      setIsReconnecting(false);
+      setRetryInSeconds(0);
+      settleTimerRef.current = setTimeout(() => {
+        settleTimerRef.current = null;
+        resetReconnectBackoff();
+      }, CONNECTION_HEALTHY_AFTER_MS);
       setError((current) => {
         if (current && stateRef.current.messages.length > 0) {
           return null;
@@ -1006,9 +1116,6 @@ export function useBotSessionStream({
           for (const frame of frames) {
             const parsed = parseEventFrame(frame);
             if (parsed) {
-              // A delivered frame proves the connection is healthy; keep the
-              // backoff reset so a later drop restarts from the base delay.
-              resetReconnectBackoff();
               handleEvent(parsed);
             }
           }
@@ -1018,7 +1125,7 @@ export function useBotSessionStream({
       }
 
       if (!controller.signal.aborted) {
-        setConnected(false);
+        markStreamDown("eof");
         scheduleReconnect();
       }
     } catch (streamError) {
@@ -1026,7 +1133,7 @@ export function useBotSessionStream({
         return;
       }
 
-      setConnected(false);
+      markStreamDown("error");
       if (stateRef.current.messages.length === 0) {
         setError(
           streamError instanceof Error
@@ -1038,9 +1145,11 @@ export function useBotSessionStream({
     }
   }, [
     apiUrl,
-    clearReconnectTimer,
+    clearGraceAndSettleTimers,
+    clearRetrySchedule,
     enabled,
     handleEvent,
+    markStreamDown,
     resetReconnectBackoff,
     scheduleReconnect,
     sessionId,

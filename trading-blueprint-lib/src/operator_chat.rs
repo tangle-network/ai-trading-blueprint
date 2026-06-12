@@ -1803,34 +1803,76 @@ pub fn transcript_messages_for_session(target: &SidecarChatTarget, session_id: &
         .unwrap_or_else(|| Value::Array(Vec::new()))
 }
 
+/// Poll interval for transcript-change detection on the chat event stream.
+/// Cheap (hashes only the last message under the store lock), so it can stay
+/// tight enough that a finished agent turn reaches the UI within a second.
+const CHAT_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
+
+/// Fingerprint of a session transcript: changes iff a message is appended or
+/// the last message is rewritten (the store is append/replace-last only).
+/// Returns (revision, message_count).
+fn transcript_revision(transcript_key: &str) -> (u64, usize) {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let count = CHAT_TRANSCRIPTS
+        .lock()
+        .ok()
+        .and_then(|store| {
+            store.get(transcript_key).map(|messages| {
+                messages.len().hash(&mut hasher);
+                if let Some(last) = messages.last() {
+                    last.to_string().hash(&mut hasher);
+                }
+                messages.len()
+            })
+        })
+        .unwrap_or(0);
+    (hasher.finish(), count)
+}
+
+/// Long-lived SSE channel for a chat session. Emits a `sync` event immediately
+/// on connect and again whenever the session transcript changes; between
+/// emissions the connection idles on SSE keep-alive pings. The event carries a
+/// revision fingerprint, not message bodies — clients refetch the message
+/// history (whose source of truth is the sidecar) when the revision moves, so
+/// there is exactly one transcript source of truth.
+///
+/// The previous implementation ended the response after a single event, which
+/// clients read as a dropped connection and answered with a 1-2s reconnect
+/// loop ("Reconnecting…" flicker).
 pub async fn proxy_chat_events(
     target: SidecarChatTarget,
     session_id: Option<String>,
 ) -> Result<Response, (StatusCode, String)> {
     let session_id = session_id.unwrap_or_else(|| default_manual_session_id(&target.sandbox_id));
-    let messages = CHAT_TRANSCRIPTS
-        .lock()
-        .ok()
-        .and_then(|store| {
-            store
-                .get(&transcript_key(&target.sandbox_id, &session_id))
-                .cloned()
-        })
-        .unwrap_or_default();
-    let event = Event::default()
-        .event("sync")
-        .json_data(json!({
-            "sessionId": session_id,
-            "messages": messages,
-            "transport": "agents/run"
-        }))
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to encode chat event: {e}"),
-            )
-        })?;
-    let event_stream = futures_util::stream::once(async move { Ok::<Event, Infallible>(event) });
+    let key = transcript_key(&target.sandbox_id, &session_id);
+
+    let event_stream = futures_util::stream::unfold(
+        (None::<u64>, session_id, key),
+        |(last_revision, session_id, key)| async move {
+            loop {
+                let (revision, message_count) = transcript_revision(&key);
+                if last_revision != Some(revision) {
+                    let event = Event::default()
+                        .event("sync")
+                        .json_data(json!({
+                            "sessionId": session_id,
+                            "revision": revision.to_string(),
+                            "messageCount": message_count,
+                            "transport": "agents/run"
+                        }))
+                        .unwrap_or_else(|_| Event::default().event("sync").data("{}"));
+                    return Some((
+                        Ok::<Event, Infallible>(event),
+                        (Some(revision), session_id, key),
+                    ));
+                }
+                sleep(CHAT_EVENT_POLL_INTERVAL).await;
+            }
+        },
+    );
+
     Ok(Sse::new(Box::pin(event_stream))
         .keep_alive(KeepAlive::default())
         .into_response())
@@ -1844,6 +1886,49 @@ mod tests {
         routing::{get, post},
     };
     use tempfile::tempdir;
+
+    #[test]
+    fn transcript_revision_moves_only_when_transcript_changes() {
+        let key = transcript_key("sandbox-rev-test", "session-rev-test");
+
+        let (empty_revision, empty_count) = transcript_revision(&key);
+        assert_eq!(empty_count, 0);
+        assert_eq!(
+            transcript_revision(&key).0,
+            empty_revision,
+            "revision must be stable while the transcript is unchanged"
+        );
+
+        if let Ok(mut store) = CHAT_TRANSCRIPTS.lock() {
+            store
+                .entry(key.clone())
+                .or_default()
+                .push(json!({"info": {"id": "user-1", "role": "user"}}));
+        }
+        let (one_revision, one_count) = transcript_revision(&key);
+        assert_eq!(one_count, 1);
+        assert_ne!(one_revision, empty_revision);
+        assert_eq!(
+            transcript_revision(&key).0,
+            one_revision,
+            "revision must be stable between appends"
+        );
+
+        // Rewriting the last message (how streaming turns settle) moves the
+        // revision even though the count is unchanged.
+        if let Ok(mut store) = CHAT_TRANSCRIPTS.lock()
+            && let Some(messages) = store.get_mut(&key)
+        {
+            messages[0] = json!({"info": {"id": "user-1", "role": "user", "success": true}});
+        }
+        let (rewritten_revision, rewritten_count) = transcript_revision(&key);
+        assert_eq!(rewritten_count, 1);
+        assert_ne!(rewritten_revision, one_revision);
+
+        if let Ok(mut store) = CHAT_TRANSCRIPTS.lock() {
+            store.remove(&key);
+        }
+    }
 
     #[test]
     fn detects_autonomous_session_names() {
