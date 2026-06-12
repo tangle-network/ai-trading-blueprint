@@ -19,6 +19,18 @@ vi.mock('@tangle-network/blueprint-ui/components', () => ({
   Skeleton: ({ className }: { className?: string }) => <div className={className} />,
 }));
 
+vi.mock('~/lib/contracts/chains', () => ({
+  networks: {
+    8453: {
+      chain: {
+        blockExplorers: {
+          default: { name: 'BaseScan', url: 'https://basescan.org' },
+        },
+      },
+    },
+  },
+}));
+
 vi.mock('~/lib/hooks/useBotApi', () => ({
   useLatestAgentTrades: () => ({
     trades: hoisted.latestTrades,
@@ -63,7 +75,7 @@ function makeBot(overrides: Partial<Bot> = {}): Bot {
   };
 }
 
-function makeTrade(index: number): Trade {
+function makeTrade(index: number, overrides: Partial<Trade> = {}): Trade {
   return {
     id: `trade-${index}`,
     botId: 'bot-1',
@@ -83,6 +95,7 @@ function makeTrade(index: number): Trade {
     targetProtocol: 'hyperliquid',
     venue: 'paper',
     hyperliquidMetadata: { asset: 'ETH', assetSize: `0.0${index}` },
+    ...overrides,
   };
 }
 
@@ -197,5 +210,71 @@ describe('LatestAgentTrades', () => {
     expect(screen.getByText('2 / 2')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next fills page' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Previous fills page' })).toBeEnabled();
+  });
+
+  it('links live EVM fill references to the chain explorer', () => {
+    const bot = makeBot();
+    const txHash = `0x${'a'.repeat(64)}`;
+    hoisted.latestTrades = [
+      {
+        trade: makeTrade(0, {
+          status: 'executed',
+          paperTrade: false,
+          targetProtocol: 'uniswap_v3',
+          venue: 'dex',
+          txHash,
+          chainId: 8453,
+        }),
+        bot,
+        botId: bot.id,
+        botName: bot.name,
+      },
+    ];
+
+    render(
+      <MemoryRouter>
+        <LatestAgentTrades
+          bots={[bot]}
+          variant="explorer"
+          limit={50}
+          className="h-full min-h-0"
+        />
+      </MemoryRouter>,
+    );
+
+    const explorerLinks = screen.getAllByRole('link', { name: /view fill transaction on basescan/i });
+    expect(explorerLinks.length).toBeGreaterThanOrEqual(2);
+    for (const link of explorerLinks) {
+      expect(link).toHaveAttribute('href', `https://basescan.org/tx/${txHash}`);
+      expect(link).toHaveAttribute('target', '_blank');
+    }
+  });
+
+  it('does not link paper fill references even when the hash is EVM-shaped', () => {
+    const bot = makeBot();
+    hoisted.latestTrades = [
+      {
+        trade: makeTrade(0, {
+          txHash: `0x${'c'.repeat(64)}`,
+          chainId: 8453,
+        }),
+        bot,
+        botId: bot.id,
+        botName: bot.name,
+      },
+    ];
+
+    render(
+      <MemoryRouter>
+        <LatestAgentTrades
+          bots={[bot]}
+          variant="explorer"
+          limit={50}
+          className="h-full min-h-0"
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('link', { name: /view fill transaction/i })).not.toBeInTheDocument();
   });
 });

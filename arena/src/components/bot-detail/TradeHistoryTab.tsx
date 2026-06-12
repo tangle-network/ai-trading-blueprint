@@ -12,6 +12,7 @@ import { countUsableValidatorSignatures, getTradeValidationDisplay } from '~/lib
 import { formatNumber } from '~/lib/format';
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
 import { formatTradeModeLabel, getTerminalTradeActionPillClass } from '~/lib/tradeDisplay';
+import { getExplorerTxLink } from '~/lib/utils/explorerLinks';
 import {
   applySortDirection,
   compareNumberValue,
@@ -36,15 +37,6 @@ interface TradeHistoryTabProps {
 const TRADE_HISTORY_LIMIT = 50;
 const SQUARE_TABLE_CLASS = 'rounded-none [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_.relative.overflow-auto]:!rounded-none [&_table]:!rounded-none [&_thead]:!rounded-none [&_tbody]:!rounded-none [&_tr]:!rounded-none [&_th]:!rounded-none [&_td]:!rounded-none';
 
-const EXPLORER_URLS: Record<number, { name: string; base: string }> = {
-  1: { name: 'Etherscan', base: 'https://etherscan.io/tx/' },
-  137: { name: 'Polygonscan', base: 'https://polygonscan.com/tx/' },
-  42161: { name: 'Arbiscan', base: 'https://arbiscan.io/tx/' },
-  8453: { name: 'Basescan', base: 'https://basescan.org/tx/' },
-  10: { name: 'Optimistic', base: 'https://optimistic.etherscan.io/tx/' },
-  31337: { name: 'Local', base: '' },
-};
-
 const tradeTimestampFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
@@ -53,12 +45,6 @@ const tradeTimestampFormatter = new Intl.DateTimeFormat('en-US', {
 });
 
 type TradeHistorySortKey = 'time' | 'trade' | 'market' | 'size' | 'usd' | 'risk' | 'ref' | 'status';
-
-function explorerUrl(txHash: string, chainId?: number): string | null {
-  if (!chainId || chainId === 31337) return null;
-  const explorer = EXPLORER_URLS[chainId];
-  return explorer ? `${explorer.base}${txHash}` : null;
-}
 
 function TradeTableHead({
   compact = false,
@@ -261,7 +247,7 @@ function renderExecutionRef(trade: Trade) {
     );
   }
 
-  if (trade.txHash.startsWith('0xpaper_')) {
+  if (trade.paperTrade || trade.status === 'paper' || trade.txHash.startsWith('0xpaper_')) {
     return (
       <span className="text-base font-data text-arena-elements-textTertiary" title={trade.txHash}>
         {truncateHash(trade.txHash)}
@@ -269,8 +255,8 @@ function renderExecutionRef(trade: Trade) {
     );
   }
 
-  const url = explorerUrl(trade.txHash, trade.chainId);
-  if (!url) {
+  const explorer = getExplorerTxLink(trade.chainId, trade.txHash);
+  if (!explorer) {
     return (
       <span className="text-base font-data text-arena-elements-textTertiary" title={trade.txHash}>
         {truncateHash(trade.txHash)}
@@ -280,11 +266,12 @@ function renderExecutionRef(trade: Trade) {
 
   return (
     <a
-      href={url}
+      href={explorer.url}
       target="_blank"
       rel="noopener noreferrer"
       className="inline-flex items-center gap-0.5 text-base font-data text-arena-elements-textTertiary transition-colors hover:text-arena-elements-textPrimary"
-      title={trade.txHash}
+      title={`${trade.txHash} · ${explorer.label}`}
+      aria-label={`View transaction on ${explorer.label}`}
       onClick={(e) => e.stopPropagation()}
     >
       {truncateHash(trade.txHash)}
