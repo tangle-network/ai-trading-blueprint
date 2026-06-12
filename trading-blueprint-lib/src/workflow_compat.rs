@@ -61,6 +61,11 @@ pub struct WorkflowRunRecord {
     pub provider: Option<String>,
     #[serde(default)]
     pub cost_usd: Option<f64>,
+    /// Agent harness (sidecar backend) the run executed through —
+    /// `opencode`, `claude-code`, or `codex`. None for deterministic runs
+    /// (no agent CLI involved) and legacy rows.
+    #[serde(default)]
+    pub harness: Option<String>,
 }
 
 /// Per-run transcript record. Same shape the bin's tests already construct.
@@ -144,6 +149,8 @@ pub fn workflow_run_record_from_latest_execution(
         model: None,
         provider: None,
         cost_usd: None,
+        // The sibling execution summary carries no harness identity either.
+        harness: None,
     }
 }
 

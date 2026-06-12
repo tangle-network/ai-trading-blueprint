@@ -288,6 +288,80 @@ struct GetSecretsResponse {
     env_json: serde_json::Map<String, serde_json::Value>,
 }
 
+// ── Agent runtime types ──────────────────────────────────────────────────
+
+/// Owner-callable runtime knobs: agent harness + model identity. All fields
+/// optional — only provided knobs change. No on-chain job, no tx fees.
+#[derive(Deserialize)]
+struct AgentRuntimeUpdateRequest {
+    agent_harness: Option<String>,
+    model_provider: Option<String>,
+    model_name: Option<String>,
+    model_base_url: Option<String>,
+    model_api_key: Option<String>,
+}
+
+/// Model identity as stored in the bot's injected env. The API key is never
+/// echoed back — only its presence.
+#[derive(Serialize)]
+struct AgentRuntimeModel {
+    provider: Option<String>,
+    name: Option<String>,
+    base_url: Option<String>,
+    api_key_set: bool,
+}
+
+#[derive(Serialize)]
+struct AgentRuntimeResponse {
+    status: String,
+    agent_harness: String,
+    model: AgentRuntimeModel,
+    /// What it took for the change to reach the live sandbox:
+    /// - `container_recreated`: secrets were re-injected, which recreates the
+    ///   sidecar container (same sandbox id + token), so the new
+    ///   `AGENT_BACKEND`/model env is live for chat and cron ticks.
+    /// - `applies_on_secret_configuration`: the bot has no injected secrets
+    ///   yet; the persisted harness takes effect when secrets are configured.
+    restart: String,
+}
+
+#[derive(Serialize)]
+struct AgentRuntimeStateResponse {
+    agent_harness: String,
+    model: AgentRuntimeModel,
+}
+
+fn agent_runtime_model_from_env(
+    env: &serde_json::Map<String, serde_json::Value>,
+) -> AgentRuntimeModel {
+    let text = |key: &str| {
+        env.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    AgentRuntimeModel {
+        provider: text("OPENCODE_MODEL_PROVIDER"),
+        name: text("OPENCODE_MODEL_NAME"),
+        base_url: text("OPENCODE_MODEL_BASE_URL"),
+        api_key_set: text("OPENCODE_MODEL_API_KEY").is_some(),
+    }
+}
+
+fn stored_sandbox_env(sandbox_id: &str) -> serde_json::Map<String, serde_json::Value> {
+    sandbox_runtime::runtime::get_sandbox_by_id(sandbox_id)
+        .ok()
+        .map(|sandbox| {
+            if sandbox.user_env_json.trim().is_empty() {
+                serde_json::Map::new()
+            } else {
+                serde_json::from_str(&sandbox.user_env_json).unwrap_or_default()
+            }
+        })
+        .unwrap_or_default()
+}
+
 #[derive(Serialize)]
 struct ActivationProgressResponse {
     bot_id: String,
@@ -637,6 +711,10 @@ struct BotRunResponse {
     provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cost_usd: Option<f64>,
+    /// Agent harness the run executed through (`opencode`, `claude-code`,
+    /// `codex`). Absent on deterministic runs and legacy rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness: Option<String>,
 }
 
 // ── Session auth types ──────────────────────────────────────────────────
@@ -710,6 +788,10 @@ pub fn build_operator_router() -> Router {
             post(decide_revision_candidate),
         )
         .route("/api/bots/{bot_id}/config", patch(update_config))
+        .route(
+            "/api/bots/{bot_id}/agent-runtime",
+            get(get_agent_runtime).patch(update_agent_runtime),
+        )
         .route(
             "/api/bots/{bot_id}/risk/acknowledge-drawdown",
             post(acknowledge_drawdown),
@@ -2694,6 +2776,7 @@ fn map_bot_run(bot: &TradingBotRecord, run: WorkflowRunRecord) -> BotRunResponse
         model: run.model,
         provider: run.provider,
         cost_usd: run.cost_usd,
+        harness: run.harness,
         result: run.result,
         error: run.error,
     }
@@ -3559,6 +3642,182 @@ async fn wipe_secrets(
         workflow_id: None,
         trading_api_token: None,
         trading_api_url: None,
+    }))
+}
+
+// ── Agent runtime handlers ───────────────────────────────────────────────
+
+/// Current agent harness + model identity for a bot, so UIs can render the
+/// runtime knobs. The model API key is never returned.
+async fn get_agent_runtime(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> ApiResult<AgentRuntimeStateResponse> {
+    let bot =
+        resolve_bot(&bot_id).map_err(|(status, message)| ApiError::message(status, message))?;
+    verify_submitter(&bot, &caller)?;
+
+    Ok(Json(AgentRuntimeStateResponse {
+        agent_harness: trading_blueprint_lib::harness::agent_harness_for_bot(&bot.strategy_config),
+        model: agent_runtime_model_from_env(&stored_sandbox_env(&bot.sandbox_id)),
+    }))
+}
+
+/// Owner-callable runtime update: change the agent harness and/or the model
+/// the harness drives, with no on-chain job. Validation mirrors provision and
+/// configure (`harness::normalize_agent_harness` + the operator-env auth check
+/// in `harness_ai_env`), so an unsupported harness fails with its precise
+/// reason before any state changes.
+///
+/// Persistence + propagation:
+/// - `agent_harness` is stored in `strategy_config` (the chat path reads it
+///   per request via `backend.type`, so chat adopts it immediately).
+/// - model fields become `OPENCODE_MODEL_*` overrides merged into the bot's
+///   stored sandbox secrets.
+/// - For a bot with injected secrets, the merged env is re-injected through
+///   the existing wipe + activate path. `inject_secrets` recreates the
+///   sidecar container (same sandbox id and token), which is how a new
+///   `AGENT_BACKEND` reaches cron workflow ticks — reported as
+///   `restart: "container_recreated"`.
+async fn update_agent_runtime(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+    Json(body): Json<AgentRuntimeUpdateRequest>,
+) -> ApiResult<AgentRuntimeResponse> {
+    let bot = resolve_live_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+
+    let field = |value: &Option<String>| -> Option<String> {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    let requested_harness = field(&body.agent_harness);
+    let model_provider = field(&body.model_provider);
+    let model_name = field(&body.model_name);
+    let model_base_url = field(&body.model_base_url);
+    let model_api_key = field(&body.model_api_key);
+
+    if requested_harness.is_none()
+        && model_provider.is_none()
+        && model_name.is_none()
+        && model_base_url.is_none()
+        && model_api_key.is_none()
+    {
+        return Err(ApiError::message(
+            StatusCode::BAD_REQUEST,
+            "No agent-runtime changes requested. Provide agent_harness and/or model_* fields."
+                .to_string(),
+        ));
+    }
+
+    // Validate the harness (supported set + a usable operator auth path)
+    // before touching any state. Re-validated even on model-only updates:
+    // the re-injection below re-derives the harness env, and a missing
+    // operator credential must fail here, not after the wipe.
+    let effective_harness = match requested_harness.as_deref() {
+        Some(raw) => trading_blueprint_lib::harness::normalize_agent_harness(raw)
+            .map_err(|reason| ApiError::message(StatusCode::BAD_REQUEST, reason))?,
+        None => trading_blueprint_lib::harness::agent_harness_for_bot(&bot.strategy_config),
+    };
+    trading_blueprint_lib::operator_credentials::harness_ai_env(&effective_harness)
+        .map_err(|reason| ApiError::message(StatusCode::BAD_REQUEST, reason))?;
+
+    let mut env = stored_sandbox_env(&bot.sandbox_id);
+    let has_secrets = !env.is_empty();
+    let model_change_requested = model_provider.is_some()
+        || model_name.is_some()
+        || model_base_url.is_some()
+        || model_api_key.is_some();
+
+    // Model overrides live in the bot's injected secrets — without secrets
+    // there is no durable store for them, so fail closed instead of
+    // pretending the override took effect.
+    if model_change_requested && !has_secrets {
+        return Err(ApiError::conflict(
+            "Bot has no configured secrets; model overrides are stored with the injected \
+             secrets. Configure secrets first (POST /api/bots/{bot_id}/secrets), then retry."
+                .to_string(),
+        ));
+    }
+
+    if let Some(provider) = &model_provider {
+        env.insert("OPENCODE_MODEL_PROVIDER".into(), provider.clone().into());
+    }
+    if let Some(name) = &model_name {
+        env.insert("OPENCODE_MODEL_NAME".into(), name.clone().into());
+    }
+    if let Some(base_url) = &model_base_url {
+        env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.clone().into());
+    }
+    if let Some(api_key) = &model_api_key {
+        env.insert("OPENCODE_MODEL_API_KEY".into(), api_key.clone().into());
+    }
+    // AGENT_BACKEND is harness-managed: drop any stale value so activation
+    // re-derives it from the (possibly new) strategy_config harness via
+    // harness_ai_env. Without this, a previous harness's AGENT_BACKEND would
+    // win the activate-time `or_insert` merge and pin the old backend.
+    env.remove("AGENT_BACKEND");
+
+    // Persist the harness selection. The operator-chat path resolves
+    // strategy_config.agent_harness per request, so chat turns adopt the new
+    // harness immediately even before re-injection completes.
+    if requested_harness.is_some() {
+        let store =
+            state::bots().map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        let harness_value = serde_json::Value::String(effective_harness.clone());
+        store
+            .update(&state::bot_key(&bot.id), |b| {
+                if let Some(obj) = b.strategy_config.as_object_mut() {
+                    obj.insert("agent_harness".to_string(), harness_value.clone());
+                } else {
+                    b.strategy_config = serde_json::json!({ "agent_harness": harness_value });
+                }
+            })
+            .map_err(|e| {
+                ApiError::message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to persist agent_harness: {e}"),
+                )
+            })?;
+    }
+
+    // Re-inject env so the live sandbox picks up AGENT_BACKEND + model env.
+    // This is the same path the secrets UI uses (wipe + activate): the
+    // sidecar container is recreated with the merged env, preserving the
+    // sandbox id and token, and workflows/tools are rebuilt by activation.
+    let restart = if has_secrets {
+        trading_blueprint_lib::jobs::wipe_bot_secrets(&bot.id, None)
+            .await
+            .map_err(|e| {
+                ApiError::message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Secret re-injection failed during wipe: {e}"),
+                )
+            })?;
+        trading_blueprint_lib::jobs::activate_bot_with_secrets(&bot.id, env.clone(), None)
+            .await
+            .map_err(|e| {
+                ApiError::message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "Secret re-injection failed during re-activation: {e}. The bot is in \
+                         awaiting-secrets state; reconfigure via POST /api/bots/{{bot_id}}/secrets."
+                    ),
+                )
+            })?;
+        "container_recreated"
+    } else {
+        "applies_on_secret_configuration"
+    };
+
+    Ok(Json(AgentRuntimeResponse {
+        status: "updated".to_string(),
+        agent_harness: effective_harness,
+        model: agent_runtime_model_from_env(&env),
+        restart: restart.to_string(),
     }))
 }
 

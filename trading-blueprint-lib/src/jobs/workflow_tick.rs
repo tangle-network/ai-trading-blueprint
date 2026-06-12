@@ -162,7 +162,7 @@ fn workflow_result_text(task: &Value, field: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn persist_executed_run_history(response: &Value) {
+fn persist_executed_run_history(response: &Value, all_bots: &[crate::state::TradingBotRecord]) {
     let Some(executed) = response.get("executed").and_then(Value::as_array) else {
         return;
     };
@@ -171,6 +171,10 @@ fn persist_executed_run_history(response: &Value) {
         let Some(workflow_id) = entry.get("workflowId").and_then(Value::as_u64) else {
             continue;
         };
+        let workflow_name = entry
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let executed_at = entry
             .get("executedAt")
             .and_then(Value::as_u64)
@@ -213,6 +217,22 @@ fn persist_executed_run_history(response: &Value) {
             model: workflow_result_text(task, "model"),
             provider: workflow_result_text(task, "provider"),
             cost_usd: task.get("costUsd").and_then(Value::as_f64),
+            // Agentic runs execute through the sidecar's default backend,
+            // which is the bot's selected agent_harness (AGENT_BACKEND env).
+            // Deterministic ticks spawn no agent CLI → no harness identity.
+            harness: {
+                let tokens = task.get("inputTokens").and_then(Value::as_u64).unwrap_or(0)
+                    + task
+                        .get("outputTokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                if tokens > 0 {
+                    bot_for_executed_workflow(all_bots, workflow_id, workflow_name)
+                        .map(|bot| crate::harness::agent_harness_for_bot(&bot.strategy_config))
+                } else {
+                    None
+                }
+            },
         };
 
         if let Err(err) = crate::workflow_compat::persist_workflow_run_record(record) {
@@ -1200,7 +1220,7 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
     }
     validate_fast_runs(&mut response, &runnable_bots).await;
     tracing::info!("workflow_tick() returned: {}", response);
-    persist_executed_run_history(&response);
+    persist_executed_run_history(&response, &runnable_bots);
 
     // 3.5. Promotion conductor: advance self-improvement paper trials (paper bots only).
     //      Activates queued backtest-passing candidates, accrues forward paper evidence
