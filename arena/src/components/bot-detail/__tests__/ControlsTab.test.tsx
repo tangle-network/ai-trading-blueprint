@@ -12,6 +12,16 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
   updateConfigMutate: vi.fn(),
+  updateAgentRuntimeMutate: vi.fn(),
+  agentRuntime: {
+    agent_harness: 'opencode',
+    model: {
+      provider: 'zai-coding-plan',
+      name: 'glm-4.7',
+      base_url: 'https://api.z.ai/api/coding/paas/v4',
+      api_key_set: true,
+    },
+  },
   detail: {
     id: 'bot-1',
     operator_address: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
@@ -23,11 +33,12 @@ const mocks = vi.hoisted(() => ({
       paper_trade: true,
       asset_token: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
       initial_capital_usd: '10000',
-    },
-    risk_params: {},
+    } as Record<string, unknown>,
+    risk_params: {} as Record<string, unknown>,
     chain_id: 31338,
     trading_active: true,
     paper_trade: true,
+    trading_loop_cron: '0 */5 * * * *',
     created_at: 1712125717,
     max_lifetime_days: 30,
     trading_api_url: 'http://localhost:9101',
@@ -105,7 +116,9 @@ vi.mock('~/lib/hooks/useBotControl', () => ({
     startBot: { mutate: vi.fn(), isPending: false, error: null },
     stopBot: { mutate: vi.fn(), isPending: false, error: null },
     runNow: { mutate: vi.fn(), isPending: false, error: null, isSuccess: false },
+    agentRuntime: { data: mocks.agentRuntime, isFetching: false, error: null },
     updateConfig: { mutate: mocks.updateConfigMutate, isPending: false, error: null },
+    updateAgentRuntime: { mutate: mocks.updateAgentRuntimeMutate, isPending: false, error: null },
     isAuthenticated: true,
     authenticate: vi.fn(),
   }),
@@ -165,10 +178,12 @@ describe('ControlsTab', () => {
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
     mocks.updateConfigMutate.mockReset();
+    mocks.updateAgentRuntimeMutate.mockReset();
     mocks.walletAddress = '0x1111111111111111111111111111111111111111';
     mocks.operatorAccountAddress = '0x1111111111111111111111111111111111111111';
     mocks.detail.submitter_address = '0x1111111111111111111111111111111111111111';
     mocks.detail.paper_trade = true;
+    mocks.detail.trading_loop_cron = '0 */5 * * * *';
     mocks.detail.strategy_config = {
       runtime_backend: 'docker',
       paper_trade: true,
@@ -176,6 +191,16 @@ describe('ControlsTab', () => {
       initial_capital_usd: '10000',
     };
     mocks.detail.risk_params = {};
+    mocks.detail.secrets_configured = true;
+    mocks.agentRuntime = {
+      agent_harness: 'opencode',
+      model: {
+        provider: 'zai-coding-plan',
+        name: 'glm-4.7',
+        base_url: 'https://api.z.ai/api/coding/paas/v4',
+        api_key_set: true,
+      },
+    };
   });
 
   it('renders the live average validator score instead of the stale bot field', () => {
@@ -200,6 +225,57 @@ describe('ControlsTab', () => {
     render(<ControlsTab bot={makeBot()} />);
 
     expect(screen.getByText('177571563657601274')).toBeInTheDocument();
+  });
+
+  it('saves live harness and model changes through the runtime endpoint', async () => {
+    const user = userEvent.setup();
+    render(<ControlsTab bot={makeBot()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Codex' }));
+    await user.clear(screen.getByLabelText('Model name'));
+    await user.type(screen.getByLabelText('Model name'), 'gpt-5.1');
+    await user.click(screen.getByRole('button', { name: 'Save Runtime' }));
+
+    expect(mocks.updateAgentRuntimeMutate).toHaveBeenCalledWith({
+      agent_harness: 'codex',
+      model_name: 'gpt-5.1',
+    });
+  });
+
+  it('saves trading, research, and conversation cadence without dropping strategy config', async () => {
+    const user = userEvent.setup();
+    mocks.detail.strategy_config = {
+      runtime_backend: 'docker',
+      paper_trade: true,
+      custom_instructions: 'Keep positions small.',
+      workflow_schedules: {
+        conversation_cron: '0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *',
+        research_cron: '0 2 * * * *',
+        conversation_enabled: true,
+        research_enabled: true,
+      },
+    };
+    render(<ControlsTab bot={makeBot()} />);
+
+    await user.clear(screen.getByLabelText('Trading cron'));
+    await user.type(screen.getByLabelText('Trading cron'), '0 */1 * * * *');
+    await user.click(screen.getByLabelText('Conversation workflow enabled'));
+    await user.click(screen.getByRole('button', { name: 'Save Cadence' }));
+
+    expect(mocks.updateConfigMutate).toHaveBeenCalledTimes(1);
+    const [payload] = mocks.updateConfigMutate.mock.calls[0];
+    expect(payload.tradingLoopCron).toBe('0 */1 * * * *');
+    expect(JSON.parse(payload.strategyConfigJson)).toEqual({
+      runtime_backend: 'docker',
+      paper_trade: true,
+      custom_instructions: 'Keep positions small.',
+      workflow_schedules: {
+        conversation_cron: '0 1,6,11,16,21,26,31,36,41,46,51,56 * * * *',
+        research_cron: '0 2 * * * *',
+        conversation_enabled: false,
+        research_enabled: true,
+      },
+    });
   });
 
   it('allows owner controls when the operator auth session owns the bot without a connected wallet', () => {

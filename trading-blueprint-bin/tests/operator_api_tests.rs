@@ -2251,8 +2251,13 @@ async fn test_send_run_message_requires_non_empty_message() {
     );
 
     let auth = test_auth_header(SUBMITTER);
-    let response =
-        post_run_message(&bot.id, "run-msg-empty", Some(&auth), json!({ "message": "  " })).await;
+    let response = post_run_message(
+        &bot.id,
+        "run-msg-empty",
+        Some(&auth),
+        json!({ "message": "  " }),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -2306,7 +2311,10 @@ async fn test_send_run_message_seeds_context_for_sessionless_run_and_merges_foll
         .unwrap()
         .to_bytes();
     let serialized = String::from_utf8(transcript_body.to_vec()).unwrap();
-    assert!(serialized.contains("why did this run skip?"), "{serialized}");
+    assert!(
+        serialized.contains("why did this run skip?"),
+        "{serialized}"
+    );
     assert!(serialized.contains("Owner follow-up:"), "{serialized}");
     assert!(
         serialized.contains("saved run summary"),
@@ -3404,6 +3412,39 @@ async fn test_update_config_with_auth() {
     // Verify persisted
     let updated = state::get_bot(&bot.id).unwrap().unwrap();
     assert_eq!(updated.strategy_config["leverage"], 5);
+}
+
+#[tokio::test]
+async fn test_update_config_rejects_invalid_trading_loop_cron_before_persisting() {
+    let _dir = init_test_env();
+
+    let bot = seed_bot("config-bad-cron-1", "perp", true);
+    let body = serde_json::json!({
+        "strategy_config_json": "{\"leverage\": 5}",
+        "trading_loop_cron": "not a cron",
+    });
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/bots/{}/config", bot.id))
+                .header("content-type", "application/json")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let err = String::from_utf8_lossy(&body);
+    assert!(err.contains("invalid trading_loop_cron"), "{err}");
+
+    let stored = state::get_bot(&bot.id).unwrap().unwrap();
+    assert_eq!(stored.trading_loop_cron, "0 */5 * * * *");
+    assert!(stored.strategy_config.get("leverage").is_none());
 }
 
 // ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ export interface BotDetail {
   chain_id: number;
   trading_active: boolean;
   paper_trade: boolean;
+  trading_loop_cron?: string;
   created_at: number;
   max_lifetime_days: number;
   trading_api_url: string;

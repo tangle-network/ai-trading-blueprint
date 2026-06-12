@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useOperatorAuth } from './useOperatorAuth';
 import {
@@ -8,6 +8,28 @@ import {
 import { readOperatorError } from '~/lib/operator/errors';
 import { dispatchBotsRefresh } from '~/lib/events/bots';
 import type { BotOperatorKind } from '~/lib/types/bot';
+
+export type AgentHarness = 'opencode' | 'claude-code' | 'codex';
+
+export interface AgentRuntimeModel {
+  provider?: string | null;
+  name?: string | null;
+  base_url?: string | null;
+  api_key_set: boolean;
+}
+
+export interface AgentRuntimeState {
+  agent_harness: AgentHarness | string;
+  model: AgentRuntimeModel;
+}
+
+export interface AgentRuntimeUpdate {
+  agent_harness?: string;
+  model_provider?: string;
+  model_name?: string;
+  model_base_url?: string;
+  model_api_key?: string;
+}
 
 async function apiCall(
   apiUrl: string,
@@ -49,6 +71,7 @@ export function useBotControl(
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['bot-detail', apiUrl, botId] });
+    queryClient.invalidateQueries({ queryKey: ['bot-agent-runtime', apiUrl, botId] });
     queryClient.invalidateQueries({ queryKey: ['bot-metrics', apiUrl, botId] });
     queryClient.invalidateQueries({ queryKey: ['bot-trades', apiUrl, botId] });
     queryClient.invalidateQueries({ queryKey: ['bot-trade-page', apiUrl, botId] });
@@ -89,26 +112,60 @@ export function useBotControl(
     onError: onMutationError('Run now'),
   });
 
+  const agentRuntime = useQuery({
+    queryKey: ['bot-agent-runtime', apiUrl, botId, deploymentKind, token ?? 'anonymous'],
+    enabled: !!apiUrl && !!botId && !!token,
+    staleTime: 10_000,
+    queryFn: async () => {
+      const t = await ensureToken();
+      return apiCall(
+        apiUrl,
+        buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/agent-runtime'),
+        'GET',
+        t,
+      ) as Promise<AgentRuntimeState>;
+    },
+  });
+
   const updateConfig = useMutation({
     mutationFn: async (params: {
       strategyConfigJson?: string;
       riskParamsJson?: string;
+      tradingLoopCron?: string;
     }) => {
       const t = await ensureToken();
       return apiCall(apiUrl, buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/config'), 'PATCH', t, {
         strategy_config_json: params.strategyConfigJson,
         risk_params_json: params.riskParamsJson,
+        trading_loop_cron: params.tradingLoopCron,
       });
     },
     onSuccess: invalidate,
     onError: onMutationError('Update config'),
   });
 
+  const updateAgentRuntime = useMutation({
+    mutationFn: async (params: AgentRuntimeUpdate) => {
+      const t = await ensureToken();
+      return apiCall(
+        apiUrl,
+        buildBotScopedPathForDeploymentKind(deploymentKind, botId, '/agent-runtime'),
+        'PATCH',
+        t,
+        params,
+      ) as Promise<AgentRuntimeState>;
+    },
+    onSuccess: invalidate,
+    onError: onMutationError('Update runtime'),
+  });
+
   return {
     startBot,
     stopBot,
     runNow,
+    agentRuntime,
     updateConfig,
+    updateAgentRuntime,
     isAuthenticated,
     authenticate,
   };

@@ -856,6 +856,7 @@ async fn execute_agent_run_turn(
         "timeout": request.timeout_ms,
         "backend": backend
     });
+    let started_at_unix = chrono::Utc::now().timestamp().max(0) as u64;
     let started_at = Instant::now();
     let result = send_chat_request(
         &request.target,
@@ -918,6 +919,7 @@ async fn execute_agent_run_turn(
     } else {
         assistant_text
     };
+    let duration_ms = started_at.elapsed().as_millis() as u64;
     let usage_event = build_agent_run_usage_event_for(
         &request.target,
         &request.session_id,
@@ -925,14 +927,14 @@ async fn execute_agent_run_turn(
         &text,
         status,
         &payload,
-        started_at.elapsed().as_millis() as u64,
+        duration_ms,
         &request.surface,
         &request.operation,
         request.bot_id.as_deref(),
         request.run_id.as_deref(),
     );
     append_usage_event_to_sidecar(&request.target, usage_event.clone()).await;
-    let mut assistant_metadata = request.assistant_metadata;
+    let mut assistant_metadata = request.assistant_metadata.clone();
     merge_metadata_fields(
         &mut assistant_metadata,
         json!({
@@ -950,6 +952,7 @@ async fn execute_agent_run_turn(
     );
 
     let messages = transcript_messages_for_session(&request.target, &request.session_id);
+    let completed_at_unix = chrono::Utc::now().timestamp().max(0) as u64;
     let trace_id = usage_event
         .get("trace_id")
         .and_then(Value::as_str)
@@ -966,6 +969,16 @@ async fn execute_agent_run_turn(
         .unwrap_or(0)
         .min(u64::from(u32::MAX)) as u32;
     let cost_usd = usage_event.get("cost_usd").and_then(Value::as_f64);
+    persist_operator_chat_run_record(
+        &request,
+        started_at_unix,
+        completed_at_unix,
+        duration_ms,
+        status,
+        &text,
+        &usage_event,
+        &messages,
+    );
 
     Ok(AgenticChatTurnResult {
         session_id: request.session_id,
@@ -979,6 +992,97 @@ async fn execute_agent_run_turn(
         payload,
         messages,
     })
+}
+
+fn usage_event_string(event: &Value, key: &str) -> Option<String> {
+    event
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn usage_event_u32(event: &Value, key: &str) -> u32 {
+    event
+        .get(key)
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(u64::from(u32::MAX)) as u32
+}
+
+fn persist_operator_chat_run_record(
+    request: &AgentRunTurnRequest,
+    started_at: u64,
+    completed_at: u64,
+    duration_ms: u64,
+    status: StatusCode,
+    assistant_text: &str,
+    usage_event: &Value,
+    messages: &Value,
+) {
+    if request.surface != "operator-chat" {
+        return;
+    }
+    let Ok(bot) = crate::state::find_bot_by_sandbox(&request.target.sandbox_id) else {
+        return;
+    };
+    let Some(base_workflow_id) = bot.workflow_id else {
+        return;
+    };
+    let workflow_id = base_workflow_id + 2;
+    let run_id = usage_event_string(usage_event, "event_id").unwrap_or_else(|| {
+        format!(
+            "operator-chat-{}-{}",
+            request.session_id,
+            chrono::Utc::now().timestamp_millis()
+        )
+    });
+    let run = crate::workflow_compat::WorkflowRunRecord {
+        run_id: run_id.clone(),
+        workflow_id,
+        status: if status.is_success() {
+            crate::workflow_compat::WorkflowRunStatus::Completed
+        } else {
+            crate::workflow_compat::WorkflowRunStatus::Failed
+        },
+        started_at,
+        completed_at: Some(completed_at),
+        session_id: Some(request.session_id.clone()),
+        trace_id: usage_event_string(usage_event, "trace_id"),
+        duration_ms,
+        input_tokens: usage_event_u32(usage_event, "input_tokens"),
+        output_tokens: usage_event_u32(usage_event, "output_tokens"),
+        result: status.is_success().then(|| assistant_text.to_string()),
+        error: (!status.is_success()).then(|| assistant_text.to_string()),
+        loop_mode: Some("agentic".to_string()),
+        model: usage_event_string(usage_event, "model"),
+        provider: usage_event_string(usage_event, "provider"),
+        cost_usd: usage_event.get("cost_usd").and_then(Value::as_f64),
+        harness: Some(crate::harness::agent_harness_for_bot(&bot.strategy_config)),
+    };
+    if let Err(error) = crate::workflow_compat::persist_workflow_run_record(run) {
+        tracing::warn!(
+            sandbox_id = %request.target.sandbox_id,
+            session_id = %request.session_id,
+            "failed to persist operator-chat run record: {error}"
+        );
+        return;
+    }
+    let transcript = crate::workflow_compat::WorkflowRunTranscriptRecord {
+        run_id: run_id.clone(),
+        session_id: request.session_id.clone(),
+        captured_at: completed_at,
+        messages: messages.clone(),
+    };
+    if let Err(error) = crate::workflow_compat::persist_workflow_run_transcript(transcript) {
+        tracing::warn!(
+            sandbox_id = %request.target.sandbox_id,
+            session_id = %request.session_id,
+            run_id = %run_id,
+            "failed to persist operator-chat run transcript: {error}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1874,6 +1978,9 @@ mod tests {
         let source = include_str!("operator_chat.rs");
         assert!(source.contains("\"wait_for_completion\": false"));
         assert!(source.contains("self_improvement.status"));
+        assert!(source.contains("persist_operator_chat_run_record"));
+        assert!(source.contains("workflow_id = base_workflow_id + 2"));
+        assert!(source.contains("persist_workflow_run_transcript"));
 
         assert!(should_route_owner_message_to_self_improvement(
             "Research Rain SDK, build a paper-trading prototype under tools/rain-paper, and run bun test tools/rain-paper/rain-paper.test.ts"

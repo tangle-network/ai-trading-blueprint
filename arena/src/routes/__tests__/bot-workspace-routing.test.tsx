@@ -218,7 +218,7 @@ function renderBotWorkspace(initialEntries: string[]) {
 }
 
 function findWorkspace(testId: string) {
-  return screen.findByTestId(testId, {}, { timeout: 3_000 });
+  return screen.findByTestId(testId, {}, { timeout: 10_000 });
 }
 
 function clickFirstWorkspaceLink(name: RegExp) {

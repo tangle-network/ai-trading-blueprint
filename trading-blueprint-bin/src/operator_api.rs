@@ -138,6 +138,7 @@ pub struct BotDetailResponse {
     pub chain_id: u64,
     pub trading_active: bool,
     pub paper_trade: bool,
+    pub trading_loop_cron: String,
     pub created_at: u64,
     pub max_lifetime_days: u64,
     pub trading_api_url: String,
@@ -190,6 +191,7 @@ impl BotDetailResponse {
             chain_id: b.chain_id,
             trading_active: b.trading_active,
             paper_trade: b.paper_trade,
+            trading_loop_cron: b.trading_loop_cron.clone(),
             created_at: b.created_at,
             max_lifetime_days: b.max_lifetime_days,
             trading_api_url: b.trading_api_url,
@@ -403,6 +405,7 @@ struct RunNowResponse {
 struct UpdateConfigRequest {
     strategy_config_json: Option<String>,
     risk_params_json: Option<String>,
+    trading_loop_cron: Option<String>,
     harness_json: Option<String>,
     vault_address: Option<String>,
 }
@@ -1328,11 +1331,48 @@ fn trading_loop_cron_from_config(
     let Some(cron) = value.as_str().map(str::trim).filter(|raw| !raw.is_empty()) else {
         return Err("trading_loop_cron must be a non-empty cron string".to_string());
     };
-    // Same parser the workflow scheduler uses (resolve_next_run → cron crate),
+    validate_trading_loop_cron(cron)
+}
+
+fn validate_trading_loop_cron(cron: &str) -> Result<String, String> {
+    let cron = cron.trim();
+    if cron.is_empty() {
+        return Err("trading_loop_cron must be a non-empty cron string".to_string());
+    }
+    // Same parser the workflow scheduler uses (resolve_next_run -> cron crate),
     // so a value accepted here is guaranteed to schedule.
     ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", cron, None)
         .map_err(|e| format!("invalid trading_loop_cron '{cron}': {e}"))?;
     Ok(cron.to_string())
+}
+
+fn refresh_trading_workflow_schedule(bot: &TradingBotRecord, cron: &str) -> Result<(), String> {
+    let Some(workflow_id) = bot.workflow_id else {
+        return Ok(());
+    };
+    let store = ai_agent_sandbox_blueprint_lib::workflows::workflows()?;
+    let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id);
+    let cron = cron.to_string();
+    let updated = store
+        .update(&key, |entry| {
+            entry.trigger_config = cron.clone();
+            entry.next_run_at = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
+                &entry.trigger_type,
+                &cron,
+                entry.last_run_at,
+            )
+            .ok()
+            .flatten();
+        })
+        .map_err(|e| e.to_string())?;
+    if !updated {
+        tracing::warn!(
+            workflow_id,
+            bot_id = %bot.id,
+            "Trading workflow not found while refreshing trading_loop_cron"
+        );
+    }
+    Ok(())
 }
 
 fn string_at_path<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a str> {
@@ -4434,6 +4474,12 @@ async fn update_config(
     let bot = resolve_live_bot(&bot_id)?;
 
     verify_submitter(&bot, &caller)?;
+    let next_trading_loop_cron = body
+        .trading_loop_cron
+        .as_deref()
+        .map(validate_trading_loop_cron)
+        .transpose()
+        .map_err(|message| ApiError::message(StatusCode::BAD_REQUEST, message))?;
 
     trading_blueprint_lib::jobs::configure_core(
         &bot.sandbox_id,
@@ -4442,6 +4488,33 @@ async fn update_config(
     )
     .await
     .map_err(|e| ApiError::message(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    if let Some(cron) = next_trading_loop_cron {
+        let store = state::bots().map_err(|e| {
+            ApiError::message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to open bot store: {e}"),
+            )
+        })?;
+        store
+            .update(&state::bot_key(&bot.id), |b| {
+                b.trading_loop_cron = cron.clone();
+            })
+            .map_err(|e| {
+                ApiError::message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to update trading_loop_cron: {e}"),
+                )
+            })?;
+        if let Ok(Some(updated_bot)) = state::get_bot(&bot.id)
+            && let Err(err) = refresh_trading_workflow_schedule(&updated_bot, &cron)
+        {
+            tracing::warn!(
+                bot_id = %updated_bot.id,
+                "Failed to refresh trading workflow schedule after config update: {err}"
+            );
+        }
+    }
 
     // Update vault address if provided
     if let Some(addr) = &body.vault_address
@@ -8423,6 +8496,16 @@ mod tests {
     }
 
     #[test]
+    fn validate_trading_loop_cron_rejects_broken_edits() {
+        assert_eq!(
+            validate_trading_loop_cron("0 */2 * * * *").expect("valid cron"),
+            "0 */2 * * * *"
+        );
+        assert!(validate_trading_loop_cron("").is_err());
+        assert!(validate_trading_loop_cron("not a cron").is_err());
+    }
+
+    #[test]
     fn create_bot_strategy_config_accepts_json_string_for_cli_callers() {
         let req = CreateBotRequest {
             prompt: "perp".to_string(),
@@ -8535,7 +8618,7 @@ mod tests {
             paper_trade: true,
             wind_down_started_at: None,
             submitter_address: String::new(),
-            trading_loop_cron: String::new(),
+            trading_loop_cron: "0 */3 * * * *".to_string(),
             call_id: 0,
             service_id: 0,
             harness_json: serde_json::json!(null),
@@ -9058,7 +9141,7 @@ mod tests {
             paper_trade: true,
             wind_down_started_at: Some(5000),
             submitter_address: String::new(),
-            trading_loop_cron: String::new(),
+            trading_loop_cron: "0 */3 * * * *".to_string(),
             call_id: 0,
             service_id: 0,
             harness_json: serde_json::json!(null),
@@ -9089,6 +9172,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["wind_down_started_at"], 5000);
         assert_eq!(json["name"], expected_name);
+        assert_eq!(json["trading_loop_cron"], "0 */3 * * * *");
     }
 
     #[tokio::test]
