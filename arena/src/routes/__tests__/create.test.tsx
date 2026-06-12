@@ -51,6 +51,14 @@ vi.mock('~/lib/hooks/useOperatorAuth', () => ({
   useOperatorAuth: () => ({ getToken: hoisted.getTokenMock }),
 }))
 
+// The preview client resolves operator base URLs from build-time env; CI has
+// none, so without this stub the evidence fetch silently never fires (local
+// .env.local masked it). importOriginal keeps every other meta export real.
+vi.mock('~/lib/operator/meta', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/lib/operator/meta')>()),
+  ALL_TRADING_OPERATOR_API_URLS: ['http://operator.test'],
+}))
+
 vi.mock('~/lib/operator/discovery', () => ({
   useOperatorDirectory: () => ({
     apiUrls: ['http://operator.test'],
