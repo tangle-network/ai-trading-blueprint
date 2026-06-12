@@ -303,6 +303,130 @@ fn workflow_is_due(
         && entry.next_run_at.is_some_and(|next_run| next_run <= now)
 }
 
+/// While a bot's drawdown circuit breaker is tripped, its deterministic tick
+/// can only produce `skip/circuit-breaker-triggered` (288 no-op runs per bot
+/// per day at the 5-minute cadence). Stretch the effective interval instead.
+/// Haltedness is re-derived from the live snapshot on every pass — never a
+/// sticky flag — so an owner acknowledge-drawdown (which rebases drawdown to
+/// 0) restores full cadence immediately.
+const HALTED_TICK_BACKOFF_MULTIPLIER: u64 = 6;
+
+fn positive_f64(value: Option<&Value>) -> Option<f64> {
+    let value = value?;
+    let parsed = value.as_f64().or_else(|| {
+        value
+            .as_str()
+            .and_then(|raw| raw.trim().parse::<f64>().ok())
+    })?;
+    (parsed.is_finite() && parsed > 0.0).then_some(parsed)
+}
+
+/// Mirror of tick_common.js `launchTicketMaxDrawdownPct`: parse "N% max
+/// drawdown" out of the launch ticket's free-text risk field.
+fn launch_ticket_max_drawdown_pct(ticket_risk: &str) -> Option<f64> {
+    let lower = ticket_risk.to_ascii_lowercase();
+    for (index, _) in lower.match_indices('%') {
+        let after = lower[index + 1..].trim_start();
+        let Some(after_max) = after.strip_prefix("max") else {
+            continue;
+        };
+        if !after_max.trim_start().starts_with("drawdown") {
+            continue;
+        }
+        let before = lower[..index].trim_end();
+        let start = before
+            .rfind(|c: char| !c.is_ascii_digit() && c != '.')
+            .map(|position| position + 1)
+            .unwrap_or(0);
+        if let Ok(parsed) = before[start..].parse::<f64>()
+            && parsed.is_finite()
+            && parsed > 0.0
+        {
+            return Some(parsed);
+        }
+    }
+    None
+}
+
+/// The drawdown threshold the deterministic tick actually trips its breaker
+/// on. Must mirror tick_common.js `mandateMaxDrawdownPct` exactly (harness
+/// risk -> strategy_config -> launch ticket text -> 10% default) so the
+/// server-side haltedness check agrees with the tick's own breaker call.
+fn fast_tick_breaker_threshold_pct(bot: &crate::state::TradingBotRecord) -> f64 {
+    const DEFAULT_MAX_DRAWDOWN_PCT: f64 = 10.0;
+    let harness = match &bot.harness_json {
+        Value::String(raw) => serde_json::from_str::<Value>(raw).unwrap_or(Value::Null),
+        other => other.clone(),
+    };
+    if let Some(threshold) = positive_f64(harness.pointer("/risk/max_drawdown_pct")) {
+        return threshold;
+    }
+    if let Some(threshold) = positive_f64(bot.strategy_config.get("max_drawdown_pct")) {
+        return threshold;
+    }
+    if let Some(threshold) = bot
+        .strategy_config
+        .pointer("/launch_ticket/risk")
+        .and_then(Value::as_str)
+        .and_then(launch_ticket_max_drawdown_pct)
+    {
+        return threshold;
+    }
+    DEFAULT_MAX_DRAWDOWN_PCT
+}
+
+fn bot_is_breaker_halted(bot: &crate::state::TradingBotRecord) -> bool {
+    // Live bots derive breaker state from an async portfolio reconcile; only
+    // paper bots have the server-authoritative snapshot drawdown the breaker
+    // reads, so only they get the backoff (fail-open to full cadence).
+    if !bot.paper_trade {
+        return false;
+    }
+    let threshold = fast_tick_breaker_threshold_pct(bot);
+    if threshold <= 0.0 {
+        return false;
+    }
+    trading_http_api::metrics_store::latest_snapshot_for_bot(&bot.id)
+        .ok()
+        .flatten()
+        .and_then(|snapshot| snapshot.drawdown_pct.trim().parse::<f64>().ok())
+        .is_some_and(|drawdown| drawdown >= threshold)
+}
+
+fn cron_interval_secs(
+    entry: &ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry,
+    now: u64,
+) -> Option<u64> {
+    let first = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
+        &entry.trigger_type,
+        &entry.trigger_config,
+        Some(now),
+    )
+    .ok()
+    .flatten()?;
+    let second = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
+        &entry.trigger_type,
+        &entry.trigger_config,
+        Some(first),
+    )
+    .ok()
+    .flatten()?;
+    (second > first).then(|| second - first)
+}
+
+fn halted_tick_backoff_elapsed(
+    entry: &ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry,
+    now: u64,
+) -> bool {
+    let Some(last_run_at) = entry.last_run_at else {
+        return true;
+    };
+    let Some(interval) = cron_interval_secs(entry, now) else {
+        return true;
+    };
+    now.saturating_sub(last_run_at) >= interval.saturating_mul(HALTED_TICK_BACKOFF_MULTIPLIER)
+}
+
 fn fast_tick_bot_and_tool_for_workflow<'a>(
     entry: &ai_agent_sandbox_blueprint_lib::workflows::WorkflowEntry,
     all_bots: &'a [crate::state::TradingBotRecord],
@@ -762,16 +886,31 @@ async fn run_due_fast_ticks(
     let now = chrono::Utc::now().timestamp().max(0) as u64;
     let store = workflows()?;
     let all_workflows = store.values().map_err(|e| e.to_string())?;
-    let due: Vec<_> = all_workflows
+    let mut due = Vec::new();
+    let mut deferred = Vec::new();
+    for entry in all_workflows
         .into_iter()
         .filter(|entry| workflow_is_due(entry, now))
-        .filter_map(|entry| {
-            let (bot, tool) = fast_tick_bot_and_tool_for_workflow(&entry, all_bots)?;
-            Some((entry, bot.clone(), tool.to_string()))
-        })
-        .collect();
+    {
+        let Some((bot, tool)) = fast_tick_bot_and_tool_for_workflow(&entry, all_bots) else {
+            continue;
+        };
+        let (bot, tool) = (bot.clone(), tool.to_string());
+        if bot_is_breaker_halted(&bot) && !halted_tick_backoff_elapsed(&entry, now) {
+            tracing::info!(
+                workflow_id = entry.id,
+                bot_id = %bot.id,
+                "fast tick deferred: drawdown circuit breaker halted; cadence stretched x{HALTED_TICK_BACKOFF_MULTIPLIER}"
+            );
+            deferred.push(entry);
+            continue;
+        }
+        due.push((entry, bot, tool));
+    }
 
-    for (entry, _, _) in &due {
+    // Deferred (breaker-halted) workflows advance next_run_at without running,
+    // so haltedness is re-checked once per base interval, not every pass.
+    for entry in deferred.iter().chain(due.iter().map(|(entry, _, _)| entry)) {
         let workflow_id = entry.id;
         let key = workflow_key(workflow_id);
         let next_run_at = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
@@ -937,12 +1076,23 @@ const contextOk = Number.isFinite(started)
   && (!expectedContextId || decisionContext.context_id === expectedContextId)
   && (!expectedAction || actionOf(decisionContext) === expectedAction)
   && (!expectedReason || reasonOf(decisionContext) === expectedReason);
-const reflectionOk = Number.isFinite(started)
+// Repeated reflection signatures suppress the full reflections.jsonl append
+// (anti-spam); the loop proves it still ran via reflection-state.json, which
+// must be freshly stamped and tied to this tick's decision context.
+const reflectionState = readJson('/home/agent/memory/reflection-state.json');
+const reflectionStateTs = reflectionState && Date.parse(reflectionState.updated_at || '');
+const reflectionRepeatOk = Number.isFinite(started)
+  && Number.isFinite(reflectionStateTs)
+  && reflectionStateTs >= started
+  && decisionContext
+  && reflectionState.last_decision_context_id === decisionContext.context_id;
+const reflectionOk = (Number.isFinite(started)
   && Number.isFinite(reflectionTs)
   && reflectionTs >= started
   && (!expectedReflectionId || reflection.reflection_id === expectedReflectionId)
   && decisionContext
-  && reflection.decision_context_id === decisionContext.context_id;
+  && reflection.decision_context_id === decisionContext.context_id)
+  || reflectionRepeatOk;
 
 console.log(JSON.stringify({
   decision_ok: decisionOk,
@@ -1357,6 +1507,170 @@ mod tests {
         assert!(
             selected.is_none(),
             "wind-down bot should not run the normal deterministic fast tick"
+        );
+    }
+
+    fn ensure_state_dir() {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            let tmp = tempfile::TempDir::new().expect("temp state dir");
+            // SAFETY: set once before the OnceCell-backed stores initialize.
+            unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
+            std::mem::forget(tmp);
+        });
+    }
+
+    #[tokio::test]
+    async fn breaker_halted_fast_tick_defers_and_resumes_after_acknowledge() {
+        ensure_state_dir();
+
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let bot_id = format!("halted-tick-{suffix}");
+        let wf_id = 66_600_000 + (chrono::Utc::now().timestamp_millis() as u64 % 1_000_000);
+        let bot = test_bot(&bot_id, wf_id);
+
+        // Server-authoritative breaker state: latest snapshot drawdown 15%
+        // exceeds the default 10% mandate, so the bot is halted.
+        trading_http_api::metrics_store::record_snapshot(
+            trading_http_api::metrics_store::MetricSnapshot {
+                timestamp: chrono::Utc::now(),
+                bot_id: bot_id.clone(),
+                account_value_usd: "8500".to_string(),
+                unrealized_pnl: "0".to_string(),
+                realized_pnl: "-1500".to_string(),
+                high_water_mark: "10000".to_string(),
+                drawdown_pct: "15".to_string(),
+                positions_count: 0,
+                trade_count: 3,
+                risk_baseline_usd: Some("10000".to_string()),
+            },
+        )
+        .unwrap();
+
+        let now = chrono::Utc::now().timestamp().max(0) as u64;
+        let last_run = now - 600; // 2 base intervals ago: inside the 6x backoff window
+        let mut workflow = fast_workflow(&bot_id, wf_id);
+        workflow.last_run_at = Some(last_run);
+        workflow.next_run_at = Some(1);
+        workflows()
+            .unwrap()
+            .insert(workflow_key(wf_id), workflow)
+            .unwrap();
+
+        run_due_fast_ticks(&[bot.clone()]).await.unwrap();
+
+        let wf = workflows()
+            .unwrap()
+            .get(&workflow_key(wf_id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            wf.last_run_at,
+            Some(last_run),
+            "breaker-halted bot's tick is deferred, not executed"
+        );
+        assert!(
+            wf.next_run_at.is_some_and(|next| next > now),
+            "deferred workflow is rescheduled for the next base interval (got {:?})",
+            wf.next_run_at
+        );
+
+        // Owner acknowledges the drawdown: baseline rebases, breaker re-arms,
+        // and the very next due tick must run at full cadence again.
+        trading_http_api::metrics_store::acknowledge_drawdown(&bot_id)
+            .unwrap()
+            .expect("snapshot to rebase");
+        workflows()
+            .unwrap()
+            .update(&workflow_key(wf_id), |workflow| {
+                workflow.next_run_at = Some(1);
+            })
+            .unwrap();
+
+        run_due_fast_ticks(&[bot]).await.unwrap();
+
+        let wf = workflows()
+            .unwrap()
+            .get(&workflow_key(wf_id))
+            .unwrap()
+            .unwrap();
+        assert!(
+            wf.last_run_at.is_some_and(|at| at >= now),
+            "after acknowledge-drawdown the tick executes immediately (got {:?})",
+            wf.last_run_at
+        );
+    }
+
+    #[test]
+    fn launch_ticket_drawdown_parse_mirrors_tick_common() {
+        assert_eq!(launch_ticket_max_drawdown_pct("4% max drawdown"), Some(4.0));
+        assert_eq!(
+            launch_ticket_max_drawdown_pct("Keep risk tight: 12.5 % MAX  drawdown, no leverage"),
+            Some(12.5)
+        );
+        // tick_common.js requires the number BEFORE "% max drawdown".
+        assert_eq!(launch_ticket_max_drawdown_pct("max drawdown of 4%"), None);
+        assert_eq!(launch_ticket_max_drawdown_pct("no risk text"), None);
+        assert_eq!(launch_ticket_max_drawdown_pct("0% max drawdown"), None);
+    }
+
+    #[test]
+    fn breaker_threshold_resolution_matches_tick_mandate_precedence() {
+        let mut bot = test_bot("breaker-threshold-bot", 44);
+        assert_eq!(fast_tick_breaker_threshold_pct(&bot), 10.0, "default");
+
+        bot.strategy_config = json!({"launch_ticket": {"risk": "4% max drawdown"}});
+        assert_eq!(fast_tick_breaker_threshold_pct(&bot), 4.0, "launch ticket");
+
+        bot.strategy_config = json!({
+            "max_drawdown_pct": 6,
+            "launch_ticket": {"risk": "4% max drawdown"}
+        });
+        assert_eq!(
+            fast_tick_breaker_threshold_pct(&bot),
+            6.0,
+            "explicit strategy_config beats ticket text"
+        );
+
+        bot.harness_json = json!({"risk": {"max_drawdown_pct": 3}});
+        assert_eq!(
+            fast_tick_breaker_threshold_pct(&bot),
+            3.0,
+            "harness risk beats strategy_config"
+        );
+
+        // The PATCH config path stores harness_json as a JSON-encoded STRING.
+        bot.harness_json = Value::String(json!({"risk": {"max_drawdown_pct": 2.5}}).to_string());
+        assert_eq!(
+            fast_tick_breaker_threshold_pct(&bot),
+            2.5,
+            "string-encoded harness form resolves too"
+        );
+    }
+
+    #[test]
+    fn halted_tick_backoff_runs_once_per_six_base_intervals() {
+        // 5-minute cron => 300s base interval; halted bots run at 6x = 30 min.
+        let now = 1_750_000_000u64;
+        let mut workflow = fast_workflow("backoff-bot", 45);
+
+        workflow.last_run_at = None;
+        assert!(
+            halted_tick_backoff_elapsed(&workflow, now),
+            "never-run workflow is not deferred"
+        );
+
+        workflow.last_run_at = Some(now - 5 * 300);
+        assert!(
+            !halted_tick_backoff_elapsed(&workflow, now),
+            "within the stretched window the halted tick is deferred"
+        );
+
+        workflow.last_run_at = Some(now - 6 * 300);
+        assert!(
+            halted_tick_backoff_elapsed(&workflow, now),
+            "after 6 base intervals the halted tick runs (haltedness re-derived)"
         );
     }
 
