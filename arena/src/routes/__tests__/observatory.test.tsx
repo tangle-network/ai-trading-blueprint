@@ -266,26 +266,26 @@ describe('ObservatoryPage', () => {
     expect(screen.getByRole('heading', { name: 'Observatory' })).toBeInTheDocument();
     expect(screen.getAllByText('ETH Perp Sentinel').length).toBeGreaterThan(0);
     expect(screen.getByText('Active/Work')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Output' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('tablist', { name: 'Observatory views' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Work session transcript')).toBeInTheDocument();
+    expect(screen.getByLabelText('Observatory context')).toBeInTheDocument();
     expect(container.querySelector('[data-sandbox-run-group]')).not.toBeNull();
-    expect(container.querySelector('[data-sandbox-run-group]')).toHaveAttribute('data-collapsed', 'true');
+    expect(container.querySelector('[data-sandbox-run-group]')).toHaveAttribute('data-collapsed', 'false');
     expect(container.querySelector('[data-observatory-trace-role="user"]')).not.toBeNull();
     expect(container.querySelector('[data-observatory-trace-role="assistant"]')).not.toBeNull();
     expect(container.querySelector('[data-chat-role="user"]')).not.toBeNull();
     expect(container.querySelector('[data-chat-role="assistant"]')).not.toBeNull();
-    expect(screen.getByText(/Research-only Observatory task for bot bot-1\./)).toBeInTheDocument();
-    expect(screen.getByText('Output pending. Current status: queued_research.')).toBeInTheDocument();
+    expect(screen.getAllByText(/Research-only Observatory task for bot bot-1\./).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Output pending. Current status: queued_research.').length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Expand run' }));
     expect(screen.getByText('Source-grounded finding is recorded.')).toBeInTheDocument();
     expect(screen.getByText('can_trade')).toBeInTheDocument();
     expect(screen.getAllByText('false').length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Findings 1' }));
-    expect(screen.getByText('external-signal-not-checked')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Trace 1' }));
+    expect(screen.getAllByText('external-signal-not-checked').length).toBeGreaterThan(0);
+    expect(screen.getByText('Operating gaps')).toBeInTheDocument();
+    expect(screen.getByText('Proposals')).toBeInTheDocument();
+    expect(screen.getByText('Work queue')).toBeInTheDocument();
     expect(screen.getByText('Dedupe')).toBeInTheDocument();
     expect(screen.getByText('Blocked')).toBeInTheDocument();
     expect(screen.getByText('active_delegation_cap')).toBeInTheDocument();
@@ -299,8 +299,7 @@ describe('ObservatoryPage', () => {
     const { default: ObservatoryPage } = await import('../observatory');
     render(<ObservatoryPage />, { wrapper: createWrapper() });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Ideas 1' }));
-    expect(screen.getByText('external-signal-not-checked')).toBeInTheDocument();
+    expect(screen.getAllByText('external-signal-not-checked').length).toBeGreaterThan(0);
     expect(screen.getByText('high severity')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Delegate research' }));
     expect(hoisted.feedbackMutateMock).toHaveBeenCalledWith({
@@ -326,7 +325,6 @@ describe('ObservatoryPage', () => {
     const { default: ObservatoryPage } = await import('../observatory');
     render(<ObservatoryPage />, { wrapper: createWrapper() });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Ideas 1' }));
     expect(screen.getByText('Delegate Research')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delegate research' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Delegate build' })).not.toBeInTheDocument();

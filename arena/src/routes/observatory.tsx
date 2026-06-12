@@ -46,11 +46,9 @@ interface ObservatoryWorkspaceLayout {
   botListCollapsed: boolean;
 }
 
-type ObservatoryInspectorTab = 'output' | 'trace' | 'findings' | 'ideas' | 'delegations';
-
 const OBSERVATORY_WORKSPACE_LAYOUT_KEY = 'arena:observatory-workspace-layout';
 const DEFAULT_OBSERVATORY_WORKSPACE_LAYOUT: ObservatoryWorkspaceLayout = {
-  botListPercent: 34,
+  botListPercent: 23,
   botListCollapsed: false,
 };
 
@@ -68,8 +66,8 @@ function normalizeObservatoryLayout(value: Partial<ObservatoryWorkspaceLayout>):
   return {
     botListPercent: clampNumber(
       Number(value.botListPercent) || DEFAULT_OBSERVATORY_WORKSPACE_LAYOUT.botListPercent,
-      24,
-      52,
+      20,
+      38,
     ),
     botListCollapsed: value.botListCollapsed === true,
   };
@@ -710,26 +708,6 @@ function DelegatedWorkList({
   );
 }
 
-function TraceDataPanel({
-  title,
-  icon,
-  children,
-}: {
-  title: string;
-  icon: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="min-w-0 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] p-3">
-      <h5 className="mb-2 flex items-center gap-2 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
-        <span className={`${icon} text-base text-[var(--arena-terminal-text-muted)]`} aria-hidden="true" />
-        {title}
-      </h5>
-      {children}
-    </section>
-  );
-}
-
 const renderObservatoryToolDetail: CustomToolRenderer = (part: ToolPart) => {
   const metadata = part.state.metadata as {
     observatory_kind?: string;
@@ -875,71 +853,6 @@ function WorkSessionStrip({
   );
 }
 
-function SessionDetailPanel({
-  session,
-  task,
-  idea,
-}: {
-  session: ObservatoryDelegatedWorkSession | null;
-  task?: ObservatoryResearchTask | null;
-  idea?: ObservatoryIdea | null;
-}) {
-  if (!session) {
-    return (
-      <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3 text-sm text-[var(--arena-terminal-text-secondary)]">
-        Select delegated work to inspect its prompt, artifacts, and gates.
-      </div>
-    );
-  }
-
-  const safetyEntries = Object.entries(task?.safety_limits ?? {});
-  const evidenceRefs = task?.evidence_refs?.length ? task.evidence_refs : idea?.evidence_refs ?? [];
-
-  return (
-    <div className="grid gap-3">
-      <TraceDataPanel title="Prompt" icon="i-ph:chat-circle-text">
-        <p className="whitespace-pre-wrap text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
-          {task?.prompt ?? idea?.thesis ?? session.summary}
-        </p>
-      </TraceDataPanel>
-
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <TraceDataPanel title="Artifacts" icon="i-ph:archive">
-          <div className="mt-2 grid gap-1.5 font-data text-xs text-[var(--arena-terminal-text-secondary)]">
-            <span className="break-all">{session.artifact_ref ?? 'No session artifact recorded.'}</span>
-            {evidenceRefs.slice(0, 4).map((ref) => (
-              <span key={ref} className="break-all text-[var(--arena-terminal-text-muted)]">{ref}</span>
-            ))}
-          </div>
-        </TraceDataPanel>
-
-        <TraceDataPanel title="Gates" icon="i-ph:shield-check">
-          <div className="mt-2 grid gap-1.5 font-data text-xs text-[var(--arena-terminal-text-secondary)]">
-            {safetyEntries.length > 0 ? safetyEntries.map(([key, value]) => (
-              <span key={key} className="flex min-w-0 items-center justify-between gap-3">
-                <span className="truncate text-[var(--arena-terminal-text-muted)]">{key}</span>
-                <span className="shrink-0 text-[var(--arena-terminal-text)]">{String(value)}</span>
-              </span>
-            )) : (
-              <span>No explicit task safety limits recorded.</span>
-            )}
-          </div>
-        </TraceDataPanel>
-      </div>
-
-      {task?.acceptance_criteria?.length ? (
-        <TraceDataPanel title="Acceptance" icon="i-ph:list-checks">
-          <div className="mt-2 grid gap-1.5 text-sm leading-5 text-[var(--arena-terminal-text-secondary)]">
-            {task.acceptance_criteria.map((criterion) => (
-              <span key={criterion}>{criterion}</span>
-            ))}
-          </div>
-        </TraceDataPanel>
-      ) : null}
-    </div>
-  );
-}
-
 function DriverMessage({
   message,
   parts,
@@ -986,15 +899,13 @@ function ObservatoryRunTranscript({
   idea?: ObservatoryIdea | null;
   usage?: ObservatoryReflectionRun['usage_summary'];
 }) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
   const transcript = useMemo(
     () => buildObservatoryTranscript({ bot, reflection, session, task, idea }),
     [bot, idea, reflection, session, task],
   );
-  const traceStatus = task?.status ?? session?.status ?? 'complete';
-
   useEffect(() => {
-    setCollapsed(true);
+    setCollapsed(false);
   }, [bot.bot_id, reflection?.run_id, session?.session_id]);
 
   return (
@@ -1035,14 +946,6 @@ function ObservatoryRunTranscript({
               onToggle={() => setCollapsed((value) => !value)}
               branding={OBSERVATORY_AGENT_BRANDING}
               renderToolDetail={renderObservatoryToolDetail}
-              headerActions={(
-                <span
-                  title={traceStatus}
-                  className={`block max-w-[10rem] truncate font-data text-xs ${statusClass(traceStatus)}`}
-                >
-                  {compactStatusLabel(traceStatus)}
-                </span>
-              )}
             />
           </div>
         </div>
@@ -1087,7 +990,6 @@ function Inspector({
   onTrigger: () => void;
   triggerPending: boolean;
 }) {
-  const [activeTab, setActiveTab] = useState<ObservatoryInspectorTab>('output');
   const feedback = useObservatoryIdeaFeedback(bot?.bot_id ?? '', {
     operatorApiUrl: ALL_TRADING_OPERATOR_API_URLS[0],
     enabled: !!bot,
@@ -1137,13 +1039,6 @@ function Inspector({
   const selectedSession = delegatedSessions.find((session) => session.session_id === selectedSessionId) ?? delegatedSessions[0] ?? null;
   const selectedTask = selectedSession?.task_id ? taskById.get(selectedSession.task_id) : null;
   const selectedIdea = selectedSession?.idea_id ? ideasById.get(selectedSession.idea_id) : null;
-  const tabs: Array<{ id: ObservatoryInspectorTab; label: string; value?: string }> = [
-    { id: 'output', label: 'Output' },
-    { id: 'trace', label: 'Trace', value: selectedSession ? '1' : '0' },
-    { id: 'findings', label: 'Findings', value: String(reflection?.findings.length ?? 0) },
-    { id: 'ideas', label: 'Ideas', value: String(bot.records.ideas.length) },
-    { id: 'delegations', label: 'Delegations', value: `${pressure.active_sessions}/${pressure.unique_sessions}` },
-  ];
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--arena-terminal-panel)]">
@@ -1176,53 +1071,69 @@ function Inspector({
         </div>
       </div>
 
-      <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-1" role="tablist" aria-label="Observatory views">
-        {tabs.map((tab) => {
-          const active = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex h-9 shrink-0 items-center gap-2 px-3 font-display text-sm font-semibold transition-colors ${
-                active
-                  ? 'bg-[var(--arena-terminal-panel-strong)] text-[var(--arena-terminal-text)] shadow-[inset_0_-2px_0_#50d2c1]'
-                  : 'text-[var(--arena-terminal-text-muted)] hover:bg-[var(--arena-terminal-panel)] hover:text-[var(--arena-terminal-text)]'
-              } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60`}
-            >
-              <span>{tab.label}</span>
-              {tab.value ? <span className="font-data text-xs text-[var(--arena-terminal-text-muted)]">{tab.value}</span> : null}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-        {activeTab === 'output' ? (
-          <div className="flex h-full min-h-0 flex-col">
-            <WorkSessionStrip
-              sessions={bot.records.delegated_work_sessions}
-              selectedSessionId={selectedSession?.session_id ?? null}
-              onSelectSession={setSelectedSessionId}
+      <div className="grid min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden 2xl:grid-cols-[minmax(0,1fr)_minmax(17rem,20rem)] 2xl:overflow-hidden">
+        <div className="flex min-h-[560px] min-w-0 flex-col overflow-hidden 2xl:min-h-0">
+          <WorkSessionStrip
+            sessions={bot.records.delegated_work_sessions}
+            selectedSessionId={selectedSession?.session_id ?? null}
+            onSelectSession={setSelectedSessionId}
+          />
+          <div className="min-h-0 flex-1">
+            <ObservatoryRunTranscript
+              bot={bot}
+              reflection={reflection}
+              session={selectedSession}
+              task={selectedTask}
+              idea={selectedIdea}
+              usage={usage}
             />
-            <div className="min-h-0 flex-1">
-              <ObservatoryRunTranscript
-                bot={bot}
-                reflection={reflection}
-                session={selectedSession}
-                task={selectedTask}
-                idea={selectedIdea}
-                usage={usage}
-              />
-            </div>
           </div>
-        ) : null}
+        </div>
 
-        {activeTab === 'trace' ? (
-          <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden p-3">
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <aside className="overflow-visible border-t border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] p-3 2xl:min-h-0 2xl:overflow-y-auto 2xl:overflow-x-hidden 2xl:border-l 2xl:border-t-0" aria-label="Observatory context">
+          <div className="grid gap-4">
+            <section className="grid gap-2">
+              <h3 className="flex items-center justify-between gap-3 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+                <span>Signal</span>
+                <span className="font-data text-xs text-[var(--arena-terminal-text-muted)]">
+                  {digest?.source_status ?? 'none'}
+                </span>
+              </h3>
+              <SignalDigest digest={digest} />
+            </section>
+
+            <section className="grid gap-2">
+              <h3 className="flex items-center justify-between gap-3 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+                <span>Operating gaps</span>
+                <span className="font-data text-xs text-[var(--arena-terminal-text-muted)]">
+                  {reflection?.findings.length ?? 0}
+                </span>
+              </h3>
+              <FindingList findings={reflection?.findings ?? []} />
+            </section>
+
+            <section className="grid gap-2">
+              <h3 className="flex items-center justify-between gap-3 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+                <span>Proposals</span>
+                <span className="font-data text-xs text-[var(--arena-terminal-text-muted)]">
+                  {bot.records.ideas.length}
+                </span>
+              </h3>
+              <IdeaList
+                ideas={bot.records.ideas}
+                feedbackByIdeaId={feedbackByIdeaId}
+                isPending={feedback.isPending}
+                onFeedback={(ideaId, action) => feedback.mutate({ ideaId, action })}
+              />
+            </section>
+
+            <section className="grid gap-2">
+              <h3 className="flex items-center justify-between gap-3 font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
+                <span>Work queue</span>
+                <span className="font-data text-xs text-[var(--arena-terminal-text-muted)]">
+                  {pressure.active_sessions}/{pressure.unique_sessions}
+                </span>
+              </h3>
               <DelegatedWorkList
                 sessions={bot.records.delegated_work_sessions}
                 pressure={pressure}
@@ -1230,44 +1141,9 @@ function Inspector({
                 selectedSessionId={selectedSession?.session_id ?? null}
                 onSelectSession={setSelectedSessionId}
               />
-              <SessionDetailPanel
-                session={selectedSession}
-                task={selectedTask}
-                idea={selectedIdea}
-              />
-            </div>
+            </section>
           </div>
-        ) : null}
-
-        {activeTab === 'findings' ? (
-          <div className="grid h-full min-h-0 gap-3 overflow-y-auto overflow-x-hidden p-3 xl:grid-cols-[minmax(0,1fr)_22rem]">
-            <FindingList findings={reflection?.findings ?? []} />
-            <SignalDigest digest={digest} />
-          </div>
-        ) : null}
-
-        {activeTab === 'ideas' ? (
-          <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden p-3">
-            <IdeaList
-              ideas={bot.records.ideas}
-              feedbackByIdeaId={feedbackByIdeaId}
-              isPending={feedback.isPending}
-              onFeedback={(ideaId, action) => feedback.mutate({ ideaId, action })}
-            />
-          </div>
-        ) : null}
-
-        {activeTab === 'delegations' ? (
-          <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden p-3">
-            <DelegatedWorkList
-              sessions={bot.records.delegated_work_sessions}
-              pressure={pressure}
-              researchTasks={bot.records.research_tasks}
-              selectedSessionId={selectedSession?.session_id ?? null}
-              onSelectSession={setSelectedSessionId}
-            />
-          </div>
-        ) : null}
+        </aside>
       </div>
     </section>
   );
@@ -1442,7 +1318,7 @@ export default function ObservatoryPage() {
                   }
                   setLayout((current) => ({
                     ...current,
-                    botListPercent: clampNumber(next, 24, 52),
+                    botListPercent: clampNumber(next, 20, 38),
                     botListCollapsed: false,
                   }));
                 },

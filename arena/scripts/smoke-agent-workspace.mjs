@@ -35,7 +35,7 @@ const SECTION_EXPECTATIONS = {
   ],
   runs: [
     ['ETH Macro Scalper', 'No runs yet'],
-    ['Reasoning', 'fast_backtest', 'Breakout retest', 'Evidence replay', 'Decision Path'],
+    ['Reasoning', 'fast_backtest', 'Breakout retest', 'Trading Run', 'Recorded reasoning summary'],
   ],
   chat: [
     ['Review the ETH breakout retest', 'ETH breakout review', 'No chat sessions yet'],
@@ -54,8 +54,8 @@ const LIVE_SECTION_EXPECTATIONS = {
   ],
   runs: [
     'Runs',
-    ['Trading Trace', 'No runs yet'],
-    ['Run details', 'Run failed', 'Result', 'Error', 'Workflow', 'Decision', 'Transcript'],
+    ['Trading Run', 'Research Run', 'Agent Run', 'No runs yet'],
+    ['Run failed', 'Error', 'Decision', 'Reasoning', 'Waiting for run output'],
   ],
   chat: [
     'Chat',
@@ -73,11 +73,10 @@ const FIXTURE_DASHBOARD_EXPECTATIONS = ['My Agents', 'ETH Macro Scalper', 'PNL',
 const FIXTURE_OBSERVATORY_EXPECTATIONS = [
   'Observatory',
   'ETH Macro Scalper',
-  'Output',
-  'Trace',
-  'Findings',
-  'Ideas',
-  'Delegations',
+  'Signal',
+  'Operating gaps',
+  'Proposals',
+  'Work queue',
   'Agent',
   '1 tool, 1 response',
   'Source-grounded finding is recorded.',
@@ -1653,7 +1652,7 @@ function getSectionExpectations(section, {
     return LIVE_SECTION_EXPECTATIONS[section] ?? [];
   }
   if (fixtureEmptyRunTranscript && section === 'runs') {
-    return ['Decision Path', 'Evidence Record', 'No visible messages'];
+    return ['Trading Run', 'Recorded reasoning summary', 'Breakout retest'];
   }
   return SECTION_EXPECTATIONS[section] ?? [];
 }

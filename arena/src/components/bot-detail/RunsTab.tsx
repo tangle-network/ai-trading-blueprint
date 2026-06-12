@@ -46,12 +46,10 @@ import {
 import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 import { UnverifiedDataNotice } from "./shared/DataAccessNotices";
 import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
-import { DecisionInspector } from "./shared/DecisionInspector";
 import { StatusBadge } from "~/components/ui/StatusBadge";
 import { ConnectionChip } from "~/components/ui/ConnectionChip";
 import { TerminalEmptyState } from "./shared/WorkspacePrimitives";
 import {
-  WorkspaceCollapsedPane,
   WorkspaceResizeHandle,
   beginWorkspaceResize,
   clampNumber,
@@ -96,13 +94,11 @@ const RUN_LOOP_FILTERS: Array<{ value: RunLoopFilter; label: string }> = [
 
 interface RunsWorkspaceLayout {
   sidebarWidth: number;
-  inspectorWidth: number;
 }
 
 const RUNS_WORKSPACE_LAYOUT_KEY = "arena:runs-workspace-layout";
 const DEFAULT_RUNS_WORKSPACE_LAYOUT: RunsWorkspaceLayout = {
   sidebarWidth: 252,
-  inspectorWidth: 360,
 };
 
 function normalizeRunsWorkspaceLayout(value: Partial<RunsWorkspaceLayout>): RunsWorkspaceLayout {
@@ -112,16 +108,11 @@ function normalizeRunsWorkspaceLayout(value: Partial<RunsWorkspaceLayout>): Runs
       220,
       360,
     ),
-    inspectorWidth: clampNumber(
-      Number(value.inspectorWidth) || DEFAULT_RUNS_WORKSPACE_LAYOUT.inspectorWidth,
-      300,
-      540,
-    ),
   };
 }
 
 const RUNS_BRANDING: AgentBranding = {
-  label: "Autonomous Trace",
+  label: "Agent Run",
   accentClass: "text-amber-800 dark:text-amber-300",
   bgClass: "bg-amber-500/8",
   containerBgClass: "bg-arena-elements-background-depth-2/30",
@@ -159,7 +150,16 @@ function isRunsAuthError(error: unknown): boolean {
 }
 
 function getRunTitle(run: BotRun): string {
-  return getWorkflowKindLabel(run.workflowKind);
+  switch (run.workflowKind) {
+    case "trading":
+      return "Trading Run";
+    case "research":
+      return "Research Run";
+    case "conversation":
+      return "Conversation Run";
+    default:
+      return "Agent Run";
+  }
 }
 
 function getRunSubtitle(run: BotRun): string {
@@ -601,7 +601,7 @@ function TraceCockpit({
   ].filter(Boolean);
   const contextLabel = secondaryContextParts.length > 0
     ? secondaryContextParts.join(" / ")
-    : "Evidence replay";
+    : "Agent output";
   const toolLabel = toolCount > 0
     ? `${toolCount.toLocaleString()} ${toolCount === 1 ? "tool" : "tools"}`
     : "n/a";
@@ -637,193 +637,107 @@ function TraceCockpit({
   );
 }
 
-function RunResultSummary({ result }: { result: string }) {
-  const parsed = useMemo(() => parseRunResultJson(result), [result]);
-  const sections = useMemo(
-    () => (parsed ? buildRunResultSections(parsed) : []),
-    [parsed],
-  );
-
-  if (!parsed || sections.length === 0) {
-    return (
-      <pre className="mt-2 whitespace-pre-wrap break-words text-sm text-arena-elements-textPrimary">
-        {result}
-      </pre>
-    );
-  }
-
-  return (
-    <div className="mt-3 grid gap-3 lg:grid-cols-2">
-      {sections.map((section) => (
-        <section
-          key={section.title}
-          className="border border-arena-elements-dividerColor/50 bg-arena-elements-background-depth-1/25 p-3"
-        >
-          <h4 className="text-xs font-display font-semibold text-arena-elements-textPrimary">
-            {section.title}
-          </h4>
-          <dl className="mt-2 space-y-1.5">
-            {section.items.map((item) => (
-              <div key={`${section.title}-${item.label}`} className="grid gap-1 sm:grid-cols-[150px_minmax(0,1fr)]">
-                <dt className="text-[12px] font-data font-medium text-arena-elements-textSecondary">
-                  {item.label}
-                </dt>
-                <dd className="whitespace-pre-wrap break-words text-sm font-data text-arena-elements-textPrimary">
-                  {item.value}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      ))}
-    </div>
-  );
+function formatRunResultSectionText(
+  section: ReturnType<typeof buildRunResultSections>[number],
+): string {
+  const lines = section.items.map((item) => `${item.label}: ${item.value}`);
+  return [`**${section.title}**`, ...lines].join("\n");
 }
 
-function RunDetailPanel({
-  run,
-  decisionItem,
-}: {
-  run: BotRun;
-  decisionItem?: DecisionFeedItem;
-}) {
-  const sections = decisionItem?.sections?.filter((section) => section.items.length > 0) ?? [];
+function buildRunFinalOutput(run: BotRun): string {
+  const error = run.error?.trim();
+  if (error) {
+    return `Run failed\n\n${error}`;
+  }
+
+  const parsed = parseRunResultJson(run.result);
+  const sections = parsed ? buildRunResultSections(parsed) : [];
+  if (sections.length > 0) {
+    return sections.map(formatRunResultSectionText).join("\n\n");
+  }
+
+  const result = run.result?.trim();
+  if (result && result !== "No messages.") {
+    return result;
+  }
+
+  return `${getStatusLabel(run.status)} run recorded without a final output.`;
+}
+
+function buildRunReasoningText(
+  run: BotRun,
+  decisionItem?: DecisionFeedItem,
+): string | null {
   const capturedStages = decisionItem?.stages.filter((stage) => (
     stage.value !== "Not captured" || Boolean(stage.detail)
   )) ?? [];
-  const transcriptLabel = run.transcriptAvailable
-    ? "No visible messages"
-    : run.result || run.error
-      ? "Structured evidence"
-      : "Not captured";
+  const lines = [
+    decisionItem?.reason ? `Reason: ${decisionItem.reason}` : null,
+    ...capturedStages.map((stage) => (
+      stage.detail
+        ? `${stage.label}: ${stage.value} - ${stage.detail}`
+        : `${stage.label}: ${stage.value}`
+    )),
+    run.traceId ? `Replay id: ${run.traceId}` : null,
+    run.sessionId ? `Session: ${run.sessionId}` : null,
+  ].filter((line): line is string => Boolean(line));
 
-  return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--arena-terminal-bg)]">
-      <div
-        className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
-        tabIndex={0}
-        aria-label="Run details"
-      >
-        <div className="grid min-h-full gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.44fr)]">
-          <div className="min-w-0 space-y-4">
-            {capturedStages.length > 0 && (
-              <section className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
-                <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-text-muted)]">
-                  Decision Path
-                </div>
-                <div className="grid gap-2 p-3 [grid-template-columns:repeat(auto-fit,minmax(12rem,1fr))]">
-                  {capturedStages.map((stage) => (
-                    <div key={stage.key} className="min-w-0 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-3">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className={`${stage.iconClass} shrink-0 text-base text-[var(--arena-terminal-accent)]`} aria-hidden="true" />
-                        <span className="truncate font-display text-sm font-semibold text-[var(--arena-terminal-text)]">
-                          {stage.label}
-                        </span>
-                      </div>
-                      <div className="mt-2 truncate font-data text-sm font-bold text-[var(--arena-terminal-text)]" title={stage.value}>
-                        {stage.value}
-                      </div>
-                      {stage.detail && (
-                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--arena-terminal-text-muted)]" title={stage.detail}>
-                          {stage.detail}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
+  return lines.length > 0 ? `Recorded reasoning summary\n${lines.join("\n")}` : null;
+}
 
-            {(run.error || run.result) && (
-              <section className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
-                <div className="flex items-center justify-between border-b border-[var(--arena-terminal-border)] px-3 py-2">
-                  <div className="font-data text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-text-muted)]">
-                    {run.error ? "Error" : sections.length > 0 ? "Parsed Output" : "Result"}
-                  </div>
-                  <div className="truncate font-data text-[11px] text-[var(--arena-terminal-text-subtle)]">
-                    {run.runId}
-                  </div>
-                </div>
-                <div className="p-3">
-                  {run.error ? (
-                    <pre className="whitespace-pre-wrap break-words font-data text-sm leading-6 text-[var(--arena-terminal-danger)]">
-                      {run.error}
-                    </pre>
-                  ) : run.result && sections.length === 0 ? (
-                    <pre className="whitespace-pre-wrap break-words font-data text-sm leading-6 text-[var(--arena-terminal-text-secondary)]">
-                      {run.result}
-                    </pre>
-                  ) : run.result ? (
-                    <RunResultSummary result={run.result} />
-                  ) : null}
-                </div>
-              </section>
-            )}
-          </div>
+function buildSavedRunTranscript(
+  run: BotRun,
+  decisionItem?: DecisionFeedItem,
+): {
+  messages: AppSessionMessage[];
+  partMap: Record<string, SessionPart[]>;
+} {
+  const sessionId = buildRunReplaySessionId(run);
+  const driverMessageId = `${run.runId}:driver`;
+  const assistantMessageId = `${run.runId}:assistant`;
+  const created = run.startedAt * 1000;
+  const completed = run.completedAt ? run.completedAt * 1000 : undefined;
+  const finalText = buildRunFinalOutput(run);
+  const reasoningText = buildRunReasoningText(run, decisionItem);
+  const assistantParts: SessionPart[] = [];
 
-          <aside className="min-w-0 space-y-4">
-            <section className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
-              <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-text-muted)]">
-                Evidence Record
-              </div>
-              <div className="divide-y divide-[var(--arena-terminal-border)]">
-                {([
-                  ["Run ID", run.runId],
-                  ["Workflow", getWorkflowKindLabel(run.workflowKind)],
-                  ...(run.loopMode
-                    ? [["Loop", run.loopMode === "agentic" ? "Agentic" : "Deterministic tick"]]
-                    : []),
-                  ...(run.model ? [["Model", run.model]] : []),
-                  ...(run.provider ? [["Provider", run.provider]] : []),
-                  ...(run.costUsd != null
-                    ? [["Cost", formatRunCostUsd(run.costUsd) ?? "n/a"]]
-                    : []),
-                  ["Transcript", transcriptLabel],
-                  ["Trace", run.traceId ?? "n/a"],
-                  ["Session", run.sessionId ?? "n/a"],
-                  ["Started", formatRunTimestamp(run.startedAt)],
-                  ["Completed", run.completedAt ? formatRunTimestamp(run.completedAt) : "Still running"],
-                  ["Input tok", run.inputTokens.toString()],
-                  ["Output tok", run.outputTokens.toString()],
-                ] as Array<[string, string]>).map(([label, value]) => (
-                  <div key={label} className="grid min-w-0 grid-cols-[7.25rem_minmax(0,1fr)] gap-3 px-3 py-2 font-data text-xs">
-                    <span className="truncate uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
-                      {label}
-                    </span>
-                    <span className="min-w-0 truncate text-right text-[var(--arena-terminal-text-secondary)]" title={value}>
-                      {value}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
+  if (reasoningText) {
+    assistantParts.push({
+      type: "reasoning",
+      text: reasoningText,
+      time: { start: created, end: completed ?? created },
+    });
+  }
 
-            {sections.length > 0 && (
-              <section className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
-                <div className="border-b border-[var(--arena-terminal-border)] px-3 py-2 font-data text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--arena-terminal-text-muted)]">
-                  Quick Read
-                </div>
-                <div className="divide-y divide-[var(--arena-terminal-border)]">
-                  {sections.slice(0, 4).flatMap((section) =>
-                    section.items.slice(0, 3).map((item) => (
-                      <div key={`${section.title}-${item.label}`} className="grid min-w-0 grid-cols-[7.25rem_minmax(0,1fr)] gap-3 px-3 py-2 font-data text-xs">
-                        <span className="truncate uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
-                          {item.label}
-                        </span>
-                        <span className="min-w-0 truncate text-right text-[var(--arena-terminal-text)]" title={item.value}>
-                          {item.value}
-                        </span>
-                      </div>
-                    )),
-                  )}
-                </div>
-              </section>
-            )}
-          </aside>
-        </div>
-      </div>
-    </div>
-  );
+  assistantParts.push({ type: "text", text: finalText });
+
+  return {
+    messages: [
+      {
+        id: driverMessageId,
+        role: "user",
+        sessionID: sessionId,
+        time: { created },
+        _insertionIndex: 0,
+      },
+      {
+        id: assistantMessageId,
+        role: "assistant",
+        sessionID: sessionId,
+        time: { created: completed ?? created, completed },
+        _insertionIndex: 1,
+      },
+    ],
+    partMap: {
+      [driverMessageId]: [
+        {
+          type: "text",
+          text: `${getRunTitle(run)} from ${formatRunTimestamp(run.startedAt)}.`,
+        },
+      ],
+      [assistantMessageId]: assistantParts,
+    },
+  };
 }
 
 export function RunsTab({
@@ -856,9 +770,7 @@ export function RunsTab({
       : window.innerWidth < (immersive ? 860 : 1100),
   );
   const [runsSidebarCollapsed, setRunsSidebarCollapsed] = useState(false);
-  const [decisionInspectorCollapsed, setDecisionInspectorCollapsed] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
-  const traceSurfaceRef = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = usePersistentWorkspaceLayout(
     RUNS_WORKSPACE_LAYOUT_KEY,
     DEFAULT_RUNS_WORKSPACE_LAYOUT,
@@ -883,10 +795,6 @@ export function RunsTab({
       mediaQuery.removeEventListener("change", syncLayout);
     };
   }, [immersive]);
-
-  useEffect(() => {
-    if (isStackedLayout) setDecisionInspectorCollapsed(false);
-  }, [isStackedLayout]);
 
   const runsQuery = useInfiniteQuery({
     queryKey: ["bot-runs", apiUrl, authKey, botId],
@@ -1066,10 +974,22 @@ export function RunsTab({
     (stream.isStreaming || hasVisibleReplayMessages) &&
     !traceReplayFailed &&
     !streamErrorMessage;
-  const showDecisionInspector = decisionItems.length > 0 && shouldShowTraceReplay;
   const selectedDecisionId = activeRun ? `run:${activeRun.runId}` : undefined;
   const selectedDecisionItem =
     decisionItems.find((item) => item.id === selectedDecisionId) ?? decisionItems[0];
+  const savedRunTranscript = useMemo(
+    () => (activeRun ? buildSavedRunTranscript(activeRun, selectedDecisionItem) : null),
+    [activeRun, selectedDecisionItem],
+  );
+  const transcriptMessages = shouldShowTraceReplay
+    ? stream.messages
+    : savedRunTranscript?.messages ?? [];
+  const transcriptPartMap = shouldShowTraceReplay
+    ? stream.partMap
+    : savedRunTranscript?.partMap ?? {};
+  const transcriptIsStreaming = shouldShowTraceReplay
+    ? stream.isStreaming
+    : activeRun?.status === "running";
   const runsBranding = useMemo<AgentBranding>(
     () => ({
       ...RUNS_BRANDING,
@@ -1077,7 +997,7 @@ export function RunsTab({
     }),
     [botName],
   );
-  const headerTitle = activeRun ? getRunTitle(activeRun) : "Autonomous Trace";
+  const headerTitle = activeRun ? getRunTitle(activeRun) : "Agent Run";
   const headerSubtitle = activeRun
     ? `${getWorkflowKindDescription(activeRun.workflowKind)} • ${formatRunTimestamp(activeRun.startedAt)}`
     : "Execution history";
@@ -1097,25 +1017,6 @@ export function RunsTab({
         const nextWidth = clampNumber(rawWidth, 220, maxWidth);
         setRunsSidebarCollapsed(false);
         setLayout((current) => ({ ...current, sidebarWidth: nextWidth }));
-      },
-    });
-  };
-  const startInspectorResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
-    const surface = traceSurfaceRef.current;
-    if (!surface) return;
-    const rect = surface.getBoundingClientRect();
-    beginWorkspaceResize(event, {
-      cursor: "col-resize",
-      onMove: (moveEvent) => {
-        const maxWidth = Math.min(540, Math.max(360, rect.width * 0.45));
-        const rawWidth = rect.right - moveEvent.clientX;
-        if (shouldCollapsePaneSize(rawWidth)) {
-          setDecisionInspectorCollapsed(true);
-          return;
-        }
-        const nextWidth = clampNumber(rawWidth, 300, maxWidth);
-        setDecisionInspectorCollapsed(false);
-        setLayout((current) => ({ ...current, inspectorWidth: nextWidth }));
       },
     });
   };
@@ -1286,7 +1187,7 @@ export function RunsTab({
                             value={formatRunCostUsd(activeRun.costUsd) ?? "n/a"}
                           />
                         )}
-                        <RunMetricPill label="Trace" value={activeRun.traceId ? "captured" : "summary"} />
+                        <RunMetricPill label="Replay" value={activeRun.traceId ? "captured" : "summary"} />
                       </div>
                     )}
                   </div>
@@ -1317,72 +1218,19 @@ export function RunsTab({
               />
             )}
 
-            <div
-              ref={traceSurfaceRef}
-              className={`arena-trace-surface min-h-0 flex-1 bg-[#081013] ${
-                !showDecisionInspector
-                  ? ""
-                  : isStackedLayout
-                    ? "flex flex-col"
-                    : "grid"
-              }`}
-              style={!isStackedLayout && showDecisionInspector
-                ? {
-                    gridTemplateColumns: decisionInspectorCollapsed
-                      ? "minmax(0,1fr) 8px 44px"
-                      : `minmax(0,1fr) 8px minmax(300px, ${layout.inspectorWidth}px)`,
-                  }
-                : undefined}
-            >
-              {showDecisionInspector && isStackedLayout && !decisionInspectorCollapsed && (
-                <DecisionInspector
-                  item={selectedDecisionItem}
+            <div className="arena-trace-surface min-h-0 flex-1 bg-[#081013]">
+              <div className="h-full min-h-0 min-w-0">
+                <ChatTranscript
+                  messages={transcriptMessages}
+                  partMap={transcriptPartMap}
+                  isStreaming={transcriptIsStreaming}
+                  branding={runsBranding}
+                  placeholder="This run is read only"
                   variant="terminal"
-                  className="max-h-80 border-b border-[#273035]"
+                  emptyTitle="Waiting for run output"
+                  emptyDescription="Reasoning, tool calls, and final output will appear here as soon as the operator publishes them."
                 />
-              )}
-              <div className={showDecisionInspector && isStackedLayout ? "min-h-0 min-w-0 flex-1" : "min-h-0 min-w-0"}>
-                {shouldShowTraceReplay ? (
-                  <ChatTranscript
-                    messages={stream.messages}
-                    partMap={stream.partMap}
-                    isStreaming={stream.isStreaming}
-                    branding={runsBranding}
-                    placeholder="This run is read only"
-                    variant="terminal"
-                    emptyTitle="Waiting for live trace"
-                    emptyDescription="Reasoning, tool calls, and run output will stream here as soon as the operator publishes them."
-                  />
-                ) : activeRun ? (
-                  <RunDetailPanel run={activeRun} decisionItem={selectedDecisionItem} />
-                ) : null}
               </div>
-              {showDecisionInspector && !isStackedLayout && (
-                <>
-                <WorkspaceResizeHandle
-                  orientation="vertical"
-                  className="col-start-2 row-start-1 w-2"
-                  ariaLabel="Resize run evidence inspector"
-                  title="Drag to resize run evidence inspector"
-                  onPointerDown={startInspectorResize}
-                />
-                {decisionInspectorCollapsed ? (
-                  <WorkspaceCollapsedPane
-                    label="Evidence"
-                    icon="i-ph:stack-simple"
-                    orientation="vertical"
-                    className="col-start-3 row-start-1 border-l border-[#273035]"
-                    onClick={() => setDecisionInspectorCollapsed(false)}
-                  />
-                ) : (
-                  <DecisionInspector
-                    item={selectedDecisionItem}
-                    variant="terminal"
-                    className="col-start-3 row-start-1 border-l border-[#273035]"
-                  />
-                )}
-                </>
-              )}
             </div>
 
           </div>
