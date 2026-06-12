@@ -11,30 +11,60 @@ const authState = {
   error: null as string | null,
 };
 
-const useBotSessionStreamMock = vi.hoisted(() =>
-  vi.fn(() => ({
-    messages: [] as Array<Record<string, unknown>>,
-    partMap: {} as Record<string, Array<Record<string, unknown>>>,
-    isStreaming: false,
-    connected: false,
-    isReconnecting: false,
-    attempt: 0,
-    retryInSeconds: 0,
-    error: null,
-  })),
-);
+const streamRefetchMock = vi.hoisted(() => vi.fn(async () => {}));
+
+const defaultStreamState = vi.hoisted(() => () => ({
+  messages: [] as Array<Record<string, unknown>>,
+  partMap: {} as Record<string, Array<Record<string, unknown>>>,
+  isStreaming: false,
+  connected: false,
+  isReconnecting: false,
+  attempt: 0,
+  retryInSeconds: 0,
+  error: null as string | null,
+  refetch: streamRefetchMock,
+}));
+
+const useBotSessionStreamMock = vi.hoisted(() => vi.fn(defaultStreamState));
 
 const chatTranscriptMock = vi.hoisted(() =>
-  vi.fn(({ partMap = {} }: { partMap?: Record<string, Array<Record<string, unknown>>> }) => (
-    <div data-testid="chat-transcript">
-      {Object.entries(partMap).flatMap(([messageId, parts]) =>
-        parts.map((part, index) => {
-          const text = typeof part.text === "string" ? part.text : null;
-          return text ? <div key={`${messageId}-${index}`}>{text}</div> : null;
-        }),
-      )}
-    </div>
-  )),
+  vi.fn(
+    ({
+      partMap = {},
+      onSend,
+      footerNotice,
+    }: {
+      partMap?: Record<string, Array<Record<string, unknown>>>;
+      onSend?: (text: string) => void | Promise<void>;
+      footerNotice?: React.ReactNode;
+    }) => (
+      <div data-testid="chat-transcript">
+        {Object.entries(partMap).flatMap(([messageId, parts]) =>
+          parts.map((part, index) => {
+            if (part.type === "tool" && typeof part.tool === "string") {
+              return (
+                <div key={`${messageId}-${index}`} data-testid="tool-part">
+                  {part.tool}
+                </div>
+              );
+            }
+            const text = typeof part.text === "string" ? part.text : null;
+            return text ? <div key={`${messageId}-${index}`}>{text}</div> : null;
+          }),
+        )}
+        {footerNotice}
+        {onSend ? (
+          <button
+            type="button"
+            data-testid="composer-send"
+            onClick={() => void onSend("test message")}
+          >
+            send
+          </button>
+        ) : null}
+      </div>
+    ),
+  ),
 );
 
 vi.mock("~/lib/hooks/useOperatorAuth", () => ({
@@ -109,8 +139,10 @@ describe("RunsTab", () => {
     authState.isAuthenticating = false;
     authState.error = null;
     authState.authenticate.mockReset();
-    useBotSessionStreamMock.mockClear();
+    useBotSessionStreamMock.mockReset();
+    useBotSessionStreamMock.mockImplementation(defaultStreamState);
     chatTranscriptMock.mockClear();
+    streamRefetchMock.mockClear();
 
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: false,
@@ -986,6 +1018,7 @@ describe("RunsTab", () => {
       attempt: 0,
       retryInSeconds: 0,
       error: null,
+      refetch: streamRefetchMock,
     });
     const result = JSON.stringify({
       checked_state: {
@@ -1058,5 +1091,297 @@ describe("RunsTab", () => {
     expect(cockpit).toHaveTextContent("1.8k tok");
     expect(cockpit).toHaveTextContent("2 tools");
     expect(cockpit).toHaveTextContent("trace-smoke-1");
+  });
+
+  it("renders agentic run transcripts with tool call and reasoning evidence", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    useBotSessionStreamMock.mockReturnValue({
+      messages: [
+        { id: "assistant-1", role: "assistant", time: { created: 1_775_850_000_000 } },
+      ],
+      partMap: {
+        "assistant-1": [
+          { type: "reasoning", text: "Momentum still positive, scaling in." },
+          {
+            type: "tool",
+            id: "tool-1",
+            tool: "fast_backtest",
+            state: { status: "completed", input: {}, output: {} },
+          },
+          { type: "text", text: "Opened the position." },
+        ],
+      },
+      isStreaming: false,
+      connected: false,
+      isReconnecting: false,
+      attempt: 0,
+      retryInSeconds: 0,
+      error: null,
+      refetch: streamRefetchMock,
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-agentic-tools",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_849_924,
+              completed_at: 1_775_850_048,
+              session_id: "ses-agentic-tools",
+              transcript_available: true,
+              trace_id: "trace-agentic",
+              duration_ms: 128_000,
+              input_tokens: 1_200,
+              output_tokens: 480,
+              result: "agentic summary",
+              error: null,
+              model: "glm-5.1",
+              provider: "zai",
+              cost_usd: 0.02,
+              loop_mode: "agentic",
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect(screen.getByTestId("tool-part")).toHaveTextContent("fast_backtest");
+    expect(
+      screen.getByText("Momentum still positive, scaling in."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Opened the position.")).toBeInTheDocument();
+  });
+
+  it("renders deterministic tick runs as decisions and offers a context-seeded follow-up thread", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    const result = JSON.stringify({
+      checked_state: { nav_status: "fresh", total_nav_usdc: 10_000 },
+      decision: { action: "skip", reason: "no-clear-entry-signal" },
+      trade_action: { attempted: false },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          runs: [
+            {
+              run_id: "run-tick-decision",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_849_924,
+              completed_at: 1_775_849_926,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 2_000,
+              input_tokens: 0,
+              output_tokens: 0,
+              result,
+              error: null,
+              model: null,
+              provider: null,
+              cost_usd: null,
+              loop_mode: "deterministic",
+            },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(
+      (await screen.findAllByText(/no-clear-entry-signal/)).length,
+    ).toBeGreaterThan(0);
+    // Honest continuation labeling: no live session to resume.
+    expect(
+      screen.getByText(
+        "This run kept no live agent session — replies start a follow-up thread seeded with the saved run record.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("composer-send")).toBeInTheDocument();
+  });
+
+  it("keeps the composer for unauthenticated viewers and surfaces the server rejection", async () => {
+    authState.token = null;
+    authState.isAuthenticated = false;
+
+    const { RunsTab } = await import("../RunsTab");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith("/runs/run-anon/messages")) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      if (url.includes("/runs?limit=100")) {
+        return jsonResponse({
+          runs: [
+            {
+              run_id: "run-anon",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_824_500,
+              completed_at: 1_775_824_560,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 60_000,
+              input_tokens: 10,
+              output_tokens: 6,
+              result: "public result",
+              error: null,
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    // Composer stays visible without authentication, with honest copy.
+    const sendButton = await screen.findByTestId("composer-send");
+    expect(
+      screen.getByText(
+        "Anyone can read this run. Sending a message requires the creator wallet.",
+      ),
+    ).toBeInTheDocument();
+
+    await userEvent.click(sendButton);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Connect the creator wallet to talk to this agent.",
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:9201/api/bots/bot-1/runs/run-anon/messages",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ message: "test message" }),
+      }),
+    );
+  });
+
+  it("continues a permitted conversation through the run messages endpoint", async () => {
+    const { RunsTab } = await import("../RunsTab");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith("/runs/run-owner/messages")) {
+        return jsonResponse({
+          ok: true,
+          run_id: "run-owner",
+          session_id: "ses-owner-run",
+          mode: "resumed",
+          status: "accepted",
+        });
+      }
+      if (url.includes("/runs?limit=100")) {
+        return jsonResponse({
+          runs: [
+            {
+              run_id: "run-owner",
+              workflow_id: 101,
+              workflow_kind: "trading",
+              status: "completed",
+              started_at: 1_775_824_500,
+              completed_at: 1_775_824_560,
+              session_id: "ses-owner-run",
+              transcript_available: true,
+              trace_id: null,
+              duration_ms: 60_000,
+              input_tokens: 900,
+              output_tokens: 120,
+              result: "owner result",
+              error: null,
+              model: "glm-5.1",
+              provider: "zai",
+              cost_usd: 0.01,
+              loop_mode: "agentic",
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <RunsTab
+        botId="bot-1"
+        botName="Trend Runner"
+        operatorApiUrl="http://localhost:9201"
+        operatorKind="cloud"
+        verificationState="authoritative"
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    expect(
+      await screen.findByText("Replies continue this run's original agent session."),
+    ).toBeInTheDocument();
+
+    await userEvent.click(await screen.findByTestId("composer-send"));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:9201/api/bots/bot-1/runs/run-owner/messages",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            Authorization: "Bearer test-token",
+          }),
+          body: JSON.stringify({ message: "test message" }),
+        }),
+      );
+    });
+    expect(
+      await screen.findByText(
+        /Continuing run run-owner in its original agent session/,
+      ),
+    ).toBeInTheDocument();
+    expect(streamRefetchMock).toHaveBeenCalled();
   });
 });

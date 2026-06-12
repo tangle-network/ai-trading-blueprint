@@ -43,6 +43,11 @@ import {
   parseRunResultJson,
   type DecisionFeedItem,
 } from "~/lib/decisionFeed";
+import {
+  useRunConversation,
+  type RunContinuationMode,
+  type RunConversationState,
+} from "~/lib/hooks/useRunConversation";
 import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 import { UnverifiedDataNotice } from "./shared/DataAccessNotices";
 import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
@@ -243,6 +248,76 @@ function RunsBanner({
   }
 
   return null;
+}
+
+function shortRunId(runId: string): string {
+  return runId.length > 18 ? `${runId.slice(0, 18)}…` : runId;
+}
+
+function RunComposerNotice({
+  state,
+  predictedMode,
+  runId,
+  isAuthenticated,
+  isRunning,
+}: {
+  state: RunConversationState;
+  predictedMode: RunContinuationMode | null;
+  runId: string;
+  isAuthenticated: boolean;
+  isRunning: boolean;
+}) {
+  if (state.phase === "rejected" && state.detail) {
+    return (
+      <div
+        role="alert"
+        className="border-t border-crimson-500/20 bg-crimson-500/5 px-3 py-2 text-xs text-crimson-600 dark:text-crimson-300"
+      >
+        {state.detail}
+      </div>
+    );
+  }
+
+  if (state.phase === "sending" || state.phase === "waiting") {
+    const continuationLabel =
+      (state.mode ?? predictedMode) === "resumed"
+        ? `Continuing run ${shortRunId(runId)} in its original agent session`
+        : `Continuing from run ${shortRunId(runId)} in a follow-up session seeded with its saved record`;
+    return (
+      <div
+        role="status"
+        className="flex items-center gap-2 border-t border-amber-500/15 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
+      >
+        <span className="i-ph:circle-notch animate-spin text-sm motion-reduce:animate-none" aria-hidden="true" />
+        {state.phase === "sending"
+          ? "Sending…"
+          : `${continuationLabel} — waiting for the agent's reply…`}
+      </div>
+    );
+  }
+
+  if (state.phase === "stalled" && state.detail) {
+    return (
+      <div
+        role="status"
+        className="border-t border-amber-500/15 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
+      >
+        {state.detail}
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-arena-elements-dividerColor/40 px-3 py-1.5 font-data text-[11px] text-arena-elements-textTertiary">
+      {isRunning
+        ? "Run in progress — the conversation can be continued once it finishes."
+        : !isAuthenticated
+          ? "Anyone can read this run. Sending a message requires the creator wallet."
+          : predictedMode === "resumed"
+            ? "Replies continue this run's original agent session."
+            : "This run kept no live agent session — replies start a follow-up thread seeded with the saved run record."}
+    </div>
+  );
 }
 
 function RunsSidebar({
@@ -907,6 +982,15 @@ export function RunsTab({
     streamEnabled: canStreamTranscript,
   });
 
+  const conversation = useRunConversation({
+    apiUrl,
+    token,
+    run: activeRun,
+    refetchTranscript: stream.refetch,
+    messageCount: stream.messages.length,
+    lastMessageRole: stream.messages.at(-1)?.role ?? null,
+  });
+
   const runItems: RunItem[] = useMemo(
     () =>
       visibleRuns.map((run) => ({
@@ -990,6 +1074,13 @@ export function RunsTab({
   const transcriptIsStreaming = shouldShowTraceReplay
     ? stream.isStreaming
     : activeRun?.status === "running";
+  const conversationBusy =
+    conversation.state.phase === "sending" ||
+    conversation.state.phase === "waiting";
+  const composerPlaceholder =
+    activeRun?.status === "running"
+      ? "Run in progress — it can be continued once it finishes"
+      : `Ask ${botName || "the agent"} about this run…`;
   const runsBranding = useMemo<AgentBranding>(
     () => ({
       ...RUNS_BRANDING,
@@ -1223,12 +1314,24 @@ export function RunsTab({
                 <ChatTranscript
                   messages={transcriptMessages}
                   partMap={transcriptPartMap}
-                  isStreaming={transcriptIsStreaming}
+                  isStreaming={transcriptIsStreaming || conversationBusy}
+                  onSend={activeRun ? conversation.send : undefined}
                   branding={runsBranding}
-                  placeholder="This run is read only"
+                  placeholder={composerPlaceholder}
                   variant="terminal"
                   emptyTitle="Waiting for run output"
                   emptyDescription="Reasoning, tool calls, and final output will appear here as soon as the operator publishes them."
+                  footerNotice={
+                    activeRun ? (
+                      <RunComposerNotice
+                        state={conversation.state}
+                        predictedMode={conversation.predictedMode}
+                        runId={activeRun.runId}
+                        isAuthenticated={isAuthenticated}
+                        isRunning={activeRun.status === "running"}
+                      />
+                    ) : undefined
+                  }
                 />
               </div>
             </div>

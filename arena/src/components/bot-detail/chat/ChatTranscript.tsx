@@ -1,4 +1,12 @@
-import { useCallback, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { ChatContainer } from '@tangle-network/sandbox-ui/chat';
 import type { AgentBranding, SessionPart } from '@tangle-network/sandbox-ui/types';
 import { useRunGroups } from '@tangle-network/sandbox-ui/hooks';
@@ -88,6 +96,7 @@ export function ChatTranscript({
   variant = 'default',
   emptyTitle,
   emptyDescription,
+  footerNotice,
 }: {
   messages: AppSessionMessage[];
   partMap: Record<string, SessionPart[]>;
@@ -98,6 +107,8 @@ export function ChatTranscript({
   variant?: ChatPartVariant;
   emptyTitle?: string;
   emptyDescription?: string;
+  /** Status line rendered between the transcript and the composer. */
+  footerNotice?: ReactNode;
 }) {
   const [inputValue, setInputValue] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -172,6 +183,8 @@ export function ChatTranscript({
           />
         )}
       </div>
+
+      {footerNotice}
 
       {onSend && (
         <form onSubmit={handleSubmit} className={cn('shrink-0 border-t border-arena-elements-dividerColor/50 p-3', isTerminal && 'bg-[#0b1418]')}>

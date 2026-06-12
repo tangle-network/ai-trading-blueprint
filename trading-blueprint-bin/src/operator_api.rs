@@ -769,7 +769,7 @@ pub fn build_operator_router() -> Router {
         .route("/api/bots/{bot_id}/runs/{run_id}", get(get_bot_run))
         .route(
             "/api/bots/{bot_id}/runs/{run_id}/messages",
-            get(list_bot_run_messages),
+            get(list_bot_run_messages).post(send_bot_run_message),
         )
         .route(
             "/api/bots/{bot_id}/evolution/self-improve/runs",
@@ -3046,17 +3046,125 @@ fn redact_public_transcript_value(value: serde_json::Value) -> serde_json::Value
 }
 
 fn run_public_transcript_response(
+    bot: &TradingBotRecord,
     run: &WorkflowRunRecord,
     query: &TranscriptMessageQuery,
 ) -> Result<Response, (StatusCode, String)> {
     let transcript =
         trading_blueprint_lib::workflow_compat::get_workflow_run_transcript(&run.run_id)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let messages = transcript
-        .map(|record| redact_public_transcript_value(record.messages))
+    let mut messages = transcript
+        .map(|record| record.messages)
         .unwrap_or_else(|| synthesize_run_transcript_messages(run));
+    append_run_continuation_messages(bot, run, &mut messages);
+    // Single redaction pass over the merged view: stored transcripts AND
+    // owner follow-up turns share the public-transcript policy.
+    let messages = redact_public_transcript_value(messages);
 
     Ok(replay_transcript_messages_response(messages, query))
+}
+
+/// Continuation target for a saved run. Runs that recorded a sidecar session
+/// id are continued in that same session — `/agents/run` carries `sessionId`
+/// through to the agent harness, so the original conversation context is
+/// resumed server-side ("resumed"). Runs without a session (deterministic
+/// ticks, legacy rows) get a dedicated follow-up session whose first turn is
+/// seeded with the saved run record ("context_seeded"). Never fakes resume.
+fn run_continuation_session(run: &WorkflowRunRecord) -> (String, &'static str) {
+    match run
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|session_id| !session_id.is_empty())
+    {
+        Some(session_id) => (session_id.to_string(), "resumed"),
+        None => (format!("run-followup-{}", run.run_id), "context_seeded"),
+    }
+}
+
+fn trim_run_context(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_string();
+    }
+    let prefix: String = value.chars().take(max_chars).collect();
+    format!(
+        "{prefix}…\n[truncated {} chars]",
+        char_count.saturating_sub(max_chars)
+    )
+}
+
+fn run_context_preamble(run: &WorkflowRunRecord) -> String {
+    let status = match run.status {
+        WorkflowRunStatus::Running => "running",
+        WorkflowRunStatus::Completed => "completed",
+        WorkflowRunStatus::Failed => "failed",
+        WorkflowRunStatus::Cancelled => "cancelled",
+    };
+    let mut sections = vec![format!(
+        "Context: the owner is following up on saved run {} ({status}, started_at {}). This run kept no agent session, so the saved record below is the only context.",
+        run.run_id, run.started_at
+    )];
+    if let Some(result) = run.result.as_deref().filter(|text| !text.trim().is_empty()) {
+        sections.push(format!(
+            "Saved run result:\n{}",
+            trim_run_context(result, 4_000)
+        ));
+    }
+    if let Some(error) = run.error.as_deref().filter(|text| !text.trim().is_empty()) {
+        sections.push(format!(
+            "Saved run error:\n{}",
+            trim_run_context(error, 2_000)
+        ));
+    }
+    sections.push("Owner follow-up:".to_string());
+    sections.join("\n\n")
+}
+
+/// Merge owner follow-up turns (operator-chat transcript for the run's
+/// continuation session) after the saved run transcript, deduped by message
+/// id so resumed sessions whose turns were already snapshotted into the
+/// stored transcript don't repeat.
+fn append_run_continuation_messages(
+    bot: &TradingBotRecord,
+    run: &WorkflowRunRecord,
+    messages: &mut serde_json::Value,
+) {
+    let Some(list) = messages.as_array_mut() else {
+        return;
+    };
+    let Ok(target) =
+        trading_blueprint_lib::operator_chat::resolve_sidecar_chat_target(&bot.sandbox_id)
+    else {
+        return;
+    };
+    let (session_id, _mode) = run_continuation_session(run);
+    let followups =
+        trading_blueprint_lib::operator_chat::transcript_messages_for_session(&target, &session_id);
+    let Some(followups) = followups.as_array() else {
+        return;
+    };
+
+    let existing_ids: HashSet<String> = list
+        .iter()
+        .filter_map(|message| {
+            message
+                .get("info")
+                .and_then(|info| info.get("id"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+    for message in followups {
+        let already_present = message
+            .get("info")
+            .and_then(|info| info.get("id"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|id| existing_ids.contains(id));
+        if !already_present {
+            list.push(message.clone());
+        }
+    }
 }
 
 async fn run_transcript_fallback_response(
@@ -3584,7 +3692,83 @@ async fn list_bot_run_messages(
     let bot = resolve_bot(&bot_id)?;
     let run = resolve_bot_workflow_run(&bot, &run_id)?;
     let transcript_query = parse_transcript_message_query(query.as_deref());
-    run_public_transcript_response(&run, &transcript_query)
+    run_public_transcript_response(&bot, &run, &transcript_query)
+}
+
+/// Continue the conversation behind a saved run. Owner-gated (the public can
+/// read run transcripts, only command-access callers can talk to the agent):
+/// SessionAuth rejects missing/invalid tokens with 401 and `verify_submitter`
+/// rejects non-permitted callers with 403 — the UI keeps its composer visible
+/// either way and surfaces these statuses. The new turn goes through the same
+/// operator-chat machinery as the manual chat surface; the response reports
+/// which continuation mode applied (see `run_continuation_session`).
+async fn send_bot_run_message(
+    SessionAuth(caller): SessionAuth,
+    Path((bot_id, run_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+    let run = resolve_bot_workflow_run(&bot, &run_id)?;
+    if run.status == WorkflowRunStatus::Running {
+        return Err((
+            StatusCode::CONFLICT,
+            "Run is still in progress; wait for it to finish before continuing the conversation"
+                .to_string(),
+        ));
+    }
+
+    let message = body
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Request body must carry a non-empty \"message\"".to_string(),
+            )
+        })?;
+
+    let target = trading_blueprint_lib::operator_chat::resolve_sidecar_chat_target(&bot.sandbox_id)
+        .map_err(|e| (StatusCode::CONFLICT, e))?;
+    let (session_id, mode) = run_continuation_session(&run);
+    // Seed the run record into the first turn of a synthetic follow-up
+    // session only — resumed sessions already carry their own context.
+    let needs_context_seed = mode == "context_seeded"
+        && trading_blueprint_lib::operator_chat::transcript_messages_for_session(
+            &target,
+            &session_id,
+        )
+        .as_array()
+        .is_none_or(|messages| messages.is_empty());
+    let outbound_message = if needs_context_seed {
+        format!("{}\n\n{message}", run_context_preamble(&run))
+    } else {
+        message.to_string()
+    };
+
+    let upstream = trading_blueprint_lib::operator_chat::proxy_chat_request(
+        &target,
+        reqwest::Method::POST,
+        &format!("/agents/sessions/{session_id}/messages"),
+        Some(json!({ "message": outbound_message })),
+        None,
+    )
+    .await?;
+    if !upstream.status().is_success() {
+        return Ok(upstream);
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "run_id": run.run_id,
+        "session_id": session_id,
+        "mode": mode,
+        "transport": "agents/run",
+        "status": "accepted",
+    }))
+    .into_response())
 }
 
 // ── Secrets handlers ─────────────────────────────────────────────────────
