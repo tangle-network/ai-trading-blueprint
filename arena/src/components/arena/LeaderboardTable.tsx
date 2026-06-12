@@ -17,6 +17,7 @@ import {
   compareStringValue,
   nextSortState,
   SortableHeaderButton,
+  SQUARE_TABLE_CLASS,
   StaticTableHeaderLabel,
   type SortState,
 } from '~/components/arena/SortableTableHeader';
@@ -207,8 +208,8 @@ export function LeaderboardTable({
           );
         })}
       </div>
-      <div className="hidden rounded-none md:block [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_.relative.overflow-auto]:!rounded-none [&_table]:!rounded-none [&_tbody]:!rounded-none [&_td]:!rounded-none [&_th]:!rounded-none [&_thead]:!rounded-none [&_tr]:!rounded-none">
-    <Table className="w-full min-w-[760px] table-fixed rounded-none bg-[var(--arena-terminal-panel)] [&_td]:rounded-none [&_th]:rounded-none [&_thead]:rounded-none [&_tr]:rounded-none">
+      <div className={`hidden md:block ${SQUARE_TABLE_CLASS}`}>
+    <Table className={`w-full min-w-[760px] table-fixed bg-[var(--arena-terminal-panel)] ${SQUARE_TABLE_CLASS}`}>
       <TableHeader>
         <TableRow className="rounded-none border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] hover:bg-[var(--arena-terminal-surface)]">
           <TableHead className="w-12 rounded-none py-2">
@@ -311,27 +312,27 @@ export function LeaderboardTable({
                 <span className="truncate">{truncateAddress(bot.operatorAddress)}</span>
               </div>
             </TableCell>
-            <TableCell className="py-2 text-right align-middle font-data text-base text-[var(--arena-terminal-text)]">
+            <TableCell className="py-2 text-right align-middle font-data text-base tabular-nums text-[var(--arena-terminal-text)]">
               {formatFlowUsd(stats?.recentNotionalUsd ?? 0)}
             </TableCell>
-            <TableCell className="py-2 text-right align-middle font-data text-base font-bold text-[var(--arena-terminal-text)]">
+            <TableCell className="py-2 text-right align-middle font-data text-base font-bold tabular-nums text-[var(--arena-terminal-text)]">
               {formatNumber(stats?.recentFills ?? 0, { maximumFractionDigits: 0 })}
             </TableCell>
             <TableCell
-              className="py-2 text-right align-middle font-data text-base text-[var(--arena-terminal-text)]"
+              className="py-2 text-right align-middle font-data text-base tabular-nums text-[var(--arena-terminal-text)]"
               title={fillCountEvidenceTitle(totalFillEvidence)}
             >
               {totalFillEvidence.value > 0
                 ? formatNumber(totalFillEvidence.value, { maximumFractionDigits: 0 })
                 : '—'}
             </TableCell>
-            <TableCell className="py-2 text-right align-middle font-data text-base text-[var(--arena-terminal-text-secondary)]">
+            <TableCell className="py-2 text-right align-middle font-data text-base tabular-nums text-[var(--arena-terminal-text-secondary)]">
               {lastTradeAt != null ? formatTradeAge(lastTradeAt) : 'No fills'}
             </TableCell>
             <TableCell className="hidden py-2 text-right align-middle font-data text-base text-[var(--arena-terminal-text-secondary)] min-[1320px]:table-cell">
               {modeLabel(bot)}
             </TableCell>
-            <TableCell className="py-2 text-right align-middle font-data text-base font-bold">
+            <TableCell className="py-2 text-right align-middle font-data text-base font-bold tabular-nums">
               {bot.pnlPercent === 0 ? (
                 <span className="text-[var(--arena-terminal-text-subtle)]">{returnValue}</span>
               ) : bot.pnlPercent > 0 ? (

@@ -14,6 +14,7 @@ import {
   compareStringValue,
   nextSortState,
   SortableHeaderButton,
+  SQUARE_TABLE_CLASS,
   type SortState,
 } from '~/components/arena/SortableTableHeader';
 
@@ -29,7 +30,6 @@ interface PositionsTabProps {
   workspaceLayout?: 'wide' | 'rail' | 'ledger';
 }
 
-const SQUARE_TABLE_CLASS = 'rounded-none [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_.relative.overflow-auto]:!rounded-none [&_table]:!rounded-none [&_thead]:!rounded-none [&_tbody]:!rounded-none [&_tr]:!rounded-none [&_th]:!rounded-none [&_td]:!rounded-none';
 type StandardPositionSortKey = 'asset' | 'amount' | 'value' | 'price' | 'weight';
 type PerpPositionSortKey = 'market' | 'side' | 'size' | 'notional' | 'margin' | 'usage' | 'lev' | 'pnl' | 'liq';
 

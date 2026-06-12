@@ -23,7 +23,8 @@ export const ArenaHeaderUtilitiesContext = createContext<ReactNode>(null);
 export function ArenaHeaderMetric({ value, label, title }: ArenaPageMetric) {
   return (
     <div className="min-w-0" title={title}>
-      <div className="truncate font-data text-base font-bold leading-none text-[var(--arena-terminal-text)] md:text-lg">
+      {/* tabular-nums keeps refreshing values from oscillating cell width */}
+      <div className="truncate font-data text-base font-bold leading-none tabular-nums text-[var(--arena-terminal-text)] md:text-lg">
         {value}
       </div>
       <div className="mt-0.5 truncate font-data text-[11px] uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)] md:text-xs">

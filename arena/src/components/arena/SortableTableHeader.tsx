@@ -1,5 +1,12 @@
 import type { ReactNode } from 'react';
 
+/**
+ * Neutralizes @tangle/blueprint-ui Table rounding/chrome so tables sit flush
+ * inside the arena terminal panels. Single source for every arena table —
+ * apply to both the scroll container and the `Table` element.
+ */
+export const SQUARE_TABLE_CLASS = 'rounded-none [&_[data-slot=table-container]]:!rounded-none [&_[data-slot=table-container]]:!border-0 [&_[data-slot=table-container]]:!bg-transparent [&_[data-slot=table-container]]:!shadow-none [&_.relative.overflow-auto]:!rounded-none [&_table]:!rounded-none [&_thead]:!rounded-none [&_tbody]:!rounded-none [&_tr]:!rounded-none [&_th]:!rounded-none [&_td]:!rounded-none';
+
 export type SortDirection = 'asc' | 'desc';
 
 export interface SortState<K extends string> {

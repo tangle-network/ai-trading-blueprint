@@ -43,7 +43,7 @@ function StatusChip({
   children: ReactNode;
 }) {
   return (
-    <span className={`inline-flex h-5 items-center border px-1.5 font-mono text-[10px] uppercase tracking-[0.08em] ${statusToneClass(tone)}`}>
+    <span className={`inline-flex h-5 items-center border px-1.5 font-data text-[10px] uppercase tracking-[0.08em] ${statusToneClass(tone)}`}>
       {children}
     </span>
   );
@@ -68,7 +68,7 @@ function MetricCell({
 
   return (
     <span className="min-w-0 border-l border-[var(--arena-terminal-border)] px-2 first:border-l-0">
-      <span className="block truncate font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--arena-terminal-text-subtle)]">
+      <span className="block truncate font-data text-[10px] uppercase tracking-[0.1em] text-[var(--arena-terminal-text-subtle)]">
         {label}
       </span>
       <span className={`mt-0.5 block truncate font-data text-[15px] font-bold leading-none tabular-nums ${toneClass}`}>
@@ -184,7 +184,7 @@ export function HomeBotCard({
               {isPaper && <StatusChip tone="outline">Paper</StatusChip>}
               {bot.verificationState === 'unverified' && <StatusChip tone="outline">Unverified</StatusChip>}
             </div>
-            <div className="mt-1 flex min-w-0 items-center gap-2 font-mono text-[11px] text-[var(--arena-terminal-text-muted)]">
+            <div className="mt-1 flex min-w-0 items-center gap-2 font-data text-[11px] text-[var(--arena-terminal-text-muted)]">
               <span className="truncate">{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
               {bot.serviceId > 0 && (
                 <>
@@ -210,14 +210,14 @@ export function HomeBotCard({
             <SparklineChart data={bot.sparklineData} positive={bot.pnlPercent >= 0} width={96} height={32} />
           ) : (
             <div className="flex h-8 w-24 items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)]">
-              <span className="font-mono text-[10px] text-[var(--arena-terminal-text-subtle)]">No chart</span>
+              <span className="font-data text-[10px] text-[var(--arena-terminal-text-subtle)]">No chart</span>
             </div>
           )}
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 min-[980px]:justify-end">
           {isProvisioning ? (
-            <div className="flex h-8 items-center gap-2 border border-[var(--arena-terminal-border)] px-2.5 font-mono text-xs text-[var(--arena-terminal-text-muted)]">
+            <div className="flex h-8 items-center gap-2 border border-[var(--arena-terminal-border)] px-2.5 font-data text-xs text-[var(--arena-terminal-text-muted)]">
               <div className="h-2.5 w-2.5 shrink-0 animate-spin border-[1.5px] border-[var(--arena-terminal-warning)] border-t-transparent" />
               Setting up
             </div>
