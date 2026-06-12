@@ -9,6 +9,8 @@ import { ArenaHeaderUtilitiesContext } from '~/components/arena/ArenaPageHeader'
 import { networks } from '~/lib/contracts/chains';
 import { TxDropdown } from './TxDropdown';
 import { WalletButton } from './WalletButton';
+import { NavigationProgress } from './NavigationProgress';
+import { IdleRoutePrefetch } from './IdleRoutePrefetch';
 
 const primaryNavItems = [
   { label: 'Home', href: '/', icon: 'i-ph:trophy' },
@@ -108,6 +110,8 @@ export function ArenaAppShell() {
 
       <ArenaHeaderUtilitiesContext.Provider value={!isBotWorkspace ? <HeaderUtilityControls /> : null}>
       <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
+        <NavigationProgress />
+        <IdleRoutePrefetch />
         {!isBotWorkspace && (
           <div className="arena-trace-terminal flex h-14 shrink-0 items-center justify-between border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 lg:hidden">
             <Link

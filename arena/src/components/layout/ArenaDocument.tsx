@@ -1,6 +1,7 @@
 import { Links, Meta, Scripts, ScrollRestoration } from 'react-router';
 import type { ReactNode } from 'react';
 import { inlineThemeBootScript } from '~/lib/theme/urlTheme';
+import { criticalThemeCss } from '~/lib/theme/criticalThemeCss';
 
 interface ArenaDocumentProps {
   children: ReactNode;
@@ -20,6 +21,9 @@ export function ArenaDocument({ children, description }: ArenaDocumentProps) {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="description" content={description} />
+        {/* Theme the canvas before the external stylesheet arrives — any
+            pre-CSS or unmounted-tree frame paints brand background, not white. */}
+        <style dangerouslySetInnerHTML={{ __html: criticalThemeCss }} />
         <Meta />
         <Links />
         <link rel="icon" href={`/favicon.svg?v=${BRAND_ICON_VERSION}`} type="image/svg+xml" />
