@@ -569,6 +569,7 @@ pub async fn trigger_observatory_for_bot(
             model: None,
             provider: None,
             cost_usd: None,
+            harness: None,
         });
         return Err(error);
     };
@@ -611,6 +612,10 @@ pub async fn trigger_observatory_for_bot(
         model: None,
         provider: None,
         cost_usd: None,
+        // The queued agentic reflection runs through the bot's selected
+        // harness; the deterministic tool pass involves no agent CLI.
+        harness: agentic_enabled
+            .then(|| crate::harness::agent_harness_for_bot(&bot.strategy_config)),
     })
     .map_err(|e| format!("persist observatory run history: {e}"))?;
 
@@ -625,6 +630,7 @@ pub async fn trigger_observatory_for_bot(
         let run_id_for_task = run_id.clone();
         let records_for_task = records.clone();
         let session_id_for_task = agentic_session_id.clone();
+        let agent_harness_for_task = crate::harness::agent_harness_for_bot(&bot.strategy_config);
         tokio::spawn(async move {
             let agentic_result = crate::operator_chat::run_bounded_agentic_exec_turn(
                 target,
@@ -723,6 +729,7 @@ pub async fn trigger_observatory_for_bot(
                         .as_ref()
                         .and_then(|agentic| usage_event_string(&agentic.usage_event, "provider")),
                     cost_usd: agentic.as_ref().and_then(|agentic| agentic.cost_usd),
+                    harness: Some(agent_harness_for_task.clone()),
                 })
             {
                 tracing::warn!(
