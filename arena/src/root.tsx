@@ -24,9 +24,23 @@ function ClientWeb3Provider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    web3ProviderModule?.then((m) => {
-      if (!cancelled) setProvider(() => m.Web3Provider);
-    });
+    web3ProviderModule
+      ?.then((m) => {
+        if (!cancelled) setProvider(() => m.Web3Provider);
+      })
+      .catch((error) => {
+        // A rejected provider chunk must not strand the app on the shell
+        // fallback: surface loudly and retry once (transient chunk fetch
+        // failures happen on flaky networks / fresh deploys).
+        console.error('[arena] Web3Provider chunk failed to load', error);
+        import('~/providers/Web3Provider')
+          .then((m) => {
+            if (!cancelled) setProvider(() => m.Web3Provider);
+          })
+          .catch((retryError) => {
+            console.error('[arena] Web3Provider retry failed', retryError);
+          });
+      });
     return () => {
       cancelled = true;
     };
