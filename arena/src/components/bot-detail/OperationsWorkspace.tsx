@@ -14,6 +14,7 @@ import {
   shouldCollapsePaneSize,
   usePersistentWorkspaceLayout,
 } from '~/components/arena/WorkspaceResizeControls';
+import { warmModulesOnIdle } from '~/lib/utils/idleWarm';
 
 export type OperationsPanel =
   | 'overview'
@@ -68,20 +69,33 @@ function normalizeOperationsOverviewLayout(value: Partial<OperationsOverviewLayo
   };
 }
 
+// Shared import thunks: the lazy() boundaries and idle warming resolve the
+// same module-cache entries, so a panel first opened after the idle warm
+// renders without the Suspense fallback swap.
+const panelImports = {
+  reasoning: () => import('./ReasoningTab'),
+  revisions: () => import('./RevisionArenaTab'),
+  controls: () => import('./ControlsTab'),
+  envelope: () => import('./EnvelopeTab'),
+  secrets: () => import('./SecretsTab'),
+  terminal: () => import('./TerminalTab'),
+  vault: () => import('./HyperliquidVaultTab'),
+} as const;
+
 const ReasoningTab = lazy(() =>
-  import('./ReasoningTab').then((module) => ({ default: module.ReasoningTab })));
+  panelImports.reasoning().then((module) => ({ default: module.ReasoningTab })));
 const RevisionArenaTab = lazy(() =>
-  import('./RevisionArenaTab').then((module) => ({ default: module.RevisionArenaTab })));
+  panelImports.revisions().then((module) => ({ default: module.RevisionArenaTab })));
 const ControlsTab = lazy(() =>
-  import('./ControlsTab').then((module) => ({ default: module.ControlsTab })));
+  panelImports.controls().then((module) => ({ default: module.ControlsTab })));
 const EnvelopeTab = lazy(() =>
-  import('./EnvelopeTab').then((module) => ({ default: module.EnvelopeTab })));
+  panelImports.envelope().then((module) => ({ default: module.EnvelopeTab })));
 const SecretsTab = lazy(() =>
-  import('./SecretsTab').then((module) => ({ default: module.SecretsTab })));
+  panelImports.secrets().then((module) => ({ default: module.SecretsTab })));
 const TerminalTab = lazy(() =>
-  import('./TerminalTab').then((module) => ({ default: module.TerminalTab })));
+  panelImports.terminal().then((module) => ({ default: module.TerminalTab })));
 const HyperliquidVaultTab = lazy(() =>
-  import('./HyperliquidVaultTab').then((module) => ({ default: module.HyperliquidVaultTab })));
+  panelImports.vault().then((module) => ({ default: module.HyperliquidVaultTab })));
 
 function isOperationsPanel(value: string | null | undefined): value is OperationsPanel {
   return value === 'overview'
@@ -768,6 +782,8 @@ export function OperationsWorkspace({
   onConfigureSecrets,
   canCommand = false,
 }: OperationsWorkspaceProps) {
+  useEffect(() => warmModulesOnIdle(Object.values(panelImports)), []);
+
   const panels = useMemo<PanelItem[]>(() => {
     const items: PanelItem[] = [
       {
