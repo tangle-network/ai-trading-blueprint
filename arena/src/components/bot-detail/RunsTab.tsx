@@ -1,17 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
 import type { AgentBranding, SessionPart } from "@tangle-network/sandbox-ui/types";
 import { ChatTranscript } from "~/components/bot-detail/chat/ChatTranscript";
 import {
   useBotSessionStream,
   type AppSessionMessage,
 } from "~/lib/hooks/useBotSessionStream";
-import { useOperatorAuth } from "~/lib/hooks/useOperatorAuth";
-import {
-  buildBotScopedPathForDeploymentKind,
-  getDeploymentKindForOperatorKind,
-  useOperatorMeta,
-} from "~/lib/operator/meta";
 import {
   OperatorAccessCard,
   UnsupportedFeatureCard,
@@ -23,16 +16,16 @@ import {
   formatDuration,
   formatRunCostUsd,
   formatRunTimestamp,
+  formatTokenTotal,
   getStatusLabel,
   getWorkflowKindDescription,
   getWorkflowKindLabel,
   hasReplayableRunTrace,
-  parseRunsResponse,
   resolveTranscriptSessionId,
   runMatchesLoopFilter,
-  summarizeAgenticSpend,
+  summarizeIntelligenceUsage,
   type BotRun,
-  type BotRunsResponse,
+  type IntelligenceUsageGranularity,
   type RunLoopFilter,
   type RunStatus,
 } from "~/lib/botRuns";
@@ -48,6 +41,10 @@ import {
   type RunContinuationMode,
   type RunConversationState,
 } from "~/lib/hooks/useRunConversation";
+import {
+  isBotRunsAuthError,
+  useBotRuns,
+} from "~/lib/hooks/useBotRuns";
 import type { BotOperatorKind, BotVerificationState } from "~/lib/types/bot";
 import { UnverifiedDataNotice } from "./shared/DataAccessNotices";
 import { DecisionActivityStrip } from "./shared/DecisionActivityStrip";
@@ -61,6 +58,10 @@ import {
   shouldCollapsePaneSize,
   usePersistentWorkspaceLayout,
 } from "~/components/arena/WorkspaceResizeControls";
+import {
+  IntelligenceSpendPanel,
+  type IntelligenceMetric,
+} from "./shared/IntelligenceSpendPanel";
 
 interface RunsTabProps {
   botId: string;
@@ -149,11 +150,6 @@ function extractRunsErrorMessage(error: unknown): string | null {
   }
 }
 
-function isRunsAuthError(error: unknown): boolean {
-  const raw = error instanceof Error ? error.message : String(error ?? "");
-  return /HTTP (401|403)/i.test(raw) || /unauthorized|forbidden/i.test(raw);
-}
-
 function getRunTitle(run: BotRun): string {
   switch (run.workflowKind) {
     case "trading":
@@ -169,12 +165,6 @@ function getRunTitle(run: BotRun): string {
 
 function getRunSubtitle(run: BotRun): string {
   return formatRunTimestamp(run.startedAt);
-}
-
-function formatTokenTotal(total: number): string {
-  if (total <= 0) return "tokens n/a";
-  if (total >= 1_000) return `${(total / 1_000).toFixed(total >= 10_000 ? 0 : 1)}k tok`;
-  return `${total} tok`;
 }
 
 function getRunTokenLabel(run: BotRun): string {
@@ -440,7 +430,7 @@ function RunsSidebar({
             className="mt-1.5 truncate font-data text-[10px] text-arena-elements-textTertiary"
             title={spendDetail ?? undefined}
           >
-            LLM spend (loaded window){" "}
+            AI spend{" "}
             <b className="font-semibold text-arena-elements-textPrimary">{spendLabel}</b>
           </div>
         )}
@@ -825,20 +815,25 @@ export function RunsTab({
   surface = "runs",
 }: RunsTabProps) {
   const baseApiUrl = operatorApiUrl ?? "";
-  const { data: operatorMeta } = useOperatorMeta(baseApiUrl);
-  const deploymentKind = getDeploymentKindForOperatorKind(operatorKind);
-  const needsAuth = deploymentKind !== "fleet";
-  const apiUrl =
-    operatorMeta && baseApiUrl
-      ? `${baseApiUrl}${buildBotScopedPathForDeploymentKind(deploymentKind, botId)}`
-      : "";
   const {
-    token,
+    apiUrl,
     isAuthenticated,
-  } = useOperatorAuth(baseApiUrl);
+    needsAuth,
+    operatorMeta,
+    runs,
+    runsQuery,
+    token,
+  } = useBotRuns({
+    botId,
+    operatorApiUrl: baseApiUrl,
+    operatorKind,
+  });
 
   const [activeRunId, setActiveRunId] = useState("");
   const [loopFilterChoice, setLoopFilterChoice] = useState<RunLoopFilter | null>(null);
+  const [intelligenceMetric, setIntelligenceMetric] = useState<IntelligenceMetric>("cost");
+  const [intelligenceGranularity, setIntelligenceGranularity] =
+    useState<IntelligenceUsageGranularity>("day");
   const [isStackedLayout, setIsStackedLayout] = useState(() =>
     typeof window === "undefined"
       ? false
@@ -852,7 +847,6 @@ export function RunsTab({
     normalizeRunsWorkspaceLayout,
   );
   const runsCacheKey = `${baseApiUrl}::${botId}::runs`;
-  const authKey = token ?? "anonymous";
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -871,61 +865,6 @@ export function RunsTab({
     };
   }, [immersive]);
 
-  const runsQuery = useInfiniteQuery({
-    queryKey: ["bot-runs", apiUrl, authKey, botId],
-    enabled: !!apiUrl,
-    initialPageParam: null as string | null,
-    queryFn: async ({ pageParam }) => {
-      const cursor =
-        typeof pageParam === "string" && pageParam.length > 0
-          ? pageParam
-          : null;
-      const response = await fetch(
-        `${apiUrl}/runs?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
-        {
-          headers: needsAuth && token ? { Authorization: `Bearer ${token}` } : {},
-        },
-      );
-
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(
-          `HTTP ${response.status}: ${body || "Failed to load runs"}`,
-        );
-      }
-
-      return parseRunsResponse(await response.json());
-    },
-    getNextPageParam: (lastPage: BotRunsResponse) =>
-      lastPage.nextCursor ?? undefined,
-    staleTime: 5_000,
-    refetchInterval: (query) => {
-      const payload = query.state.data as
-        | { pages?: BotRunsResponse[] }
-        | undefined;
-      return payload?.pages?.some((page) =>
-        page.runs.some((run) => run.status === "running"),
-      )
-        ? 5_000
-        : false;
-    },
-  });
-
-  const runs = useMemo(() => {
-    const seen = new Set<string>();
-    return (
-      runsQuery.data?.pages.flatMap((page) =>
-        page.runs.filter((run) => {
-          if (seen.has(run.runId)) {
-            return false;
-          }
-          seen.add(run.runId);
-          return true;
-        }),
-      ) ?? []
-    );
-  }, [runsQuery.data]);
-
   // Loop-mode filter is only offered when the operator reports loop_mode;
   // older operators fall back to the unfiltered list.
   const hasLoopModeData = runs.some((run) => run.loopMode != null);
@@ -939,7 +878,10 @@ export function RunsTab({
         : runs,
     [hasLoopModeData, loopFilter, runs],
   );
-  const agenticSpend = useMemo(() => summarizeAgenticSpend(runs), [runs]);
+  const intelligenceUsage = useMemo(
+    () => summarizeIntelligenceUsage(runs, intelligenceGranularity),
+    [intelligenceGranularity, runs],
+  );
 
   useEffect(() => {
     if (visibleRuns.length === 0) {
@@ -1016,17 +958,17 @@ export function RunsTab({
     completed: visibleRuns.filter((run) => run.status === "completed").length,
     failed: visibleRuns.filter((run) => run.status === "failed" || run.status === "interrupted").length,
   }), [visibleRuns]);
-  const spendLabel = agenticSpend.agenticRunCount > 0
-    ? agenticSpend.costUsd != null
-      ? `${formatRunCostUsd(agenticSpend.costUsd)} · ${formatTokenTotal(agenticSpend.totalTokens)}`
-      : agenticSpend.totalTokens > 0
-        ? formatTokenTotal(agenticSpend.totalTokens)
+  const spendLabel = intelligenceUsage.runCount > 0
+    ? intelligenceUsage.costUsd != null
+      ? `${formatRunCostUsd(intelligenceUsage.costUsd)} · ${formatTokenTotal(intelligenceUsage.totalTokens)}`
+      : intelligenceUsage.totalTokens > 0
+        ? formatTokenTotal(intelligenceUsage.totalTokens)
         : null
     : null;
-  const spendDetail = agenticSpend.agenticRunCount > 0
-    ? `Sum over the ${agenticSpend.agenticRunCount.toLocaleString()} loaded agent runs`
-      + (agenticSpend.costUsd != null && agenticSpend.costKnownRunCount < agenticSpend.agenticRunCount
-        ? ` (${agenticSpend.costKnownRunCount.toLocaleString()} report cost)`
+  const spendDetail = intelligenceUsage.runCount > 0
+    ? `Sum over the ${intelligenceUsage.runCount.toLocaleString()} loaded AI usage runs`
+      + (intelligenceUsage.costUsd != null && intelligenceUsage.costKnownRunCount < intelligenceUsage.runCount
+        ? ` (${intelligenceUsage.costKnownRunCount.toLocaleString()} report cost)`
         : "")
       + ", not lifetime spend"
     : null;
@@ -1139,7 +1081,7 @@ export function RunsTab({
   }
 
   if (runsQuery.error) {
-    if (!isAuthenticated && isRunsAuthError(runsQuery.error)) {
+    if (!isAuthenticated && isBotRunsAuthError(runsQuery.error)) {
       return (
         <OperatorAccessCard
           title="Run history owner-only"
@@ -1285,6 +1227,14 @@ export function RunsTab({
                 </div>
               </div>
             )}
+
+            <IntelligenceSpendPanel
+              summary={intelligenceUsage}
+              granularity={intelligenceGranularity}
+              metric={intelligenceMetric}
+              onGranularityChange={setIntelligenceGranularity}
+              onMetricChange={setIntelligenceMetric}
+            />
 
             <RunsBanner
               run={activeRun}

@@ -251,7 +251,7 @@ describe("RunsTab", () => {
     expect(screen.getAllByText("latest result").length).toBeGreaterThan(0);
   });
 
-  it("defaults to agent runs when loop modes are reported and rolls up loaded LLM spend", async () => {
+  it("defaults to agent runs and visualizes loaded AI spend by run type, model, and time bucket", async () => {
     const { RunsTab } = await import("../RunsTab");
     vi.stubGlobal(
       "fetch",
@@ -276,6 +276,26 @@ describe("RunsTab", () => {
               model: "glm-5.1",
               provider: "zai",
               cost_usd: 0.0421,
+              loop_mode: "agentic",
+            },
+            {
+              run_id: "run-chat",
+              workflow_id: 103,
+              workflow_kind: "conversation",
+              status: "completed",
+              started_at: 1_775_828_100,
+              completed_at: 1_775_828_140,
+              session_id: null,
+              transcript_available: false,
+              trace_id: null,
+              duration_ms: 40_000,
+              input_tokens: 200,
+              output_tokens: 300,
+              result: "chat result",
+              error: null,
+              model: "gpt-5",
+              provider: "openai",
+              cost_usd: 0.0079,
               loop_mode: "agentic",
             },
             {
@@ -319,9 +339,20 @@ describe("RunsTab", () => {
     const sidebar = await screen.findByLabelText("Autonomous runs");
     expect(within(sidebar).getAllByText("glm-5.1").length).toBeGreaterThan(0);
     expect(within(sidebar).getAllByText("$0.042").length).toBeGreaterThan(0);
-    expect(screen.getByText("1 entry")).toBeInTheDocument();
+    expect(screen.getByText("2 entries")).toBeInTheDocument();
 
-    expect(screen.getByText("LLM spend (loaded window)")).toBeInTheDocument();
+    const spendPanel = screen.getByTestId("intelligence-spend-panel");
+    expect(within(spendPanel).getByText("Intelligence Spend")).toBeInTheDocument();
+    expect(within(spendPanel).getByText("$0.050")).toBeInTheDocument();
+    expect(within(spendPanel).getByText("1.5k tok")).toBeInTheDocument();
+    expect(within(spendPanel).getByTestId("usage-workflow-trading")).toHaveTextContent("Trading");
+    expect(within(spendPanel).getByTestId("usage-workflow-trading")).toHaveTextContent("$0.042");
+    expect(within(spendPanel).getByTestId("usage-workflow-conversation")).toHaveTextContent("Chats");
+    expect(within(spendPanel).getByTestId("usage-model-zai/glm-5.1")).toHaveTextContent("zai/glm-5.1");
+    expect(within(spendPanel).getByTestId("usage-model-openai/gpt-5")).toHaveTextContent("openai/gpt-5");
+    expect(screen.getByText("AI spend")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Intelligence spend metric" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Intelligence spend time bucket" })).toBeInTheDocument();
     expect(
       screen.getByRole("group", { name: /filter runs by loop mode/i }),
     ).toBeInTheDocument();
@@ -330,8 +361,13 @@ describe("RunsTab", () => {
       "true",
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Tokens" }));
+    expect(screen.getByRole("button", { name: "Tokens" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Hour" }));
+    expect(screen.getByRole("button", { name: "Hour" })).toHaveAttribute("aria-pressed", "true");
+
     await userEvent.click(screen.getByRole("button", { name: "All" }));
-    expect(await screen.findByText("2 entries")).toBeInTheDocument();
+    expect(await screen.findByText("3 entries")).toBeInTheDocument();
   });
 
   it("hides the loop-mode filter when the operator does not report loop modes", async () => {

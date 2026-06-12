@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWrapper } from '~/test/mocks';
@@ -191,6 +191,33 @@ const overviewState = {
   },
 };
 
+const runsResponse = {
+  runs: [
+    {
+      run_id: 'obs-run-1',
+      workflow_id: 303,
+      workflow_kind: 'observatory',
+      status: 'completed',
+      started_at: 1_777_891_200,
+      completed_at: 1_777_891_260,
+      session_id: 'observatory-bot-1',
+      transcript_available: true,
+      trace_id: 'trace-observatory-1',
+      duration_ms: 60_000,
+      input_tokens: 1_200,
+      output_tokens: 450,
+      result: 'External signal coverage is not proven.',
+      error: null,
+      model: 'glm-5.1',
+      provider: 'zai',
+      cost_usd: 0.015,
+      loop_mode: 'agentic',
+      harness: 'opencode',
+    },
+  ],
+  next_cursor: null,
+};
+
 vi.mock('react-router', () => ({
   Link: ({ children, to }: { children: ReactNode; to: string }) => <a href={to}>{children}</a>,
 }));
@@ -213,6 +240,17 @@ vi.mock('~/lib/hooks/useOperatorAuth', () => ({
 vi.mock('~/lib/operator/meta', () => ({
   ALL_TRADING_OPERATOR_API_URLS: ['https://operator.test'],
   HAS_TRADING_OPERATOR_API: true,
+  buildBotScopedPathForDeploymentKind: (deploymentKind: 'fleet' | 'instance', botId: string, path = '') =>
+    deploymentKind === 'fleet' ? `/api/bots/${botId}${path}` : `/api/bot${path}`,
+  getDeploymentKindForOperatorKind: (operatorKind?: 'cloud' | 'instance' | 'tee' | null) =>
+    operatorKind === 'cloud' ? 'fleet' : 'instance',
+  useOperatorMeta: () => ({
+    data: {
+      api_version: '1',
+      deployment_kind: 'fleet',
+      features: { chat: true, terminal: true },
+    },
+  }),
 }));
 
 vi.mock('~/components/operator/OperatorAccessCard', () => ({
@@ -250,6 +288,16 @@ describe('ObservatoryPage', () => {
     overviewState.isError = false;
     overviewState.data.bots[0].records.ideas[0].proposed_action = 'delegate_research';
     overviewState.data.bots[0].records.owner_feedback = [] as any;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/bots/bot-1/runs')) {
+        return new Response(JSON.stringify(runsResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 404 });
+    }));
     hoisted.useTradingRouteAutoAuthMock.mockClear();
     hoisted.triggerMutateMock.mockClear();
     hoisted.feedbackMutateMock.mockClear();
@@ -290,6 +338,12 @@ describe('ObservatoryPage', () => {
     expect(screen.getByText('Blocked')).toBeInTheDocument();
     expect(screen.getByText('active_delegation_cap')).toBeInTheDocument();
     expect(screen.getAllByText(/research-1/).length).toBeGreaterThan(0);
+    const spendPanel = await screen.findByTestId('intelligence-spend-panel');
+    expect(within(spendPanel).getByText('Intelligence Spend')).toBeInTheDocument();
+    expect(within(spendPanel).getAllByText('$0.015').length).toBeGreaterThan(0);
+    expect(within(spendPanel).getByText('1.6k tok')).toBeInTheDocument();
+    expect(within(spendPanel).getByTestId('usage-workflow-observatory')).toHaveTextContent('Observatory');
+    expect(within(spendPanel).getByTestId('usage-model-zai/glm-5.1')).toHaveTextContent('zai/glm-5.1');
 
     fireEvent.click(screen.getByRole('button', { name: /observe now/i }));
     expect(hoisted.triggerMutateMock).toHaveBeenCalledWith('manual');

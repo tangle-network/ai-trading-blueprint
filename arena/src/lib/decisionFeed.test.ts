@@ -65,6 +65,7 @@ describe('decisionFeed', () => {
       provider: null,
       costUsd: null,
       loopMode: null,
+      harness: null,
     };
 
     const item = buildDecisionItemFromRun(run);
@@ -176,6 +177,7 @@ describe('decisionFeed', () => {
       provider: null,
       costUsd: null,
       loopMode: null,
+      harness: null,
     };
 
     expect(buildDecisionItemFromRun(run).reason).toBe(
@@ -252,6 +254,7 @@ describe('decisionFeed', () => {
       provider: null,
       costUsd: null,
       loopMode: null,
+      harness: null,
     };
 
     const item = buildDecisionItemFromRun(run);
