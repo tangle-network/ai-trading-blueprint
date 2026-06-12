@@ -9,6 +9,7 @@ pub mod context;
 pub mod discovery;
 pub mod fees;
 pub mod graceful_consumer;
+pub mod harness;
 pub mod jobs;
 pub mod on_chain;
 pub mod operator_chat;

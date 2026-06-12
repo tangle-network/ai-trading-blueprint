@@ -1514,6 +1514,14 @@ pub async fn provision_core(
     let runtime_backend =
         parse_runtime_backend_from_strategy_config(parsed_strategy_config.as_ref())
             .inspect_err(|e| mark_provision_failed(call_id, e))?;
+    // Validate the agent harness (and that the operator env can authenticate
+    // it) at provision time — an unsupported harness must fail here with a
+    // clear error, not at activation or first agent run.
+    let agent_harness =
+        crate::harness::agent_harness_from_strategy_config(parsed_strategy_config.as_ref())
+            .inspect_err(|e| mark_provision_failed(call_id, e))?;
+    crate::operator_credentials::harness_ai_env(&agent_harness)
+        .inspect_err(|e| mark_provision_failed(call_id, e))?;
     let paper_trade = parse_paper_trade_from_strategy_config(parsed_strategy_config.as_ref())
         .inspect_err(|e| mark_provision_failed(call_id, e))?
         .unwrap_or_else(|| default_paper_trade_for_request(&request));

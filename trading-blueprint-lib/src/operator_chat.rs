@@ -826,19 +826,35 @@ async fn execute_agent_run_turn(
     // profile-instructions.md and answers as the default coding assistant
     // instead of the trading operator. Model/provider still come from the
     // OPENCODE_MODEL_* env the sidecar injects; we only add instructions here.
+    //
+    // When the bot selects a non-default harness (strategy_config.agent_harness),
+    // pin it explicitly via `backend.type` — the sidecar resolves
+    // `overrides.backend?.type ?? AGENT_BACKEND-env-default`. Instructions-file
+    // loading is opencode-specific, so CLI harnesses (claude-code, codex) get
+    // the operator identity via the profile systemPrompt instead
+    // (`--system-prompt` for claude, prepended message for codex); the full
+    // protocol stays readable on disk at .opencode/profile-instructions.md.
+    let agent_harness = crate::state::find_bot_by_sandbox(&request.target.sandbox_id)
+        .map(|bot| crate::harness::agent_harness_for_bot(&bot.strategy_config))
+        .unwrap_or_else(|_| crate::harness::DEFAULT_AGENT_HARNESS.to_string());
+    let mut backend = json!({
+        "inlineProfile": {
+            "instructions": [
+                "AGENTS.md",
+                ".opencode/profile-instructions.md"
+            ]
+        }
+    });
+    if agent_harness != crate::harness::DEFAULT_AGENT_HARNESS {
+        backend["type"] = json!(agent_harness);
+        backend["inlineProfile"]["systemPrompt"] = json!(crate::jobs::OPERATOR_AGENTS_MD);
+    }
     let run_body = json!({
         "identifier": "default",
         "message": request.message.clone(),
         "sessionId": request.session_id.clone(),
         "timeout": request.timeout_ms,
-        "backend": {
-            "inlineProfile": {
-                "instructions": [
-                    "AGENTS.md",
-                    ".opencode/profile-instructions.md"
-                ]
-            }
-        }
+        "backend": backend
     });
     let started_at = Instant::now();
     let result = send_chat_request(

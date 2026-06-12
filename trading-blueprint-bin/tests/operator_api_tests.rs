@@ -1694,6 +1694,7 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
                 model: None,
                 provider: None,
                 cost_usd: None,
+                harness: None,
             },
         )
         .expect("insert successful run");
@@ -1718,6 +1719,7 @@ async fn test_runs_routes_expose_autonomous_history_without_transcript() {
                 model: None,
                 provider: None,
                 cost_usd: None,
+                harness: None,
             },
         )
         .expect("insert failed run");
@@ -1889,6 +1891,7 @@ async fn test_run_transcript_fallback_replays_json_results_as_chat_parts() {
                 model: None,
                 provider: None,
                 cost_usd: None,
+                harness: None,
             },
         )
         .expect("insert JSON run");
@@ -2006,6 +2009,7 @@ async fn test_public_run_messages_replay_json_result_without_auth() {
                 model: None,
                 provider: None,
                 cost_usd: None,
+                harness: None,
             },
         )
         .expect("insert JSON run");
@@ -2062,6 +2066,7 @@ async fn test_public_run_messages_redact_stored_transcript_secrets() {
                 model: None,
                 provider: None,
                 cost_usd: None,
+                harness: None,
             },
         )
         .expect("insert transcript run");
@@ -2147,6 +2152,7 @@ async fn test_running_autonomous_sessions_preserve_live_message_errors() {
                 model: None,
                 provider: None,
                 cost_usd: None,
+                harness: None,
             },
         )
         .expect("insert running run");
@@ -2669,6 +2675,7 @@ async fn test_archived_transcript_replay_honors_limit_and_cursor() {
                 model: None,
                 provider: None,
                 cost_usd: None,
+                harness: None,
             },
         )
         .expect("insert completed run");
@@ -2771,6 +2778,7 @@ async fn test_archived_run_messages_synthesize_summary_when_alias_unavailable() 
                 model: None,
                 provider: None,
                 cost_usd: None,
+                harness: None,
             },
         )
         .expect("insert completed run");
@@ -4842,4 +4850,228 @@ async fn test_create_preview_clamps_and_quantizes_parameters() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+}
+
+// ── /api/bots/{bot_id}/agent-runtime: owner-callable runtime knobs ────────
+
+fn set_sandbox_user_env(id: &str, env_json: &str) {
+    let mut record = sandbox_runtime::runtime::get_sandbox_by_id(id).expect("sandbox exists");
+    record.user_env_json = env_json.to_string();
+    sandbox_runtime::runtime::sandboxes()
+        .expect("sandbox store")
+        .insert(id.to_string(), record)
+        .expect("update sandbox");
+}
+
+async fn patch_agent_runtime(
+    bot_id: &str,
+    caller: &str,
+    body: serde_json::Value,
+) -> hyper::Response<axum::body::Body> {
+    app()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/bots/{bot_id}/agent-runtime"))
+                .header("content-type", "application/json")
+                .header("authorization", test_auth_header(caller))
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn get_agent_runtime_json(bot_id: &str, caller: &str) -> (u16, serde_json::Value) {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/bots/{bot_id}/agent-runtime"))
+                .header("authorization", test_auth_header(caller))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+/// Unsupported harnesses fail with the precise per-harness reason from
+/// `harness::normalize_agent_harness`, before any state changes.
+#[tokio::test]
+async fn test_agent_runtime_patch_unsupported_harness_400_with_reason() {
+    let _dir = init_test_env();
+    let bot = seed_bot("agent-rt-bad-harness", "dex", false);
+
+    let response =
+        patch_agent_runtime(&bot.id, SUBMITTER, json!({ "agent_harness": "gemini" })).await;
+    assert_eq!(response.status(), 400);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let err = String::from_utf8_lossy(&body);
+    assert!(
+        err.contains("no provider adapter"),
+        "expected the gemini rejection reason, got: {err}"
+    );
+    assert!(
+        err.contains("Supported harnesses"),
+        "expected the supported list, got: {err}"
+    );
+
+    // Unknown (not just undriveable) harnesses also get a clear error.
+    let response =
+        patch_agent_runtime(&bot.id, SUBMITTER, json!({ "agent_harness": "made-up" })).await;
+    assert_eq!(response.status(), 400);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let err = String::from_utf8_lossy(&body);
+    assert!(
+        err.contains("not a known sidecar backend"),
+        "expected unknown-harness error, got: {err}"
+    );
+
+    // Nothing was persisted on rejection.
+    let stored = state::resolve_bot(&bot.id).unwrap().unwrap();
+    assert!(stored.strategy_config.get("agent_harness").is_none());
+}
+
+#[tokio::test]
+async fn test_agent_runtime_patch_rejects_non_submitter() {
+    let _dir = init_test_env();
+    let bot = seed_bot("agent-rt-wrong-caller", "dex", false);
+
+    let response = patch_agent_runtime(
+        &bot.id,
+        "0xbbbb000000000000000000000000000000000002",
+        json!({ "agent_harness": "opencode" }),
+    )
+    .await;
+    assert_eq!(response.status(), 403);
+
+    let (status, _) =
+        get_agent_runtime_json(&bot.id, "0xbbbb000000000000000000000000000000000002").await;
+    assert_eq!(status, 403, "GET must also be submitter-gated");
+}
+
+#[tokio::test]
+async fn test_agent_runtime_patch_empty_body_400() {
+    let _dir = init_test_env();
+    let bot = seed_bot("agent-rt-empty", "dex", false);
+
+    let response = patch_agent_runtime(&bot.id, SUBMITTER, json!({})).await;
+    assert_eq!(response.status(), 400);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let err = String::from_utf8_lossy(&body);
+    assert!(err.contains("No agent-runtime changes requested"), "{err}");
+}
+
+/// Happy path: harness alias is normalized, persisted into strategy_config,
+/// returned in the response, and reflected by GET. A bot without injected
+/// secrets defers the env change to secret configuration.
+#[tokio::test]
+async fn test_agent_runtime_patch_persists_harness_and_get_reflects() {
+    let _dir = init_test_env();
+    // harness_ai_env('claude-code') requires this operator credential.
+    // SAFETY: test-process env only; no other test asserts its absence.
+    unsafe {
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test-operator-key");
+    }
+    let bot = seed_bot("agent-rt-happy", "dex", false);
+
+    let (_, before) = get_agent_runtime_json(&bot.id, SUBMITTER).await;
+    assert_eq!(before["agent_harness"], "opencode", "default harness");
+
+    let response =
+        patch_agent_runtime(&bot.id, SUBMITTER, json!({ "agent_harness": "claude" })).await;
+    assert_eq!(response.status(), 200);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "updated");
+    assert_eq!(json["agent_harness"], "claude-code", "alias normalized");
+    assert_eq!(json["restart"], "applies_on_secret_configuration");
+    assert_eq!(json["model"]["api_key_set"], false);
+
+    // Persisted in the bot record (the chat path reads this per request).
+    let stored = state::resolve_bot(&bot.id).unwrap().unwrap();
+    assert_eq!(
+        stored.strategy_config["agent_harness"], "claude-code",
+        "agent_harness must persist into strategy_config"
+    );
+
+    let (status, after) = get_agent_runtime_json(&bot.id, SUBMITTER).await;
+    assert_eq!(status, 200);
+    assert_eq!(after["agent_harness"], "claude-code", "GET reflects PATCH");
+}
+
+/// Model overrides are stored with the injected secrets; without secrets
+/// there is no durable store, so the request fails closed.
+#[tokio::test]
+async fn test_agent_runtime_model_only_without_secrets_conflicts() {
+    let _dir = init_test_env();
+    let bot = seed_bot("agent-rt-model-nosec", "dex", false);
+
+    let response =
+        patch_agent_runtime(&bot.id, SUBMITTER, json!({ "model_name": "glm-4.7" })).await;
+    assert_eq!(response.status(), 409);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let err = String::from_utf8_lossy(&body);
+    assert!(err.contains("Configure secrets first"), "{err}");
+}
+
+/// A model change on a bot with injected secrets goes through the existing
+/// wipe + activate re-injection path (container recreate). Without Docker the
+/// recreation fails at the sandbox layer — proving auth and validation passed
+/// and the request reached re-injection, mirroring the configure_secrets test.
+#[tokio::test]
+async fn test_agent_runtime_model_change_with_secrets_reaches_reinjection() {
+    let _dir = init_test_env();
+    let bot = seed_bot("agent-rt-model-reinject", "dex", true);
+    set_sandbox_user_env(
+        &bot.sandbox_id,
+        r#"{"OPENCODE_MODEL_PROVIDER":"zai-coding-plan","OPENCODE_MODEL_NAME":"glm-4.7","OPENCODE_MODEL_API_KEY":"sk-zai-secret"}"#,
+    );
+
+    let response =
+        patch_agent_runtime(&bot.id, SUBMITTER, json!({ "model_name": "glm-5.1" })).await;
+    let status = response.status().as_u16();
+    assert_ne!(status, 401, "should pass auth");
+    assert_ne!(status, 403, "should pass submitter check");
+    assert_ne!(status, 400, "model-only change on current harness is valid");
+    assert_eq!(status, 500, "expected sandbox-layer failure without Docker");
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let err = String::from_utf8_lossy(&body);
+    assert!(
+        err.contains("Secret re-injection failed"),
+        "error should come from the re-injection layer, got: {err}"
+    );
+    assert!(
+        !err.contains("sk-zai-secret"),
+        "the stored api key must never be echoed: {err}"
+    );
+}
+
+/// GET surfaces the model identity from the stored env without the key value.
+#[tokio::test]
+async fn test_agent_runtime_get_reports_model_identity_without_key() {
+    let _dir = init_test_env();
+    let bot = seed_bot("agent-rt-get-model", "dex", true);
+    set_sandbox_user_env(
+        &bot.sandbox_id,
+        r#"{"OPENCODE_MODEL_PROVIDER":"openrouter","OPENCODE_MODEL_NAME":"anthropic/claude-sonnet-4-6","OPENCODE_MODEL_BASE_URL":"https://router.tangle.tools/v1","OPENCODE_MODEL_API_KEY":"sk-tan-secret-value"}"#,
+    );
+
+    let (status, json) = get_agent_runtime_json(&bot.id, SUBMITTER).await;
+    assert_eq!(status, 200);
+    assert_eq!(json["agent_harness"], "opencode");
+    assert_eq!(json["model"]["provider"], "openrouter");
+    assert_eq!(json["model"]["name"], "anthropic/claude-sonnet-4-6");
+    assert_eq!(json["model"]["base_url"], "https://router.tangle.tools/v1");
+    assert_eq!(json["model"]["api_key_set"], true);
+    assert!(
+        !json.to_string().contains("sk-tan-secret-value"),
+        "api key must never be returned"
+    );
 }
