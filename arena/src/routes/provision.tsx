@@ -759,6 +759,16 @@ export function parsePositiveServiceIds(
   return { ok: true, ids };
 }
 
+function parseOperatorSearchParam(value: string | null): Address | null {
+  if (!value) return null;
+  try {
+    const address = getAddress(value);
+    return address === zeroAddress ? null : address;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveValidatorServiceIds({
   validatorMode,
   customValidatorIds,
@@ -1530,6 +1540,7 @@ export default function ProvisionPage() {
   // URL params for pre-selecting a blueprint or targeting an instance draft
   const [searchParams, setSearchParams] = useSearchParams();
   const preselectedBlueprintId = searchParams.get('blueprint');
+  const preselectedOperator = parseOperatorSearchParam(searchParams.get('operator'));
   const targetServiceId = searchParams.get('serviceId');
   const targetBotId = searchParams.get('botId');
   const targetSandboxId = searchParams.get('sandboxId');
@@ -1556,7 +1567,7 @@ export default function ProvisionPage() {
   const [quickLaunchError, setQuickLaunchError] = useState<string | null>(null);
   // User override from the operator picker; cheapest quote stays the default.
   const [quickOperatorChoice, setQuickOperatorChoice] =
-    useState<Address | null>(null);
+    useState<Address | null>(preselectedOperator);
   const quickJobSubmittedRef = useRef(false);
   const quickSecretsSubmittedRef = useRef(false);
 
@@ -1605,7 +1616,7 @@ export default function ProvisionPage() {
 
   // New service deployment
   const [selectedOperators, setSelectedOperators] = useState<Set<Address>>(
-    new Set(),
+    () => new Set(preselectedOperator ? [preselectedOperator] : []),
   );
   const [manualOperator, setManualOperator] = useState('');
   const [newServiceTxHash, setNewServiceTxHash] = useState<
@@ -2093,6 +2104,22 @@ export default function ProvisionPage() {
   }, [isInstance]);
 
   useEffect(() => {
+    if (!preselectedOperator) return;
+    setQuickOperatorChoice(preselectedOperator);
+    setSelectedOperators((prev) => {
+      if (
+        [...prev].some(
+          (address) => address.toLowerCase() === preselectedOperator.toLowerCase(),
+        )
+      ) {
+        return prev;
+      }
+      return new Set([preselectedOperator]);
+    });
+    if (isInstance) setServiceMode('new');
+  }, [isInstance, preselectedOperator]);
+
+  useEffect(() => {
     if (selectedPack.executionMode !== 'single-chain') return;
     const selected = compatibleExecutionTargets.find(
       (target) => target.id === executionTargetId,
@@ -2128,12 +2155,19 @@ export default function ProvisionPage() {
   }, [runtimeBackend, selectedBlueprint?.isTee]);
 
   useEffect(() => {
+    if (preselectedOperator) return;
     if (!isInstance || serviceMode !== 'new' || selectedOperators.size > 0)
       return;
     const defaultOperator = discoveredOperators[0]?.address;
     if (!defaultOperator) return;
     setSelectedOperators(new Set([defaultOperator]));
-  }, [discoveredOperators, isInstance, selectedOperators.size, serviceMode]);
+  }, [
+    discoveredOperators,
+    isInstance,
+    preselectedOperator,
+    selectedOperators.size,
+    serviceMode,
+  ]);
 
   const resetServiceActivationGuard = useCallback((txHash?: `0x${string}`) => {
     activationGuardTxHashRef.current = txHash;

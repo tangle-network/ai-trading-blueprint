@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { Identicon } from '@tangle-network/blueprint-ui/components';
 import type { Address } from 'viem';
 import type { QuoteFailureKind } from '~/lib/hooks/useQuotes';
 import { formatCost } from '~/routes/provision/types';
@@ -130,22 +131,35 @@ export function OperatorPicker({
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded((open) => !open)}
-        className="flex w-full items-center justify-between gap-3 p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
+        className="flex w-full items-center justify-between gap-3 p-3 text-left transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
       >
-        <span className="flex min-w-0 items-baseline gap-2 font-data text-sm">
-          <span className="text-arena-elements-textTertiary">Operator</span>
-          <span className="truncate text-arena-elements-textPrimary">
-            {selectedOption
-              ? selectedOption.rpcHost ?? truncateAddress(selectedOption.address)
-              : 'Choosing…'}
-          </span>
-          {selectedOption?.quoteCost != null && (
-            <span className="shrink-0 font-semibold text-arena-elements-textPrimary">
-              · {formatCost(selectedOption.quoteCost)}
+        <span className="flex min-w-0 items-center gap-3">
+          {selectedOption ? (
+            <Identicon address={selectedOption.address} size={28} />
+          ) : (
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] text-[var(--arena-terminal-muted)]">
+              <span className="i-ph:receipt text-sm" aria-hidden="true" />
             </span>
           )}
+          <span className="min-w-0">
+            <span className="block font-data text-[11px] uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
+              Operator quote
+            </span>
+            <span className="mt-0.5 flex min-w-0 items-baseline gap-2 text-sm">
+              <span className="truncate font-display font-semibold text-[var(--arena-terminal-text)]">
+                {selectedOption
+                  ? selectedOption.rpcHost ?? truncateAddress(selectedOption.address)
+                  : 'Choosing...'}
+              </span>
+              {selectedOption?.quoteCost != null && (
+                <span className="shrink-0 font-data font-semibold text-[var(--arena-terminal-accent)]">
+                  {formatCost(selectedOption.quoteCost)}
+                </span>
+              )}
+            </span>
+          </span>
         </span>
-        <span className="shrink-0 font-display text-sm font-medium text-[var(--arena-terminal-accent)]">
+        <span className="inline-flex h-8 shrink-0 items-center border border-[var(--arena-terminal-border)] px-2 font-display text-sm font-semibold text-[var(--arena-terminal-accent)]">
           {expanded ? 'Close' : 'Change'}
         </span>
       </button>
@@ -184,21 +198,22 @@ export function OperatorPicker({
                     : 'border-l-transparent motion-safe:transition-colors hover:bg-[color-mix(in_srgb,var(--arena-terminal-accent)_4%,transparent)] disabled:hover:bg-transparent'
                 }`}
               >
-                <span className="flex min-w-0 flex-col">
-                  <span
-                    className={`truncate font-data text-sm ${
-                      available
-                        ? 'text-arena-elements-textPrimary'
-                        : 'text-arena-elements-textTertiary'
-                    }`}
-                  >
-                    {option.rpcHost ?? truncateAddress(option.address)}
-                  </span>
-                  {option.rpcHost && (
-                    <span className="truncate font-data text-xs text-arena-elements-textTertiary">
-                      {truncateAddress(option.address)}
+                <span className="flex min-w-0 items-center gap-3">
+                  <Identicon address={option.address} size={26} />
+                  <span className="flex min-w-0 flex-col">
+                    <span
+                      className={`truncate font-display text-sm font-semibold ${
+                        available
+                          ? 'text-arena-elements-textPrimary'
+                          : 'text-arena-elements-textTertiary'
+                      }`}
+                    >
+                      {option.rpcHost ?? truncateAddress(option.address)}
                     </span>
-                  )}
+                    <span className="truncate font-data text-xs text-arena-elements-textTertiary">
+                      {option.rpcHost ? truncateAddress(option.address) : 'Registered operator'}
+                    </span>
+                  </span>
                 </span>
                 <span className="shrink-0 text-right">
                   {available ? (

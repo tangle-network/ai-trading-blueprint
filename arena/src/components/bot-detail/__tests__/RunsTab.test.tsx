@@ -25,7 +25,16 @@ const useBotSessionStreamMock = vi.hoisted(() =>
 );
 
 const chatTranscriptMock = vi.hoisted(() =>
-  vi.fn(() => <div data-testid="chat-transcript" />),
+  vi.fn(({ partMap = {} }: { partMap?: Record<string, Array<Record<string, unknown>>> }) => (
+    <div data-testid="chat-transcript">
+      {Object.entries(partMap).flatMap(([messageId, parts]) =>
+        parts.map((part, index) => {
+          const text = typeof part.text === "string" ? part.text : null;
+          return text ? <div key={`${messageId}-${index}`}>{text}</div> : null;
+        }),
+      )}
+    </div>
+  )),
 );
 
 vi.mock("~/lib/hooks/useOperatorAuth", () => ({
@@ -181,11 +190,11 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(
+    expect((await screen.findAllByText("Trading Run")).length).toBeGreaterThan(
       0,
     );
     expect(screen.getAllByText("latest result").length).toBeGreaterThan(0);
-    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -206,7 +215,7 @@ describe("RunsTab", () => {
         }),
       );
     });
-    expect(await screen.findByText("Research Trace")).toBeInTheDocument();
+    expect(await screen.findByText("Research Run")).toBeInTheDocument();
     expect(screen.getAllByText("latest result").length).toBeGreaterThan(0);
   });
 
@@ -387,7 +396,7 @@ describe("RunsTab", () => {
     );
 
     expect((await screen.findAllByText("public result")).length).toBeGreaterThan(0);
-    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -499,7 +508,7 @@ describe("RunsTab", () => {
     );
 
     expect((await screen.findAllByText("instance public result")).length).toBeGreaterThan(0);
-    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -599,9 +608,9 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByText("Decision Path")).toBeInTheDocument();
-    expect(screen.getAllByText("Parsed Output").length).toBeGreaterThan(0);
-    expect(screen.getByText("Evidence Record")).toBeInTheDocument();
+    expect(await screen.findByTestId("chat-transcript")).toBeInTheDocument();
+    expect(screen.getByText(/Checked State/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Decision/).length).toBeGreaterThan(0);
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -609,10 +618,10 @@ describe("RunsTab", () => {
         }),
       );
     });
-    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: /decision inspector/i })).not.toBeInTheDocument();
-    expect(screen.getAllByText("Decision").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("api-wallet-approval-not-verified").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Decision/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/api-wallet-approval-not-verified/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/result_schema_version/)).not.toBeInTheDocument();
     expect(screen.queryByText("Transcript unavailable")).not.toBeInTheDocument();
   });
@@ -712,10 +721,10 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect(await screen.findByText("Agentic Reflection")).toBeInTheDocument();
-    expect(screen.getAllByText("Parsed Output").length).toBeGreaterThan(0);
-    expect(screen.getByText("Delegation Pressure")).toBeInTheDocument();
-    expect(screen.getByText("Observatory Records")).toBeInTheDocument();
+    expect(await screen.findByText(/Agentic Reflection/)).toBeInTheDocument();
+    expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
+    expect(screen.getByText(/Delegation Pressure/)).toBeInTheDocument();
+    expect(screen.getByText(/Observatory Records/)).toBeInTheDocument();
     expect(screen.getAllByText(/processed 1 world signal/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Fetch ETH macro signal/)).toBeInTheDocument();
     expect(screen.queryByText(/agentic_reflection/)).not.toBeInTheDocument();
@@ -768,8 +777,8 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect((await screen.findAllByText("TRADE")).length).toBeGreaterThan(0);
-    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
+    expect((await screen.findAllByText(/Action: trade/i)).length).toBeGreaterThan(0);
+    expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -823,7 +832,7 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(
+    expect((await screen.findAllByText("Trading Run")).length).toBeGreaterThan(
       0,
     );
     await waitFor(() => {
@@ -875,7 +884,7 @@ describe("RunsTab", () => {
       { wrapper: createWrapper() },
     );
 
-    expect((await screen.findAllByText("Trading Trace")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Trading Run")).length).toBeGreaterThan(0);
     await waitFor(() => {
       expect(useBotSessionStreamMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -934,7 +943,7 @@ describe("RunsTab", () => {
     );
 
     expect((await screen.findAllByText("rsi-oversold")).length).toBeGreaterThan(0);
-    expect(screen.queryByTestId("chat-transcript")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-transcript")).toBeInTheDocument();
     const shell = container.querySelector('[data-sandbox-ui="true"]');
     expect(shell).toHaveClass("h-full");
     expect(shell).not.toHaveClass("glass-card");
@@ -942,7 +951,7 @@ describe("RunsTab", () => {
     expect(screen.getByLabelText("Autonomous runs")).toBeInTheDocument();
     expect(screen.queryByTestId("decision-activity-strip")).not.toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: /decision inspector/i })).not.toBeInTheDocument();
-    expect(screen.getAllByText("Decision").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Decision/).length).toBeGreaterThan(0);
   });
 
   it("shows the immersive trace cockpit from run and tool evidence", async () => {

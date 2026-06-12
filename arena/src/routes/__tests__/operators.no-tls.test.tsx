@@ -113,7 +113,7 @@ describe('operators route — endpoints without TLS', () => {
 
     // The https operator is still probed and reported healthy.
     await waitFor(() => {
-      expect(screen.getAllByText('fleet').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Online').length).toBeGreaterThan(0);
     });
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
     const probedUrls = fetchMock.mock.calls.map((call) => String(call[0]));

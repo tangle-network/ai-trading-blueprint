@@ -35,7 +35,7 @@ const SECTION_EXPECTATIONS = {
   ],
   runs: [
     ['ETH Macro Scalper', 'No runs yet'],
-    ['Reasoning', 'fast_backtest', 'Breakout retest', 'Evidence replay', 'Decision Path'],
+    ['Reasoning', 'fast_backtest', 'Breakout retest', 'Trading Run', 'Recorded reasoning summary'],
   ],
   chat: [
     ['Review the ETH breakout retest', 'ETH breakout review', 'No chat sessions yet'],
@@ -54,8 +54,8 @@ const LIVE_SECTION_EXPECTATIONS = {
   ],
   runs: [
     'Runs',
-    ['Trading Trace', 'No runs yet'],
-    ['Run details', 'Run failed', 'Result', 'Error', 'Workflow', 'Decision', 'Transcript'],
+    ['Trading Run', 'Research Run', 'Agent Run', 'No runs yet'],
+    ['Run failed', 'Error', 'Decision', 'Reasoning', 'Waiting for run output'],
   ],
   chat: [
     'Chat',
@@ -73,11 +73,10 @@ const FIXTURE_DASHBOARD_EXPECTATIONS = ['My Agents', 'ETH Macro Scalper', 'PNL',
 const FIXTURE_OBSERVATORY_EXPECTATIONS = [
   'Observatory',
   'ETH Macro Scalper',
-  'Output',
-  'Trace',
-  'Findings',
-  'Ideas',
-  'Delegations',
+  'Signal',
+  'Operating gaps',
+  'Proposals',
+  'Work queue',
   'Agent',
   '1 tool, 1 response',
   'Source-grounded finding is recorded.',
@@ -1032,11 +1031,17 @@ async function startFixtureAppServer(operatorUrl, { ownerPerformance = false } =
   });
 
   let output = '';
+  let closing = false;
   child.stdout.on('data', (chunk) => {
     output += chunk.toString();
   });
   child.stderr.on('data', (chunk) => {
     output += chunk.toString();
+  });
+  child.once('exit', (code, signal) => {
+    if (closing) return;
+    const tail = output.split('\n').slice(-80).join('\n');
+    console.error(`[arena-smoke] fixture app server exited unexpectedly (${signal ?? code}).\n${tail}`);
   });
 
   await waitFor(async () => {
@@ -1054,6 +1059,7 @@ async function startFixtureAppServer(operatorUrl, { ownerPerformance = false } =
   return {
     url,
     async close() {
+      closing = true;
       if (child.exitCode == null) {
         child.kill('SIGTERM');
       }
@@ -1065,7 +1071,23 @@ async function startFixtureAppServer(operatorUrl, { ownerPerformance = false } =
   };
 }
 
-async function launchChrome(chromePath) {
+async function launchChrome(chromePath, attempts = 3) {
+  // CI cold-starts (font cache build, crashpad init) can hold the DevTools
+  // banner past a short timeout; the launch itself is also occasionally
+  // stillborn on shared runners. Retry with a fresh profile each attempt.
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await launchChromeOnce(chromePath);
+    } catch (error) {
+      lastError = error;
+      console.warn(`[arena-smoke] chromium launch attempt ${attempt}/${attempts} failed: ${error.message.split('\n')[0]}`);
+    }
+  }
+  throw lastError;
+}
+
+async function launchChromeOnce(chromePath) {
   const profileDir = await mkdtemp(path.join(tmpdir(), 'arena-smoke-chrome-'));
   const child = spawn(chromePath, [
     '--headless=new',
@@ -1085,7 +1107,7 @@ async function launchChrome(chromePath) {
   const endpoint = await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error(`Chromium did not expose a DevTools endpoint.\n${stderr}`));
-    }, 8000);
+    }, 30000);
 
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
@@ -1327,8 +1349,31 @@ async function installFixtureWallet(page) {
 }
 
 async function navigate(page, url) {
+  const targetUrl = new URL(url).toString();
+  const currentUrl = await evaluate(page, 'location.href').catch(() => '');
+  if (currentUrl === targetUrl) {
+    await reloadIfHydrationFallbackStalled(page);
+    await wait(250);
+    return;
+  }
+
   await page.send('Page.navigate', { url });
+  try {
+    await waitFor(async () => {
+      const nextUrl = await evaluate(page, 'location.href');
+      return nextUrl === targetUrl;
+    }, { timeoutMs: 15_000, intervalMs: 100 });
+  } catch (error) {
+    const debugMetrics = await evaluate(page, `(() => ({
+      href: location.href,
+      readyState: document.readyState,
+      bodyText: document.body?.innerText?.slice(0, 400) ?? '',
+      isFallback: Boolean(document.querySelector('[data-testid="app-shell-fallback"]')),
+    }))()`).catch(() => null);
+    throw new Error(`Timed out navigating to ${targetUrl}; current=${JSON.stringify(debugMetrics)}; ${error instanceof Error ? error.message : String(error)}`);
+  }
   await waitForDocument(page);
+  await reloadIfHydrationFallbackStalled(page);
   await wait(250);
 }
 
@@ -1336,6 +1381,23 @@ async function reload(page) {
   await page.send('Page.reload', { ignoreCache: true });
   await waitForDocument(page);
   await wait(500);
+}
+
+async function isHydrationFallbackShell(page) {
+  return evaluate(page, `(() => {
+    const bodyText = document.body?.innerText?.trim() ?? '';
+    return bodyText.length === 0
+      && Boolean(document.querySelector('[data-testid="app-shell-fallback"]'))
+      && /__reactRouterContext|clientLoader|hydrateFallback/i.test(document.body?.innerHTML ?? '');
+  })()`).catch(() => false);
+}
+
+async function reloadIfHydrationFallbackStalled(page) {
+  await wait(1000);
+  if (!(await isHydrationFallbackShell(page))) return false;
+
+  await reload(page);
+  return true;
 }
 
 async function waitForDocument(page) {
@@ -1590,7 +1652,7 @@ function getSectionExpectations(section, {
     return LIVE_SECTION_EXPECTATIONS[section] ?? [];
   }
   if (fixtureEmptyRunTranscript && section === 'runs') {
-    return ['Decision Path', 'Evidence Record', 'No visible messages'];
+    return ['Trading Run', 'Recorded reasoning summary', 'Breakout retest'];
   }
   return SECTION_EXPECTATIONS[section] ?? [];
 }
@@ -1605,9 +1667,9 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
   const failures = [];
   const sections = ownerPerformance ? ['performance'] : WORKSPACE_SECTIONS;
 
-  for (const viewport of VIEWPORTS) {
-    await setViewport(page, viewport);
-    for (const section of sections) {
+  for (const section of sections) {
+    for (const viewport of VIEWPORTS) {
+      await setViewport(page, viewport);
       const route = `/arena/bot/${encodeURIComponent(botId)}/${section}`;
       await navigate(page, withPath(baseUrl, route, theme));
       let metrics;
