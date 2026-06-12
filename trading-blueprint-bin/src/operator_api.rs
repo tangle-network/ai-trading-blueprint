@@ -364,6 +364,31 @@ fn stored_sandbox_env(sandbox_id: &str) -> serde_json::Map<String, serde_json::V
         .unwrap_or_default()
 }
 
+fn apply_agent_runtime_model_env_updates(
+    env: &mut serde_json::Map<String, serde_json::Value>,
+    model_provider: Option<&str>,
+    model_name: Option<&str>,
+    model_base_url: Option<&str>,
+    model_api_key: Option<&str>,
+) {
+    if let Some(provider) = model_provider {
+        env.insert("OPENCODE_MODEL_PROVIDER".into(), provider.into());
+    }
+    if let Some(name) = model_name {
+        env.insert("OPENCODE_MODEL_NAME".into(), name.into());
+    }
+    if let Some(base_url) = model_base_url {
+        if base_url.is_empty() {
+            env.remove("OPENCODE_MODEL_BASE_URL");
+        } else {
+            env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.into());
+        }
+    }
+    if let Some(api_key) = model_api_key {
+        env.insert("OPENCODE_MODEL_API_KEY".into(), api_key.into());
+    }
+}
+
 #[derive(Serialize)]
 struct ActivationProgressResponse {
     bot_id: String,
@@ -1355,9 +1380,10 @@ fn refresh_trading_workflow_schedule(bot: &TradingBotRecord, cron: &str) -> Resu
     let cron = cron.to_string();
     let updated = store
         .update(&key, |entry| {
+            entry.trigger_type = "cron".to_string();
             entry.trigger_config = cron.clone();
             entry.next_run_at = ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run(
-                &entry.trigger_type,
+                "cron",
                 &cron,
                 entry.last_run_at,
             )
@@ -1366,11 +1392,25 @@ fn refresh_trading_workflow_schedule(bot: &TradingBotRecord, cron: &str) -> Resu
         })
         .map_err(|e| e.to_string())?;
     if !updated {
-        tracing::warn!(
-            workflow_id,
-            bot_id = %bot.id,
-            "Trading workflow not found while refreshing trading_loop_cron"
-        );
+        return Err(format!(
+            "Trading workflow {workflow_id} not found while refreshing trading_loop_cron for bot {}",
+            bot.id
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_trading_workflow_present(bot: &TradingBotRecord) -> Result<(), String> {
+    let Some(workflow_id) = bot.workflow_id else {
+        return Ok(());
+    };
+    let store = ai_agent_sandbox_blueprint_lib::workflows::workflows()?;
+    let key = ai_agent_sandbox_blueprint_lib::workflows::workflow_key(workflow_id);
+    if store.get(&key).map_err(|e| e.to_string())?.is_none() {
+        return Err(format!(
+            "Trading workflow {workflow_id} not found for bot {}",
+            bot.id
+        ));
     }
     Ok(())
 }
@@ -3949,10 +3989,13 @@ async fn update_agent_runtime(
             .filter(|v| !v.is_empty())
             .map(str::to_string)
     };
+    let optional_field = |value: &Option<String>| -> Option<String> {
+        value.as_deref().map(str::trim).map(str::to_string)
+    };
     let requested_harness = field(&body.agent_harness);
     let model_provider = field(&body.model_provider);
     let model_name = field(&body.model_name);
-    let model_base_url = field(&body.model_base_url);
+    let model_base_url = optional_field(&body.model_base_url);
     let model_api_key = field(&body.model_api_key);
 
     if requested_harness.is_none()
@@ -3998,18 +4041,13 @@ async fn update_agent_runtime(
         ));
     }
 
-    if let Some(provider) = &model_provider {
-        env.insert("OPENCODE_MODEL_PROVIDER".into(), provider.clone().into());
-    }
-    if let Some(name) = &model_name {
-        env.insert("OPENCODE_MODEL_NAME".into(), name.clone().into());
-    }
-    if let Some(base_url) = &model_base_url {
-        env.insert("OPENCODE_MODEL_BASE_URL".into(), base_url.clone().into());
-    }
-    if let Some(api_key) = &model_api_key {
-        env.insert("OPENCODE_MODEL_API_KEY".into(), api_key.clone().into());
-    }
+    apply_agent_runtime_model_env_updates(
+        &mut env,
+        model_provider.as_deref(),
+        model_name.as_deref(),
+        model_base_url.as_deref(),
+        model_api_key.as_deref(),
+    );
     // AGENT_BACKEND is harness-managed: drop any stale value so activation
     // re-derives it from the (possibly new) strategy_config harness via
     // harness_ai_env. Without this, a previous harness's AGENT_BACKEND would
@@ -4480,6 +4518,10 @@ async fn update_config(
         .map(validate_trading_loop_cron)
         .transpose()
         .map_err(|message| ApiError::message(StatusCode::BAD_REQUEST, message))?;
+    if next_trading_loop_cron.is_some() {
+        ensure_trading_workflow_present(&bot)
+            .map_err(|message| ApiError::message(StatusCode::CONFLICT, message))?;
+    }
 
     trading_blueprint_lib::jobs::configure_core(
         &bot.sandbox_id,
@@ -4506,14 +4548,25 @@ async fn update_config(
                     format!("Failed to update trading_loop_cron: {e}"),
                 )
             })?;
-        if let Ok(Some(updated_bot)) = state::get_bot(&bot.id)
-            && let Err(err) = refresh_trading_workflow_schedule(&updated_bot, &cron)
-        {
-            tracing::warn!(
-                bot_id = %updated_bot.id,
-                "Failed to refresh trading workflow schedule after config update: {err}"
-            );
-        }
+        let updated_bot = state::get_bot(&bot.id)
+            .map_err(|e| {
+                ApiError::message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to reload bot after trading_loop_cron update: {e}"),
+                )
+            })?
+            .ok_or_else(|| {
+                ApiError::message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Bot disappeared after trading_loop_cron update".to_string(),
+                )
+            })?;
+        refresh_trading_workflow_schedule(&updated_bot, &cron).map_err(|e| {
+            ApiError::message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to refresh trading workflow schedule: {e}"),
+            )
+        })?;
     }
 
     // Update vault address if provided
@@ -8503,6 +8556,34 @@ mod tests {
         );
         assert!(validate_trading_loop_cron("").is_err());
         assert!(validate_trading_loop_cron("not a cron").is_err());
+    }
+
+    #[test]
+    fn agent_runtime_model_env_update_clears_explicit_empty_base_url() {
+        let mut env = serde_json::Map::new();
+        env.insert("OPENCODE_MODEL_PROVIDER".into(), "openrouter".into());
+        env.insert(
+            "OPENCODE_MODEL_NAME".into(),
+            "anthropic/claude-sonnet-4-6".into(),
+        );
+        env.insert(
+            "OPENCODE_MODEL_BASE_URL".into(),
+            "https://router.tangle.tools/v1".into(),
+        );
+        env.insert("OPENCODE_MODEL_API_KEY".into(), "sk-test".into());
+
+        apply_agent_runtime_model_env_updates(
+            &mut env,
+            Some("gemini"),
+            Some("gemini-3-pro-preview"),
+            Some(""),
+            None,
+        );
+
+        assert_eq!(env["OPENCODE_MODEL_PROVIDER"], "gemini");
+        assert_eq!(env["OPENCODE_MODEL_NAME"], "gemini-3-pro-preview");
+        assert!(env.get("OPENCODE_MODEL_BASE_URL").is_none());
+        assert_eq!(env["OPENCODE_MODEL_API_KEY"], "sk-test");
     }
 
     #[test]

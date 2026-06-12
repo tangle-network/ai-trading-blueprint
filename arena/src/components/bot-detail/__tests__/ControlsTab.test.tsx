@@ -242,6 +242,29 @@ describe('ControlsTab', () => {
     });
   });
 
+  it('sends the selected provider base URL instead of leaving a stale runtime endpoint', async () => {
+    const user = userEvent.setup();
+    mocks.agentRuntime = {
+      agent_harness: 'opencode',
+      model: {
+        provider: 'openrouter',
+        name: 'anthropic/claude-sonnet-4-6',
+        base_url: 'https://router.tangle.tools/v1',
+        api_key_set: true,
+      },
+    };
+    render(<ControlsTab bot={makeBot()} />);
+
+    await user.selectOptions(screen.getByLabelText('Model preset'), 'zai');
+    await user.click(screen.getByRole('button', { name: 'Save Runtime' }));
+
+    expect(mocks.updateAgentRuntimeMutate).toHaveBeenCalledWith({
+      model_provider: 'zai-coding-plan',
+      model_name: 'glm-4.7',
+      model_base_url: 'https://api.z.ai/api/coding/paas/v4',
+    });
+  });
+
   it('saves trading, research, and conversation cadence without dropping strategy config', async () => {
     const user = userEvent.setup();
     mocks.detail.strategy_config = {

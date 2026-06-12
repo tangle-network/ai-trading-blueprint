@@ -256,6 +256,22 @@ pub fn insert_workflow_run_transcript_for_testing(
     persist_workflow_run_transcript(record).map(|_| ())
 }
 
+#[cfg(test)]
+pub(crate) fn remove_workflow_run_for_testing(run_id: &str) -> Result<(), String> {
+    workflow_runs_store()?
+        .remove(run_id)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+pub(crate) fn remove_workflow_run_transcript_for_testing(run_id: &str) -> Result<(), String> {
+    workflow_run_transcripts_store()?
+        .remove(run_id)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// Apply-workflow-failure no-op. The sibling's `store_failed_execution`
 /// already records the failure into `WorkflowEntry.latest_execution`, so
 /// the old hook was a duplicate write. Kept for compile-time compatibility.

@@ -29,7 +29,7 @@ import { BinaryUpdatesPanel } from '~/components/operator/BinaryUpdatesPanel';
 import { botStatusBadgeVariant, botStatusLabel, normalizeDisplayNumber } from '~/lib/format';
 import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
 import { getTradeValidationDisplay } from '~/lib/tradeValidation';
-import { AI_PROVIDERS, DEFAULT_TANGLE_ROUTER_BASE_URL } from '~/lib/config/aiProviders';
+import { AI_PROVIDERS } from '~/lib/config/aiProviders';
 import {
   CONVERSATION_CRON_5_MIN,
   RESEARCH_CRON_2_HOURS,
@@ -1086,7 +1086,7 @@ function RuntimeSettingsCard({
     if (!preset) return;
     setModelProvider(preset.modelProvider);
     setModelName(preset.modelName);
-    setModelBaseUrl(value === 'tangle-router' ? DEFAULT_TANGLE_ROUTER_BASE_URL : '');
+    setModelBaseUrl(preset.baseUrl ?? '');
   };
 
   const saveRuntime = () => {

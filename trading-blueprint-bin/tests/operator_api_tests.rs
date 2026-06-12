@@ -3447,6 +3447,83 @@ async fn test_update_config_rejects_invalid_trading_loop_cron_before_persisting(
     assert!(stored.strategy_config.get("leverage").is_none());
 }
 
+#[tokio::test]
+async fn test_update_config_updates_trading_workflow_schedule() {
+    let _dir = init_test_env();
+    let workflow_id = 9_100_401;
+    let bot = seed_bot_with_workflow("config-cron-refresh-1", "perp", true, Some(workflow_id));
+    let body = serde_json::json!({
+        "strategy_config_json": "{\"leverage\": 5}",
+        "trading_loop_cron": "0 */2 * * * *",
+    });
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/bots/{}/config", bot.id))
+                .header("content-type", "application/json")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let stored = state::get_bot(&bot.id).unwrap().unwrap();
+    assert_eq!(stored.trading_loop_cron, "0 */2 * * * *");
+    assert_eq!(stored.strategy_config["leverage"], 5);
+
+    let workflow = ai_agent_sandbox_blueprint_lib::workflows::workflows()
+        .expect("workflow store")
+        .get(&ai_agent_sandbox_blueprint_lib::workflows::workflow_key(
+            workflow_id,
+        ))
+        .expect("read workflow")
+        .expect("workflow exists");
+    assert_eq!(workflow.trigger_config, "0 */2 * * * *");
+    assert!(workflow.next_run_at.is_some());
+}
+
+#[tokio::test]
+async fn test_update_config_rejects_trading_loop_cron_when_workflow_missing() {
+    let _dir = init_test_env();
+    let bot = seed_bot("config-cron-missing-workflow-1", "perp", true);
+    state::bots()
+        .expect("bots store")
+        .update(&state::bot_key(&bot.id), |record| {
+            record.workflow_id = Some(9_100_402);
+        })
+        .expect("set missing workflow id");
+    let body = serde_json::json!({
+        "strategy_config_json": "{\"leverage\": 5}",
+        "trading_loop_cron": "0 */2 * * * *",
+    });
+
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/bots/{}/config", bot.id))
+                .header("content-type", "application/json")
+                .header("authorization", test_auth_header(SUBMITTER))
+                .body(Body::from(serde_json::to_string(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let err = String::from_utf8_lossy(&body);
+    assert!(err.contains("Trading workflow 9100402 not found"), "{err}");
+
+    let stored = state::get_bot(&bot.id).unwrap().unwrap();
+    assert_eq!(stored.trading_loop_cron, "0 */5 * * * *");
+    assert!(stored.strategy_config.get("leverage").is_none());
+}
+
 // ---------------------------------------------------------------------------
 // Metrics / trades / portfolio tests
 // ---------------------------------------------------------------------------
@@ -5319,6 +5396,22 @@ async fn test_agent_runtime_model_only_without_secrets_conflicts() {
     let response =
         patch_agent_runtime(&bot.id, SUBMITTER, json!({ "model_name": "glm-4.7" })).await;
     assert_eq!(response.status(), 409);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let err = String::from_utf8_lossy(&body);
+    assert!(err.contains("Configure secrets first"), "{err}");
+}
+
+#[tokio::test]
+async fn test_agent_runtime_empty_base_url_is_a_model_change() {
+    let _dir = init_test_env();
+    let bot = seed_bot("agent-rt-empty-base-url", "dex", false);
+
+    let response = patch_agent_runtime(&bot.id, SUBMITTER, json!({ "model_base_url": "" })).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::CONFLICT,
+        "explicit empty base URL should be treated as a clear request, not an empty body"
+    );
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let err = String::from_utf8_lossy(&body);
     assert!(err.contains("Configure secrets first"), "{err}");
