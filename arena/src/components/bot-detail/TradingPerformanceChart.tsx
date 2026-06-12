@@ -393,14 +393,26 @@ function rollingAverageSeries(candles: MarketCandle[], period: number): LineData
   return result;
 }
 
-function vwapSeries(candles: MarketCandle[]): LineData<Time>[] {
+export function vwapSeries(candles: MarketCandle[]): LineData<Time>[] {
+  // Session-anchored (UTC daily) VWAP. A cumulative VWAP anchored at the
+  // start of the loaded window drifts arbitrarily far from price in a
+  // trending market (e.g. floats ~15% above the candles after a multi-week
+  // decline) - traders read that as a broken indicator. Resetting each UTC
+  // session is the standard convention.
   const result: LineData<Time>[] = [];
   let cumulativePriceVolume = 0;
   let cumulativeVolume = 0;
+  let sessionDay = -1;
 
   for (const candle of candles) {
     const volume = Math.max(0, candle.volume);
     if (volume <= 0) continue;
+    const day = Math.floor(candle.timestamp / 86_400_000);
+    if (day !== sessionDay) {
+      sessionDay = day;
+      cumulativePriceVolume = 0;
+      cumulativeVolume = 0;
+    }
     const typicalPrice = (candle.high + candle.low + candle.close) / 3;
     cumulativePriceVolume += typicalPrice * volume;
     cumulativeVolume += volume;
@@ -1535,6 +1547,10 @@ export function TradingPerformanceChart({
         );
         const navPaneSeries = navPane
           ? chart.addSeries(charts.AreaSeries, {
+              // The lower pane charts the bot's portfolio NAV in USD - a
+              // different quantity from the price candles above. Without a
+              // title the axis values read as nonsense prices.
+              title: 'NAV (USD)',
               lineColor,
               topColor: fillTopColor,
               bottomColor: chartTheme.gradientEnd,
@@ -1543,7 +1559,7 @@ export function TradingPerformanceChart({
               crosshairMarkerRadius: 3,
               crosshairMarkerBorderColor: chartTheme.hoverBorderColor,
               crosshairMarkerBackgroundColor: lineColor,
-              lastValueVisible: false,
+              lastValueVisible: true,
               priceLineVisible: false,
             }, navPane.paneIndex())
           : undefined;
