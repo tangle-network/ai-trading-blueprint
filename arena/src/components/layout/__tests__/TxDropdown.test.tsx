@@ -32,6 +32,18 @@ vi.mock('@tangle-network/blueprint-ui', () => ({
   clearTxs: hoisted.clearTxs,
 }));
 
+vi.mock('~/lib/contracts/chains', () => ({
+  networks: {
+    84532: {
+      chain: {
+        blockExplorers: {
+          default: { name: 'BaseScan Sepolia', url: 'https://sepolia.basescan.org/' },
+        },
+      },
+    },
+  },
+}));
+
 vi.mock('@tangle-network/sandbox-ui/hooks', () => ({
   useDropdownMenu: () => ({
     open: hoisted.open,
@@ -102,5 +114,27 @@ describe('TxDropdown', () => {
 
     expect(screen.getByText('Transactions')).toBeInTheDocument();
     expect(screen.getByText('Create service')).toBeInTheDocument();
+  });
+
+  it('links expanded transaction hashes to the chain explorer', async () => {
+    const user = userEvent.setup();
+    const hash = '0x1111111111111111111111111111111111111111111111111111111111111111';
+    hoisted.open = true;
+    hoisted.txs = [{
+      hash,
+      label: 'Create service',
+      status: 'confirmed',
+      timestamp: Date.now(),
+      chainId: 84532,
+    }];
+
+    render(<TxDropdown />);
+
+    await user.click(screen.getByRole('button', { name: /create service/i }));
+
+    expect(screen.getByRole('link', { name: /view transaction on basescan sepolia/i })).toHaveAttribute(
+      'href',
+      `https://sepolia.basescan.org/tx/${hash}`,
+    );
   });
 });

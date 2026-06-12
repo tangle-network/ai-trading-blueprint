@@ -18,6 +18,7 @@ import {
 } from '~/lib/tradeDisplay';
 import { formatNumber } from '~/lib/format';
 import { isExplicitPaperValidationBypass } from '~/lib/tradeValidation';
+import { getExplorerTxLink } from '~/lib/utils/explorerLinks';
 import {
   WorkspaceCollapsedPane,
   WorkspaceControlButton,
@@ -50,6 +51,52 @@ function formatReference(trade: Trade): string {
   const ref = trade.txHash ?? trade.execution?.clobOrderId ?? trade.id;
   if (!ref) return '—';
   return ref.length > 14 ? `${ref.slice(0, 6)}…${ref.slice(-4)}` : ref;
+}
+
+function TradeReference({
+  trade,
+  align = 'right',
+  terminal = false,
+}: {
+  trade: Trade;
+  align?: 'left' | 'right';
+  terminal?: boolean;
+}) {
+  const isLiveRef = !trade.paperTrade && trade.status !== 'paper';
+  const explorer = isLiveRef ? getExplorerTxLink(trade.chainId, trade.txHash) : null;
+  const label = formatReference(trade);
+  const alignmentClass = align === 'right' ? 'justify-end text-right' : 'justify-start text-left';
+
+  if (!explorer) {
+    return (
+      <span
+        className={`block min-w-0 truncate ${align === 'right' ? 'text-right' : 'text-left'}`}
+        title={trade.txHash ?? trade.execution?.clobOrderId ?? trade.id}
+      >
+        {label}
+      </span>
+    );
+  }
+
+  return (
+    <a
+      href={explorer.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`inline-flex max-w-full min-w-0 items-center gap-1 truncate font-data transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60 ${alignmentClass} ${
+        terminal
+          ? 'text-[var(--arena-terminal-accent)] hover:text-[var(--arena-terminal-text)]'
+          : 'text-violet-700 hover:text-arena-elements-textPrimary dark:text-violet-300'
+      }`}
+      title={`${trade.txHash} · ${explorer.label}`}
+      aria-label={`View fill transaction on ${explorer.label}`}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <span className="min-w-0 truncate">{label}</span>
+      <span className="i-ph:arrow-square-out shrink-0 text-[11px]" aria-hidden="true" />
+    </a>
+  );
 }
 
 const tradeTimestampFormatter = new Intl.DateTimeFormat('en-US', {
@@ -431,7 +478,7 @@ export function LatestAgentTrades({
                           {formatTradeUsd(trade.notionalUsd)}
                         </td>
                         <td className="hidden border-b border-[var(--arena-terminal-border)] px-2.5 py-1.5 text-right align-middle font-data text-xs text-[var(--arena-terminal-text-muted)] 2xl:table-cell">
-                          {formatReference(trade)}
+                          <TradeReference trade={trade} terminal />
                         </td>
                       </tr>
                     );
@@ -578,7 +625,7 @@ export function LatestAgentTrades({
                       <StatusBadge status={trade.status} size="sm" />
                     </td>
                     <td className="border-b border-arena-elements-dividerColor/45 px-4 py-3 text-right align-middle font-data text-sm text-arena-elements-textTertiary">
-                      {formatReference(trade)}
+                      <TradeReference trade={trade} />
                     </td>
                   </tr>
                 );
@@ -679,7 +726,7 @@ function FillInspector({
           <InspectorRow label="Price" value={price} />
           <InspectorRow label="Input" value={`${formatTradeAmount(trade.amountIn)} ${trade.tokenIn}`} />
           <InspectorRow label="Output" value={`${formatTradeAmount(trade.amountOut)} ${trade.tokenOut}`} />
-          <InspectorRow label="Ref" value={formatReference(trade)} />
+          <InspectorRow label="Ref" value={<TradeReference trade={trade} terminal />} />
           {trade.decisionSource && (
             <InspectorRow label="Source" value={trade.decisionSource} />
           )}
@@ -717,11 +764,13 @@ function FillInspector({
   );
 }
 
-function InspectorRow({ label, value }: { label: string; value: string }) {
+function InspectorRow({ label, value }: { label: string; value: ReactNode }) {
+  const content = typeof value === 'string' && value.length === 0 ? '—' : value;
+
   return (
     <div className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2 last:border-b-0">
       <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--arena-terminal-text-subtle)]">{label}</span>
-      <span className="min-w-0 truncate text-right font-mono text-sm text-[var(--arena-terminal-text-secondary)]">{value || '—'}</span>
+      <span className="min-w-0 truncate text-right font-mono text-sm text-[var(--arena-terminal-text-secondary)]">{content}</span>
     </div>
   );
 }

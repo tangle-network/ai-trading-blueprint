@@ -38,6 +38,10 @@ vi.mock('~/lib/hooks/useBotApi', () => ({
   }),
 }));
 
+vi.mock('~/lib/contracts/chains', () => ({
+  networks: {},
+}));
+
 vi.mock('~/lib/hooks/useOperatorAuth', () => ({
   useOperatorAuth: () => ({
     token: 'test-token',
@@ -126,6 +130,42 @@ describe('TradeHistoryTab', () => {
     expect(screen.getAllByText('USDC').length).toBeGreaterThan(0);
     expect(screen.queryByText('Price')).not.toBeInTheDocument();
     expect(screen.queryByText('$2,000')).not.toBeInTheDocument();
+  });
+
+  it('links live EVM execution hashes to the explorer from trade history', () => {
+    const txHash = `0x${'b'.repeat(64)}`;
+    setTrades([
+      makeTrade({
+        id: 'trade-1',
+        txHash,
+        chainId: 137,
+        paperTrade: false,
+        targetProtocol: 'uniswap_v3',
+      }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.getByRole('link', { name: /view transaction on polygonscan/i })).toHaveAttribute(
+      'href',
+      `https://polygonscan.com/tx/${txHash}`,
+    );
+  });
+
+  it('does not link paper execution hashes from trade history', () => {
+    setTrades([
+      makeTrade({
+        id: 'trade-1',
+        txHash: `0x${'c'.repeat(64)}`,
+        chainId: 137,
+        paperTrade: true,
+        status: 'paper',
+      }),
+    ]);
+
+    render(<TradeHistoryTab botId="bot-1" botName="Test Bot" />);
+
+    expect(screen.queryByRole('link', { name: /view transaction/i })).not.toBeInTheDocument();
   });
 
   it('paginates loaded rows against the trade ledger total when available', () => {
