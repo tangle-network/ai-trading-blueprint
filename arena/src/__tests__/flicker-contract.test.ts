@@ -6,8 +6,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { criticalThemeCss } from '~/lib/theme/criticalThemeCss';
-
-const src = (rel: string) => readFileSync(resolve(__dirname, '..', rel), 'utf8');
+// vitest sets css:false, which empties .scss imports (even ?raw), so source
+// contracts are read straight from disk. import.meta.dirname needs the node
+// types that arena's tsconfig now includes.
+const src = (rel: string) =>
+  readFileSync(resolve(import.meta.dirname, '..', rel), 'utf8');
 
 describe('critical theme CSS', () => {
   const variables = src('styles/variables.scss');
