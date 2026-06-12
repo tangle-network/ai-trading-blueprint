@@ -81,6 +81,7 @@ vi.mock('@tangle-network/blueprint-ui/components', () => ({
   Card: ({ children, ...props }: any) => <div {...props}>{children}</div>,
   CardContent: ({ children, ...props }: any) => <div {...props}>{children}</div>,
   Button: ({ children, ...props }: any) => <button {...props}>{children}</button>,
+  Identicon: ({ address }: any) => <span data-testid="identicon">{address?.slice(0, 6)}</span>,
 }));
 
 vi.mock('@tangle-network/blueprint-ui', () => ({

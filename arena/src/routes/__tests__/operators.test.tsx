@@ -107,11 +107,16 @@ describe('operators route', () => {
 
     await waitFor(() => {
       expect(screen.getAllByText('Public').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('fleet').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Online').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Shared endpoint').length).toBeGreaterThan(0);
     });
 
     expect(screen.getAllByText('https://fallback-operator.test').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Allowlist').length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: 'Request' }).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByRole('link', { name: 'Request' })[0]).toHaveAttribute(
+      'href',
+      '/provision?blueprint=trading-instance&operator=0x1111111111111111111111111111111111111111',
+    );
   });
 });

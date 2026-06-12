@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { resolveOperatorRpc, useOperators } from '@tangle-network/blueprint-ui';
+import { Identicon } from '@tangle-network/blueprint-ui/components';
 import type { Address } from 'viem';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import type { OperatorMeta } from '~/lib/operator/meta';
@@ -39,9 +40,16 @@ function shortAddress(value: string | null | undefined): string {
 }
 
 function accessTone(mode: string | undefined) {
+  if (!mode)
+    return 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] text-[var(--arena-terminal-muted)]';
   return mode === 'public'
     ? 'border-[#50d2c1]/45 bg-[#50d2c1]/10 text-[#0f766e] dark:text-[#9af4e8]'
     : 'border-[#f2d073]/40 bg-[#f2d073]/12 text-[#8a5a00] dark:text-[#f6d77c]';
+}
+
+function accessLabel(mode: string | undefined): string {
+  if (!mode) return 'Unknown';
+  return mode === 'public' ? 'Public' : 'Allowlist';
 }
 
 function healthTone(ok: boolean | undefined) {
@@ -50,8 +58,45 @@ function healthTone(ok: boolean | undefined) {
   return 'border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] text-[var(--arena-terminal-muted)]';
 }
 
+function healthLabel(row: BlueprintOperatorRow): string {
+  if (row.api?.ok) return 'Online';
+  if (row.api?.noTls) return 'No TLS';
+  if (row.api) return 'Offline';
+  return 'Unverified';
+}
+
+function deploymentLabel(kind: OperatorMeta['deployment_kind'] | undefined): string {
+  if (kind === 'fleet') return 'Shared endpoint';
+  if (kind === 'instance') return 'Dedicated endpoint';
+  return 'Endpoint';
+}
+
+function provisionHref(
+  blueprint: TradingBlueprintDef | undefined,
+  row?: BlueprintOperatorRow,
+): string {
+  const params = new URLSearchParams();
+  if (blueprint) params.set('blueprint', blueprint.id);
+  const operator = row?.address ?? row?.api?.meta?.request_access?.operator_address;
+  if (operator) params.set('operator', operator);
+  const query = params.toString();
+  return query ? `/provision?${query}` : '/provision';
+}
+
 function normalizeDirectoryUrl(value: string | undefined): string {
   return value?.trim().replace(/\/+$/, '') ?? '';
+}
+
+function OperatorIdentity({ row, size = 28 }: { row: BlueprintOperatorRow; size?: number }) {
+  const operatorAddress = row.address ?? row.api?.meta?.request_access?.operator_address;
+  if (!operatorAddress) {
+    return (
+      <span className="flex shrink-0 items-center justify-center border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] text-[var(--arena-terminal-muted)]" style={{ width: size, height: size }}>
+        <span className="i-ph:plug text-sm" aria-hidden="true" />
+      </span>
+    );
+  }
+  return <Identicon address={operatorAddress as Address} size={size} />;
 }
 
 async function fetchOperatorApis(urls: string[]): Promise<OperatorApiRow[]> {
@@ -188,32 +233,44 @@ function BlueprintOperatorsTable({
         ) : (
           rows.map((row) => {
             const access = row.api?.meta?.request_access;
+            const status = healthLabel(row);
             return (
               <div key={row.key} className="space-y-2 px-3 py-3 text-sm">
                 <div className="flex min-w-0 items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate font-data text-[var(--arena-terminal-text)]" title={row.address ?? undefined}>
-                      {row.address ? shortAddress(row.address) : 'Operator API'}
-                    </div>
-                    <div className="truncate font-data text-xs text-[var(--arena-terminal-muted)]" title={row.apiUrl || row.rpcAddress}>
-                      {row.apiUrl || 'No RPC registered'}
+                  <div className="flex min-w-0 items-center gap-3">
+                    <OperatorIdentity row={row} size={30} />
+                    <div className="min-w-0">
+                      <div className="truncate font-data text-[var(--arena-terminal-text)]" title={row.address ?? undefined}>
+                        {row.address ? shortAddress(row.address) : 'Operator API'}
+                      </div>
+                      <div className="truncate font-data text-xs text-[var(--arena-terminal-muted)]" title={row.apiUrl || row.rpcAddress}>
+                        {row.apiUrl || 'No RPC registered'}
+                      </div>
                     </div>
                   </div>
                   <span
                     className={`inline-flex h-7 shrink-0 items-center border px-2 text-xs font-display font-semibold ${healthTone(row.api?.ok)}`}
                     title={row.api?.noTls ? 'Unreachable from browser (no TLS). Operator endpoints must be served over https.' : row.api?.error}
                   >
-                    {row.api?.ok ? 'Online' : row.api?.noTls ? 'No TLS' : row.api ? 'Offline' : 'Unverified'}
+                    {status}
                   </span>
                 </div>
                 <div className="flex min-w-0 items-center justify-between gap-2">
                   <span className={`inline-flex h-7 items-center border px-2 text-xs font-display font-semibold ${accessTone(access?.mode)}`}>
-                    {access?.mode === 'public' ? 'Public' : 'Allowlist'}
+                    {accessLabel(access?.mode)}
                   </span>
-                  <Link to="/provision" className="font-display text-sm text-[#148f82] hover:text-[#0f766e] dark:text-[#50d2c1] dark:hover:text-[#c8fffb]">
+                  <Link
+                    to={provisionHref(selectedBlueprint, row)}
+                    className="inline-flex h-8 items-center border border-[#50d2c1]/35 px-2 font-display text-sm font-semibold text-[#148f82] hover:border-[#50d2c1]/60 hover:bg-[#50d2c1]/10 hover:text-[#0f766e] dark:text-[#50d2c1] dark:hover:text-[#c8fffb]"
+                  >
                     Request
                   </Link>
                 </div>
+                {row.api?.ok && (
+                  <div className="font-data text-[11px] uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
+                    {deploymentLabel(row.api.meta?.deployment_kind)}
+                  </div>
+                )}
               </div>
             );
           })
@@ -239,14 +296,18 @@ function BlueprintOperatorsTable({
           ) : (
             rows.map((row) => {
               const access = row.api?.meta?.request_access;
+              const status = healthLabel(row);
               return (
                 <div key={row.key} className="grid min-h-12 grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_120px_120px_120px] items-center gap-3 px-3 py-2 text-sm">
-                  <div className="min-w-0">
-                    <div className="truncate font-data text-[var(--arena-terminal-text)]" title={row.address ?? undefined}>
-                      {row.address ?? 'Configured API'}
-                    </div>
-                    <div className="font-data text-[11px] uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
-                      {row.source === 'registered' ? 'on-chain registration' : 'configured endpoint'}
+                  <div className="flex min-w-0 items-center gap-3">
+                    <OperatorIdentity row={row} />
+                    <div className="min-w-0">
+                      <div className="truncate font-data text-[var(--arena-terminal-text)]" title={row.address ?? undefined}>
+                        {row.address ?? 'Configured API'}
+                      </div>
+                      <div className="font-data text-[11px] uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
+                        {row.source === 'registered' ? 'on-chain registration' : deploymentLabel(row.api?.meta?.deployment_kind)}
+                      </div>
                     </div>
                   </div>
                   <a
@@ -259,15 +320,25 @@ function BlueprintOperatorsTable({
                     {row.apiUrl || 'No RPC registered'}
                   </a>
                   <span className={`inline-flex h-7 w-fit items-center border px-2 text-xs font-display font-semibold ${accessTone(access?.mode)}`}>
-                    {access?.mode === 'public' ? 'Public' : 'Allowlist'}
+                    {accessLabel(access?.mode)}
                   </span>
-                  <span
-                    className={`inline-flex h-7 w-fit items-center border px-2 text-xs font-display font-semibold ${healthTone(row.api?.ok)}`}
-                    title={row.api?.noTls ? 'Unreachable from browser (no TLS). Operator endpoints must be served over https.' : row.api?.error}
+                  <div className="min-w-0">
+                    <span
+                      className={`inline-flex h-7 w-fit items-center border px-2 text-xs font-display font-semibold ${healthTone(row.api?.ok)}`}
+                      title={row.api?.noTls ? 'Unreachable from browser (no TLS). Operator endpoints must be served over https.' : row.api?.error}
+                    >
+                      {status}
+                    </span>
+                    {row.api?.ok && (
+                      <div className="mt-1 truncate font-data text-[11px] text-[var(--arena-terminal-text-subtle)]">
+                        {deploymentLabel(row.api.meta?.deployment_kind)}
+                      </div>
+                    )}
+                  </div>
+                  <Link
+                    to={provisionHref(selectedBlueprint, row)}
+                    className="inline-flex h-8 w-fit items-center border border-[#50d2c1]/35 px-2 font-display text-sm font-semibold text-[#148f82] hover:border-[#50d2c1]/60 hover:bg-[#50d2c1]/10 hover:text-[#0f766e] dark:text-[#50d2c1] dark:hover:text-[#c8fffb]"
                   >
-                    {row.api?.ok ? row.api.meta?.deployment_kind ?? 'online' : row.api?.noTls ? 'no TLS' : row.api ? 'offline' : 'unverified'}
-                  </span>
-                  <Link to="/provision" className="w-fit font-display text-sm font-semibold text-[#148f82] hover:text-[#0f766e] dark:text-[#50d2c1] dark:hover:text-[#c8fffb]">
                     Request
                   </Link>
                 </div>
@@ -333,7 +404,7 @@ export default function OperatorsPage() {
         controls={(
           <>
             <ArenaHeaderLink to="/operators/register" icon="i-ph:hard-drives" variant="primary">Become an operator</ArenaHeaderLink>
-            <ArenaHeaderLink to="/provision" icon="i-ph:rocket-launch">Request Instance</ArenaHeaderLink>
+            <ArenaHeaderLink to={provisionHref(selectedBlueprint)} icon="i-ph:rocket-launch">Request Instance</ArenaHeaderLink>
             <ArenaHeaderLink to="/create" icon="i-ph:chat-circle-dots">New Agent</ArenaHeaderLink>
           </>
         )}
@@ -373,7 +444,10 @@ export default function OperatorsPage() {
                 {operatorCount.toString()} registered on-chain for blueprint #{selectedBlueprint?.blueprintId ?? '0'}.
               </p>
             </div>
-            <Link to="/provision" className="hidden text-sm font-display text-[#50d2c1] hover:text-[#c8fffb] sm:inline-flex">
+            <Link
+              to={provisionHref(selectedBlueprint)}
+              className="hidden h-8 items-center border border-[#50d2c1]/35 px-2 font-display text-sm font-semibold text-[#50d2c1] hover:border-[#50d2c1]/60 hover:bg-[#50d2c1]/10 hover:text-[#c8fffb] sm:inline-flex"
+            >
               Quote and request
             </Link>
           </div>

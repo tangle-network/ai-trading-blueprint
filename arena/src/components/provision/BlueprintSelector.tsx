@@ -1,4 +1,3 @@
-import { Card, CardContent } from '@tangle-network/blueprint-ui/components';
 import type { TradingBlueprintDef } from '~/lib/blueprints';
 import { instanceFraming } from '~/lib/blueprints/framing';
 
@@ -8,21 +7,18 @@ interface BlueprintSelectorProps {
   onSelect: (id: string) => void;
 }
 
-const colorClasses: Record<string, { border: string; bg: string; icon: string }> = {
+const colorClasses: Record<string, { accent: string; soft: string }> = {
   violet: {
-    border: 'border-violet-500/50',
-    bg: 'bg-violet-500/5',
-    icon: 'text-violet-500',
+    accent: 'text-[#b99cff]',
+    soft: 'bg-[#7c5cff]/10',
   },
   teal: {
-    border: 'border-teal-500/50',
-    bg: 'bg-teal-500/5',
-    icon: 'text-teal-500',
+    accent: 'text-[#50d2c1]',
+    soft: 'bg-[#50d2c1]/10',
   },
   blue: {
-    border: 'border-blue-500/50',
-    bg: 'bg-blue-500/5',
-    icon: 'text-blue-500',
+    accent: 'text-[#7db7ff]',
+    soft: 'bg-[#2f86ff]/10',
   },
 };
 
@@ -36,7 +32,11 @@ export function BlueprintSelector({ blueprints, selected, onSelect }: BlueprintS
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" role="radiogroup" aria-label="Where your bot runs">
+    <div
+      className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
+      role="radiogroup"
+      aria-label="Where your bot runs"
+    >
       {blueprints.map((bp) => {
         const isSelected = selected === bp.id;
         const colors = colorClasses[bp.color] ?? colorClasses.violet;
@@ -49,42 +49,51 @@ export function BlueprintSelector({ blueprints, selected, onSelect }: BlueprintS
             role="radio"
             aria-checked={isSelected}
             onClick={() => onSelect(bp.id)}
-            className="text-left w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]"
+            className={[
+              'group relative min-h-[164px] w-full border bg-[var(--arena-terminal-panel)] p-4 text-left transition-[background-color,border-color,transform] duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]',
+              isSelected
+                ? 'border-[var(--arena-terminal-accent)] bg-[color-mix(in_srgb,var(--arena-terminal-accent)_8%,var(--arena-terminal-panel))]'
+                : 'border-[var(--arena-terminal-border)] hover:border-[color-mix(in_srgb,var(--arena-terminal-accent)_44%,var(--arena-terminal-border))] hover:bg-[var(--arena-terminal-panel-strong)]',
+            ].join(' ')}
           >
-            <Card
-              className={`relative overflow-hidden cursor-pointer hover:shadow-md motion-safe:transition-all motion-safe:duration-200 ${
-                isSelected
-                  ? `${colors.border} ${colors.bg} ring-2 ring-offset-1 ring-offset-arena-elements-bg ring-current shadow-lg`
-                  : 'border-arena-elements-borderColor hover:border-arena-elements-textTertiary'
-              }`}
-            >
-              <CardContent className="p-5">
-                <div className="flex items-start gap-3 mb-3">
-                  <div className={`${bp.icon} ${colors.icon} text-2xl shrink-0 mt-0.5`} />
+            <div className="flex h-full flex-col gap-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--arena-terminal-border)] ${colors.soft}`}>
+                    <span className={`${bp.icon} ${colors.accent} text-lg`} aria-hidden="true" />
+                  </span>
                   <div className="min-w-0">
-                    <h3 className="font-display font-bold text-base leading-tight">
+                    <h3 className="font-display text-base font-semibold leading-tight text-[var(--arena-terminal-text)]">
                       {framing.label}
                     </h3>
-                    {/* Technical blueprint name stays available, demoted. */}
-                    <div className="mt-1 font-data text-xs text-arena-elements-textTertiary">
+                    <div className="mt-1 truncate font-data text-xs text-[var(--arena-terminal-text-subtle)]">
                       {bp.name}
                     </div>
                   </div>
                 </div>
 
-                <p className="text-sm text-arena-elements-textSecondary leading-relaxed">
-                  {framing.summary}
-                </p>
+                <span
+                  className={[
+                    'flex h-5 w-5 shrink-0 items-center justify-center border text-xs transition-colors',
+                    isSelected
+                      ? 'border-[var(--arena-terminal-accent)] bg-[var(--arena-terminal-accent)] text-[var(--arena-terminal-accent-text)]'
+                      : 'border-[var(--arena-terminal-border)] text-transparent group-hover:text-[var(--arena-terminal-muted)]',
+                  ].join(' ')}
+                  aria-hidden="true"
+                >
+                  <span className="i-ph:check text-sm" />
+                </span>
+              </div>
 
-                {isSelected && (
-                  <div className="absolute top-3 right-3">
-                    <div className={`w-5 h-5 rounded-full ${colors.icon} bg-current/15 flex items-center justify-center`}>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+              <p className="text-sm leading-relaxed text-[var(--arena-terminal-muted)]">
+                {framing.summary}
+              </p>
+
+              <div className="mt-auto flex items-center justify-between gap-3 font-data text-[11px] uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
+                <span>Blueprint #{bp.blueprintId}</span>
+                <span>{bp.isTee ? 'TEE' : bp.isFleet ? 'Shared' : 'Dedicated'}</span>
+              </div>
+            </div>
           </button>
         );
       })}

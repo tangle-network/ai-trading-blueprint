@@ -103,15 +103,15 @@ export function TxDropdown({ align = 'end', side = 'down' }: { align?: 'start' |
   const pending = useStore(pendingCount);
 
   return (
-    <div ref={menuRef} className="relative">
+    <div ref={menuRef} className="relative inline-flex h-full w-full items-center justify-center">
       <button
         type="button"
         onClick={toggle}
-        className="relative border border-arena-elements-dividerColor/70 bg-arena-elements-bg-depth-3 p-2.5 text-arena-elements-textSecondary transition-[background-color,border-color,color,opacity] duration-150 hover:border-[#50d2c1]/35 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+        className="relative inline-flex h-9 w-9 items-center justify-center border border-arena-elements-dividerColor/70 bg-arena-elements-bg-depth-3 p-0 text-arena-elements-textSecondary transition-[background-color,border-color,color,opacity] duration-150 hover:border-[#50d2c1]/35 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
         aria-label="Transaction history"
         aria-expanded={open}
       >
-        <div className="i-ph:receipt text-base text-arena-elements-textSecondary" />
+        <div className="i-ph:receipt pointer-events-none text-base leading-none text-arena-elements-textSecondary" />
         {pending > 0 && (
           <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-violet-600 text-white text-[10px] font-data font-bold animate-pulse">
             {pending}
