@@ -12,7 +12,13 @@ import { existsSync } from 'node:fs'
 import { repoRoot, resolveRepo } from '../lib/repo.js'
 import type { BacktestArtifact, BotContext, HarnessConfig } from './harness-types.js'
 
-const BINARY_REL = 'trading-runtime/target/release/examples/harness_backtest'
+// Workspace-root target dir: trading-runtime is a workspace member, so
+// `cargo build -p trading-runtime --example …` lands in <repo>/target, the
+// same place walk-forward.ts resolves its CLI from. (The earlier
+// 'trading-runtime/target/…' path was never produced by the workspace build —
+// ensureHarnessBacktestBinary rebuilt every call and then spawned a
+// nonexistent path.)
+const BINARY_REL = 'target/release/examples/harness_backtest'
 
 /** Build the Rust cell-level CLI if it isn't already on disk. */
 export function ensureHarnessBacktestBinary(): string {

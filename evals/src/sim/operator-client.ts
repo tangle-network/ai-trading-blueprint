@@ -32,6 +32,15 @@ import { spawnSync } from 'node:child_process'
 const DEFAULT_TIMEOUT_MS = 180_000
 const DEFAULT_POLL_INTERVAL_MS = 5_000
 
+/** Fast-tick cron for eval-provisioned bots — every minute (6-field cron with
+ *  seconds, the same format as the production every-5-minutes default).
+ *  create_bot reads it from `strategy_config.trading_loop_cron` and validates
+ *  it with the workflow scheduler's own cron parser (operator_api.rs
+ *  `trading_loop_cron_from_config`); activation honors it for the fast
+ *  workflow (jobs/activate.rs). Exported so capture-window consumers can
+ *  derive their wait budget from the actual cadence. */
+export const EVAL_TRADING_LOOP_CRON = '0 * * * * *'
+
 // StrategyType SOT lives in strategy-type.ts (the venue→pack inference module).
 // Imported + re-exported here so existing importers of `OperatorClient`'s
 // StrategyType keep working, but there is now ONE definition, not two that drift.
@@ -255,10 +264,56 @@ export class OperatorClient {
     strategy_type: StrategyType
     strategy_config?: Record<string, unknown>
   }): Promise<string> {
-    const created = await this.post<{ id?: string; bot_id?: string; bot?: { id?: string } }>('/api/bots', opts)
+    const { botId } = await this.provisionBotDetailed(opts)
+    return botId
+  }
+
+  /** Provision + return the trading-API access the create response carries
+   *  (set when activation ran inline). The per-bot trading API is how an eval
+   *  drives HONEST state changes — e.g. NAV-drop metrics snapshots whose
+   *  hwm/drawdown the server computes — instead of mutating stores directly.
+   *  `tradingApiUrl`/`tradingApiToken` are null when activation was deferred. */
+  async provisionBotDetailed(opts: {
+    prompt: string
+    name: string
+    strategy_type: StrategyType
+    strategy_config?: Record<string, unknown>
+  }): Promise<{ botId: string; tradingApiUrl: string | null; tradingApiToken: string | null }> {
+    // Eval-provisioned bots tick every minute instead of the production
+    // 5-minute default (#122): the post-session side-effect capture window is
+    // ~2.5min, so a 5-min cron usually missed it and the analyst drowned in
+    // UNVERIFIABLE cells. OperatorClient is eval-only, so this never changes
+    // production cadence; an explicit caller strategy_config still wins.
+    const body = {
+      ...opts,
+      strategy_config: {
+        trading_loop_cron: EVAL_TRADING_LOOP_CRON,
+        ...(opts.strategy_config ?? {}),
+      },
+    }
+    const created = await this.post<{
+      id?: string
+      bot_id?: string
+      bot?: { id?: string }
+      trading_api_url?: string | null
+      trading_api_token?: string | null
+    }>('/api/bots', body)
     const botId = created.id ?? created.bot_id ?? created.bot?.id
     if (!botId) throw new Error(`bot create did not return an id: ${JSON.stringify(created)}`)
-    return botId
+    return {
+      botId,
+      // The operator hands sidecars `host.docker.internal`; from the eval host
+      // that's 127.0.0.1 (same normalization the operator's own trading-api
+      // proxy applies in fetch_trading_api_json).
+      tradingApiUrl:
+        typeof created.trading_api_url === 'string' && created.trading_api_url.trim().length > 0
+          ? created.trading_api_url.replace('host.docker.internal', '127.0.0.1')
+          : null,
+      tradingApiToken:
+        typeof created.trading_api_token === 'string' && created.trading_api_token.trim().length > 0
+          ? created.trading_api_token
+          : null,
+    }
   }
 
   /** Block until the bot is READY to chat. Two readiness paths:

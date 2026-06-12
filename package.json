@@ -22,7 +22,9 @@
     "release:local-artifacts": "scripts/release-local-artifacts.sh",
     "typecheck:evals": "tsc -p evals/tsconfig.json --noEmit",
     "eval:harness-self-improve": "npm run build:evals --silent && node dist/evals/bin/harness-self-improve-eval.js",
-    "eval:per-bot-self-improve": "npm run build:evals --silent && node dist/evals/bin/per-bot-self-improve-eval.js"
+    "eval:per-bot-self-improve": "npm run build:evals --silent && node dist/evals/bin/per-bot-self-improve-eval.js",
+    "eval:planted-improvement": "npm run build:evals --silent && node dist/evals/bin/planted-improvement-eval.js",
+    "eval:breaker-recovery": "npm run build:evals --silent && node dist/evals/bin/breaker-recovery-eval.js"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -1306,6 +1306,35 @@ fn create_bot_strategy_config(
     Ok(config)
 }
 
+/// Default fast-tick cadence for product-created bots (every 5 minutes).
+const DEFAULT_TRADING_LOOP_CRON: &str = "0 */5 * * * *";
+
+/// Per-bot fast-tick cadence from `strategy_config.trading_loop_cron`.
+///
+/// The bot record has carried `trading_loop_cron` since provisioning landed
+/// (state/mod.rs) and activation honors it for the fast workflow
+/// (jobs/activate.rs), but `create_bot` used to hardcode the 5-minute default,
+/// so HTTP callers had no way to set a per-bot cadence. Eval-provisioned bots
+/// set a 1-minute cron so a short side-effect capture window always observes
+/// ≥1 deterministic tick (#122). Invalid expressions are a 400, not a silent
+/// fallback — a bot ticking on an unintended cadence looks alive while being
+/// misconfigured.
+fn trading_loop_cron_from_config(
+    strategy_config: &serde_json::Map<String, serde_json::Value>,
+) -> Result<String, String> {
+    let Some(value) = strategy_config.get("trading_loop_cron") else {
+        return Ok(DEFAULT_TRADING_LOOP_CRON.to_string());
+    };
+    let Some(cron) = value.as_str().map(str::trim).filter(|raw| !raw.is_empty()) else {
+        return Err("trading_loop_cron must be a non-empty cron string".to_string());
+    };
+    // Same parser the workflow scheduler uses (resolve_next_run → cron crate),
+    // so a value accepted here is guaranteed to schedule.
+    ai_agent_sandbox_blueprint_lib::workflows::resolve_next_run("cron", cron, None)
+        .map_err(|e| format!("invalid trading_loop_cron '{cron}': {e}"))?;
+    Ok(cron.to_string())
+}
+
 fn string_at_path<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a str> {
     let mut current = value;
     for segment in path {
@@ -2382,6 +2411,8 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
     persist_name_metadata(&mut strategy_config, &name_resolution);
     let name = name_resolution.name.clone();
 
+    let trading_loop_cron = trading_loop_cron_from_config(&strategy_config)
+        .map_err(|message| ApiError::message(StatusCode::BAD_REQUEST, message))?;
     let final_strategy_config = serde_json::Value::Object(strategy_config);
     let agent_profile_for_response = final_strategy_config
         .get("agent_profile")
@@ -2403,7 +2434,7 @@ async fn create_bot(req: axum::extract::Request) -> ApiResult<serde_json::Value>
         required_signatures: alloy_primitives::U256::ZERO,
         chain_id: alloy_primitives::U256::from(chain_id),
         rpc_url,
-        trading_loop_cron: "0 */5 * * * *".into(),
+        trading_loop_cron,
         cpu_cores: 1,
         memory_mb: 2048,
         max_lifetime_days: 30,
@@ -8161,6 +8192,41 @@ mod tests {
             serde_json::json!(["gmx_v2", "vertex"])
         );
         assert_eq!(config["volatility_params"]["realized_window_hours"], 24);
+    }
+
+    #[test]
+    fn trading_loop_cron_from_config_round_trips_eval_one_minute_cron() {
+        // Default when absent.
+        let empty = serde_json::Map::new();
+        assert_eq!(
+            trading_loop_cron_from_config(&empty).expect("default cron"),
+            DEFAULT_TRADING_LOOP_CRON
+        );
+
+        // The eval-provisioning override (every minute, 6-field cron with
+        // seconds — same format as the default) round-trips verbatim.
+        let mut config = serde_json::Map::new();
+        config.insert(
+            "trading_loop_cron".to_string(),
+            serde_json::Value::String("0 * * * * *".to_string()),
+        );
+        assert_eq!(
+            trading_loop_cron_from_config(&config).expect("eval cron"),
+            "0 * * * * *"
+        );
+
+        // Invalid expressions and non-string values fail closed (400 at the
+        // route), never a silent fallback to the default cadence.
+        config.insert(
+            "trading_loop_cron".to_string(),
+            serde_json::Value::String("every minute".to_string()),
+        );
+        assert!(trading_loop_cron_from_config(&config).is_err());
+        config.insert(
+            "trading_loop_cron".to_string(),
+            serde_json::Value::Number(60.into()),
+        );
+        assert!(trading_loop_cron_from_config(&config).is_err());
     }
 
     #[test]

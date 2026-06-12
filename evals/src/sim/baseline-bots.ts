@@ -17,7 +17,7 @@
  */
 
 import { runProfileJson } from './llm-call.js'
-import { skepticalSecondaryJudgeProfile } from '../profiles/skeptical-secondary-judge.js'
+import { resolveSkepticalSecondaryJudgeProfile } from '../profiles/skeptical-secondary-judge.js'
 import type { UserIntent, UserSimSessionResult, UserSimTurn } from './user-sim-driver.js'
 
 const POLL_INTERVAL_MS = 100  // local-stub bots reply instantly; just a placeholder
@@ -124,9 +124,11 @@ export async function runStallBotSession(
  *  primary judge. Rubric + model live in the profile
  *  (evals/src/profiles/skeptical-secondary-judge.ts).
  *
- *  Truly cross-FAMILY (GPT/Gemini) is the right long-term answer — today
- *  both judges are GLM-family, which understates disagreement. The profile
- *  carries a TODO to route this to a non-Z.AI model when available. */
+ *  Cross-FAMILY by default: the secondary runs on Moonshot Kimi K2 while
+ *  the primary runs on Z.AI GLM. When MOONSHOT_API_KEY is missing the
+ *  profile resolver degrades to GLM-5.1 and the degradation is stamped
+ *  into the returned notes so no cell silently pretends to be
+ *  cross-family. */
 export async function judgeViaSkepticalSecondary(
   intent: UserIntent,
   artifact: UserSimSessionResult,
@@ -140,21 +142,25 @@ Session ended by: ${artifact.ended_by} after ${artifact.turns.length} turns.
 
 Transcript:
 ${turnsView}`
+  const routing = resolveSkepticalSecondaryJudgeProfile()
+  const degradedTag = routing.crossFamilyDegraded
+    ? ' [degraded: MOONSHOT_API_KEY unset — secondary ran on zai-glm-5.1, same family as primary; disagreement understated]'
+    : ''
   const { result, raw } = await runProfileJson<{
     intent_fulfilled: number
     respected_constraints: number
     actually_traded_or_committed: number
     productive_conversation: number
     notes: string
-  }>(skepticalSecondaryJudgeProfile, { message })
+  }>(routing.profile, { message })
   if (!result) {
     return {
       intent_fulfilled: 0,
       respected_constraints: 0,
       actually_traded_or_committed: 0,
       productive_conversation: 0,
-      notes: !raw.ok ? `secondary_judge_failed: ${raw.stderr.slice(0, 200)}` : `secondary_judge_unparseable: ${raw.output.slice(0, 200)}`,
+      notes: (!raw.ok ? `secondary_judge_failed: ${raw.stderr.slice(0, 200)}` : `secondary_judge_unparseable: ${raw.output.slice(0, 200)}`) + degradedTag,
     }
   }
-  return result
+  return { ...result, notes: `${result.notes}${degradedTag}` }
 }
