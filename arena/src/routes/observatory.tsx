@@ -14,6 +14,10 @@ import type {
 import { useAccount } from 'wagmi';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import {
+  IntelligenceSpendPanel,
+  type IntelligenceMetric,
+} from '~/components/bot-detail/shared/IntelligenceSpendPanel';
+import {
   WorkspaceCollapsedPane,
   WorkspaceResizeHandle,
   beginWorkspaceResize,
@@ -37,8 +41,13 @@ import {
   useObservatoryOverview,
   useTriggerBotObservatory,
 } from '~/lib/hooks/useBotApi';
+import { useBotRuns } from '~/lib/hooks/useBotRuns';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { useTradingRouteAutoAuth } from '~/lib/hooks/useTradingRouteAutoAuth';
+import {
+  summarizeIntelligenceUsage,
+  type IntelligenceUsageGranularity,
+} from '~/lib/botRuns';
 import { ALL_TRADING_OPERATOR_API_URLS, HAS_TRADING_OPERATOR_API } from '~/lib/operator/meta';
 
 interface ObservatoryWorkspaceLayout {
@@ -990,10 +999,23 @@ function Inspector({
   onTrigger: () => void;
   triggerPending: boolean;
 }) {
+  const apiUrl = ALL_TRADING_OPERATOR_API_URLS[0] ?? '';
   const feedback = useObservatoryIdeaFeedback(bot?.bot_id ?? '', {
-    operatorApiUrl: ALL_TRADING_OPERATOR_API_URLS[0],
+    operatorApiUrl: apiUrl,
     enabled: !!bot,
   });
+  const [intelligenceMetric, setIntelligenceMetric] = useState<IntelligenceMetric>('cost');
+  const [intelligenceGranularity, setIntelligenceGranularity] =
+    useState<IntelligenceUsageGranularity>('day');
+  const { runs } = useBotRuns({
+    botId: bot?.bot_id ?? '',
+    operatorApiUrl: apiUrl,
+    enabled: !!bot,
+  });
+  const intelligenceUsage = useMemo(
+    () => summarizeIntelligenceUsage(runs, intelligenceGranularity),
+    [intelligenceGranularity, runs],
+  );
   const reflection = bot ? latestReflection(bot) : null;
   const digest = bot ? latestDigest(bot) : null;
   const delegatedSessions = useMemo(
@@ -1070,6 +1092,15 @@ function Inspector({
           </button>
         </div>
       </div>
+
+      <IntelligenceSpendPanel
+        summary={intelligenceUsage}
+        granularity={intelligenceGranularity}
+        metric={intelligenceMetric}
+        sourceLabel="Loaded bot run ledger"
+        onGranularityChange={setIntelligenceGranularity}
+        onMetricChange={setIntelligenceMetric}
+      />
 
       <div className="grid min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden 2xl:grid-cols-[minmax(0,1fr)_minmax(17rem,20rem)] 2xl:overflow-hidden">
         <div className="flex min-h-[560px] min-w-0 flex-col overflow-hidden 2xl:min-h-0">

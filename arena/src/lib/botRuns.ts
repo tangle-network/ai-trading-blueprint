@@ -1,7 +1,8 @@
 export type RunStatus = "running" | "completed" | "failed" | "interrupted";
-export type WorkflowKind = "trading" | "research" | "conversation" | "unknown";
+export type WorkflowKind = "trading" | "research" | "conversation" | "observatory" | "unknown";
 export type RunLoopMode = "deterministic" | "agentic";
 export type RunLoopFilter = "agentic" | "deterministic" | "all";
+export type IntelligenceUsageGranularity = "day" | "hour";
 
 export interface BotRun {
   runId: string;
@@ -23,6 +24,36 @@ export interface BotRun {
   provider: string | null;
   costUsd: number | null;
   loopMode: RunLoopMode | null;
+  harness: string | null;
+}
+
+export interface IntelligenceUsageBreakdown {
+  id: string;
+  label: string;
+  runCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number | null;
+  costKnownRunCount: number;
+}
+
+export interface IntelligenceUsageBucket extends IntelligenceUsageBreakdown {
+  startedAt: number;
+}
+
+export interface IntelligenceUsageSummary {
+  runCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number | null;
+  costKnownRunCount: number;
+  windowStart: number | null;
+  windowEnd: number | null;
+  byWorkflow: IntelligenceUsageBreakdown[];
+  byModel: IntelligenceUsageBreakdown[];
+  timeline: IntelligenceUsageBucket[];
 }
 
 export interface BotRunsResponse {
@@ -63,6 +94,7 @@ function parseWorkflowKind(value: unknown): WorkflowKind {
     case "trading":
     case "research":
     case "conversation":
+    case "observatory":
     case "unknown":
       return value;
     default:
@@ -108,6 +140,7 @@ export function parseRunsResponse(payload: unknown): BotRunsResponse {
           provider: asString(run?.provider),
           costUsd: asNumber(run?.cost_usd),
           loopMode: parseLoopMode(run?.loop_mode),
+          harness: asString(run?.harness),
         } satisfies BotRun;
       })
       .filter((run): run is BotRun => run !== null),
@@ -155,6 +188,8 @@ export function getWorkflowKindLabel(kind: WorkflowKind): string {
       return "Research Trace";
     case "conversation":
       return "Conversation Trace";
+    case "observatory":
+      return "Observatory Trace";
     default:
       return "Autonomous Trace";
   }
@@ -168,6 +203,8 @@ export function getWorkflowKindDescription(kind: WorkflowKind): string {
       return "Longer-horizon market research cycle";
     case "conversation":
       return "Internal autonomous conversation cycle";
+    case "observatory":
+      return "Reflection and improvement cycle";
     default:
       return "Autonomous execution";
   }
@@ -265,36 +302,190 @@ export function formatRunCostUsd(costUsd: number | null): string | null {
   return `$${costUsd.toFixed(2)}`;
 }
 
-export interface AgenticSpendSummary {
-  /** Count of loaded runs explicitly marked agentic. */
-  agenticRunCount: number;
-  /** Sum of cost_usd over agentic runs that reported it; null if none did. */
-  costUsd: number | null;
-  /** Count of agentic runs that reported cost_usd. */
-  costKnownRunCount: number;
-  totalTokens: number;
+export function formatTokenTotal(total: number): string {
+  if (total <= 0) return "tokens n/a";
+  if (total >= 1_000) return `${(total / 1_000).toFixed(total >= 10_000 ? 0 : 1)}k tok`;
+  return `${total} tok`;
 }
 
-export function summarizeAgenticSpend(runs: BotRun[]): AgenticSpendSummary {
-  let agenticRunCount = 0;
+function isUsageBearingRun(run: BotRun): boolean {
+  return (
+    run.loopMode === "agentic" ||
+    run.inputTokens > 0 ||
+    run.outputTokens > 0 ||
+    run.costUsd != null
+  );
+}
+
+function workflowUsageLabel(kind: WorkflowKind): string {
+  switch (kind) {
+    case "trading":
+      return "Trading";
+    case "research":
+      return "Research";
+    case "conversation":
+      return "Chats";
+    case "observatory":
+      return "Observatory";
+    default:
+      return "Other";
+  }
+}
+
+function modelUsageLabel(run: BotRun): string {
+  if (run.provider && run.model) return `${run.provider}/${run.model}`;
+  if (run.model) return run.model;
+  if (run.provider) return `${run.provider}/unknown`;
+  if (run.harness) return `${run.harness}/unknown`;
+  return "Model n/a";
+}
+
+function addUsage(
+  bucket: IntelligenceUsageBreakdown,
+  run: BotRun,
+): IntelligenceUsageBreakdown {
+  const costKnown = run.costUsd != null && Number.isFinite(run.costUsd);
+  return {
+    ...bucket,
+    runCount: bucket.runCount + 1,
+    inputTokens: bucket.inputTokens + run.inputTokens,
+    outputTokens: bucket.outputTokens + run.outputTokens,
+    totalTokens: bucket.totalTokens + run.inputTokens + run.outputTokens,
+    costUsd: costKnown
+      ? (bucket.costUsd ?? 0) + (run.costUsd ?? 0)
+      : bucket.costUsd,
+    costKnownRunCount: bucket.costKnownRunCount + (costKnown ? 1 : 0),
+  };
+}
+
+function emptyUsageBreakdown(id: string, label: string): IntelligenceUsageBreakdown {
+  return {
+    id,
+    label,
+    runCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    costUsd: null,
+    costKnownRunCount: 0,
+  };
+}
+
+const DAY_BUCKET_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+
+const HOUR_BUCKET_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "UTC",
+});
+
+function usageBucketStartMs(timestampSeconds: number, granularity: IntelligenceUsageGranularity): number {
+  const date = new Date(timestampSeconds * 1000);
+  if (granularity === "hour") {
+    return Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+      date.getUTCHours(),
+    );
+  }
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
+function usageBucketLabel(startMs: number, granularity: IntelligenceUsageGranularity): string {
+  const date = new Date(startMs);
+  return granularity === "hour"
+    ? `${HOUR_BUCKET_FORMATTER.format(date)} UTC`
+    : DAY_BUCKET_FORMATTER.format(date);
+}
+
+function sortUsageBreakdowns(
+  left: IntelligenceUsageBreakdown,
+  right: IntelligenceUsageBreakdown,
+): number {
+  return (
+    (right.costUsd ?? -1) - (left.costUsd ?? -1) ||
+    right.totalTokens - left.totalTokens ||
+    right.runCount - left.runCount ||
+    left.label.localeCompare(right.label)
+  );
+}
+
+export function summarizeIntelligenceUsage(
+  runs: BotRun[],
+  granularity: IntelligenceUsageGranularity,
+): IntelligenceUsageSummary {
+  let runCount = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let totalCost = 0;
   let costKnownRunCount = 0;
-  let costUsd = 0;
-  let totalTokens = 0;
+  let windowStart: number | null = null;
+  let windowEnd: number | null = null;
+  const byWorkflow = new Map<string, IntelligenceUsageBreakdown>();
+  const byModel = new Map<string, IntelligenceUsageBreakdown>();
+  const timeline = new Map<string, IntelligenceUsageBucket>();
 
   for (const run of runs) {
-    if (run.loopMode !== "agentic") continue;
-    agenticRunCount += 1;
-    totalTokens += run.inputTokens + run.outputTokens;
-    if (run.costUsd != null && Number.isFinite(run.costUsd)) {
+    if (!isUsageBearingRun(run)) continue;
+
+    const costKnown = run.costUsd != null && Number.isFinite(run.costUsd);
+    runCount += 1;
+    inputTokens += run.inputTokens;
+    outputTokens += run.outputTokens;
+    if (costKnown) {
+      totalCost += run.costUsd ?? 0;
       costKnownRunCount += 1;
-      costUsd += run.costUsd;
     }
+    windowStart = windowStart == null ? run.startedAt : Math.min(windowStart, run.startedAt);
+    windowEnd = windowEnd == null ? run.startedAt : Math.max(windowEnd, run.completedAt ?? run.startedAt);
+
+    const workflowId = run.workflowKind;
+    byWorkflow.set(
+      workflowId,
+      addUsage(
+        byWorkflow.get(workflowId) ?? emptyUsageBreakdown(workflowId, workflowUsageLabel(run.workflowKind)),
+        run,
+      ),
+    );
+
+    const modelLabel = modelUsageLabel(run);
+    byModel.set(
+      modelLabel,
+      addUsage(byModel.get(modelLabel) ?? emptyUsageBreakdown(modelLabel, modelLabel), run),
+    );
+
+    const bucketStartMs = usageBucketStartMs(run.startedAt, granularity);
+    const bucketId = String(bucketStartMs);
+    const existingBucket = timeline.get(bucketId);
+    const nextBucket = addUsage(
+      existingBucket ?? {
+        ...emptyUsageBreakdown(bucketId, usageBucketLabel(bucketStartMs, granularity)),
+        startedAt: Math.floor(bucketStartMs / 1000),
+      },
+      run,
+    ) as IntelligenceUsageBucket;
+    timeline.set(bucketId, nextBucket);
   }
 
   return {
-    agenticRunCount,
-    costUsd: costKnownRunCount > 0 ? costUsd : null,
+    runCount,
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    costUsd: costKnownRunCount > 0 ? totalCost : null,
     costKnownRunCount,
-    totalTokens,
+    windowStart,
+    windowEnd,
+    byWorkflow: Array.from(byWorkflow.values()).sort(sortUsageBreakdowns),
+    byModel: Array.from(byModel.values()).sort(sortUsageBreakdowns),
+    timeline: Array.from(timeline.values()).sort((a, b) => a.startedAt - b.startedAt),
   };
 }

@@ -2201,7 +2201,7 @@ export function useTriggerBotObservatory(botId: string, options: BotApiQueryOpti
           queryKey: ['observatory-overview', apiUrl, auth.authCacheKey],
         }),
         queryClient.invalidateQueries({
-          queryKey: ['bot-runs', apiUrl, auth.authCacheKey, botId],
+          queryKey: ['bot-runs'],
         }),
       ]);
     },
