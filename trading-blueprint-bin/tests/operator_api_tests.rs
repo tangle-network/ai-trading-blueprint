@@ -2121,6 +2121,269 @@ async fn test_public_run_messages_redact_stored_transcript_secrets() {
     assert!(serialized.contains("0xbeef"), "{serialized}");
 }
 
+fn seed_workflow_run_record(
+    bot: &TradingBotRecord,
+    run_id: &str,
+    status: trading_blueprint_lib::workflow_compat::WorkflowRunStatus,
+    session_id: Option<&str>,
+) {
+    trading_blueprint_lib::workflow_compat::workflow_runs()
+        .expect("workflow runs store")
+        .insert(
+            run_id.to_string(),
+            trading_blueprint_lib::workflow_compat::WorkflowRunRecord {
+                run_id: run_id.to_string(),
+                workflow_id: bot.workflow_id.expect("workflow id"),
+                status,
+                started_at: 1_775_824_100,
+                completed_at: Some(1_775_824_228),
+                session_id: session_id.map(str::to_string),
+                trace_id: None,
+                duration_ms: 128_000,
+                input_tokens: 0,
+                output_tokens: 0,
+                result: Some("saved run summary".to_string()),
+                error: None,
+                loop_mode: None,
+                model: None,
+                provider: None,
+                cost_usd: None,
+                harness: None,
+            },
+        )
+        .expect("insert run record");
+}
+
+async fn post_run_message(
+    bot_id: &str,
+    run_id: &str,
+    auth: Option<&str>,
+    body: serde_json::Value,
+) -> axum::response::Response {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/bots/{bot_id}/runs/{run_id}/messages"))
+        .header("content-type", "application/json");
+    if let Some(auth) = auth {
+        request = request.header("authorization", auth);
+    }
+
+    app()
+        .oneshot(request.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_send_run_message_rejects_unauthenticated_caller() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("run-msg-anon-bot", "dex", true, Some(9_100_063));
+    seed_workflow_run_record(
+        &bot,
+        "run-msg-anon",
+        trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
+        None,
+    );
+
+    let response = post_run_message(
+        &bot.id,
+        "run-msg-anon",
+        None,
+        json!({ "message": "what happened here?" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_send_run_message_rejects_non_permitted_caller() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("run-msg-forbidden-bot", "dex", true, Some(9_100_064));
+    seed_workflow_run_record(
+        &bot,
+        "run-msg-forbidden",
+        trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
+        None,
+    );
+
+    let wrong_auth = test_auth_header("0xbbbb000000000000000000000000000000000002");
+    let response = post_run_message(
+        &bot.id,
+        "run-msg-forbidden",
+        Some(&wrong_auth),
+        json!({ "message": "what happened here?" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_send_run_message_conflicts_while_run_is_in_progress() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("run-msg-running-bot", "dex", true, Some(9_100_065));
+    seed_workflow_run_record(
+        &bot,
+        "run-msg-running",
+        trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Running,
+        Some("ses-live-run"),
+    );
+
+    let auth = test_auth_header(SUBMITTER);
+    let response = post_run_message(
+        &bot.id,
+        "run-msg-running",
+        Some(&auth),
+        json!({ "message": "status?" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn test_send_run_message_requires_non_empty_message() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("run-msg-empty-bot", "dex", true, Some(9_100_066));
+    seed_workflow_run_record(
+        &bot,
+        "run-msg-empty",
+        trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
+        None,
+    );
+
+    let auth = test_auth_header(SUBMITTER);
+    let response =
+        post_run_message(&bot.id, "run-msg-empty", Some(&auth), json!({ "message": "  " })).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_send_run_message_seeds_context_for_sessionless_run_and_merges_followups() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("run-msg-seeded-bot", "dex", true, Some(9_100_067));
+    let sidecar_url = spawn_mock_chat_sidecar(&bot.id).await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+    seed_workflow_run_record(
+        &bot,
+        "run-msg-seeded",
+        trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
+        None,
+    );
+
+    let auth = test_auth_header(SUBMITTER);
+    let response = post_run_message(
+        &bot.id,
+        "run-msg-seeded",
+        Some(&auth),
+        json!({ "message": "why did this run skip?" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["mode"], "context_seeded");
+    assert_eq!(payload["session_id"], "run-followup-run-msg-seeded");
+    assert_eq!(payload["run_id"], "run-msg-seeded");
+
+    // The follow-up user turn (with the seeded run context) is merged into
+    // the public run transcript view.
+    let transcript_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/runs/run-msg-seeded/messages?limit=200",
+                    bot.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(transcript_response.status(), StatusCode::OK);
+    let transcript_body = transcript_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let serialized = String::from_utf8(transcript_body.to_vec()).unwrap();
+    assert!(serialized.contains("why did this run skip?"), "{serialized}");
+    assert!(serialized.contains("Owner follow-up:"), "{serialized}");
+    assert!(
+        serialized.contains("saved run summary"),
+        "context preamble should embed the saved run record: {serialized}"
+    );
+}
+
+#[tokio::test]
+async fn test_send_run_message_resumes_recorded_session() {
+    let _ = init_test_env();
+    let bot = seed_bot_with_workflow("run-msg-resume-bot", "dex", true, Some(9_100_068));
+    let sidecar_url = spawn_mock_chat_sidecar(&bot.id).await;
+    set_sandbox_sidecar_url(&bot.sandbox_id, &sidecar_url);
+    seed_workflow_run_record(
+        &bot,
+        "run-msg-resume",
+        trading_blueprint_lib::workflow_compat::WorkflowRunStatus::Completed,
+        Some("ses-resume-original"),
+    );
+    trading_blueprint_lib::workflow_compat::insert_workflow_run_transcript_for_testing(
+        trading_blueprint_lib::workflow_compat::WorkflowRunTranscriptRecord {
+            run_id: "run-msg-resume".to_string(),
+            session_id: "ses-resume-original".to_string(),
+            captured_at: 1_775_824_228,
+            messages: json!([
+                {
+                    "info": { "id": "msg-original", "role": "assistant", "timestamp": "2026-04-24T07:10:00.000Z" },
+                    "parts": [{ "type": "text", "text": "original run output" }]
+                }
+            ]),
+        },
+    )
+    .expect("insert transcript snapshot");
+
+    let auth = test_auth_header(SUBMITTER);
+    let response = post_run_message(
+        &bot.id,
+        "run-msg-resume",
+        Some(&auth),
+        json!({ "message": "follow up on that output" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["mode"], "resumed");
+    assert_eq!(payload["session_id"], "ses-resume-original");
+
+    let transcript_response = app()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/bots/{}/runs/run-msg-resume/messages?limit=200",
+                    bot.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(transcript_response.status(), StatusCode::OK);
+    let transcript_body = transcript_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let serialized = String::from_utf8(transcript_body.to_vec()).unwrap();
+    assert!(serialized.contains("original run output"), "{serialized}");
+    assert!(
+        serialized.contains("follow up on that output"),
+        "{serialized}"
+    );
+    // Resumed sessions get the raw message — no synthetic context preamble.
+    assert!(!serialized.contains("Owner follow-up:"), "{serialized}");
+}
+
 #[tokio::test]
 async fn test_running_autonomous_sessions_preserve_live_message_errors() {
     let _ = init_test_env();
