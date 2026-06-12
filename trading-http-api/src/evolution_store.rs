@@ -57,6 +57,11 @@ pub struct SelfImprovementRun {
     /// Paper trades required under this candidate's revision before the promotion sweep runs the gate.
     #[serde(default)]
     pub trades_target: Option<u64>,
+    /// Set when the conductor promoted this blocked-but-best candidate into a
+    /// shadow paper trial. Doubles as the per-bot daily rate-limit timestamp:
+    /// at most one blocked candidate per bot per day enters a shadow trial.
+    #[serde(default)]
+    pub shadow_trial_started_at: Option<i64>,
 }
 
 pub fn runs() -> Result<&'static PersistentStore<SelfImprovementRun>, String> {

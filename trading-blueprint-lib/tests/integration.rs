@@ -680,7 +680,9 @@ async fn test_workflow_tick_disables_stopped_bot_workflows() {
 
     let sandbox_id = "sb-stopped-tick-1";
     let bot_id = "trading-stopped-tick-1";
-    let wf_id = 77777u64;
+    // Must not collide with test_deprovision_cleans_everything (77777..=77779),
+    // which REMOVES its workflow ids from the shared store mid-suite.
+    let wf_id = 75770u64;
 
     fixtures::seed_bot_record(bot_id, sandbox_id, "dex", "0xAA", Some(wf_id));
     bots()
@@ -822,6 +824,7 @@ async fn test_promotion_conductor_activates_queued_backtest_pass_candidate() {
             sandbox_revision_id: Some(revision_id.clone()),
             trial_deadline: None,
             trades_target: Some(20),
+            shadow_trial_started_at: None,
         },
     )
     .unwrap();
@@ -860,6 +863,170 @@ async fn test_promotion_conductor_activates_queued_backtest_pass_candidate() {
     );
     assert_eq!(run.trades_target, Some(20));
     assert!(run.trial_deadline.is_some());
+}
+
+#[tokio::test]
+async fn test_promotion_conductor_shadow_trials_best_blocked_candidate_once_per_day() {
+    let _dir = common::init_test_env();
+
+    let bot_id = format!("shadow-bot-{}", uuid::Uuid::new_v4());
+    let sandbox_id = format!("shadow-sandbox-{}", uuid::Uuid::new_v4());
+    let bot = fixtures::seed_bot_record(&bot_id, &sandbox_id, "dex", "0xAA", None);
+    let current = trading_runtime::backtest::BacktestConfig::default();
+    let current_harness = serde_json::to_value(&current.harness).unwrap();
+    bots()
+        .unwrap()
+        .update(&bot_key(&bot_id), |b| {
+            b.harness_json = current_harness.clone();
+        })
+        .unwrap();
+    let bot = bots().unwrap().get(&bot_key(&bot_id)).unwrap().unwrap();
+
+    let now = chrono::Utc::now().timestamp();
+    let blocked_run = |suffix: &str, created_at: i64, version_bump: u32, report_id: &str| {
+        let mut candidate = current.clone();
+        candidate.harness.version = current.harness.version + version_bump;
+        trading_http_api::evolution_store::SelfImprovementRun {
+            run_id: format!("sir-shadow-{suffix}-{}", uuid::Uuid::new_v4()),
+            bot_id: bot_id.clone(),
+            created_at,
+            user_intent: "Blocked candidate awaiting paper evidence.".to_string(),
+            candidate_hash: format!("sha256:{}", uuid::Uuid::new_v4().simple()),
+            approved: false,
+            status: "blocked".to_string(),
+            blockers: vec!["missing persisted paper trading evidence for candidate".to_string()],
+            candles_used: 72,
+            current_config: serde_json::to_value(&current).unwrap(),
+            candidate_config: serde_json::to_value(&candidate).unwrap(),
+            paper_evidence: None,
+            evidence_report_id: Some(report_id.to_string()),
+            risk_budget_decision_id: None,
+            base_snapshot_id: None,
+            sandbox_revision_id: None,
+            trial_deadline: None,
+            trades_target: None,
+            shadow_trial_started_at: None,
+        }
+    };
+    let evidence_report = |report_id: &str, candidate_hash: &str, confidence: f64| {
+        trading_http_api::risk_budget::EvidenceReport {
+            report_id: report_id.to_string(),
+            bot_id: bot_id.clone(),
+            created_at: chrono::Utc::now(),
+            candidate_hash: candidate_hash.to_string(),
+            revision_id: None,
+            strategy_class: None,
+            market_type: None,
+            instrument_type: None,
+            venue: None,
+            target_protocol: None,
+            candles_used: 72,
+            backtest_should_promote: false,
+            likely_overfit: false,
+            train_candles: 50,
+            test_candles: 22,
+            train_sharpe_delta: 0.1,
+            test_sharpe_delta: 0.05,
+            train_drawdown_delta: 0.0,
+            test_drawdown_delta: 0.0,
+            paper_trades: None,
+            paper_return_pct: None,
+            paper_max_drawdown_pct: None,
+            evidence_modes: vec![trading_http_api::risk_budget::EvidenceMode::FastBacktest],
+            blockers: vec!["missing persisted paper trading evidence for candidate".to_string()],
+            confidence_score: confidence,
+            recommendation: trading_http_api::risk_budget::PromotionLevel::Candidate,
+            explanation: String::new(),
+        }
+    };
+
+    // Stale (older than a day, highest score) must not be picked; among today's
+    // candidates the higher walk-forward composite wins.
+    let weak = blocked_run("weak", now - 3600, 11, &format!("er-weak-{bot_id}"));
+    let best = blocked_run("best", now - 1800, 12, &format!("er-best-{bot_id}"));
+    let stale = blocked_run("stale", now - 2 * 86_400, 13, &format!("er-stale-{bot_id}"));
+    for (run, confidence) in [(&weak, 0.2), (&best, 0.8), (&stale, 0.99)] {
+        trading_http_api::risk_budget::insert_report(evidence_report(
+            run.evidence_report_id.as_deref().unwrap(),
+            &run.candidate_hash,
+            confidence,
+        ))
+        .unwrap();
+        trading_http_api::evolution_store::insert(run.clone()).unwrap();
+    }
+
+    trading_blueprint_lib::jobs::promotion_conductor::run_promotion_conductor(&[bot]).await;
+
+    let updated = bots().unwrap().get(&bot_key(&bot_id)).unwrap().unwrap();
+    assert_eq!(
+        updated.active_trial_run_id.as_deref(),
+        Some(best.run_id.as_str()),
+        "best same-day blocked candidate enters the shadow trial"
+    );
+    assert_eq!(
+        updated.harness_json, current_harness,
+        "shadow trial must not touch the live harness"
+    );
+    assert_eq!(
+        updated.pre_trial_harness_json, None,
+        "shadow trial records no harness swap to revert"
+    );
+
+    let activated = trading_http_api::evolution_store::get(&bot_id, &best.run_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        activated.status,
+        trading_http_api::evolution_store::status::PAPER_TRIAL
+    );
+    assert!(activated.shadow_trial_started_at.is_some());
+    assert!(activated.trial_deadline.is_some());
+
+    let marker = trading_http_api::trial_marker::get(&bot_id)
+        .unwrap()
+        .expect("shadow trial tags paper trades to the candidate");
+    assert_eq!(marker.candidate_hash, best.candidate_hash);
+
+    let weak_after = trading_http_api::evolution_store::get(&bot_id, &weak.run_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(weak_after.status, "blocked", "only one candidate trials");
+
+    // End the trial (tabled) and offer a fresh, even better blocked candidate:
+    // the per-bot daily rate limit must hold until the window passes.
+    trading_http_api::evolution_store::update(&bot_id, &best.run_id, |r| {
+        r.status = trading_http_api::evolution_store::status::TABLED.to_string();
+    })
+    .unwrap();
+    trading_http_api::trial_marker::clear(&bot_id).unwrap();
+    bots()
+        .unwrap()
+        .update(&bot_key(&bot_id), |b| {
+            b.active_trial_run_id = None;
+            b.active_trial_candidate_hash = None;
+        })
+        .unwrap();
+    let fresh = blocked_run("fresh", now, 14, &format!("er-fresh-{bot_id}"));
+    trading_http_api::risk_budget::insert_report(evidence_report(
+        fresh.evidence_report_id.as_deref().unwrap(),
+        &fresh.candidate_hash,
+        0.9,
+    ))
+    .unwrap();
+    trading_http_api::evolution_store::insert(fresh.clone()).unwrap();
+
+    let bot = bots().unwrap().get(&bot_key(&bot_id)).unwrap().unwrap();
+    trading_blueprint_lib::jobs::promotion_conductor::run_promotion_conductor(&[bot]).await;
+
+    let updated = bots().unwrap().get(&bot_key(&bot_id)).unwrap().unwrap();
+    assert_eq!(
+        updated.active_trial_run_id, None,
+        "at most one shadow trial per bot per day"
+    );
+    let fresh_after = trading_http_api::evolution_store::get(&bot_id, &fresh.run_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(fresh_after.status, "blocked");
 }
 
 #[tokio::test]
