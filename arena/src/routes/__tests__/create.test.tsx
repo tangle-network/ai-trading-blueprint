@@ -51,8 +51,13 @@ vi.mock('~/lib/hooks/useOperatorAuth', () => ({
   useOperatorAuth: () => ({ getToken: hoisted.getTokenMock }),
 }))
 
-vi.mock('~/lib/operator/meta', () => ({
-  ALL_TRADING_OPERATOR_API_URLS: ['http://operator.test'],
+vi.mock('~/lib/operator/discovery', () => ({
+  useOperatorDirectory: () => ({
+    apiUrls: ['http://operator.test'],
+    endpoints: [],
+    isDiscovering: false,
+    discoveryError: null,
+  }),
 }))
 
 describe('create agent route', () => {

@@ -5,7 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { resolveOperatorRpc, useOperators } from '@tangle-network/blueprint-ui';
 import type { Address } from 'viem';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
-import { ALL_TRADING_OPERATOR_API_URLS, type OperatorMeta } from '~/lib/operator/meta';
+import type { OperatorMeta } from '~/lib/operator/meta';
+import { isMixedContentBlocked, useOperatorDirectory } from '~/lib/operator/discovery';
 import { TRADING_BLUEPRINTS, type TradingBlueprintDef } from '~/lib/blueprints';
 
 export const meta: MetaFunction = () => [
@@ -18,6 +19,8 @@ interface OperatorApiRow {
   ok: boolean;
   meta?: OperatorMeta;
   error?: string;
+  /** http endpoint on an https page: the browser blocks the request before it leaves. */
+  noTls?: boolean;
 }
 
 interface BlueprintOperatorRow {
@@ -51,9 +54,9 @@ function normalizeDirectoryUrl(value: string | undefined): string {
   return value?.trim().replace(/\/+$/, '') ?? '';
 }
 
-async function fetchOperatorApis(): Promise<OperatorApiRow[]> {
+async function fetchOperatorApis(urls: string[]): Promise<OperatorApiRow[]> {
   const rows = await Promise.all(
-    ALL_TRADING_OPERATOR_API_URLS.map(async (url) => {
+    urls.map(async (url) => {
       const controller = new AbortController();
       const timeout = globalThis.setTimeout(() => controller.abort(), 4_000);
       try {
@@ -115,13 +118,15 @@ function buildBlueprintOperatorRows({
   operators,
   apiRows,
   apiLoading,
+  fallbackUrls,
 }: {
   operators: Array<{ address: Address; rpcAddress?: string }>;
   apiRows: OperatorApiRow[];
   apiLoading: boolean;
+  fallbackUrls: string[];
 }): BlueprintOperatorRow[] {
   const displayedApiRows: OperatorApiRow[] = apiLoading
-    ? ALL_TRADING_OPERATOR_API_URLS.map((url) => ({ url, ok: false }))
+    ? fallbackUrls.map((url) => ({ url, ok: false }))
     : apiRows;
   const apiByUrl = new Map(
     displayedApiRows.map((row) => [normalizeDirectoryUrl(row.url), row]),
@@ -133,13 +138,17 @@ function buildBlueprintOperatorRows({
       operator.rpcAddress ? resolveOperatorRpc(operator.rpcAddress) : undefined,
     );
     if (apiUrl) registeredApiUrls.add(apiUrl);
+    let api = apiUrl ? apiByUrl.get(apiUrl) : undefined;
+    if (!api && apiUrl && isMixedContentBlocked(apiUrl)) {
+      api = { url: apiUrl, ok: false, noTls: true, error: 'Unreachable from browser (no TLS)' };
+    }
     return {
       key: `registered-${operator.address}`,
       source: 'registered',
       address: operator.address,
       rpcAddress: operator.rpcAddress,
       apiUrl,
-      api: apiUrl ? apiByUrl.get(apiUrl) : undefined,
+      api,
     };
   });
 
@@ -190,8 +199,11 @@ function BlueprintOperatorsTable({
                       {row.apiUrl || 'No RPC registered'}
                     </div>
                   </div>
-                  <span className={`inline-flex h-7 shrink-0 items-center border px-2 text-xs font-display font-semibold ${healthTone(row.api?.ok)}`}>
-                    {row.api?.ok ? 'Online' : row.api ? 'Offline' : 'Unverified'}
+                  <span
+                    className={`inline-flex h-7 shrink-0 items-center border px-2 text-xs font-display font-semibold ${healthTone(row.api?.ok)}`}
+                    title={row.api?.noTls ? 'Unreachable from browser (no TLS). Operator endpoints must be served over https.' : row.api?.error}
+                  >
+                    {row.api?.ok ? 'Online' : row.api?.noTls ? 'No TLS' : row.api ? 'Offline' : 'Unverified'}
                   </span>
                 </div>
                 <div className="flex min-w-0 items-center justify-between gap-2">
@@ -249,8 +261,11 @@ function BlueprintOperatorsTable({
                   <span className={`inline-flex h-7 w-fit items-center border px-2 text-xs font-display font-semibold ${accessTone(access?.mode)}`}>
                     {access?.mode === 'public' ? 'Public' : 'Allowlist'}
                   </span>
-                  <span className={`inline-flex h-7 w-fit items-center border px-2 text-xs font-display font-semibold ${healthTone(row.api?.ok)}`} title={row.api?.error}>
-                    {row.api?.ok ? row.api.meta?.deployment_kind ?? 'online' : row.api ? 'offline' : 'unverified'}
+                  <span
+                    className={`inline-flex h-7 w-fit items-center border px-2 text-xs font-display font-semibold ${healthTone(row.api?.ok)}`}
+                    title={row.api?.noTls ? 'Unreachable from browser (no TLS). Operator endpoints must be served over https.' : row.api?.error}
+                  >
+                    {row.api?.ok ? row.api.meta?.deployment_kind ?? 'online' : row.api?.noTls ? 'no TLS' : row.api ? 'offline' : 'unverified'}
                   </span>
                   <Link to="/provision" className="w-fit font-display text-sm font-semibold text-[#148f82] hover:text-[#0f766e] dark:text-[#50d2c1] dark:hover:text-[#c8fffb]">
                     Request
@@ -274,19 +289,35 @@ export default function OperatorsPage() {
   );
   const blueprintId = selectedBlueprint ? BigInt(selectedBlueprint.blueprintId) : 0n;
   const { operators, operatorCount } = useOperators(blueprintId);
+  const directory = useOperatorDirectory();
+  // Probe only browser-reachable endpoints; no-TLS endpoints are surfaced as
+  // static rows so operators learn their endpoint must be served over https.
+  const probeUrls = directory.apiUrls;
+  const blockedApiRows = useMemo<OperatorApiRow[]>(
+    () => directory.endpoints
+      .filter((endpoint) => !endpoint.browserReachable)
+      .map((endpoint) => ({
+        url: endpoint.apiUrl,
+        ok: false,
+        noTls: true,
+        error: 'Unreachable from browser (no TLS)',
+      })),
+    [directory.endpoints],
+  );
   const apiQuery = useQuery({
-    queryKey: ['operator-api-directory', ALL_TRADING_OPERATOR_API_URLS],
-    queryFn: fetchOperatorApis,
+    queryKey: ['operator-api-directory', probeUrls],
+    queryFn: () => fetchOperatorApis(probeUrls),
     staleTime: 30_000,
   });
   const publicApiCount = (apiQuery.data ?? []).filter((row) => row.meta?.request_access?.mode === 'public').length;
   const directoryRows = useMemo(
     () => buildBlueprintOperatorRows({
       operators,
-      apiRows: apiQuery.data ?? [],
+      apiRows: [...(apiQuery.data ?? []), ...blockedApiRows],
       apiLoading: apiQuery.isLoading,
+      fallbackUrls: probeUrls,
     }),
-    [apiQuery.data, apiQuery.isLoading, operators],
+    [apiQuery.data, apiQuery.isLoading, blockedApiRows, operators, probeUrls],
   );
 
   return (
@@ -295,7 +326,7 @@ export default function OperatorsPage() {
         title="Operators"
         titleWidthClassName="min-[1180px]:w-[11rem]"
         metrics={[
-          { label: 'APIs', value: ALL_TRADING_OPERATOR_API_URLS.length.toString() },
+          { label: 'APIs', value: directory.endpoints.length.toString() },
           { label: 'On-chain', value: operatorCount.toString() },
           { label: 'Public', value: publicApiCount.toString() },
         ]}

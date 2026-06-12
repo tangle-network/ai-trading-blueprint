@@ -8,7 +8,7 @@ import {
   buildTradingAgentProfile,
   type TradingAgentProfile,
 } from '~/lib/agentProfile'
-import { ALL_TRADING_OPERATOR_API_URLS } from '~/lib/operator/meta'
+import { useOperatorDirectory } from '~/lib/operator/discovery'
 import {
   parseMandatePercent,
   toCreateStrategyEvidence,
@@ -518,7 +518,8 @@ export default function CreateAgent() {
   const draftStrategyType = primaryCapability.strategyType
   const detectedProfile = STRATEGY_PROFILES[draftStrategyType]
   const launchSteps = useMemo(() => detectedProfile.route.split(' -> '), [detectedProfile.route])
-  const operatorLabel = formatOperatorLabel(ALL_TRADING_OPERATOR_API_URLS[0])
+  const { apiUrls: operatorApiUrls } = useOperatorDirectory()
+  const operatorLabel = formatOperatorLabel(operatorApiUrls[0])
   const exactHint = STRATEGY_HINTS.find((hint) => prompt.trim() === hint.prompt)
   const selectedHint = exactHint ?? STRATEGY_HINTS.find((hint) => hint.capabilityIds.some((id) => selectedCapabilityIds.includes(id))) ?? STRATEGY_HINTS[0]
   const selectedCapabilityLabels = useMemo(
