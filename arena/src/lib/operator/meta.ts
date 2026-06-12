@@ -9,7 +9,7 @@ export const TEE_OPERATOR_API_URL =
   import.meta.env.VITE_TEE_OPERATOR_API_URL ?? INSTANCE_OPERATOR_API_URL;
 export const OPERATOR_API_URL = CLOUD_OPERATOR_API_URL;
 
-function normalizeOperatorApiUrl(value: string): string {
+export function normalizeOperatorApiUrl(value: string): string {
   return value.trim().replace(/\/+$/, '');
 }
 
@@ -137,23 +137,32 @@ export function getExpectedDeploymentKindForBlueprint(
   }
 }
 
-export function useOperatorMeta(apiUrl = OPERATOR_API_URL) {
-  return useQuery<OperatorMeta>({
-    queryKey: ['operator-meta', apiUrl],
-    queryFn: async () => {
-      if (!apiUrl) return DEFAULT_META;
-      const res = await fetch(`${apiUrl}/api/meta`, {
-        headers: { Accept: 'application/json' },
-      });
-      if (!res.ok) {
-        throw new Error(`Failed to load operator metadata: ${res.status}`);
-      }
-      return res.json() as Promise<OperatorMeta>;
-    },
+export const OPERATOR_META_TIMEOUT_MS = 5_000;
+
+export async function fetchOperatorMeta(apiUrl: string): Promise<OperatorMeta> {
+  if (!apiUrl) return DEFAULT_META;
+  const res = await fetch(`${apiUrl}/api/meta`, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(OPERATOR_META_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load operator metadata: ${res.status}`);
+  }
+  return res.json() as Promise<OperatorMeta>;
+}
+
+export function operatorMetaQueryOptions(apiUrl: string) {
+  return {
+    queryKey: ['operator-meta', apiUrl] as const,
+    queryFn: () => fetchOperatorMeta(apiUrl),
     enabled: !!apiUrl,
     staleTime: 5 * 60_000,
     retry: 1,
-  });
+  };
+}
+
+export function useOperatorMeta(apiUrl = OPERATOR_API_URL) {
+  return useQuery<OperatorMeta>(operatorMetaQueryOptions(apiUrl));
 }
 
 export function buildBotScopedPath(

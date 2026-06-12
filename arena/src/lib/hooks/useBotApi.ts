@@ -15,10 +15,10 @@ import type { Portfolio } from '~/lib/types/portfolio';
 import { mapApiPortfolioState, type RawPortfolioState } from '~/lib/portfolio';
 import { parseTradeDisplayAmount, resolveAssetDisplay, type TokenMetadata } from '~/lib/tradeTokenMetadata';
 import {
-  ALL_TRADING_OPERATOR_API_URLS,
   buildBotScopedPathForDeploymentKind,
   getDeploymentKindForOperatorKind,
 } from '~/lib/operator/meta';
+import { useOperatorDirectory } from '~/lib/operator/discovery';
 import { useOperatorAuth } from './useOperatorAuth';
 import { operatorJsonWithAuth } from '~/lib/operator/fetch';
 import { OperatorRequestError } from '~/lib/operator/errors';
@@ -587,10 +587,13 @@ async function fetchOperatorBotApi<T>(
   return operatorJsonWithAuth<T>(apiUrl, path, auth, options);
 }
 
+const OPERATOR_PUBLIC_FETCH_TIMEOUT_MS = 5_000;
+
 async function fetchOperatorPublicJson<T>(apiUrl: string, path: string): Promise<T> {
   const res = await fetch(`${apiUrl}${path}`, {
     cache: 'no-store',
     headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(OPERATOR_PUBLIC_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     throw new Error(`Operator request failed: ${res.status}`);
@@ -1261,16 +1264,17 @@ export function useLatestAgentTrades(
 
   const botById = useMemo(() => new Map(bots.map((bot) => [bot.id, bot])), [botFingerprint, bots]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const { apiUrls: directoryApiUrls } = useOperatorDirectory();
   const operatorUrls = useMemo(() => {
     const urls = new Set<string>();
-    ALL_TRADING_OPERATOR_API_URLS.forEach((url) => {
+    directoryApiUrls.forEach((url) => {
       if (url) urls.add(url);
     });
     bots.forEach((bot) => {
       if (bot.operatorApiUrl) urls.add(bot.operatorApiUrl);
     });
     return Array.from(urls);
-  }, [botFingerprint, bots]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [botFingerprint, bots, directoryApiUrls]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const operatorResults = useQueries({
     queries: operatorUrls.map((apiUrl) => ({
@@ -1475,16 +1479,17 @@ export function usePlatformVolumeSeries(
     bot.chainId ?? 'none',
   ].join(':')).join('|');
 
+  const { apiUrls: directoryApiUrls } = useOperatorDirectory();
   const operatorUrls = useMemo(() => {
     const urls = new Set<string>();
-    ALL_TRADING_OPERATOR_API_URLS.forEach((url) => {
+    directoryApiUrls.forEach((url) => {
       if (url) urls.add(url);
     });
     bots.forEach((bot) => {
       if (bot.operatorApiUrl) urls.add(bot.operatorApiUrl);
     });
     return Array.from(urls);
-  }, [botFingerprint, bots]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [botFingerprint, bots, directoryApiUrls]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const operatorResults = useQueries({
     queries: operatorUrls.map((apiUrl) => ({

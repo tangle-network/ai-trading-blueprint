@@ -43,27 +43,40 @@ import { getBotStrategyChainId } from '~/lib/utils/botStrategy';
 import { tokenMetadataFromStrategyConfig } from '~/lib/assetUniverse';
 import { networks } from '~/lib/contracts/chains';
 import { isBotCommandableByWallet } from '~/lib/utils/botAccess';
+import { warmModulesOnIdle } from '~/lib/utils/idleWarm';
 
 export const meta: MetaFunction = () => [{ title: 'Agent | Tangle Trading' }];
 
+// Import thunks are shared between the lazy() boundaries and idle warming so
+// both hit the same module-cache entry. Once the workspace mounts, every
+// section chunk is fetched during idle time — switching to a not-yet-visited
+// section then resolves instantly instead of swapping in the Suspense fallback.
+const workspaceSectionImports = {
+  performance: () => import('~/components/bot-detail/PerformanceTab'),
+  portfolio: () => import('~/components/bot-detail/PortfolioWorkspace'),
+  runs: () => import('~/components/bot-detail/RunsTab'),
+  chat: () => import('~/components/bot-detail/ChatTab'),
+  operations: () => import('~/components/bot-detail/OperationsWorkspace'),
+} as const;
+
 const PerformanceTab = lazy(() =>
-  import('~/components/bot-detail/PerformanceTab').then((module) => ({
+  workspaceSectionImports.performance().then((module) => ({
     default: module.PerformanceTab,
   })));
 const PortfolioWorkspace = lazy(() =>
-  import('~/components/bot-detail/PortfolioWorkspace').then((module) => ({
+  workspaceSectionImports.portfolio().then((module) => ({
     default: module.PortfolioWorkspace,
   })));
 const RunsTab = lazy(() =>
-  import('~/components/bot-detail/RunsTab').then((module) => ({
+  workspaceSectionImports.runs().then((module) => ({
     default: module.RunsTab,
   })));
 const ChatTab = lazy(() =>
-  import('~/components/bot-detail/ChatTab').then((module) => ({
+  workspaceSectionImports.chat().then((module) => ({
     default: module.ChatTab,
   })));
 const OperationsWorkspace = lazy(() =>
-  import('~/components/bot-detail/OperationsWorkspace').then((module) => ({
+  workspaceSectionImports.operations().then((module) => ({
     default: module.OperationsWorkspace,
   })));
 
@@ -174,6 +187,11 @@ export default function BotDetailPage() {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+
+  useEffect(
+    () => warmModulesOnIdle(Object.values(workspaceSectionImports)),
+    [],
+  );
   const routeSection = sectionFromPathname(location.pathname);
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const legacyTab = searchParams.get('tab');

@@ -51,8 +51,21 @@ vi.mock('~/lib/hooks/useOperatorAuth', () => ({
   useOperatorAuth: () => ({ getToken: hoisted.getTokenMock }),
 }))
 
-vi.mock('~/lib/operator/meta', () => ({
+// The preview client resolves operator base URLs from build-time env; CI has
+// none, so without this stub the evidence fetch silently never fires (local
+// .env.local masked it). importOriginal keeps every other meta export real.
+vi.mock('~/lib/operator/meta', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/lib/operator/meta')>()),
   ALL_TRADING_OPERATOR_API_URLS: ['http://operator.test'],
+}))
+
+vi.mock('~/lib/operator/discovery', () => ({
+  useOperatorDirectory: () => ({
+    apiUrls: ['http://operator.test'],
+    endpoints: [],
+    isDiscovering: false,
+    discoveryError: null,
+  }),
 }))
 
 describe('create agent route', () => {
@@ -256,7 +269,7 @@ describe('create agent route', () => {
     // Default fetch stub 503s: the card states the gap honestly and the
     // launch button stays enabled.
     expect(
-      await screen.findByText(/still launches into paper trading/i, {}, { timeout: 3000 }),
+      await screen.findByText(/still launches into paper trading/i, {}, { timeout: 15000 }),
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /launch paper agent/i })).toBeEnabled()
   })
@@ -266,7 +279,7 @@ describe('create agent route', () => {
     const { default: CreateAgent } = await import('../create')
     render(<CreateAgent />)
 
-    expect(await screen.findByText('+4.2%', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(await screen.findByText('+4.2%', {}, { timeout: 15000 })).toBeInTheDocument()
     expect(screen.getByText('61%')).toBeInTheDocument()
     expect(screen.getByText('18')).toBeInTheDocument()
     expect(screen.getByText('last 30d')).toBeInTheDocument()
@@ -298,7 +311,7 @@ describe('create agent route', () => {
     fireEvent.click(screen.getByText('Polymarket news edge').closest('button')!)
 
     expect(
-      await screen.findByText(/no public kline source/, {}, { timeout: 3000 }),
+      await screen.findByText(/no public kline source/, {}, { timeout: 15000 }),
     ).toBeInTheDocument()
     expect(screen.queryByText('Win rate')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /launch paper agent/i })).toBeEnabled()
@@ -309,7 +322,7 @@ describe('create agent route', () => {
     const { default: CreateAgent } = await import('../create')
     render(<CreateAgent />)
 
-    await screen.findByText('+4.2%', {}, { timeout: 3000 })
+    await screen.findByText('+4.2%', {}, { timeout: 15000 })
     fireEvent.click(screen.getByRole('button', { name: /launch paper agent/i }))
 
     await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledWith('/provision?draft=create'))

@@ -25,18 +25,28 @@ import {
   type OperatorSyncScope,
 } from '~/lib/stores/operatorSyncScope';
 import type { Bot, BotLifecycleStatus, BotOperatorKind, BotStatus, StrategyType } from '~/lib/types/bot';
+import { useQueries } from '@tanstack/react-query';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { useOperatorMeta } from '~/lib/operator/meta';
 import {
   CLOUD_OPERATOR_API_URL,
   INSTANCE_OPERATOR_API_URL,
   TEE_OPERATOR_API_URL,
+  normalizeOperatorApiUrl,
+  operatorMetaQueryOptions,
 } from '~/lib/operator/meta';
+import {
+  clearOperatorFailure,
+  recordOperatorFailure,
+  useOperatorDirectory,
+} from '~/lib/operator/discovery';
 import { operatorJsonWithAuth } from '~/lib/operator/fetch';
 import { subscribeBotsRefresh } from '~/lib/events/bots';
 import { resolveBotDisplayName } from '~/lib/utils/botNames';
 
 const REFRESH_INTERVAL_MS = 15_000;
+/** A hung operator must not block the merged roster; refresh re-polls every 15s anyway. */
+const OPERATOR_FETCH_TIMEOUT_MS = 5_000;
 
 function isUniqueCallId(callId: number | null | undefined): callId is number {
   return typeof callId === 'number' && Number.isFinite(callId) && callId > 0;
@@ -178,6 +188,7 @@ async function fetchOperatorBots(source: OperatorSource): Promise<OperatorBotRes
     {
       refreshOnUnauthorized: false,
       auth: !isPublicFleet,
+      signal: AbortSignal.timeout(OPERATOR_FETCH_TIMEOUT_MS),
     },
   );
 
@@ -211,6 +222,28 @@ async function fetchOperatorBots(source: OperatorSource): Promise<OperatorBotRes
     operatorApiUrl: source.apiUrl,
     operatorKind: source.kind,
   }));
+}
+
+/**
+ * Bot ids are operator-scoped: two operators can each legitimately serve a bot
+ * with the same id over /api/bots. Roster dedupe must key on (operator, bot id)
+ * so distinct operators are never collapsed into one entry. On-chain bots
+ * (keyed by vault address, no operatorApiUrl) keep their plain id.
+ */
+export function operatorScopedBotKey(bot: { id: string; operatorApiUrl?: string | null }): string {
+  return bot.operatorApiUrl ? `${bot.operatorApiUrl}::${bot.id}` : bot.id;
+}
+
+export function dedupeBotsByOperatorScopedKey<T extends { id: string; operatorApiUrl?: string | null }>(
+  bots: T[],
+): T[] {
+  const seen = new Set<string>();
+  return bots.filter((bot) => {
+    const key = operatorScopedBotKey(bot);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function makeBaseBot(partial: Partial<Bot>, authoritative: boolean): Bot {
@@ -307,6 +340,38 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
   const controllerRef = useRef<AbortController | null>(null);
   const refreshSeqRef = useRef(0);
 
+  // On-chain discovery: registered operators beyond the env-configured trio.
+  const directory = useOperatorDirectory();
+  const envApiUrls = useMemo(() => new Set(
+    [CLOUD_OPERATOR_API_URL, INSTANCE_OPERATOR_API_URL, TEE_OPERATOR_API_URL]
+      .map(normalizeOperatorApiUrl)
+      .filter(Boolean),
+  ), []);
+  const discoveredApiUrls = useMemo(
+    () => directory.apiUrls.filter((url) => !envApiUrls.has(url)),
+    [directory.apiUrls, envApiUrls],
+  );
+  const discoveredMetas = useQueries({
+    queries: discoveredApiUrls.map((apiUrl) => operatorMetaQueryOptions(apiUrl)),
+  });
+  // Discovered operators have no wallet session here, so only public fleet
+  // rosters are readable; discovered instance deployments (single private bot)
+  // require auth and are skipped until the user authenticates against them.
+  const discoveredFleetFingerprint = discoveredApiUrls
+    .filter((apiUrl, index) => discoveredMetas[index]?.data?.deployment_kind === 'fleet')
+    .join('|');
+  const discoveredFleetSources = useMemo<OperatorSource[]>(() => (
+    discoveredFleetFingerprint ? discoveredFleetFingerprint.split('|') : []
+  ).map((apiUrl) => ({
+    kind: 'cloud' as const,
+    apiUrl,
+    deploymentKind: 'fleet' as const,
+    token: null,
+    isAuthenticating: false,
+    getCachedToken: () => null,
+    getToken: async () => null,
+  })), [discoveredFleetFingerprint]);
+
   const operatorSources = useMemo<OperatorSource[]>(() => {
     const sources: OperatorSource[] = [];
     const pushSource = (source: OperatorSource) => {
@@ -351,12 +416,14 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
         getToken: teeAuth.getToken,
       });
     }
+    discoveredFleetSources.forEach(pushSource);
     return sources;
   }, [
     cloudAuth.getCachedToken,
     cloudAuth.getToken,
     cloudAuth.isAuthenticating,
     cloudMeta.data?.deployment_kind,
+    discoveredFleetSources,
     instanceAuth.getCachedToken,
     instanceAuth.getToken,
     instanceAuth.isAuthenticating,
@@ -395,8 +462,12 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
         .filter((source) => source.apiUrl && (source.deploymentKind !== 'instance' || source.token))
         .map(async (source) => {
           try {
-            return await fetchOperatorBots(source);
+            const bots = await fetchOperatorBots(source);
+            clearOperatorFailure(source.apiUrl);
+            return bots;
           } catch (err) {
+            // Dead/unreachable operators are skipped, remembered, and never block the merge.
+            recordOperatorFailure(source.apiUrl, err);
             console.warn(`[TradingSyncProvider] Operator bot fetch failed for ${source.apiUrl}:`, err);
             return [];
           }
@@ -410,15 +481,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
       if (fastOperatorBots.length > 0) {
         const current = hydratedBotsStore.get();
         const nonOperatorBots = current.bots.filter((bot) => bot.source !== 'operator');
-        const seenIds = new Set(nonOperatorBots.map((bot) => bot.id));
-        const nextBots = [
-          ...nonOperatorBots,
-          ...fastOperatorBots.filter((bot) => {
-            if (seenIds.has(bot.id)) return false;
-            seenIds.add(bot.id);
-            return true;
-          }),
-        ];
+        const nextBots = dedupeBotsByOperatorScopedKey([...nonOperatorBots, ...fastOperatorBots]);
         hydratedBotsStore.set({
           bots: nextBots,
           isLoading: false,
@@ -723,7 +786,7 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
       const vaultEntriesByAddress = new Map(
         vaultEntries.map((entry) => [entry.vaultAddress.toLowerCase(), entry] as const),
       );
-      const seenBotIds = new Set(builtBots.map((bot) => bot.id));
+      const seenBotKeys = new Set(builtBots.map(operatorScopedBotKey));
       const lastVerifiedAt = Date.now();
 
       for (const operatorBot of operatorBots) {
@@ -752,8 +815,9 @@ export function TradingSyncProvider({ children }: { children: ReactNode }) {
         if (vaultLower === zeroAddress && !hasOperatorLifecycleState) continue;
 
         const botId = operatorBot.id;
-        if (seenBotIds.has(botId)) continue;
-        seenBotIds.add(botId);
+        const botKey = operatorScopedBotKey({ id: botId, operatorApiUrl: operatorBot.operatorApiUrl });
+        if (seenBotKeys.has(botKey)) continue;
+        seenBotKeys.add(botKey);
 
         const vaultEntry = vaultEntriesByAddress.get(vaultLower);
         const botStatus = mapOperatorLifecycleToStatus(operatorBot.lifecycle_status, vaultEntry?.paused ?? false);
