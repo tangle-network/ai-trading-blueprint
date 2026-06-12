@@ -10,6 +10,9 @@ import { PerformanceTab } from '../PerformanceTab';
 
 const lightweightChartMock = vi.hoisted(() => {
   const fitContent = vi.fn();
+  const getVisibleLogicalRange = vi.fn(() => ({ from: 0, to: 40 }));
+  const scrollPosition = vi.fn(() => 2);
+  const scrollToPosition = vi.fn();
   const setVisibleRange = vi.fn();
   const timeToCoordinate = vi.fn((time: number) => {
     const base = Date.parse('2026-04-23T10:00:00.000Z') / 1000;
@@ -19,6 +22,9 @@ const lightweightChartMock = vi.hoisted(() => {
   const unsubscribeVisibleLogicalRangeChange = vi.fn();
   const timeScale = {
     fitContent,
+    getVisibleLogicalRange,
+    scrollPosition,
+    scrollToPosition,
     setVisibleRange,
     subscribeVisibleLogicalRangeChange,
     timeToCoordinate,
@@ -96,12 +102,15 @@ const lightweightChartMock = vi.hoisted(() => {
     createChart: vi.fn(() => chart),
     createSeriesMarkers: vi.fn(() => markerApi),
     fitContent,
+    getVisibleLogicalRange,
     lineSeries,
     markerApi,
     navPaneSeries,
     pane0,
     pane1,
     priceScale,
+    scrollPosition,
+    scrollToPosition,
     setVisibleRange,
     subscribeVisibleLogicalRangeChange,
     timeScale,
@@ -373,6 +382,9 @@ describe('PerformanceTab', () => {
     lightweightChartMock.createChart.mockClear();
     lightweightChartMock.createSeriesMarkers.mockClear();
     lightweightChartMock.fitContent.mockClear();
+    lightweightChartMock.getVisibleLogicalRange.mockClear();
+    lightweightChartMock.scrollPosition.mockClear();
+    lightweightChartMock.scrollToPosition.mockClear();
     lightweightChartMock.setVisibleRange.mockClear();
     lightweightChartMock.lineSeries.setData.mockClear();
     lightweightChartMock.markerApi.detach.mockClear();
@@ -1143,6 +1155,85 @@ describe('PerformanceTab', () => {
       to: Math.ceil(latestLoadedMs / 1000),
     });
     expect(screen.getByTestId('chart-market-coverage')).toHaveTextContent('31/37 candles');
+  });
+
+  it('pans chart history on horizontal touchpad wheel without triggering browser navigation', async () => {
+    mockMetrics = [
+      {
+        timestamp: '2026-04-30T00:00:00.000Z',
+        account_value_usd: 10000,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        drawdown_pct: 0,
+        trade_count: 1,
+      },
+    ];
+    mockTrades = [
+      makeTrade({
+        id: 'latest-eth',
+        action: 'open_long',
+        timestamp: Date.parse('2026-04-30T00:00:00.000Z'),
+        hyperliquidMetadata: {
+          asset: 'ETH',
+          assetSize: '0.03',
+          orderType: 'market',
+          reduceOnly: false,
+        },
+        venue: 'perp',
+      }),
+    ];
+    const firstLoadedMs = Date.parse('2026-03-25T00:00:00.000Z');
+    mockMarketCandles = Array.from({ length: 37 }, (_, index) => {
+      const open = 3200 + index * 4;
+      return {
+        timestamp: firstLoadedMs + index * 24 * 60 * 60 * 1000,
+        token: 'ETH',
+        open,
+        high: open + 16,
+        low: open - 12,
+        close: open + 6,
+        volume: 1000 + index,
+      };
+    });
+
+    render(
+      <PerformanceTab
+        bot={makeBot({
+          strategyType: 'hyperliquid_perp',
+          strategyConfig: { asset: 'ETH' },
+        })}
+        isLive
+      />,
+    );
+
+    await waitFor(() => expect(lightweightChartMock.createChart).toHaveBeenCalled());
+    const chartShell = screen.getByTestId('tradingview-performance-chart');
+    Object.defineProperty(chartShell, 'clientWidth', { configurable: true, value: 1000 });
+
+    const horizontalWheel = new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      deltaX: 100,
+      deltaY: 4,
+    });
+    const horizontalResult = chartShell.dispatchEvent(horizontalWheel);
+
+    expect(horizontalResult).toBe(false);
+    expect(horizontalWheel.defaultPrevented).toBe(true);
+    expect(lightweightChartMock.scrollToPosition).toHaveBeenCalledWith(expect.any(Number), false);
+    expect(lightweightChartMock.scrollToPosition.mock.calls.at(-1)?.[0]).toBeGreaterThan(2);
+
+    const verticalWheel = new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      deltaX: 1,
+      deltaY: 100,
+    });
+    const verticalResult = chartShell.dispatchEvent(verticalWheel);
+
+    expect(verticalResult).toBe(true);
+    expect(verticalWheel.defaultPrevented).toBe(false);
+    expect(lightweightChartMock.scrollToPosition).toHaveBeenCalledTimes(1);
   });
 
   it('groups dense same-location market executions into one readable marker', async () => {
