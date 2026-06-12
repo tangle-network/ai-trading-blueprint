@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ const VIEWPORTS = [
 ];
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ARENA_DIR = path.resolve(SCRIPT_DIR, '..');
+const BUILD_CLIENT_DIR = path.join(ARENA_DIR, 'build', 'client');
 const FIXTURE_BOT_ID = 'smoke-hyperliquid-agent';
 const FIXTURE_OPERATOR = '0x1234567890abcdef1234567890abcdef12345678';
 const FIXTURE_VAULT = '0x0000000000000000000000000000000000001001';
@@ -291,6 +292,15 @@ async function getFreePort() {
   });
 }
 
+async function fileExists(filePath) {
+  try {
+    const entry = await stat(filePath);
+    return entry.isFile();
+  } catch {
+    return false;
+  }
+}
+
 function json(res, statusCode, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(statusCode, {
@@ -299,6 +309,99 @@ function json(res, statusCode, payload) {
     'access-control-allow-origin': '*',
   });
   res.end(body);
+}
+
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.once('error', reject);
+    req.once('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+function contentTypeFor(filePath) {
+  if (filePath.endsWith('.html')) return 'text/html; charset=utf-8';
+  if (filePath.endsWith('.js')) return 'text/javascript; charset=utf-8';
+  if (filePath.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (filePath.endsWith('.svg')) return 'image/svg+xml';
+  if (filePath.endsWith('.png')) return 'image/png';
+  if (filePath.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (filePath.endsWith('.ico')) return 'image/x-icon';
+  return 'application/octet-stream';
+}
+
+async function proxyFixtureOperatorRequest(req, res, operatorUrl, requestUrl) {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+      'access-control-allow-headers': req.headers['access-control-request-headers'] ?? 'authorization,content-type',
+      'access-control-max-age': '600',
+    });
+    res.end();
+    return;
+  }
+
+  const targetPath = requestUrl.pathname.replace(/^\/operator-api/, '') || '/';
+  const target = new URL(targetPath + requestUrl.search, operatorUrl);
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (!value || ['host', 'connection', 'content-length'].includes(key.toLowerCase())) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(key, item);
+    } else {
+      headers.set(key, value);
+    }
+  }
+
+  const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readRequestBody(req);
+  const response = await fetch(target, {
+    method: req.method,
+    headers,
+    body,
+  });
+  const responseHeaders = {};
+  response.headers.forEach((value, key) => {
+    responseHeaders[key] = value;
+  });
+  responseHeaders['access-control-allow-origin'] = '*';
+  res.writeHead(response.status, responseHeaders);
+  if (req.method === 'HEAD') {
+    res.end();
+    return;
+  }
+  res.end(Buffer.from(await response.arrayBuffer()));
+}
+
+function fixtureAppEnv(operatorUrl, { ownerPerformance = false } = {}) {
+  return {
+    ...process.env,
+    VITE_OPERATOR_API_URL: '/operator-api',
+    VITE_CLOUD_OPERATOR_API_URL: '/operator-api',
+    VITE_INSTANCE_OPERATOR_API_URL: '',
+    VITE_TEE_OPERATOR_API_URL: '',
+    VITE_OPERATOR_PROXY_TARGET: operatorUrl,
+    VITE_USE_LOCAL_CHAIN: 'false',
+    VITE_CHAIN_ID: String(FIXTURE_WALLET_CHAIN_ID),
+    ...(ownerPerformance ? { VITE_OPERATOR_E2E_AUTH_ADDRESS: FIXTURE_OPERATOR } : {}),
+    BROWSER: 'none',
+  };
+}
+
+function buildFixtureStaticApp(operatorUrl, { ownerPerformance = false } = {}) {
+  console.log('[arena-smoke] building fixture app for static smoke');
+  const result = spawnSync('pnpm', ['run', 'build'], {
+    cwd: ARENA_DIR,
+    env: fixtureAppEnv(operatorUrl, { ownerPerformance }),
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.split('\n').slice(-120).join('\n');
+    throw new Error(`Fixture static build failed (${result.status ?? result.signal}).\n${output}`);
+  }
+  console.log('[arena-smoke] fixture static build completed');
 }
 
 function text(res, statusCode, body) {
@@ -1003,6 +1106,68 @@ function startFixtureOperatorServer({ emptyRunTranscript = false } = {}) {
 }
 
 async function startFixtureAppServer(operatorUrl, { ownerPerformance = false } = {}) {
+  const preferBuiltFixture = process.env.GITHUB_ACTIONS === 'true' || process.env.ARENA_SMOKE_USE_BUILD === '1';
+  if (preferBuiltFixture) {
+    buildFixtureStaticApp(operatorUrl, { ownerPerformance });
+  }
+  if (preferBuiltFixture && await fileExists(path.join(BUILD_CLIENT_DIR, 'index.html'))) {
+    return startFixtureStaticAppServer(operatorUrl);
+  }
+
+  return startFixtureDevAppServer(operatorUrl, { ownerPerformance });
+}
+
+async function startFixtureStaticAppServer(operatorUrl) {
+  const port = await getFreePort();
+  const url = `http://127.0.0.1:${port}/`;
+  const server = createHttpServer(async (req, res) => {
+    try {
+      const requestUrl = new URL(req.url ?? '/', url);
+      if (requestUrl.pathname === '/operator-api' || requestUrl.pathname.startsWith('/operator-api/')) {
+        await proxyFixtureOperatorRequest(req, res, operatorUrl, requestUrl);
+        return;
+      }
+
+      let pathname = decodeURIComponent(requestUrl.pathname);
+      if (pathname.includes('\0')) {
+        text(res, 400, 'Bad request');
+        return;
+      }
+      if (pathname === '/') pathname = '/index.html';
+
+      const requestedPath = path.resolve(BUILD_CLIENT_DIR, pathname.slice(1));
+      const buildRoot = path.resolve(BUILD_CLIENT_DIR);
+      const insideBuild = requestedPath === buildRoot || requestedPath.startsWith(`${buildRoot}${path.sep}`);
+      const filePath = insideBuild
+        && await fileExists(requestedPath)
+        ? requestedPath
+        : path.join(BUILD_CLIENT_DIR, 'index.html');
+      const body = await readFile(filePath);
+      res.writeHead(200, {
+        'content-type': contentTypeFor(filePath),
+        'cache-control': filePath.endsWith('index.html') ? 'no-store' : 'public, max-age=31536000, immutable',
+      });
+      res.end(body);
+    } catch (error) {
+      text(res, 500, error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      console.log(`[arena-smoke] serving built fixture app from ${BUILD_CLIENT_DIR}`);
+      resolve({
+        url,
+        async close() {
+          await new Promise((closeResolve) => server.close(closeResolve));
+        },
+      });
+    });
+  });
+}
+
+async function startFixtureDevAppServer(operatorUrl, { ownerPerformance = false } = {}) {
   const port = await getFreePort();
   const url = `http://127.0.0.1:${port}/`;
   const child = spawn('pnpm', [
@@ -1015,18 +1180,7 @@ async function startFixtureAppServer(operatorUrl, { ownerPerformance = false } =
     String(port),
   ], {
     cwd: ARENA_DIR,
-    env: {
-      ...process.env,
-      VITE_OPERATOR_API_URL: '/operator-api',
-      VITE_CLOUD_OPERATOR_API_URL: '/operator-api',
-      VITE_INSTANCE_OPERATOR_API_URL: '',
-      VITE_TEE_OPERATOR_API_URL: '',
-      VITE_OPERATOR_PROXY_TARGET: operatorUrl,
-      VITE_USE_LOCAL_CHAIN: 'false',
-      VITE_CHAIN_ID: String(FIXTURE_WALLET_CHAIN_ID),
-      ...(ownerPerformance ? { VITE_OPERATOR_E2E_AUTH_ADDRESS: FIXTURE_OPERATOR } : {}),
-      BROWSER: 'none',
-    },
+    env: fixtureAppEnv(operatorUrl, { ownerPerformance }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
