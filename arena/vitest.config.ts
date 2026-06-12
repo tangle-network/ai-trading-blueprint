@@ -34,5 +34,8 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     globals: true,
     css: false,
+    // CI runners (2 cores, full-suite parallelism) run async route tests an
+    // order of magnitude slower than dev machines; 5s defaults flake there.
+    testTimeout: 20000,
   },
 });

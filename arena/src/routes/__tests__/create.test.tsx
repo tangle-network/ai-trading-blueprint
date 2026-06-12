@@ -261,7 +261,7 @@ describe('create agent route', () => {
     // Default fetch stub 503s: the card states the gap honestly and the
     // launch button stays enabled.
     expect(
-      await screen.findByText(/still launches into paper trading/i, {}, { timeout: 3000 }),
+      await screen.findByText(/still launches into paper trading/i, {}, { timeout: 15000 }),
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /launch paper agent/i })).toBeEnabled()
   })
@@ -271,7 +271,7 @@ describe('create agent route', () => {
     const { default: CreateAgent } = await import('../create')
     render(<CreateAgent />)
 
-    expect(await screen.findByText('+4.2%', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(await screen.findByText('+4.2%', {}, { timeout: 15000 })).toBeInTheDocument()
     expect(screen.getByText('61%')).toBeInTheDocument()
     expect(screen.getByText('18')).toBeInTheDocument()
     expect(screen.getByText('last 30d')).toBeInTheDocument()
@@ -303,7 +303,7 @@ describe('create agent route', () => {
     fireEvent.click(screen.getByText('Polymarket news edge').closest('button')!)
 
     expect(
-      await screen.findByText(/no public kline source/, {}, { timeout: 3000 }),
+      await screen.findByText(/no public kline source/, {}, { timeout: 15000 }),
     ).toBeInTheDocument()
     expect(screen.queryByText('Win rate')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /launch paper agent/i })).toBeEnabled()
@@ -314,7 +314,7 @@ describe('create agent route', () => {
     const { default: CreateAgent } = await import('../create')
     render(<CreateAgent />)
 
-    await screen.findByText('+4.2%', {}, { timeout: 3000 })
+    await screen.findByText('+4.2%', {}, { timeout: 15000 })
     fireEvent.click(screen.getByRole('button', { name: /launch paper agent/i }))
 
     await waitFor(() => expect(hoisted.navigateMock).toHaveBeenCalledWith('/provision?draft=create'))
