@@ -132,6 +132,10 @@ vi.mock('react-router', () => ({
   useSearchParams: () => [new URLSearchParams(), vi.fn()],
 }));
 
+vi.mock('~/lib/contracts/chains', () => ({
+  networks: {},
+}));
+
 let mockMetrics: Array<Record<string, unknown>> | undefined = [];
 let mockMetricsSummary: Record<string, number> | undefined = {
   portfolio_value_usd: 10000,

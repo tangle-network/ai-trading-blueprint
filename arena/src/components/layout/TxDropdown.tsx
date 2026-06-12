@@ -6,6 +6,7 @@ import { useDropdownMenu } from '@tangle-network/sandbox-ui/hooks';
 import { copyText, timeAgo } from '@tangle-network/sandbox-ui/utils';
 import { useTxWatcher } from '~/lib/hooks/useTxWatcher';
 import { useProvisionWatcher } from '~/lib/hooks/useProvisionWatcher';
+import { getExplorerTxLink } from '~/lib/utils/explorerLinks';
 
 const gasFormatter = new Intl.NumberFormat('en-US');
 
@@ -21,6 +22,7 @@ function StatusIcon({ status }: { status: TrackedTx['status'] }) {
 
 function TxRow({ tx }: { tx: TrackedTx }) {
   const [expanded, setExpanded] = useState(false);
+  const explorer = getExplorerTxLink(tx.chainId, tx.hash);
 
   const copyHash = useCallback(async () => {
     await copyText(tx.hash);
@@ -52,14 +54,29 @@ function TxRow({ tx }: { tx: TrackedTx }) {
         <div className="px-4 pb-3 space-y-2">
           <div className="flex items-center gap-2">
             <span className="text-xs font-data text-arena-elements-textTertiary w-16 shrink-0">Hash</span>
-            <button
-              type="button"
-              onClick={copyHash}
-              className="text-xs font-data text-arena-elements-textSecondary hover:text-violet-700 dark:hover:text-violet-400 transition-colors truncate group flex items-center gap-1.5"
-            >
-              <span className="truncate">{tx.hash}</span>
-              <div className="i-ph:copy text-xs opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-            </button>
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={copyHash}
+                className="group flex min-w-0 flex-1 items-center gap-1.5 truncate text-xs font-data text-arena-elements-textSecondary transition-colors hover:text-violet-700 dark:hover:text-violet-400"
+                title={tx.hash}
+              >
+                <span className="truncate">{tx.hash}</span>
+                <div className="i-ph:copy text-xs opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+              </button>
+              {explorer && (
+                <a
+                  href={explorer.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-arena-elements-textTertiary transition-colors hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+                  title={`${tx.hash} · ${explorer.label}`}
+                  aria-label={`View transaction on ${explorer.label}`}
+                >
+                  <span className="i-ph:arrow-square-out text-xs" aria-hidden="true" />
+                </a>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-data text-arena-elements-textTertiary w-16 shrink-0">Status</span>
