@@ -23,6 +23,7 @@ vi.mock('@nanostores/react', () => ({
 }));
 
 vi.mock('@tangle-network/blueprint-ui', () => ({
+  cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' '),
   txListStore: {
     get: () => hoisted.txs,
   },
@@ -82,6 +83,22 @@ describe('TxDropdown', () => {
     expect(trigger).toHaveClass('items-center');
     expect(trigger).toHaveClass('justify-center');
     expect(trigger).toHaveClass('p-0');
+
+    await user.click(trigger);
+
+    expect(hoisted.toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders a full-width labeled trigger for the expanded sidebar dock', async () => {
+    const user = userEvent.setup();
+    render(<TxDropdown compact={false} align="start" side="up" />);
+
+    const trigger = screen.getByRole('button', { name: /transaction history/i });
+
+    expect(trigger).toHaveClass('h-10');
+    expect(trigger).toHaveClass('w-full');
+    expect(trigger).toHaveClass('gap-2');
+    expect(screen.getByText('Transactions')).toBeInTheDocument();
 
     await user.click(trigger);
 

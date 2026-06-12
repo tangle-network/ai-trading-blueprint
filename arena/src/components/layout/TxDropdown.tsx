@@ -1,7 +1,7 @@
 import { useState, useCallback, type RefObject } from 'react';
 import { useStore } from '@nanostores/react';
 import { toast } from 'sonner';
-import { txListStore, pendingCount, clearTxs, type TrackedTx } from '@tangle-network/blueprint-ui';
+import { cn, txListStore, pendingCount, clearTxs, type TrackedTx } from '@tangle-network/blueprint-ui';
 import { useDropdownMenu } from '@tangle-network/sandbox-ui/hooks';
 import { copyText, timeAgo } from '@tangle-network/sandbox-ui/utils';
 import { useTxWatcher } from '~/lib/hooks/useTxWatcher';
@@ -93,7 +93,15 @@ function TxRow({ tx }: { tx: TrackedTx }) {
   );
 }
 
-export function TxDropdown({ align = 'end', side = 'down' }: { align?: 'start' | 'end'; side?: 'up' | 'down' } = {}) {
+export function TxDropdown({
+  align = 'end',
+  side = 'down',
+  compact = true,
+}: {
+  align?: 'start' | 'end';
+  side?: 'up' | 'down';
+  compact?: boolean;
+} = {}) {
   useTxWatcher();
   useProvisionWatcher();
 
@@ -107,11 +115,15 @@ export function TxDropdown({ align = 'end', side = 'down' }: { align?: 'start' |
       <button
         type="button"
         onClick={toggle}
-        className="relative inline-flex h-9 w-9 items-center justify-center border border-arena-elements-dividerColor/70 bg-arena-elements-bg-depth-3 p-0 text-arena-elements-textSecondary transition-[background-color,border-color,color,opacity] duration-150 hover:border-[#50d2c1]/35 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
+        className={cn(
+          'relative inline-flex items-center justify-center border border-arena-elements-dividerColor/70 bg-arena-elements-bg-depth-3 text-arena-elements-textSecondary transition-[background-color,border-color,color,opacity] duration-150 hover:border-[#50d2c1]/35 hover:bg-arena-elements-item-backgroundHover hover:text-arena-elements-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60',
+          compact ? 'h-9 w-9 p-0' : 'h-10 w-full gap-2 px-2 font-display text-sm font-medium',
+        )}
         aria-label="Transaction history"
         aria-expanded={open}
       >
         <div className="i-ph:receipt pointer-events-none text-base leading-none text-arena-elements-textSecondary" />
+        {!compact && <span className="min-w-0 truncate">Transactions</span>}
         {pending > 0 && (
           <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-violet-600 text-white text-[10px] font-data font-bold animate-pulse">
             {pending}

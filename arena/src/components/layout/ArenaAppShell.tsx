@@ -339,9 +339,6 @@ function HeaderUtilityControls() {
   return (
     <div className="hidden items-center gap-1.5 lg:flex">
       <div className={headerUtilityControlClass}>
-        <TxDropdown />
-      </div>
-      <div className={headerUtilityControlClass}>
         <ThemeToggle />
       </div>
     </div>
@@ -352,6 +349,9 @@ function ExpandedAccountDock() {
   return (
     <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
       <div className={cn('min-w-0', terminalControlClass)}>
+        <TxDropdown compact={false} align="start" side="up" />
+      </div>
+      <div className={cn('mt-1.5 min-w-0', terminalControlClass)}>
         <WalletButton align="start" side="up" />
       </div>
       <div className={cn('mt-1.5 min-w-0', terminalControlClass)}>
@@ -364,6 +364,9 @@ function ExpandedAccountDock() {
 function CollapsedAccountDock() {
   return (
     <>
+      <div className={collapsedControlClass}>
+        <TxDropdown align="start" side="up" />
+      </div>
       <div className={collapsedControlClass}>
         <NetworkButton compact align="start" side="up" />
       </div>
