@@ -107,7 +107,9 @@ function PulseCell({
       )}
     </>
   );
-  const className = 'min-w-0 border-b border-[var(--arena-terminal-border)] px-3 py-2.5 last:border-b-0 min-[980px]:border-b-0 min-[980px]:border-r min-[980px]:last:border-r-0';
+  // min-h matches the tallest loaded cell (two content rows + identicon) so
+  // empty/loading cells don't render shorter and reflow when data arrives.
+  const className = 'min-h-[5.25rem] min-w-0 border-b border-[var(--arena-terminal-border)] px-3 py-2.5 last:border-b-0 min-[980px]:border-b-0 min-[980px]:border-r min-[980px]:last:border-r-0';
 
   if (to) {
     return (

@@ -4,9 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Bot } from '~/lib/types/bot';
 import { ArenaTopAgentsPanel } from '../ArenaTopAgentsPanel';
 
-vi.mock('@tangle-network/blueprint-ui/components', () => ({
-  Identicon: ({ address }: { address: string }) => <span>{address.slice(0, 6)}</span>,
-}));
+vi.mock('@tangle-network/blueprint-ui/components', () => import('~/test/stubs/blueprint-ui-components'));
 
 function makeBot(overrides: Partial<Bot> = {}): Bot {
   return {
@@ -55,7 +53,9 @@ describe('ArenaTopAgentsPanel', () => {
     expect(screen.getByTestId('top-agents-panel')).toHaveClass('overflow-hidden', 'h-full', 'min-h-0');
     expect(screen.getByTestId('top-agents-panel')).not.toHaveClass('rounded-[6px]');
     expect(screen.getByRole('heading', { name: 'Top agents' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open ETH Macro Scalper performance' })).toHaveAttribute(
+    // Rows use the shared leaderboard idiom: clickable row + named agent link.
+    expect(screen.getByRole('button', { name: 'Open ETH Macro Scalper performance' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'ETH Macro Scalper' })).toHaveAttribute(
       'href',
       '/arena/bot/bot-1/performance',
     );

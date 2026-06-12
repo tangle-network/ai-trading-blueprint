@@ -16,6 +16,7 @@ import { usePendingValidationCount } from '~/components/bot-detail/usePendingVal
 import { SecretsModal, type SecretsTarget } from '~/components/home/SecretsModal';
 import { ErrorBoundary } from '~/components/ErrorBoundary';
 import { EnvelopeNeededBanner } from '~/components/bot-detail/EnvelopeNeededBanner';
+import { DrawdownHaltBanner } from '~/components/bot-detail/DrawdownHaltBanner';
 import { useBotDetail } from '~/lib/hooks/useBotDetail';
 import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { useRouteOperatorAutoAuth } from '~/lib/hooks/useRouteOperatorAutoAuth';
@@ -556,6 +557,8 @@ export default function BotDetailPage() {
           workspace
         ) : (
           <div className="flex h-full min-h-0 flex-col gap-2">
+            {/* Halted state is visible to everyone; the resume action inside is creator-only. */}
+            <DrawdownHaltBanner bot={bot} canCommand={canCommandBot} />
             {canCommandBot && (
               <EnvelopeNeededBanner
                 bot={bot}

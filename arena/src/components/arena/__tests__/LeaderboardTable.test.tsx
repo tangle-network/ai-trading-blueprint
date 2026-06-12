@@ -4,15 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Bot } from '~/lib/types/bot';
 import { LeaderboardTable } from '../LeaderboardTable';
 
-vi.mock('@tangle-network/blueprint-ui/components', () => ({
-  Identicon: ({ address }: { address: string }) => <span>{address.slice(0, 6)}</span>,
-  Table: ({ children, ...props }: any) => <table {...props}>{children}</table>,
-  TableHeader: ({ children, ...props }: any) => <thead {...props}>{children}</thead>,
-  TableBody: ({ children, ...props }: any) => <tbody {...props}>{children}</tbody>,
-  TableRow: ({ children, ...props }: any) => <tr {...props}>{children}</tr>,
-  TableHead: ({ children, ...props }: any) => <th {...props}>{children}</th>,
-  TableCell: ({ children, ...props }: any) => <td {...props}>{children}</td>,
-}));
+vi.mock('@tangle-network/blueprint-ui/components', () => import('~/test/stubs/blueprint-ui-components'));
 
 function makeBot(overrides: Partial<Bot> = {}): Bot {
   return {

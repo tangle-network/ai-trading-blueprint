@@ -1124,6 +1124,26 @@ interface BotApiQueryOptions {
   stopAtTimestampMs?: number;
 }
 
+/**
+ * keepPreviousData scoped to the same bot on the same operator. Range/window
+ * segments of the query key (days, limit, page count, …) change when the user
+ * flips a chart range; keeping the previous series visible while the new
+ * window loads prevents the loaded chart from collapsing back to a skeleton.
+ * Switching bots still starts clean — another bot's series is worse than a
+ * skeleton. Relies on the `[name, apiUrl, botId, …]` key convention shared by
+ * every bot-scoped query in this module.
+ */
+function keepPreviousDataForSameBot<T>(apiUrl: string, botId: string) {
+  return (
+    previousData: T | undefined,
+    previousQuery: { queryKey: readonly unknown[] } | undefined,
+  ): T | undefined => {
+    const key = previousQuery?.queryKey;
+    if (!key || key[1] !== apiUrl || key[2] !== botId) return undefined;
+    return previousData;
+  };
+}
+
 export function useBotTradePage(
   botId: string,
   botName: string = '',
@@ -1196,6 +1216,7 @@ export function useBotTradePage(
     staleTime: 15_000,
     refetchOnMount: 'always',
     refetchInterval: options.refetchInterval,
+    placeholderData: keepPreviousDataForSameBot<TradePage>(apiUrl, botId),
     enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
   });
 }
@@ -1773,6 +1794,7 @@ export function useBotMetrics(botId: string, days = 30, options: BotApiQueryOpti
     staleTime: 15_000,
     refetchOnMount: false,
     refetchInterval: options.refetchInterval,
+    placeholderData: keepPreviousDataForSameBot<ApiMetricsSnapshot[]>(apiUrl, botId),
     enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
   });
 }
@@ -1842,6 +1864,7 @@ export function useBotMarketCandles(
     staleTime: 30_000,
     refetchOnMount: false,
     refetchInterval: options.refetchInterval,
+    placeholderData: keepPreviousDataForSameBot<MarketCandle[]>(apiUrl, botId),
     enabled: enabled && !!apiUrl && !!normalizedToken && (!needsAuth || !!auth.getCachedToken()),
   });
 }
@@ -1897,6 +1920,7 @@ export function useBotChartStudies(
     staleTime: 30_000,
     refetchOnMount: false,
     refetchInterval: options.refetchInterval,
+    placeholderData: keepPreviousDataForSameBot<ChartStudy[]>(apiUrl, botId),
     enabled: enabled && !!apiUrl && !!normalizedToken && (!needsAuth || !!auth.getCachedToken()),
   });
 }
@@ -2014,6 +2038,39 @@ export function useBotPerformanceSummary(botId: string, options: BotApiQueryOpti
     refetchOnMount: false,
     refetchInterval: options.refetchInterval,
     enabled: enabled && !!apiUrl && (!needsAuth || !!auth.getCachedToken()),
+  });
+}
+
+/**
+ * Owner acknowledgement of a drawdown-breaker halt. The operator rebases the
+ * risk baseline to current NAV (`POST /risk/acknowledge-drawdown`, submitter
+ * only), so future drawdown is measured from the acknowledged loss instead of
+ * the old high-water mark. Invalidate the metrics history so the halted state
+ * derived from the latest snapshot clears as soon as the rebased data lands.
+ */
+export function useAcknowledgeDrawdown(botId: string, options: BotApiQueryOptions = {}) {
+  const apiUrl = options.operatorApiUrl ?? '';
+  const auth = useOperatorAuth(apiUrl);
+  const deploymentKind = getDeploymentKindForOperatorKind(options.operatorKind);
+  const queryClient = useQueryClient();
+
+  return useMutation<{ status: string }, Error, void>({
+    mutationFn: async () => {
+      const path = buildBotScopedPathForDeploymentKind(
+        deploymentKind,
+        botId,
+        '/risk/acknowledge-drawdown',
+      );
+      return operatorJsonWithAuth<{ status: string }>(apiUrl, path, auth, {
+        method: 'POST',
+      });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['bot-metrics', apiUrl, botId] }),
+        queryClient.invalidateQueries({ queryKey: ['bot-performance-summary', apiUrl, botId] }),
+      ]);
+    },
   });
 }
 

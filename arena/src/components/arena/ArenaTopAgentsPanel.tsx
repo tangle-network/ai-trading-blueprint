@@ -1,7 +1,7 @@
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import type { ReactNode } from 'react';
 import type { Address } from 'viem';
-import { Identicon } from '@tangle-network/blueprint-ui/components';
+import { Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import type { Bot } from '~/lib/types/bot';
 import type { AgentActivityStats } from '~/lib/agentActivity';
 import { botStatusLabel, formatCompactUsd, formatNumber, formatSignedPercent, STRATEGY_SHORT } from '~/lib/format';
@@ -10,6 +10,7 @@ import {
   fillCountEvidenceTitle,
   resolveFillCountEvidence,
 } from '~/lib/tradeEvidence';
+import { SQUARE_TABLE_CLASS, StaticTableHeaderLabel } from '~/components/arena/SortableTableHeader';
 
 interface ArenaTopAgentsPanelProps {
   bots: Bot[];
@@ -59,6 +60,7 @@ export function ArenaTopAgentsPanel({
   activityStatsByBotId,
   headerControls,
 }: ArenaTopAgentsPanelProps) {
+  const navigate = useNavigate();
   const isRail = variant === 'rail';
   const showActivity = metricMode === 'activity' && !isRail;
   const topAgents = (showActivity ? sortByActivity(bots, activityStatsByBotId) : rankLeaderboardBots(bots)).slice(0, limit);
@@ -84,33 +86,18 @@ export function ArenaTopAgentsPanel({
         </div>
       </div>
 
-      {!isRail && (
-        <div className="grid grid-cols-[2.25rem_minmax(15rem,1fr)_5.5rem_4.25rem_5.25rem] border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] px-3 py-2 font-data text-[11px] uppercase text-[var(--arena-terminal-text-subtle)] lg:text-xs">
-          <span>#</span>
-          <span>Agent</span>
-          <span className="text-right">{showActivity ? '24H Vol' : '30D'}</span>
-          <span className="text-right">{showActivity ? '24H' : 'Sharpe'}</span>
-          <span className="text-right">{showActivity ? 'Total' : 'Fills'}</span>
-        </div>
-      )}
-
       <div className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
         {topAgents.length === 0 ? (
           <div className="flex h-full min-h-[12rem] items-center justify-center px-6 text-center font-display text-sm text-[var(--arena-terminal-text-muted)]">
             No public agents yet.
           </div>
-        ) : (
+        ) : isRail ? (
           <div className="divide-y divide-[var(--arena-terminal-border)]">
             {topAgents.map((bot, index) => {
               const href = `/arena/bot/${encodeURIComponent(bot.id)}/performance`;
               const hasRailReturn = Number.isFinite(bot.pnlPercent) && bot.pnlPercent !== 0;
               const hasRailTrades = bot.totalTrades > 0;
-              const activityStats = activityStatsByBotId?.get(bot.id);
-              const totalFillEvidence = resolveFillCountEvidence({
-                visibleTradeCount: activityStats?.totalVisibleFills,
-                rosterTradeCount: bot.totalTrades,
-              });
-              return isRail ? (
+              return (
                 <Link
                   key={bot.id}
                   to={href}
@@ -151,70 +138,119 @@ export function ArenaTopAgentsPanel({
                     <span className="i-ph:arrow-up-right shrink-0 text-sm text-[var(--arena-terminal-text-subtle)] group-hover:text-[var(--arena-terminal-accent)]" aria-hidden="true" />
                   )}
                 </Link>
-              ) : (
-                <Link
-                  key={bot.id}
-                  to={href}
-                  className="group grid grid-cols-[2.25rem_minmax(15rem,1fr)_5.5rem_4.25rem_5.25rem] items-center px-3 py-2 transition-colors hover:bg-[var(--arena-terminal-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#50d2c1]/60"
-                  aria-label={`Open ${bot.name} performance`}
-                >
-                  <span className="font-data text-sm font-semibold text-[var(--arena-terminal-text-subtle)]">
-                    {formatNumber(index + 1, { maximumFractionDigits: 0 })}
-                  </span>
-                  <span className="flex min-w-0 items-center gap-3">
-                    <Identicon address={bot.operatorAddress as Address} size={32} />
-                    <span className="min-w-0">
-                      <span className="block truncate font-display text-base font-semibold leading-tight text-[var(--arena-terminal-text)] group-hover:text-[var(--arena-terminal-accent)]">
-                        {bot.name}
-                      </span>
-                      <span className="mt-1 flex min-w-0 items-center gap-2 font-data text-xs text-[var(--arena-terminal-text-muted)]">
-                        <span className="truncate">{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
-                        <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
-                        <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-success)]' : 'truncate'}>
-                          {botStatusLabel(bot.status)}
-                        </span>
-                        {bot.tvl > 0 && (
-                          <>
-                            <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
-                            <span className="truncate">{formatCompactUsd(bot.tvl)}</span>
-                          </>
-                        )}
-                      </span>
-                    </span>
-                  </span>
-                  {showActivity ? (
-                    <>
-                      <span className="text-right font-data text-lg font-bold text-[var(--arena-terminal-text)]">
-                        {formatFlowUsd(activityStatsByBotId?.get(bot.id)?.recentNotionalUsd ?? 0)}
-                      </span>
-                      <span className="text-right font-data text-lg text-[var(--arena-terminal-text)]">
-                        {formatNumber(activityStats?.recentFills ?? 0, { maximumFractionDigits: 0 })}
-                      </span>
-                      <span
-                        className="text-right font-data text-lg text-[var(--arena-terminal-text-secondary)]"
-                        title={fillCountEvidenceTitle(totalFillEvidence)}
-                      >
-                        {totalFillEvidence.value > 0
-                          ? formatNumber(totalFillEvidence.value, { maximumFractionDigits: 0 })
-                          : '—'}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <span className={`text-right font-data text-lg font-bold ${valueTone(bot.pnlPercent)}`}>
-                        {formatSignedPercent(bot.pnlPercent)}
-                      </span>
-                      <span className="text-right font-data text-lg text-[var(--arena-terminal-text)]">
-                        {bot.sharpeRatio !== 0 ? formatNumber(bot.sharpeRatio, { maximumFractionDigits: 1 }) : '—'}
-                      </span>
-                      <span className="text-right font-data text-lg text-[var(--arena-terminal-text)]">
-                        {bot.totalTrades > 0 ? formatNumber(bot.totalTrades, { maximumFractionDigits: 0 }) : '—'}
-                      </span>
-                    </>
-                  )}
-                </Link>
               );
             })}
+          </div>
+        ) : (
+          <div className={SQUARE_TABLE_CLASS}>
+            <Table className={`w-full min-w-[34rem] table-fixed bg-[var(--arena-terminal-panel)] ${SQUARE_TABLE_CLASS}`}>
+              <TableHeader className="sticky top-0 z-10">
+                <TableRow className="border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] hover:bg-[var(--arena-terminal-surface)]">
+                  <TableHead className="w-10 py-2">
+                    <StaticTableHeaderLabel>#</StaticTableHeaderLabel>
+                  </TableHead>
+                  <TableHead className="py-2">
+                    <StaticTableHeaderLabel>Agent</StaticTableHeaderLabel>
+                  </TableHead>
+                  <TableHead className="w-[5.75rem] py-2">
+                    <StaticTableHeaderLabel align="right">{showActivity ? '24H Vol' : '30D'}</StaticTableHeaderLabel>
+                  </TableHead>
+                  <TableHead className="w-[4.5rem] py-2">
+                    <StaticTableHeaderLabel align="right">{showActivity ? '24H' : 'Sharpe'}</StaticTableHeaderLabel>
+                  </TableHead>
+                  <TableHead className="w-[5.5rem] py-2">
+                    <StaticTableHeaderLabel align="right">{showActivity ? 'Total' : 'Fills'}</StaticTableHeaderLabel>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {topAgents.map((bot, index) => {
+                  const href = `/arena/bot/${encodeURIComponent(bot.id)}/performance`;
+                  const activityStats = activityStatsByBotId?.get(bot.id);
+                  const totalFillEvidence = resolveFillCountEvidence({
+                    visibleTradeCount: activityStats?.totalVisibleFills,
+                    rosterTradeCount: bot.totalTrades,
+                  });
+                  return (
+                    <TableRow
+                      key={bot.id}
+                      className="group cursor-pointer border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)]"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open ${bot.name} performance`}
+                      onClick={() => navigate(href)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          navigate(href);
+                        }
+                      }}
+                    >
+                      <TableCell className="py-2 align-middle font-data text-sm font-semibold tabular-nums text-[var(--arena-terminal-text-subtle)]">
+                        {formatNumber(index + 1, { maximumFractionDigits: 0 })}
+                      </TableCell>
+                      <TableCell className="min-w-0 py-2 align-middle">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Identicon address={bot.operatorAddress as Address} size={32} />
+                          <div className="min-w-0 flex-1">
+                            <Link
+                              to={href}
+                              className="block truncate font-display text-base font-semibold leading-tight text-[var(--arena-terminal-text)] transition-colors duration-200 hover:text-[var(--arena-terminal-accent)]"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              {bot.name}
+                            </Link>
+                            <div className="mt-0.5 flex min-w-0 items-center gap-2 font-data text-xs text-[var(--arena-terminal-text-muted)]">
+                              <span className="truncate">{STRATEGY_SHORT[bot.strategyType] ?? bot.strategyType}</span>
+                              <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
+                              <span className={bot.status === 'active' ? 'truncate text-[var(--arena-terminal-success)]' : 'truncate'}>
+                                {botStatusLabel(bot.status)}
+                              </span>
+                              {bot.tvl > 0 && (
+                                <>
+                                  <span className="h-1 w-1 shrink-0 rounded-full bg-[var(--arena-terminal-text-subtle)]" aria-hidden="true" />
+                                  <span className="truncate tabular-nums">{formatCompactUsd(bot.tvl)}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </TableCell>
+                      {showActivity ? (
+                        <>
+                          <TableCell className="py-2 text-right align-middle font-data text-base font-bold tabular-nums text-[var(--arena-terminal-text)]">
+                            {formatFlowUsd(activityStats?.recentNotionalUsd ?? 0)}
+                          </TableCell>
+                          <TableCell className="py-2 text-right align-middle font-data text-base tabular-nums text-[var(--arena-terminal-text)]">
+                            {formatNumber(activityStats?.recentFills ?? 0, { maximumFractionDigits: 0 })}
+                          </TableCell>
+                          <TableCell
+                            className="py-2 text-right align-middle font-data text-base tabular-nums text-[var(--arena-terminal-text-secondary)]"
+                            title={fillCountEvidenceTitle(totalFillEvidence)}
+                          >
+                            {totalFillEvidence.value > 0
+                              ? formatNumber(totalFillEvidence.value, { maximumFractionDigits: 0 })
+                              : '—'}
+                          </TableCell>
+                        </>
+                      ) : (
+                        <>
+                          <TableCell className={`py-2 text-right align-middle font-data text-base font-bold tabular-nums ${valueTone(bot.pnlPercent)}`}>
+                            {formatSignedPercent(bot.pnlPercent)}
+                          </TableCell>
+                          <TableCell className="py-2 text-right align-middle font-data text-base tabular-nums text-[var(--arena-terminal-text)]">
+                            {bot.sharpeRatio !== 0 ? formatNumber(bot.sharpeRatio, { maximumFractionDigits: 1 }) : '—'}
+                          </TableCell>
+                          <TableCell className="py-2 text-right align-middle font-data text-base tabular-nums text-[var(--arena-terminal-text)]">
+                            {bot.totalTrades > 0 ? formatNumber(bot.totalTrades, { maximumFractionDigits: 0 }) : '—'}
+                          </TableCell>
+                        </>
+                      )}
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
         )}
       </div>

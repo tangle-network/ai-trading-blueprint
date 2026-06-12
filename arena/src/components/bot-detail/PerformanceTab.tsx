@@ -640,14 +640,14 @@ function BenchmarkStrip({ summary }: { summary: BotPerformanceSummary }) {
           <div className={`mt-1 truncate font-data text-base font-semibold tabular-nums min-[1440px]:text-lg ${cell.tone}`}>
             {cell.value}
           </div>
-          {cell.subvalue && (
-            <div
-              className="mt-0.5 truncate font-data text-[11px] text-[#949e9c] min-[1440px]:text-xs"
-              title={cell.subvalue}
-            >
-              {cell.subvalue}
-            </div>
-          )}
+          {/* Always render the subvalue row so cell height is identical before
+              and after window/capital labels resolve (no vertical reflow). */}
+          <div
+            className="mt-0.5 truncate font-data text-[11px] text-[#949e9c] min-[1440px]:text-xs"
+            title={cell.subvalue ?? undefined}
+          >
+            {cell.subvalue ?? ' '}
+          </div>
         </div>
       ))}
     </section>
@@ -730,6 +730,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     data: apiMetrics,
     isError: hasMetricsError,
     isLoading,
+    isPlaceholderData: metricsArePlaceholder,
   } = useBotMetrics(bot.id, selectedRange.days, {
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
@@ -789,7 +790,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 30_000 : false,
   });
-  const { data: performanceSummary } = useBotPerformanceSummary(bot.id, {
+  const { data: performanceSummary, isLoading: performanceSummaryLoading } = useBotPerformanceSummary(bot.id, {
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
     refetchInterval: isLive ? 60_000 : false,
@@ -1310,6 +1311,19 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
                   </button>
                 ))}
               </div>
+              {metricsArePlaceholder && (
+                <span
+                  role="status"
+                  aria-label="Updating range"
+                  title="Updating range"
+                  className="inline-flex h-8 items-center px-1 font-data text-[11px] text-[#949e9c]"
+                >
+                  <span
+                    className="h-1.5 w-1.5 rounded-full bg-[var(--arena-terminal-accent)] animate-pulse motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                </span>
+              )}
             </div>
           </div>
 
@@ -1391,11 +1405,29 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             </section>
           )}
 
-          {hasBenchmarkData(performanceSummary) && (
+          {hasBenchmarkData(performanceSummary) ? (
             <BenchmarkStrip summary={performanceSummary} />
-          )}
+          ) : performanceSummaryLoading ? (
+            // Reserve the strip's footprint while the summary loads so the
+            // chart doesn't get pushed down when benchmark data pops in.
+            <section
+              aria-label="Performance vs benchmark"
+              aria-busy="true"
+              className="grid shrink-0 grid-cols-3 gap-px border-b border-[#273035] bg-[#273035]"
+            >
+              {['Return', 'vs Buy & Hold', 'Max DD'].map((label) => (
+                <div key={label} className="min-w-0 bg-[#0f1a1f] px-3 py-2">
+                  <div className="truncate font-data text-[11px] uppercase tracking-[0.12em] text-[#697371] min-[1440px]:text-xs">
+                    {label}
+                  </div>
+                  <Skeleton className="mt-1.5 h-5 w-16 min-[1440px]:h-6" />
+                  <Skeleton className="mt-1.5 h-3.5 w-28 min-[1440px]:h-4" />
+                </div>
+              ))}
+            </section>
+          ) : null}
 
-          <div className="min-h-0 flex-1 bg-[#0f1a1f]">
+          <div className="min-h-0 flex-1 bg-[#0f1a1f]" aria-busy={metricsArePlaceholder}>
             {chartIsRenderable ? (
               <div className="h-full min-h-[260px] min-[1280px]:min-h-[420px]">
                 <TradingPerformanceChart

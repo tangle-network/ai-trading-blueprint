@@ -3,9 +3,11 @@ import { Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { resolveOperatorRpc, useOperators } from '@tangle-network/blueprint-ui';
-import { Identicon } from '@tangle-network/blueprint-ui/components';
+import { Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import type { Address } from 'viem';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
+import { SQUARE_TABLE_CLASS, StaticTableHeaderLabel } from '~/components/arena/SortableTableHeader';
+import { Skeleton, SkeletonTableRow } from '~/components/ui/Skeleton';
 import type { OperatorMeta } from '~/lib/operator/meta';
 import { isMixedContentBlocked, useOperatorDirectory } from '~/lib/operator/discovery';
 import { TRADING_BLUEPRINTS, type TradingBlueprintDef } from '~/lib/blueprints';
@@ -227,7 +229,26 @@ function BlueprintOperatorsTable({
     <div className="border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)]">
       <div className="divide-y divide-[var(--arena-terminal-border)] md:hidden">
         {isLoadingOperators && empty ? (
-          <div className="px-3 py-4 text-sm text-[var(--arena-terminal-muted)]">Loading operators...</div>
+          // Mirror the loaded card layout (identity row + chips) so resolved
+          // operators replace skeletons without resizing the panel.
+          Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="space-y-2 px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-[30px] w-[30px]" />
+                  <div>
+                    <Skeleton className="h-4 w-28" />
+                    <Skeleton className="mt-1.5 h-3 w-40" />
+                  </div>
+                </div>
+                <Skeleton className="h-7 w-16" />
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <Skeleton className="h-7 w-20" />
+                <Skeleton className="h-8 w-20" />
+              </div>
+            </div>
+          ))
         ) : empty ? (
           <div className="px-3 py-4 text-sm text-[var(--arena-terminal-muted)]">No operators found for this blueprint.</div>
         ) : (
@@ -277,76 +298,90 @@ function BlueprintOperatorsTable({
         )}
       </div>
 
-      <div className="hidden overflow-x-auto md:block">
-        <div className="min-w-[900px]">
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_120px_120px_120px] gap-3 border-b border-[var(--arena-terminal-border)] px-3 py-2 text-xs font-data uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
-          <span>Operator</span>
-          <span>RPC / API</span>
-          <span>Access</span>
-          <span>Health</span>
-          <span>Action</span>
-        </div>
-        <div className="divide-y divide-[var(--arena-terminal-border)]">
-          {isLoadingOperators && empty ? (
-            <div className="px-3 py-4 text-sm text-[var(--arena-terminal-muted)]">Loading operators...</div>
-          ) : empty ? (
-            <div className="px-3 py-4 text-sm text-[var(--arena-terminal-muted)]">
-              No operators found for {selectedBlueprint?.name ?? 'this blueprint'}.
-            </div>
-          ) : (
-            rows.map((row) => {
-              const access = row.api?.meta?.request_access;
-              const status = healthLabel(row);
-              return (
-                <div key={row.key} className="grid min-h-12 grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_120px_120px_120px] items-center gap-3 px-3 py-2 text-sm">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <OperatorIdentity row={row} />
-                    <div className="min-w-0">
-                      <div className="truncate font-data text-[var(--arena-terminal-text)]" title={row.address ?? undefined}>
-                        {row.address ?? 'Configured API'}
+      <div className={`hidden overflow-x-auto md:block ${SQUARE_TABLE_CLASS}`}>
+        <Table className={`w-full min-w-[900px] table-fixed bg-[var(--arena-terminal-panel)] ${SQUARE_TABLE_CLASS}`}>
+          <TableHeader>
+            <TableRow className="border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-surface)] hover:bg-[var(--arena-terminal-surface)]">
+              <TableHead className="py-2"><StaticTableHeaderLabel>Operator</StaticTableHeaderLabel></TableHead>
+              <TableHead className="w-[28%] py-2"><StaticTableHeaderLabel>RPC / API</StaticTableHeaderLabel></TableHead>
+              <TableHead className="w-[120px] py-2"><StaticTableHeaderLabel>Access</StaticTableHeaderLabel></TableHead>
+              <TableHead className="w-[120px] py-2"><StaticTableHeaderLabel>Health</StaticTableHeaderLabel></TableHead>
+              <TableHead className="w-[120px] py-2"><StaticTableHeaderLabel>Action</StaticTableHeaderLabel></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoadingOperators && empty ? (
+              Array.from({ length: 3 }).map((_, index) => (
+                <SkeletonTableRow key={index} cols={5} />
+              ))
+            ) : empty ? (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={5} className="px-3 py-4 text-sm text-[var(--arena-terminal-muted)]">
+                  No operators found for {selectedBlueprint?.name ?? 'this blueprint'}.
+                </TableCell>
+              </TableRow>
+            ) : (
+              rows.map((row) => {
+                const access = row.api?.meta?.request_access;
+                const status = healthLabel(row);
+                return (
+                  <TableRow key={row.key} className="border-b border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel)] transition-colors hover:bg-[var(--arena-terminal-panel-strong)]">
+                    <TableCell className="min-w-0 py-2 align-middle">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <OperatorIdentity row={row} />
+                        <div className="min-w-0">
+                          <div className="truncate font-data text-sm text-[var(--arena-terminal-text)]" title={row.address ?? undefined}>
+                            {row.address ?? 'Configured API'}
+                          </div>
+                          <div className="font-data text-[11px] uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
+                            {row.source === 'registered' ? 'on-chain registration' : deploymentLabel(row.api?.meta?.deployment_kind)}
+                          </div>
+                        </div>
                       </div>
-                      <div className="font-data text-[11px] uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
-                        {row.source === 'registered' ? 'on-chain registration' : deploymentLabel(row.api?.meta?.deployment_kind)}
-                      </div>
-                    </div>
-                  </div>
-                  <a
-                    href={row.apiUrl || undefined}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="min-w-0 truncate font-data text-[#148f82] hover:text-[#0f766e] dark:text-[#9af4e8] dark:hover:text-[#c8fffb]"
-                    title={row.apiUrl || row.rpcAddress}
-                  >
-                    {row.apiUrl || 'No RPC registered'}
-                  </a>
-                  <span className={`inline-flex h-7 w-fit items-center border px-2 text-xs font-display font-semibold ${accessTone(access?.mode)}`}>
-                    {accessLabel(access?.mode)}
-                  </span>
-                  <div className="min-w-0">
-                    <span
-                      className={`inline-flex h-7 w-fit items-center border px-2 text-xs font-display font-semibold ${healthTone(row.api?.ok)}`}
-                      title={row.api?.noTls ? 'Unreachable from browser (no TLS). Operator endpoints must be served over https.' : row.api?.error}
-                    >
-                      {status}
-                    </span>
-                    {row.api?.ok && (
-                      <div className="mt-1 truncate font-data text-[11px] text-[var(--arena-terminal-text-subtle)]">
-                        {deploymentLabel(row.api.meta?.deployment_kind)}
-                      </div>
-                    )}
-                  </div>
-                  <Link
-                    to={provisionHref(selectedBlueprint, row)}
-                    className="inline-flex h-8 w-fit items-center border border-[#50d2c1]/35 px-2 font-display text-sm font-semibold text-[#148f82] hover:border-[#50d2c1]/60 hover:bg-[#50d2c1]/10 hover:text-[#0f766e] dark:text-[#50d2c1] dark:hover:text-[#c8fffb]"
-                  >
-                    Request
-                  </Link>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+                    </TableCell>
+                    <TableCell className="min-w-0 py-2 align-middle">
+                      <a
+                        href={row.apiUrl || undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block min-w-0 truncate font-data text-sm text-[#148f82] hover:text-[#0f766e] dark:text-[#9af4e8] dark:hover:text-[#c8fffb]"
+                        title={row.apiUrl || row.rpcAddress}
+                      >
+                        {row.apiUrl || 'No RPC registered'}
+                      </a>
+                    </TableCell>
+                    <TableCell className="py-2 align-middle">
+                      <span className={`inline-flex h-7 w-fit items-center border px-2 text-xs font-display font-semibold ${accessTone(access?.mode)}`}>
+                        {accessLabel(access?.mode)}
+                      </span>
+                    </TableCell>
+                    <TableCell className="min-w-0 py-2 align-middle">
+                      <span
+                        className={`inline-flex h-7 w-fit items-center border px-2 text-xs font-display font-semibold ${healthTone(row.api?.ok)}`}
+                        title={row.api?.noTls ? 'Unreachable from browser (no TLS). Operator endpoints must be served over https.' : row.api?.error}
+                      >
+                        {status}
+                      </span>
+                      {row.api?.ok && (
+                        <div className="mt-1 truncate font-data text-[11px] text-[var(--arena-terminal-text-subtle)]">
+                          {deploymentLabel(row.api.meta?.deployment_kind)}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="py-2 align-middle">
+                      <Link
+                        to={provisionHref(selectedBlueprint, row)}
+                        className="inline-flex h-8 w-fit items-center border border-[#50d2c1]/35 px-2 font-display text-sm font-semibold text-[#148f82] hover:border-[#50d2c1]/60 hover:bg-[#50d2c1]/10 hover:text-[#0f766e] dark:text-[#50d2c1] dark:hover:text-[#c8fffb]"
+                      >
+                        Request
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
       </div>
     </div>
   );

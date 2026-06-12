@@ -1393,6 +1393,9 @@ export function TradingPerformanceChart({
         rightPriceScale: {
           borderVisible: false,
           scaleMargins: { top: 0.08, bottom: activeMode === 'market' ? 0.2 : 0.14 },
+          // Reserve axis width so the plot area doesn't shift horizontally
+          // when price-label width changes between ranges/datasets.
+          minimumWidth: 64,
         },
         timeScale: {
           borderVisible: false,
