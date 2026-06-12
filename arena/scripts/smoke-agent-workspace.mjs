@@ -1456,9 +1456,8 @@ async function readFixtureRouteMetrics(page, { bodyLimit = 5000 } = {}) {
   })()`);
 }
 
-function isBlankHydrationFallbackMetrics(metrics) {
-  return metrics.bodyText.trim().length === 0
-    && /__reactRouterContext|clientLoader|hydrateFallback/i.test(metrics.bodyHtml);
+function shouldRetryBlankShellMetrics(metrics) {
+  return metrics.bodyText.trim().length === 0;
 }
 
 async function waitForFixtureRoute(page, {
@@ -1470,8 +1469,9 @@ async function waitForFixtureRoute(page, {
   let reloadedHydrationFallback = false;
   return waitFor(async () => {
     const nextMetrics = await readFixtureRouteMetrics(page, { bodyLimit });
-    if (!reloadedHydrationFallback && isBlankHydrationFallbackMetrics(nextMetrics)) {
+    if (!reloadedHydrationFallback && shouldRetryBlankShellMetrics(nextMetrics)) {
       reloadedHydrationFallback = true;
+      console.warn(`[arena-smoke] blank shell at ${nextMetrics.pathname || 'unknown route'}; reloading once`);
       await reload(page);
       return false;
     }
@@ -1751,8 +1751,9 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
           transformedWorkspaceAncestor,
         };
       })()`);
-        if (!reloadedHydrationFallback && isBlankHydrationFallbackMetrics(nextMetrics)) {
+        if (!reloadedHydrationFallback && shouldRetryBlankShellMetrics(nextMetrics)) {
           reloadedHydrationFallback = true;
+          console.warn(`[arena-smoke] blank shell at ${nextMetrics.pathname || 'unknown route'}; reloading once`);
           await reload(page);
           return false;
         }
