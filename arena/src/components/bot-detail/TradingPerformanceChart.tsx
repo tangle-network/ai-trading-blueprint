@@ -108,6 +108,11 @@ const MARKET_AXIS_DAY_ONLY_THRESHOLD_MS = 5 * 24 * 60 * 60 * 1000;
 const MARKET_AXIS_EDGE_SUPPRESSION_MIN_MS = 8 * 60 * 1000;
 const MARKET_AXIS_EDGE_SUPPRESSION_MAX_MS = 6 * 60 * 60 * 1000;
 const MARKET_AXIS_EDGE_SUPPRESSION_RANGE_FRACTION = 0.005;
+const HORIZONTAL_WHEEL_INTENT_RATIO = 1.15;
+const HORIZONTAL_WHEEL_MIN_DELTA_PX = 4;
+const HORIZONTAL_WHEEL_PAN_MULTIPLIER = 0.8;
+const WHEEL_DELTA_LINE = 1;
+const WHEEL_DELTA_PAGE = 2;
 const DEFAULT_MARKET_STUDIES: Record<MarketStudyId, boolean> = {
   vwap: true,
   sma20: true,
@@ -129,6 +134,44 @@ const STUDY_LINE_COLORS: Record<StudyLineId, string> = {
   bbLower: '#8C96A3',
 };
 const AGENT_STUDY_COLORS = ['#B788FF', '#F2B84B', '#6EA8FF', '#50D2C1', '#ED7088', '#9CA3AF'];
+
+function chartHorizontalWheelDelta(event: WheelEvent): number | null {
+  if (event.ctrlKey || event.metaKey) return null;
+
+  const absoluteX = Math.abs(event.deltaX);
+  const absoluteY = Math.abs(event.deltaY);
+  if (event.shiftKey && absoluteY >= HORIZONTAL_WHEEL_MIN_DELTA_PX) {
+    return event.deltaY;
+  }
+  if (absoluteX < HORIZONTAL_WHEEL_MIN_DELTA_PX) return null;
+  if (absoluteY > 0 && absoluteX < absoluteY * HORIZONTAL_WHEEL_INTENT_RATIO) return null;
+
+  return event.deltaX;
+}
+
+function normalizeWheelDeltaPixels(delta: number, deltaMode: number): number {
+  if (deltaMode === WHEEL_DELTA_LINE) return delta * 32;
+  if (deltaMode === WHEEL_DELTA_PAGE) return delta * 120;
+  return delta;
+}
+
+function panChartTimeScale(chart: IChartApi, container: HTMLDivElement, delta: number, deltaMode: number) {
+  const timeScale = chart.timeScale() as ReturnType<IChartApi['timeScale']> & {
+    getVisibleLogicalRange?: () => { from: number; to: number } | null;
+    scrollPosition?: () => number;
+    scrollToPosition?: (position: number, animated: boolean) => void;
+  };
+  if (typeof timeScale.scrollPosition !== 'function' || typeof timeScale.scrollToPosition !== 'function') return;
+
+  const visibleRange = timeScale.getVisibleLogicalRange?.();
+  const visibleBars = visibleRange ? Math.max(1, visibleRange.to - visibleRange.from) : 80;
+  const containerWidth = container.clientWidth || container.getBoundingClientRect().width || 1;
+  const deltaPixels = normalizeWheelDeltaPixels(delta, deltaMode);
+  const barShift = (deltaPixels * visibleBars * HORIZONTAL_WHEEL_PAN_MULTIPLIER) / containerWidth;
+
+  timeScale.scrollToPosition(timeScale.scrollPosition() + barShift, false);
+}
+
 const markerTimeFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
@@ -1259,6 +1302,7 @@ export function TradingPerformanceChart({
   chartStudies = [],
   fillCountEvidence,
 }: TradingPerformanceChartProps) {
+  const shellRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverReadout, setHoverReadout] = useState<HoverReadout | null>(null);
   const [exactMarketOverlay, setExactMarketOverlay] = useState<ExactMarketMarkerOverlay[]>([]);
@@ -1371,6 +1415,7 @@ export function TradingPerformanceChart({
 
     let cancelled = false;
     let crosshairHandler: ((param: MouseEventParams<Time>) => void) | null = null;
+    let removeHorizontalWheelListener: (() => void) | null = null;
     let unsubscribeVisibleRange: (() => void) | null = null;
     let resizeObserver: ResizeObserver | null = null;
 
@@ -1467,6 +1512,21 @@ export function TradingPerformanceChart({
           priceFormatter: formatAxisCurrency,
         },
       });
+
+      const wheelBoundary = shellRef.current ?? containerRef.current;
+      if (wheelBoundary) {
+        const handleHorizontalWheel = (event: WheelEvent) => {
+          const delta = chartHorizontalWheelDelta(event);
+          if (delta == null) return;
+
+          if (event.cancelable) event.preventDefault();
+          event.stopPropagation();
+          panChartTimeScale(chart, wheelBoundary, delta, event.deltaMode);
+        };
+
+        wheelBoundary.addEventListener('wheel', handleHorizontalWheel, { capture: true, passive: false });
+        removeHorizontalWheelListener = () => wheelBoundary.removeEventListener('wheel', handleHorizontalWheel, true);
+      }
 
       let runtime: ChartRuntime;
       if (activeMode === 'market') {
@@ -1742,6 +1802,7 @@ export function TradingPerformanceChart({
 
     return () => {
       cancelled = true;
+      removeHorizontalWheelListener?.();
       unsubscribeVisibleRange?.();
       resizeObserver?.disconnect();
       const runtime = runtimeRef.current;
@@ -1955,8 +2016,12 @@ export function TradingPerformanceChart({
 
   return (
     <div
+      ref={shellRef}
       className="relative h-full min-h-[320px] w-full overflow-hidden bg-[var(--arena-terminal-panel)]"
-      style={{ backgroundColor: chartTheme.chartSurface }}
+      style={{
+        backgroundColor: chartTheme.chartSurface,
+        overscrollBehaviorX: 'contain',
+      }}
       data-testid="tradingview-performance-chart"
     >
       <div ref={containerRef} className="absolute inset-0" />
