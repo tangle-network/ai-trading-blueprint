@@ -3892,6 +3892,7 @@ fn caller_has_bot_command_access(bot: &TradingBotRecord, caller: &str) -> bool {
     let submitter = bot.submitter_address.trim();
     (!submitter.is_empty() && submitter.eq_ignore_ascii_case(caller))
         || strategy_config_has_permitted_caller(&bot.strategy_config, caller)
+        || trading_blueprint_lib::request_access::caller_is_operator_admin(caller)
 }
 
 /// Owner acknowledgement of a drawdown breach: rebases the risk baseline to
@@ -8134,11 +8135,19 @@ mod tests {
     }
 
     fn test_auth_header() -> String {
-        let token = sandbox_runtime::session_auth::create_test_token(
-            "0x1234567890abcdef1234567890abcdef12345678",
-        );
+        auth_header_for("0x1234567890abcdef1234567890abcdef12345678")
+    }
+
+    fn auth_header_for(address: &str) -> String {
+        let token = sandbox_runtime::session_auth::create_test_token(address);
         format!("Bearer {token}")
     }
+
+    /// A caller that is never the submitter and never `OPERATOR_ADDRESS`
+    /// (admin tests set the latter to `TEST_AUTH_ADDRESS` process-wide), so
+    /// wrong-submitter tests stay meaningful now that fleet admins have bot
+    /// command access.
+    const NON_ADMIN_CALLER: &str = "0x00000000000000000000000000000000000000aa";
 
     #[test]
     fn create_bot_strategy_config_accepts_structured_object() {
@@ -9057,6 +9066,50 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn test_operator_admin_has_bot_command_access() {
+        ensure_state_dir();
+        let _guard = ENV_LOCK.lock().await;
+        let submitter = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let stranger = "0x9999999999999999999999999999999999999999";
+        let bot = seed_bot(
+            "admin-command-access-1",
+            submitter,
+            true,
+            "sandbox-admin-command-access-1",
+        );
+
+        // SAFETY: serialized by ENV_LOCK for tests that mutate OPERATOR_ADDRESS.
+        unsafe {
+            std::env::remove_var("OPERATOR_ADDRESS");
+        }
+        assert!(
+            !caller_has_bot_command_access(&bot, TEST_AUTH_ADDRESS),
+            "without OPERATOR_ADDRESS no caller is fleet admin"
+        );
+
+        set_test_admin_env(&_guard);
+        assert!(
+            caller_has_bot_command_access(&bot, TEST_AUTH_ADDRESS),
+            "operator admin can command bots it did not submit"
+        );
+        assert!(
+            caller_has_bot_command_access(
+                &bot,
+                &TEST_AUTH_ADDRESS.to_uppercase().replace("0X", "0x")
+            ),
+            "admin match is case-insensitive"
+        );
+        assert!(
+            caller_has_bot_command_access(&bot, submitter),
+            "submitter access is unchanged"
+        );
+        assert!(
+            !caller_has_bot_command_access(&bot, stranger),
+            "non-admin non-submitter callers stay denied"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn test_repair_strategy_dry_run_retargets_hyperliquid_pack() {
         ensure_state_dir();
         let _guard = ENV_LOCK.lock().await;
@@ -9503,7 +9556,7 @@ mod tests {
                     Request::builder()
                         .method(method)
                         .uri(uri)
-                        .header("authorization", test_auth_header())
+                        .header("authorization", auth_header_for(NON_ADMIN_CALLER))
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -9740,7 +9793,7 @@ mod tests {
                     .method("POST")
                     .uri("/api/bots/secrets-forbidden-1/secrets")
                     .header("content-type", "application/json")
-                    .header("authorization", test_auth_header())
+                    .header("authorization", auth_header_for(NON_ADMIN_CALLER))
                     .body(Body::from(serde_json::to_string(&body).unwrap()))
                     .unwrap(),
             )
@@ -9953,7 +10006,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/api/bots/wipe-forbidden-1/secrets")
-                    .header("authorization", test_auth_header())
+                    .header("authorization", auth_header_for(NON_ADMIN_CALLER))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -10045,7 +10098,7 @@ mod tests {
                     .method("POST")
                     .uri("/api/bots/observatory-wrong-owner-1/observatory/trigger")
                     .header("content-type", "application/json")
-                    .header("authorization", test_auth_header())
+                    .header("authorization", auth_header_for(NON_ADMIN_CALLER))
                     .body(Body::from(r#"{"reason":"test"}"#))
                     .unwrap(),
             )
@@ -10059,9 +10112,11 @@ mod tests {
     async fn test_observatory_overview_scopes_to_owner_and_hides_empty_submitters() {
         ensure_state_dir();
 
+        // Owner is a non-admin caller: admin tests set OPERATOR_ADDRESS to
+        // TEST_AUTH_ADDRESS process-wide, and a fleet admin sees every bot.
         seed_bot(
             "observatory-owned-visible-1",
-            TEST_AUTH_ADDRESS,
+            NON_ADMIN_CALLER,
             true,
             "sandbox-observatory-owned-visible-1",
         );
@@ -10087,7 +10142,7 @@ mod tests {
                 Request::builder()
                     .method("GET")
                     .uri("/api/observatory/overview")
-                    .header("authorization", test_auth_header())
+                    .header("authorization", auth_header_for(NON_ADMIN_CALLER))
                     .body(Body::empty())
                     .unwrap(),
             )
