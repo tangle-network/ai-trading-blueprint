@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ const VIEWPORTS = [
 ];
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ARENA_DIR = path.resolve(SCRIPT_DIR, '..');
+const BUILD_CLIENT_DIR = path.join(ARENA_DIR, 'build', 'client');
 const FIXTURE_BOT_ID = 'smoke-hyperliquid-agent';
 const FIXTURE_OPERATOR = '0x1234567890abcdef1234567890abcdef12345678';
 const FIXTURE_VAULT = '0x0000000000000000000000000000000000001001';
@@ -291,6 +292,15 @@ async function getFreePort() {
   });
 }
 
+async function fileExists(filePath) {
+  try {
+    const entry = await stat(filePath);
+    return entry.isFile();
+  } catch {
+    return false;
+  }
+}
+
 function json(res, statusCode, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(statusCode, {
@@ -299,6 +309,99 @@ function json(res, statusCode, payload) {
     'access-control-allow-origin': '*',
   });
   res.end(body);
+}
+
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.once('error', reject);
+    req.once('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+function contentTypeFor(filePath) {
+  if (filePath.endsWith('.html')) return 'text/html; charset=utf-8';
+  if (filePath.endsWith('.js')) return 'text/javascript; charset=utf-8';
+  if (filePath.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (filePath.endsWith('.svg')) return 'image/svg+xml';
+  if (filePath.endsWith('.png')) return 'image/png';
+  if (filePath.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (filePath.endsWith('.ico')) return 'image/x-icon';
+  return 'application/octet-stream';
+}
+
+async function proxyFixtureOperatorRequest(req, res, operatorUrl, requestUrl) {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+      'access-control-allow-headers': req.headers['access-control-request-headers'] ?? 'authorization,content-type',
+      'access-control-max-age': '600',
+    });
+    res.end();
+    return;
+  }
+
+  const targetPath = requestUrl.pathname.replace(/^\/operator-api/, '') || '/';
+  const target = new URL(targetPath + requestUrl.search, operatorUrl);
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (!value || ['host', 'connection', 'content-length'].includes(key.toLowerCase())) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(key, item);
+    } else {
+      headers.set(key, value);
+    }
+  }
+
+  const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readRequestBody(req);
+  const response = await fetch(target, {
+    method: req.method,
+    headers,
+    body,
+  });
+  const responseHeaders = {};
+  response.headers.forEach((value, key) => {
+    responseHeaders[key] = value;
+  });
+  responseHeaders['access-control-allow-origin'] = '*';
+  res.writeHead(response.status, responseHeaders);
+  if (req.method === 'HEAD') {
+    res.end();
+    return;
+  }
+  res.end(Buffer.from(await response.arrayBuffer()));
+}
+
+function fixtureAppEnv(operatorUrl, { ownerPerformance = false } = {}) {
+  return {
+    ...process.env,
+    VITE_OPERATOR_API_URL: '/operator-api',
+    VITE_CLOUD_OPERATOR_API_URL: '/operator-api',
+    VITE_INSTANCE_OPERATOR_API_URL: '',
+    VITE_TEE_OPERATOR_API_URL: '',
+    VITE_OPERATOR_PROXY_TARGET: operatorUrl,
+    VITE_USE_LOCAL_CHAIN: 'false',
+    VITE_CHAIN_ID: String(FIXTURE_WALLET_CHAIN_ID),
+    ...(ownerPerformance ? { VITE_OPERATOR_E2E_AUTH_ADDRESS: FIXTURE_OPERATOR } : {}),
+    BROWSER: 'none',
+  };
+}
+
+function buildFixtureStaticApp(operatorUrl, { ownerPerformance = false } = {}) {
+  console.log('[arena-smoke] building fixture app for static smoke');
+  const result = spawnSync('pnpm', ['run', 'build'], {
+    cwd: ARENA_DIR,
+    env: fixtureAppEnv(operatorUrl, { ownerPerformance }),
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.split('\n').slice(-120).join('\n');
+    throw new Error(`Fixture static build failed (${result.status ?? result.signal}).\n${output}`);
+  }
+  console.log('[arena-smoke] fixture static build completed');
 }
 
 function text(res, statusCode, body) {
@@ -1003,6 +1106,68 @@ function startFixtureOperatorServer({ emptyRunTranscript = false } = {}) {
 }
 
 async function startFixtureAppServer(operatorUrl, { ownerPerformance = false } = {}) {
+  const preferBuiltFixture = process.env.GITHUB_ACTIONS === 'true' || process.env.ARENA_SMOKE_USE_BUILD === '1';
+  if (preferBuiltFixture) {
+    buildFixtureStaticApp(operatorUrl, { ownerPerformance });
+  }
+  if (preferBuiltFixture && await fileExists(path.join(BUILD_CLIENT_DIR, 'index.html'))) {
+    return startFixtureStaticAppServer(operatorUrl);
+  }
+
+  return startFixtureDevAppServer(operatorUrl, { ownerPerformance });
+}
+
+async function startFixtureStaticAppServer(operatorUrl) {
+  const port = await getFreePort();
+  const url = `http://127.0.0.1:${port}/`;
+  const server = createHttpServer(async (req, res) => {
+    try {
+      const requestUrl = new URL(req.url ?? '/', url);
+      if (requestUrl.pathname === '/operator-api' || requestUrl.pathname.startsWith('/operator-api/')) {
+        await proxyFixtureOperatorRequest(req, res, operatorUrl, requestUrl);
+        return;
+      }
+
+      let pathname = decodeURIComponent(requestUrl.pathname);
+      if (pathname.includes('\0')) {
+        text(res, 400, 'Bad request');
+        return;
+      }
+      if (pathname === '/') pathname = '/index.html';
+
+      const requestedPath = path.resolve(BUILD_CLIENT_DIR, pathname.slice(1));
+      const buildRoot = path.resolve(BUILD_CLIENT_DIR);
+      const insideBuild = requestedPath === buildRoot || requestedPath.startsWith(`${buildRoot}${path.sep}`);
+      const filePath = insideBuild
+        && await fileExists(requestedPath)
+        ? requestedPath
+        : path.join(BUILD_CLIENT_DIR, 'index.html');
+      const body = await readFile(filePath);
+      res.writeHead(200, {
+        'content-type': contentTypeFor(filePath),
+        'cache-control': filePath.endsWith('index.html') ? 'no-store' : 'public, max-age=31536000, immutable',
+      });
+      res.end(body);
+    } catch (error) {
+      text(res, 500, error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      console.log(`[arena-smoke] serving built fixture app from ${BUILD_CLIENT_DIR}`);
+      resolve({
+        url,
+        async close() {
+          await new Promise((closeResolve) => server.close(closeResolve));
+        },
+      });
+    });
+  });
+}
+
+async function startFixtureDevAppServer(operatorUrl, { ownerPerformance = false } = {}) {
   const port = await getFreePort();
   const url = `http://127.0.0.1:${port}/`;
   const child = spawn('pnpm', [
@@ -1015,18 +1180,7 @@ async function startFixtureAppServer(operatorUrl, { ownerPerformance = false } =
     String(port),
   ], {
     cwd: ARENA_DIR,
-    env: {
-      ...process.env,
-      VITE_OPERATOR_API_URL: '/operator-api',
-      VITE_CLOUD_OPERATOR_API_URL: '/operator-api',
-      VITE_INSTANCE_OPERATOR_API_URL: '',
-      VITE_TEE_OPERATOR_API_URL: '',
-      VITE_OPERATOR_PROXY_TARGET: operatorUrl,
-      VITE_USE_LOCAL_CHAIN: 'false',
-      VITE_CHAIN_ID: String(FIXTURE_WALLET_CHAIN_ID),
-      ...(ownerPerformance ? { VITE_OPERATOR_E2E_AUTH_ADDRESS: FIXTURE_OPERATOR } : {}),
-      BROWSER: 'none',
-    },
+    env: fixtureAppEnv(operatorUrl, { ownerPerformance }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -1439,6 +1593,46 @@ function textIncludes(bodyText, expected) {
   });
 }
 
+async function readFixtureRouteMetrics(page, { bodyLimit = 5000 } = {}) {
+  return evaluate(page, `(() => {
+    const scrolling = document.scrollingElement || document.documentElement;
+    return {
+      pathname: location.pathname,
+      search: location.search,
+      bodyText: document.body.innerText.slice(0, ${bodyLimit}),
+      bodyHtml: document.body.innerHTML.slice(0, 5000),
+      hasDriverTrace: Boolean(document.querySelector('[data-observatory-trace-role="user"]')),
+      hasAgentTrace: Boolean(document.querySelector('[data-observatory-trace-role="assistant"]')),
+      hasRunGroup: Boolean(document.querySelector('[data-observatory-trace-role="assistant"] [data-state]')),
+      scrollHeight: scrolling.scrollHeight,
+      innerHeight: window.innerHeight,
+    };
+  })()`);
+}
+
+function shouldRetryBlankShellMetrics(metrics) {
+  return metrics.bodyText.trim().length === 0;
+}
+
+async function waitForFixtureRoute(page, {
+  expected,
+  isReady = () => true,
+  timeoutMs = 12_000,
+  bodyLimit = 5000,
+} = {}) {
+  let reloadedHydrationFallback = false;
+  return waitFor(async () => {
+    const nextMetrics = await readFixtureRouteMetrics(page, { bodyLimit });
+    if (!reloadedHydrationFallback && shouldRetryBlankShellMetrics(nextMetrics)) {
+      reloadedHydrationFallback = true;
+      console.warn(`[arena-smoke] blank shell at ${nextMetrics.pathname || 'unknown route'}; reloading once`);
+      await reload(page);
+      return false;
+    }
+    return isReady(nextMetrics) && textIncludes(nextMetrics.bodyText, expected) ? nextMetrics : false;
+  }, { timeoutMs, intervalMs: 250 });
+}
+
 async function fetchText(url) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -1673,6 +1867,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
       const route = `/arena/bot/${encodeURIComponent(botId)}/${section}`;
       await navigate(page, withPath(baseUrl, route, theme));
       let metrics;
+      let reloadedHydrationFallback = false;
       try {
         metrics = await waitFor(async () => {
         const nextMetrics = await evaluate(page, `(() => {
@@ -1698,6 +1893,7 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
           title: document.title,
           pathname: location.pathname,
           bodyText: document.body.innerText.slice(0, 20000),
+          bodyHtml: document.body.innerHTML.slice(0, 5000),
           performanceSurfaceReady: Boolean(document.querySelector('[data-testid="tradingview-performance-chart"]'))
             || /No performance snapshots available yet|Live performance unavailable/i.test(document.body.innerText),
           scrollHeight: scrolling.scrollHeight,
@@ -1709,6 +1905,12 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
           transformedWorkspaceAncestor,
         };
       })()`);
+        if (!reloadedHydrationFallback && shouldRetryBlankShellMetrics(nextMetrics)) {
+          reloadedHydrationFallback = true;
+          console.warn(`[arena-smoke] blank shell at ${nextMetrics.pathname || 'unknown route'}; reloading once`);
+          await reload(page);
+          return false;
+        }
         const expected = getSectionExpectations(section, {
           fixture,
           fixtureEmptyRunTranscript,
@@ -1728,11 +1930,12 @@ async function assertWorkspaceFits(page, baseUrl, botId, {
           return {
             pathname: location.pathname,
             bodyText: document.body.innerText.slice(0, 900),
+            bodyHtml: document.body.innerHTML.slice(0, 900),
             scrollHeight: scrolling.scrollHeight,
             innerHeight: window.innerHeight,
           };
         })()`);
-        failures.push(`${viewport.width}x${viewport.height} ${section}: timed out waiting for ${JSON.stringify(getSectionExpectations(section, { fixture, fixtureEmptyRunTranscript, ownerPerformance }))}; body="${debugMetrics.bodyText}"`);
+        failures.push(`${viewport.width}x${viewport.height} ${section}: timed out waiting for ${JSON.stringify(getSectionExpectations(section, { fixture, fixtureEmptyRunTranscript, ownerPerformance }))}; body="${debugMetrics.bodyText}" html="${debugMetrics.bodyHtml}"`);
         continue;
       }
 
@@ -1779,36 +1982,13 @@ async function assertFixtureHomeDashboard(page, baseUrl, { screenshotDir = '', t
     await setViewport(page, viewport);
     await navigate(page, withTheme(baseUrl, theme));
     let metrics;
-    let reloadedHydrationFallback = false;
     try {
-      metrics = await waitFor(async () => {
-        const nextMetrics = await evaluate(page, `(() => {
-          const scrolling = document.scrollingElement || document.documentElement;
-          return {
-            pathname: location.pathname,
-            bodyText: document.body.innerText.slice(0, 5000),
-            bodyHtml: document.body.innerHTML.slice(0, 5000),
-            scrollHeight: scrolling.scrollHeight,
-            innerHeight: window.innerHeight,
-          };
-        })()`);
-        if (
-          !reloadedHydrationFallback
-          && nextMetrics.bodyText.trim().length === 0
-          && /__reactRouterContext|clientLoader|hydrateFallback/i.test(nextMetrics.bodyHtml)
-        ) {
-          reloadedHydrationFallback = true;
-          await reload(page);
-          return false;
-        }
-        return textIncludes(nextMetrics.bodyText, FIXTURE_HOME_EXPECTATIONS) ? nextMetrics : false;
-      }, { timeoutMs: 30_000, intervalMs: 250 });
+      metrics = await waitForFixtureRoute(page, {
+        expected: FIXTURE_HOME_EXPECTATIONS,
+        timeoutMs: 30_000,
+      });
     } catch {
-      const debugMetrics = await evaluate(page, `(() => ({
-        pathname: location.pathname,
-        bodyText: document.body.innerText.slice(0, 900),
-        bodyHtml: document.body.innerHTML.slice(0, 900),
-      }))()`);
+      const debugMetrics = await readFixtureRouteMetrics(page, { bodyLimit: 900 });
       failures.push(`${viewport.width}x${viewport.height} home: timed out waiting for ${JSON.stringify(FIXTURE_HOME_EXPECTATIONS)}; body="${debugMetrics.bodyText}" html="${debugMetrics.bodyHtml}"`);
       continue;
     }
@@ -1832,26 +2012,12 @@ async function assertFixtureLeaderboardDashboard(page, baseUrl, { screenshotDir 
     await navigate(page, withPath(baseUrl, '/leaderboard', theme));
     let metrics;
     try {
-      metrics = await waitFor(async () => {
-        const nextMetrics = await evaluate(page, `(() => {
-          const scrolling = document.scrollingElement || document.documentElement;
-          return {
-            pathname: location.pathname,
-            bodyText: document.body.innerText.slice(0, 5000),
-            scrollHeight: scrolling.scrollHeight,
-            innerHeight: window.innerHeight,
-          };
-        })()`);
-        return nextMetrics.pathname.endsWith('/leaderboard')
-          && textIncludes(nextMetrics.bodyText, FIXTURE_LEADERBOARD_EXPECTATIONS)
-          ? nextMetrics
-          : false;
-      }, { timeoutMs: 12_000, intervalMs: 250 });
+      metrics = await waitForFixtureRoute(page, {
+        expected: FIXTURE_LEADERBOARD_EXPECTATIONS,
+        isReady: (nextMetrics) => nextMetrics.pathname.endsWith('/leaderboard'),
+      });
     } catch {
-      const debugMetrics = await evaluate(page, `(() => ({
-        pathname: location.pathname,
-        bodyText: document.body.innerText.slice(0, 900),
-      }))()`);
+      const debugMetrics = await readFixtureRouteMetrics(page, { bodyLimit: 900 });
       failures.push(`${viewport.width}x${viewport.height} leaderboard: timed out waiting for ${JSON.stringify(FIXTURE_LEADERBOARD_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
       continue;
     }
@@ -1875,26 +2041,12 @@ async function assertFixtureActivityDashboard(page, baseUrl, { screenshotDir = '
     await navigate(page, withPath(baseUrl, '/activity', theme));
     let metrics;
     try {
-      metrics = await waitFor(async () => {
-        const nextMetrics = await evaluate(page, `(() => {
-          const scrolling = document.scrollingElement || document.documentElement;
-          return {
-            pathname: location.pathname,
-            bodyText: document.body.innerText.slice(0, 5000),
-            scrollHeight: scrolling.scrollHeight,
-            innerHeight: window.innerHeight,
-          };
-        })()`);
-        return nextMetrics.pathname.endsWith('/activity')
-          && textIncludes(nextMetrics.bodyText, FIXTURE_ACTIVITY_EXPECTATIONS)
-          ? nextMetrics
-          : false;
-      }, { timeoutMs: 12_000, intervalMs: 250 });
+      metrics = await waitForFixtureRoute(page, {
+        expected: FIXTURE_ACTIVITY_EXPECTATIONS,
+        isReady: (nextMetrics) => nextMetrics.pathname.endsWith('/activity'),
+      });
     } catch {
-      const debugMetrics = await evaluate(page, `(() => ({
-        pathname: location.pathname,
-        bodyText: document.body.innerText.slice(0, 900),
-      }))()`);
+      const debugMetrics = await readFixtureRouteMetrics(page, { bodyLimit: 900 });
       failures.push(`${viewport.width}x${viewport.height} activity: timed out waiting for ${JSON.stringify(FIXTURE_ACTIVITY_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
       continue;
     }
@@ -1918,35 +2070,16 @@ async function assertFixtureObservatoryDashboard(page, baseUrl, { screenshotDir 
     await navigate(page, withPath(baseUrl, '/observatory', theme));
     let metrics;
     try {
-      metrics = await waitFor(async () => {
-        const nextMetrics = await evaluate(page, `(() => {
-          const scrolling = document.scrollingElement || document.documentElement;
-          return {
-            pathname: location.pathname,
-            bodyText: document.body.innerText.slice(0, 8000),
-            hasDriverTrace: Boolean(document.querySelector('[data-observatory-trace-role="user"]')),
-            hasAgentTrace: Boolean(document.querySelector('[data-observatory-trace-role="assistant"]')),
-            hasRunGroup: Boolean(document.querySelector('[data-observatory-trace-role="assistant"] [data-state]')),
-            scrollHeight: scrolling.scrollHeight,
-            innerHeight: window.innerHeight,
-          };
-        })()`);
-        return nextMetrics.pathname.endsWith('/observatory')
+      metrics = await waitForFixtureRoute(page, {
+        expected: FIXTURE_OBSERVATORY_EXPECTATIONS,
+        bodyLimit: 8000,
+        isReady: (nextMetrics) => nextMetrics.pathname.endsWith('/observatory')
           && nextMetrics.hasDriverTrace
           && nextMetrics.hasAgentTrace
-          && nextMetrics.hasRunGroup
-          && textIncludes(nextMetrics.bodyText, FIXTURE_OBSERVATORY_EXPECTATIONS)
-          ? nextMetrics
-          : false;
-      }, { timeoutMs: 12_000, intervalMs: 250 });
+          && nextMetrics.hasRunGroup,
+      });
     } catch {
-      const debugMetrics = await evaluate(page, `(() => ({
-        pathname: location.pathname,
-        bodyText: document.body.innerText.slice(0, 1200),
-        hasDriverTrace: Boolean(document.querySelector('[data-observatory-trace-role="user"]')),
-        hasAgentTrace: Boolean(document.querySelector('[data-observatory-trace-role="assistant"]')),
-        hasRunGroup: Boolean(document.querySelector('[data-observatory-trace-role="assistant"] [data-state]')),
-      }))()`);
+      const debugMetrics = await readFixtureRouteMetrics(page, { bodyLimit: 1200 });
       failures.push(`${viewport.width}x${viewport.height} observatory: timed out waiting for ${JSON.stringify(FIXTURE_OBSERVATORY_EXPECTATIONS)}; metrics=${JSON.stringify(debugMetrics)}`);
       continue;
     }
@@ -1970,26 +2103,12 @@ async function assertFixtureCreateCommand(page, baseUrl, { screenshotDir = '', t
     await navigate(page, withPath(baseUrl, '/create', theme));
     let metrics;
     try {
-      metrics = await waitFor(async () => {
-        const nextMetrics = await evaluate(page, `(() => {
-          const scrolling = document.scrollingElement || document.documentElement;
-          return {
-            pathname: location.pathname,
-            bodyText: document.body.innerText.slice(0, 5000),
-            scrollHeight: scrolling.scrollHeight,
-            innerHeight: window.innerHeight,
-          };
-        })()`);
-        return nextMetrics.pathname.endsWith('/create')
-          && textIncludes(nextMetrics.bodyText, FIXTURE_CREATE_EXPECTATIONS)
-          ? nextMetrics
-          : false;
-      }, { timeoutMs: 12_000, intervalMs: 250 });
+      metrics = await waitForFixtureRoute(page, {
+        expected: FIXTURE_CREATE_EXPECTATIONS,
+        isReady: (nextMetrics) => nextMetrics.pathname.endsWith('/create'),
+      });
     } catch {
-      const debugMetrics = await evaluate(page, `(() => ({
-        pathname: location.pathname,
-        bodyText: document.body.innerText.slice(0, 900),
-      }))()`);
+      const debugMetrics = await readFixtureRouteMetrics(page, { bodyLimit: 900 });
       failures.push(`${viewport.width}x${viewport.height} create: timed out waiting for ${JSON.stringify(FIXTURE_CREATE_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
       continue;
     }
@@ -2013,26 +2132,12 @@ async function assertFixtureProvisionGate(page, baseUrl, { screenshotDir = '', t
     await navigate(page, withPath(baseUrl, '/provision', theme));
     let metrics;
     try {
-      metrics = await waitFor(async () => {
-        const nextMetrics = await evaluate(page, `(() => {
-          const scrolling = document.scrollingElement || document.documentElement;
-          return {
-            pathname: location.pathname,
-            bodyText: document.body.innerText.slice(0, 5000),
-            scrollHeight: scrolling.scrollHeight,
-            innerHeight: window.innerHeight,
-          };
-        })()`);
-        return nextMetrics.pathname.endsWith('/provision')
-          && textIncludes(nextMetrics.bodyText, FIXTURE_PROVISION_EXPECTATIONS)
-          ? nextMetrics
-          : false;
-      }, { timeoutMs: 12_000, intervalMs: 250 });
+      metrics = await waitForFixtureRoute(page, {
+        expected: FIXTURE_PROVISION_EXPECTATIONS,
+        isReady: (nextMetrics) => nextMetrics.pathname.endsWith('/provision'),
+      });
     } catch {
-      const debugMetrics = await evaluate(page, `(() => ({
-        pathname: location.pathname,
-        bodyText: document.body.innerText.slice(0, 900),
-      }))()`);
+      const debugMetrics = await readFixtureRouteMetrics(page, { bodyLimit: 900 });
       failures.push(`${viewport.width}x${viewport.height} provision: timed out waiting for ${JSON.stringify(FIXTURE_PROVISION_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
       continue;
     }
@@ -2059,29 +2164,16 @@ async function assertFixtureProvisionConnected(page, baseUrl, { screenshotDir = 
     await navigate(page, provisionUrl.toString());
     let metrics;
     try {
-      metrics = await waitFor(async () => {
-        const nextMetrics = await evaluate(page, `(() => {
-          const scrolling = document.scrollingElement || document.documentElement;
-          return {
-            pathname: location.pathname,
-            search: location.search,
-            bodyText: document.body.innerText.slice(0, 8000),
-            scrollHeight: scrolling.scrollHeight,
-            innerHeight: window.innerHeight,
-          };
-        })()`);
-        const hasLaunchConsole = nextMetrics.pathname.endsWith('/provision')
+      metrics = await waitForFixtureRoute(page, {
+        expected: FIXTURE_PROVISION_CONNECTED_EXPECTATIONS,
+        timeoutMs: 15_000,
+        bodyLimit: 8000,
+        isReady: (nextMetrics) => nextMetrics.pathname.endsWith('/provision')
           && nextMetrics.search.includes('blueprint=trading-cloud')
-          && textIncludes(nextMetrics.bodyText, FIXTURE_PROVISION_CONNECTED_EXPECTATIONS);
-        const isStillLoading = /Loading service|Loading operator|Loading blueprint/i.test(nextMetrics.bodyText);
-        return hasLaunchConsole && !isStillLoading ? nextMetrics : false;
-      }, { timeoutMs: 15_000, intervalMs: 250 });
+          && !/Loading service|Loading operator|Loading blueprint/i.test(nextMetrics.bodyText),
+      });
     } catch {
-      const debugMetrics = await evaluate(page, `(() => ({
-        pathname: location.pathname,
-        search: location.search,
-        bodyText: document.body.innerText.slice(0, 1200),
-      }))()`);
+      const debugMetrics = await readFixtureRouteMetrics(page, { bodyLimit: 1200 });
       failures.push(`${viewport.width}x${viewport.height} provision-connected: timed out waiting for ${JSON.stringify(FIXTURE_PROVISION_CONNECTED_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
       continue;
     }
@@ -2110,28 +2202,14 @@ async function assertFixtureOwnerDashboard(page, baseUrl, { screenshotDir = '', 
     await navigate(page, dashboardUrl.toString());
     let metrics;
     try {
-      metrics = await waitFor(async () => {
-        const nextMetrics = await evaluate(page, `(() => {
-          const scrolling = document.scrollingElement || document.documentElement;
-          return {
-            pathname: location.pathname,
-            search: location.search,
-            bodyText: document.body.innerText.slice(0, 8000),
-            scrollHeight: scrolling.scrollHeight,
-            innerHeight: window.innerHeight,
-          };
-        })()`);
-        return nextMetrics.pathname.endsWith('/dashboard')
-          && textIncludes(nextMetrics.bodyText, FIXTURE_DASHBOARD_EXPECTATIONS)
-          ? nextMetrics
-          : false;
-      }, { timeoutMs: 15_000, intervalMs: 250 });
+      metrics = await waitForFixtureRoute(page, {
+        expected: FIXTURE_DASHBOARD_EXPECTATIONS,
+        timeoutMs: 15_000,
+        bodyLimit: 8000,
+        isReady: (nextMetrics) => nextMetrics.pathname.endsWith('/dashboard'),
+      });
     } catch {
-      const debugMetrics = await evaluate(page, `(() => ({
-        pathname: location.pathname,
-        search: location.search,
-        bodyText: document.body.innerText.slice(0, 1200),
-      }))()`);
+      const debugMetrics = await readFixtureRouteMetrics(page, { bodyLimit: 1200 });
       failures.push(`${viewport.width}x${viewport.height} dashboard: timed out waiting for ${JSON.stringify(FIXTURE_DASHBOARD_EXPECTATIONS)}; body="${debugMetrics.bodyText}"`);
       continue;
     }

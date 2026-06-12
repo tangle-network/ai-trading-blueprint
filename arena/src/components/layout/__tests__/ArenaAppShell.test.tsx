@@ -59,7 +59,9 @@ vi.mock('~/lib/hooks/useBots', () => ({
 }));
 
 vi.mock('../TxDropdown', () => ({
-  TxDropdown: () => <button type="button">Transactions</button>,
+  TxDropdown: ({ compact = true }: { compact?: boolean }) => (
+    <button type="button" data-compact={compact ? 'true' : 'false'}>Transactions</button>
+  ),
 }));
 
 vi.mock('../WalletButton', () => ({
@@ -145,8 +147,9 @@ describe('ArenaAppShell', () => {
       '/tangle-mark.svg',
     );
     expect(within(sidebar!).getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
+    const txButton = within(sidebar!).getByRole('button', { name: 'Transactions' });
+    expect(txButton).toHaveAttribute('data-compact', 'true');
     expect(within(sidebar!).getByRole('button', { name: 'Network' })).toBeInTheDocument();
-    expect(within(sidebar!).queryByRole('button', { name: 'Transactions' })).not.toBeInTheDocument();
     expect(within(sidebar!).queryByRole('button', { name: 'Theme' })).not.toBeInTheDocument();
     const walletButton = within(sidebar!).getByRole('button', { name: 'Wallet' });
     expect(walletButton).toHaveAttribute('data-compact', 'true');
@@ -157,11 +160,14 @@ describe('ArenaAppShell', () => {
     renderShell('/');
 
     const sidebar = screen.getByRole('navigation', { name: 'Tangle navigation' }).closest('aside');
+    const txButton = within(sidebar!).getByRole('button', { name: 'Transactions' });
     const walletButton = within(sidebar!).getByRole('button', { name: 'Wallet' });
     const chainButton = within(sidebar!).getByRole('button', { name: 'Network' });
 
+    expect(txButton).toHaveAttribute('data-compact', 'false');
     expect(walletButton.parentElement).toHaveClass('[&>button]:!bg-[var(--arena-terminal-panel)]');
     expect(walletButton.parentElement).toHaveClass('[&>button]:!text-[var(--arena-terminal-text-secondary)]');
+    expect(txButton.compareDocumentPosition(walletButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(walletButton.compareDocumentPosition(chainButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -183,8 +189,8 @@ describe('ArenaAppShell', () => {
       '/tangle-mark.svg',
     );
     expect(within(sidebar!).getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
+    expect(within(sidebar!).getByRole('button', { name: 'Transactions' })).toHaveAttribute('data-compact', 'true');
     expect(within(sidebar!).getByRole('button', { name: 'Network' })).toBeInTheDocument();
-    expect(within(sidebar!).queryByRole('button', { name: 'Transactions' })).not.toBeInTheDocument();
     expect(within(sidebar!).queryByRole('button', { name: 'Theme' })).not.toBeInTheDocument();
     expect(screen.getByText('Agent body')).toBeInTheDocument();
   });
