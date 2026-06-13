@@ -241,9 +241,12 @@ async function decide(ctx) {
 async function decideAgentic(ctx, g) {
   const { positions, markets, top, totalNav, idleCash, checkedState, metrics, minOrderUsd, maxDrawdownPct, maxDeployUsd } = g;
 
-  // The model sees the whole shortlist (so it can judge relative value) but the
-  // trade is bound to the deterministic top-1. Side is the model's call.
-  const shortlist = markets.slice(0, SHORTLIST_SIZE).map((m) => ({
+  // The model sees the top of the shortlist (enough to judge relative value)
+  // but the trade is bound to the deterministic top-1. Side is the model's call.
+  // Cap at 4: a larger market list pushed glm-4.7's reasoning past the call
+  // timeout and nulled the decision; the model only ever trades the top-1.
+  const MODEL_SHORTLIST = 4;
+  const shortlist = markets.slice(0, MODEL_SHORTLIST).map((m) => ({
     condition_id: m.condition_id,
     question: m.question,
     yes_price: Number(m.yes_price.toFixed(4)),

@@ -18,7 +18,11 @@
 
 const crypto = require('crypto');
 
-const DEFAULT_TIMEOUT_MS = 25000;
+// Reasoning models (glm-4.7) routinely spend 20-40s on a non-trivial prompt
+// (hundreds of reasoning tokens). 25s clipped the larger prediction/multi
+// prompts mid-thought -> AbortController -> null -> a real model decision lost.
+// The fast tick runs every ~5 min, so a longer ceiling costs nothing.
+const DEFAULT_TIMEOUT_MS = 45000;
 const DEFAULT_MAX_TOKENS = 700;
 const ZAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4';
 
