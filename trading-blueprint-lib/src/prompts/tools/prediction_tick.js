@@ -9,7 +9,10 @@
 //   2. Inside the guard envelope the MODEL is the alpha source: it reads the live
 //      market shortlist (implied probabilities), open conditional-token positions,
 //      external signals and the mandate, and picks ONE action for the single
-//      pre-ranked best market — enter_yes / enter_no / skip — plus a size.
+//      pre-ranked best market — enter_yes / enter_no / hold / skip — plus a size.
+//      (hold and skip both mean no-trade; the shared decision prompt teaches the
+//      model to answer "hold"/"skip" when undecisive, so both MUST be accepted or
+//      every non-decisive tick nulls out and looks like a broken model.)
 //   3. There is NO prior deterministic prediction strategy to preserve, so the
 //      disabled/eval path (TRADING_AGENTIC_DECISIONS=0) is an honest no-trade
 //      baseline that still satisfies the schema-v1 contract.
@@ -19,9 +22,12 @@
 // it can hallucinate), we DETERMINISTICALLY rank the discovered markets and feed
 // the model the full shortlist as evidence but bind the trade to the top-1 ranked
 // market. The model's action encodes the side: enter_yes → YES token, enter_no →
-// NO token, skip → no trade. This keeps agentic_decision.js unmodified, makes the
-// choice auditable (the rank is reproducible, the side is the model's), and stays
-// fail-closed (null / 'skip' → no trade).
+// NO token, hold/skip → no trade. This keeps agentic_decision.js unmodified, makes
+// the choice auditable (the rank is reproducible, the side is the model's), and
+// stays fail-closed — but distinguishes a model that CHOSE not to trade
+// (model-chose-skip, with provenance) from a model call that FAILED
+// (model-decision-unavailable, no provenance) so a dead decision path can't hide
+// behind a benign skip.
 
 const t = require('/home/agent/tools/tick-common');
 const { agenticDecision, agenticDecisionsEnabled } = require('/home/agent/tools/agentic-decision');
@@ -260,7 +266,23 @@ async function decideAgentic(ctx, g) {
     market_signals: compactSignals(ctx, checkedState, metrics),
   };
 
-  const candidates = ['enter_yes', 'enter_no', 'skip'];
+  // Candidate vocabulary. agenticDecision NULLS any reply whose action is not in
+  // this set (fail-closed), and the SHARED system prompt it uses explicitly tells
+  // the model to answer "hold"/"skip" when the evidence is not decisive. So we
+  // must accept BOTH no-trade words here, or every non-decisive tick comes back
+  // null and is wrongly reported as a model failure (the live `model-no-edge`,
+  // `decided_by:None` bug: an out-of-set "hold" reply nulled the call even though
+  // a valid top market and idle cash were in hand). `enter_yes`/`enter_no` carry
+  // the side; `hold` and `skip` both mean no trade. The evidence below spells out
+  // that contract so the model's choice is grounded, not guessed.
+  const candidates = ['enter_yes', 'enter_no', 'hold', 'skip'];
+  evidence.action_contract = {
+    enter_yes: 'BUY the YES outcome of candidate_market (bet it resolves YES)',
+    enter_no: 'BUY the NO outcome of candidate_market (bet it resolves NO)',
+    hold: 'do nothing this tick — no edge',
+    skip: 'do nothing this tick — no edge',
+    note: 'Only enter_yes/enter_no open a position; both hold and skip mean no trade. The trade is bound to candidate_market.',
+  };
   const decisionOut = await agenticDecision({
     family: 'prediction',
     candidates,
@@ -270,9 +292,12 @@ async function decideAgentic(ctx, g) {
     evidence,
   });
 
-  // Fail closed: a model failure SKIPS — it never trades a hidden rule.
+  // Fail closed, but HONESTLY: a null here is a model/transport FAILURE (no
+  // parseable in-contract reply), NOT the model choosing not to trade. Reporting
+  // it as `model-chose-skip` would hide a broken decision path behind a benign
+  // reason. Distinct reason + no `decided_by:model` so a dead model surfaces.
   if (!decisionOut) {
-    return { decision: { action: 'skip', reason: 'model-no-edge', checkedState }, checkedState, metrics };
+    return { decision: { action: 'skip', reason: 'model-decision-unavailable', checkedState }, checkedState, metrics };
   }
 
   const meta = {
@@ -284,8 +309,11 @@ async function decideAgentic(ctx, g) {
     prompt_hash: decisionOut.prompt_hash,
   };
 
-  if (decisionOut.action === 'skip') {
-    return { decision: { action: 'skip', reason: 'model-no-edge', checkedState, ...meta }, checkedState, metrics };
+  // The model WAS consulted and chose not to trade. Normalize both no-trade words
+  // to a single, distinct reason that carries full model provenance — this is a
+  // real decision, not a failure.
+  if (decisionOut.action === 'skip' || decisionOut.action === 'hold') {
+    return { decision: { action: 'skip', reason: 'model-chose-skip', checkedState, ...meta }, checkedState, metrics };
   }
 
   const side = decisionOut.action === 'enter_yes' ? 'YES' : 'NO';
