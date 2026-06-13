@@ -796,6 +796,12 @@ fn fast_tick_tool_bundle(tool: &str) -> Option<Vec<(&'static str, &'static str)>
             "/home/agent/tools/agentic-decision.js",
             include_str!("../prompts/tools/agentic_decision.js"),
         ),
+        // Model strategy author (FunSearch rung): the self-improvement loop
+        // requires it to author whole strategy programs as backtest candidates.
+        (
+            "/home/agent/tools/agentic-strategy-author.js",
+            include_str!("../prompts/tools/agentic_strategy_author.js"),
+        ),
     ];
 
     match tool {

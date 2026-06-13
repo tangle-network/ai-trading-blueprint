@@ -1155,6 +1155,15 @@ pub(crate) async fn write_prebuilt_tools(
         include_str!("../prompts/tools/agentic_decision.js"),
     )
     .await?;
+    // Model strategy author (FunSearch rung) — the self-improvement loop authors
+    // whole strategy programs with it; bundle alongside the decision engine.
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/agentic-strategy-author.js",
+        include_str!("../prompts/tools/agentic_strategy_author.js"),
+    )
+    .await?;
     // Default no-API-key external signal provider (Fear & Greed + CoinGecko
     // global/trending). tick-common spawns it from the same directory so
     // external_signal_evidence carries real observations out of the box.
