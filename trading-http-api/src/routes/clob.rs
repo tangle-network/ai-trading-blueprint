@@ -5,13 +5,14 @@
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::{Json, Router, routing::get};
+use axum::{Extension, Json, Router, routing::get, routing::post};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use trading_runtime::polymarket_clob::{ApprovalResult, OpenOrder, OrderBook};
 
-use crate::TradingApiState;
+use crate::paper_settlement::{self, SettlementReport};
+use crate::{BotContext, MultiBotTradingState, TradingApiState};
 
 fn clob_not_configured() -> (StatusCode, String) {
     (
@@ -170,4 +171,38 @@ async fn get_config(
         neg_risk_exchange: neg_config.map(|c| format!("{}", c.exchange)),
         neg_risk_adapter: neg_config.and_then(|c| c.neg_risk_adapter.map(|a| format!("{a}"))),
     }))
+}
+
+// ── Paper settlement (multi-bot) ─────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct SettlementResponse {
+    pub report: SettlementReport,
+}
+
+/// Settle resolved paper conditional-token positions for the authenticated bot.
+///
+/// Driven by the operator's periodic loop (or an operator-triggered call). Only
+/// paper bots are eligible — real-money redemptions go through the on-chain CTF
+/// redeem path, which this endpoint must never touch.
+async fn run_clob_settlement(
+    State(state): State<Arc<MultiBotTradingState>>,
+    Extension(bot): Extension<BotContext>,
+) -> Result<Json<SettlementResponse>, (StatusCode, String)> {
+    if !bot.paper_trade {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "CLOB paper settlement only applies to paper bots; real positions redeem on-chain"
+                .into(),
+        ));
+    }
+    let report =
+        paper_settlement::settle_resolved_paper_positions(&bot.bot_id, state.clob_client.as_deref())
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(SettlementResponse { report }))
+}
+
+pub fn multi_bot_router() -> Router<Arc<MultiBotTradingState>> {
+    Router::new().route("/clob/settlement/run", post(run_clob_settlement))
 }

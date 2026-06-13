@@ -1019,6 +1019,199 @@ pub fn extract_clob_params(
     })
 }
 
+// ── Market resolution (Gamma API) ────────────────────────────────────────────
+
+/// Default Gamma API base URL. Gamma exposes market resolution status that the
+/// CLOB order-book endpoints do not — `closed`, `umaResolutionStatus`, and the
+/// terminal `outcomePrices` that go to 1/0 once a market resolves.
+const DEFAULT_GAMMA_BASE_URL: &str = "https://gamma-api.polymarket.com";
+
+/// The resolved payout for a single outcome token of a closed market.
+///
+/// Polymarket binary/categorical markets resolve each outcome token to either
+/// $1 (the winning outcome) or $0 (every losing outcome). `payout_per_share`
+/// is that terminal value, keyed by the outcome's `token_id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarketResolution {
+    /// Condition id (market identifier) this resolution belongs to.
+    pub condition_id: String,
+    /// Per-outcome terminal payout, keyed by CLOB `token_id`. Winning token → 1,
+    /// losing tokens → 0.
+    pub payouts: HashMap<String, Decimal>,
+    /// Human-readable winning outcome label, when reported.
+    pub winning_outcome: Option<String>,
+}
+
+impl MarketResolution {
+    /// Terminal payout per share for a specific outcome token. Returns `None`
+    /// when the token id is not part of this resolved market (caller should not
+    /// settle a token it cannot price).
+    pub fn payout_for_token(&self, token_id: &str) -> Option<Decimal> {
+        let key = token_id.trim();
+        self.payouts.get(key).copied()
+    }
+}
+
+/// Raw Gamma `/markets` row. Only the fields needed to determine resolution are
+/// modelled; everything else is ignored. The array-valued fields arrive as
+/// JSON-encoded strings (e.g. `"[\"Yes\", \"No\"]"`), matching Gamma's wire
+/// format.
+#[derive(Debug, Clone, Deserialize)]
+struct GammaMarket {
+    #[serde(default, rename = "conditionId")]
+    condition_id: Option<String>,
+    #[serde(default)]
+    closed: Option<bool>,
+    #[serde(default, rename = "umaResolutionStatus")]
+    uma_resolution_status: Option<String>,
+    /// JSON-encoded array of outcome labels, e.g. `"[\"Yes\", \"No\"]"`.
+    #[serde(default)]
+    outcomes: Option<String>,
+    /// JSON-encoded array of terminal outcome prices, e.g. `"[\"1\", \"0\"]"`.
+    #[serde(default, rename = "outcomePrices")]
+    outcome_prices: Option<String>,
+    /// JSON-encoded array of CLOB token ids, positionally aligned with outcomes.
+    #[serde(default, rename = "clobTokenIds")]
+    clob_token_ids: Option<String>,
+}
+
+/// Parse a Gamma JSON-encoded string array (`"[\"a\", \"b\"]"`). Returns an
+/// empty vec for a missing/blank field rather than erroring, so a partially
+/// populated market simply yields no settleable tokens.
+fn parse_gamma_string_array(raw: Option<&str>) -> Vec<String> {
+    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
+}
+
+/// True when a Gamma market row is terminally resolved. We require both `closed`
+/// and a non-empty terminal `outcomePrices` so we never settle a market that is
+/// merely paused or de-listed without a payout vector.
+fn gamma_market_is_resolved(market: &GammaMarket) -> bool {
+    let closed = market.closed.unwrap_or(false);
+    let uma_resolved = market
+        .uma_resolution_status
+        .as_deref()
+        .map(|status| status.trim().eq_ignore_ascii_case("resolved"))
+        .unwrap_or(false);
+    let has_terminal_prices = parse_gamma_string_array(market.outcome_prices.as_deref())
+        .iter()
+        .any(|price| price.trim() == "1" || price.trim() == "1.0");
+    (closed || uma_resolved) && has_terminal_prices
+}
+
+/// Build a [`MarketResolution`] from a resolved Gamma market row. Returns `None`
+/// when the row is not resolved or lacks the token/price vectors needed to
+/// assign payouts (fail-closed: a market we can't price is left open).
+fn resolution_from_gamma_market(market: &GammaMarket) -> Option<MarketResolution> {
+    if !gamma_market_is_resolved(market) {
+        return None;
+    }
+    let condition_id = market.condition_id.clone()?;
+    let token_ids = parse_gamma_string_array(market.clob_token_ids.as_deref());
+    let prices = parse_gamma_string_array(market.outcome_prices.as_deref());
+    let outcomes = parse_gamma_string_array(market.outcomes.as_deref());
+    if token_ids.is_empty() || token_ids.len() != prices.len() {
+        return None;
+    }
+
+    let mut payouts = HashMap::with_capacity(token_ids.len());
+    let mut winning_outcome = None;
+    for (idx, token_id) in token_ids.iter().enumerate() {
+        let raw_price = prices[idx].trim();
+        let payout: Decimal = raw_price.parse().ok()?;
+        // Polymarket terminal prices are exactly 1 or 0; clamp defensively so a
+        // stray fractional never credits a half-payout.
+        let payout = if payout >= Decimal::ONE {
+            Decimal::ONE
+        } else {
+            Decimal::ZERO
+        };
+        if payout == Decimal::ONE {
+            winning_outcome = outcomes.get(idx).cloned().or(winning_outcome);
+        }
+        payouts.insert(token_id.trim().to_string(), payout);
+    }
+
+    Some(MarketResolution {
+        condition_id,
+        payouts,
+        winning_outcome,
+    })
+}
+
+/// Fetch the resolution of a Polymarket market by `condition_id` from the Gamma
+/// API. Returns:
+/// - `Ok(Some(resolution))` when the market is terminally resolved.
+/// - `Ok(None)` when the market exists but is not yet resolved (still open).
+/// - `Err(..)` when Gamma is unreachable or returns an error — callers MUST
+///   treat this as "unknown" and leave the position open (fail-closed); they
+///   must not settle on an error.
+///
+/// The base URL is overridable via `POLYMARKET_GAMMA_URL` (used by tests to
+/// point at a mock server).
+pub async fn fetch_market_resolution(
+    condition_id: &str,
+) -> Result<Option<MarketResolution>, TradingError> {
+    let base_url = std::env::var("POLYMARKET_GAMMA_URL")
+        .ok()
+        .map(|url| url.trim_end_matches('/').to_string())
+        .unwrap_or_else(|| DEFAULT_GAMMA_BASE_URL.to_string());
+    fetch_market_resolution_from(&base_url, condition_id).await
+}
+
+/// Resolution fetch against an explicit base URL. Separated from
+/// [`fetch_market_resolution`] so tests can drive a local mock without touching
+/// process env.
+pub async fn fetch_market_resolution_from(
+    base_url: &str,
+    condition_id: &str,
+) -> Result<Option<MarketResolution>, TradingError> {
+    let condition_id = condition_id.trim();
+    if condition_id.is_empty() {
+        return Err(sdk_err("condition_id is required to resolve a market"));
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("TradingBlueprint/1.0 (+polymarket settlement)")
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| TradingError::HttpError(e.to_string()))?;
+
+    // Gamma keys markets by condition id via the `condition_ids` query param;
+    // the response is an array of market rows.
+    let url = format!("{base_url}/markets?condition_ids={condition_id}");
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| TradingError::HttpError(e.to_string()))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(TradingError::MarketDataUnavailable(format!(
+            "Gamma {status} for condition {condition_id}: {body}"
+        )));
+    }
+
+    let markets: Vec<GammaMarket> = resp
+        .json()
+        .await
+        .map_err(|e| TradingError::MarketDataUnavailable(e.to_string()))?;
+
+    // Match the row for this exact condition id (Gamma may echo neighbours).
+    let market = markets.into_iter().find(|market| {
+        market
+            .condition_id
+            .as_deref()
+            .map(|id| id.trim().eq_ignore_ascii_case(condition_id))
+            .unwrap_or(false)
+    });
+
+    Ok(market.and_then(|market| resolution_from_gamma_market(&market)))
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1215,5 +1408,80 @@ mod tests {
         };
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["spender_label"], "CTFExchange");
+    }
+
+    fn gamma_market(json: serde_json::Value) -> GammaMarket {
+        serde_json::from_value(json).expect("gamma market")
+    }
+
+    #[test]
+    fn test_resolution_yes_wins() {
+        let market = gamma_market(serde_json::json!({
+            "conditionId": "0xcond",
+            "closed": true,
+            "umaResolutionStatus": "resolved",
+            "outcomes": "[\"Yes\", \"No\"]",
+            "outcomePrices": "[\"1\", \"0\"]",
+            "clobTokenIds": "[\"111\", \"222\"]",
+        }));
+        let resolution = resolution_from_gamma_market(&market).expect("resolved");
+        assert_eq!(resolution.condition_id, "0xcond");
+        assert_eq!(resolution.payout_for_token("111"), Some(Decimal::ONE));
+        assert_eq!(resolution.payout_for_token("222"), Some(Decimal::ZERO));
+        assert_eq!(resolution.winning_outcome.as_deref(), Some("Yes"));
+        // A token not in the market cannot be priced.
+        assert_eq!(resolution.payout_for_token("999"), None);
+    }
+
+    #[test]
+    fn test_resolution_no_wins() {
+        let market = gamma_market(serde_json::json!({
+            "conditionId": "0xcond",
+            "closed": true,
+            "outcomes": "[\"Yes\", \"No\"]",
+            "outcomePrices": "[\"0\", \"1\"]",
+            "clobTokenIds": "[\"111\", \"222\"]",
+        }));
+        let resolution = resolution_from_gamma_market(&market).expect("resolved");
+        assert_eq!(resolution.payout_for_token("111"), Some(Decimal::ZERO));
+        assert_eq!(resolution.payout_for_token("222"), Some(Decimal::ONE));
+        assert_eq!(resolution.winning_outcome.as_deref(), Some("No"));
+    }
+
+    #[test]
+    fn test_open_market_not_resolved() {
+        // Open market: not closed, no terminal price → no resolution.
+        let market = gamma_market(serde_json::json!({
+            "conditionId": "0xcond",
+            "closed": false,
+            "outcomes": "[\"Yes\", \"No\"]",
+            "outcomePrices": "[\"0.62\", \"0.38\"]",
+            "clobTokenIds": "[\"111\", \"222\"]",
+        }));
+        assert!(resolution_from_gamma_market(&market).is_none());
+    }
+
+    #[test]
+    fn test_closed_without_terminal_price_not_resolved() {
+        // Closed/de-listed but no 1.0 payout vector → fail-closed (leave open).
+        let market = gamma_market(serde_json::json!({
+            "conditionId": "0xcond",
+            "closed": true,
+            "outcomes": "[\"Yes\", \"No\"]",
+            "outcomePrices": "[\"0.5\", \"0.5\"]",
+            "clobTokenIds": "[\"111\", \"222\"]",
+        }));
+        assert!(resolution_from_gamma_market(&market).is_none());
+    }
+
+    #[test]
+    fn test_resolution_requires_aligned_token_and_price_vectors() {
+        let market = gamma_market(serde_json::json!({
+            "conditionId": "0xcond",
+            "closed": true,
+            "outcomePrices": "[\"1\", \"0\"]",
+            "clobTokenIds": "[\"111\"]",
+        }));
+        assert!(resolution_from_gamma_market(&market).is_none());
     }
 }

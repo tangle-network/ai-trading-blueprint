@@ -866,6 +866,10 @@ pub fn build_operator_router() -> Router {
             post(run_bot_hyperliquid_settlement),
         )
         .route(
+            "/api/bots/{bot_id}/clob/settlement/run",
+            post(run_bot_clob_settlement),
+        )
+        .route(
             "/api/bots/{bot_id}/activation-progress",
             get(get_activation_progress),
         )
@@ -7850,6 +7854,37 @@ async fn run_bot_hyperliquid_settlement(
     let bot = resolve_bot(&bot_id)?;
     verify_submitter(&bot, &caller)?;
     proxy_hyperliquid_settlement(&bot, reqwest::Method::POST, "/hyperliquid/settlement/run").await
+}
+
+/// Settle resolved paper Polymarket conditional-token positions for a bot.
+///
+/// Drives `POST /clob/settlement/run` on the bot's trading API, which redeems
+/// held outcome tokens at their resolved $1/$0 payout. Paper-only; the trading
+/// API rejects this for real-money bots (those redeem on-chain).
+async fn run_bot_clob_settlement(
+    SessionAuth(caller): SessionAuth,
+    Path(bot_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let bot = resolve_bot(&bot_id)?;
+    verify_submitter(&bot, &caller)?;
+    fetch_trading_api_json_with_method(
+        &bot,
+        reqwest::Method::POST,
+        "/clob/settlement/run",
+        &[],
+    )
+    .await
+    .map_err(|err| {
+        tracing::warn!(bot_id = %bot.id, "trading api CLOB settlement request failed: {err}");
+        (StatusCode::BAD_GATEWAY, err)
+    })?
+    .map(Json)
+    .ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Bot trading API is not available for CLOB settlement".to_string(),
+        )
+    })
 }
 
 async fn proxy_hyperliquid_settlement(

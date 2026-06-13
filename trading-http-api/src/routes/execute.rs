@@ -4153,6 +4153,79 @@ fn parse_intent_hash_bytes(s: &str) -> Result<[u8; 32], (StatusCode, String)> {
 mod tests {
     use super::*;
 
+    fn shallow_buy_book() -> OrderBook {
+        // Ascending asks: cheap depth is thin, deeper fills get pricier.
+        OrderBook {
+            market: "m".into(),
+            asset_id: "tok".into(),
+            bids: vec![],
+            asks: vec![
+                PriceLevel {
+                    price: "0.50".into(),
+                    size: "100".into(),
+                },
+                PriceLevel {
+                    price: "0.60".into(),
+                    size: "100".into(),
+                },
+                PriceLevel {
+                    price: "0.80".into(),
+                    size: "1000".into(),
+                },
+            ],
+            timestamp: "0".into(),
+        }
+    }
+
+    fn buy_params(size: &str) -> polymarket_clob::ClobOrderParams {
+        polymarket_clob::ClobOrderParams {
+            token_id: "tok".into(),
+            side: Side::Buy,
+            // Generous limit so the walk is depth-limited, not price-limited.
+            price: Decimal::from_str("1.0").unwrap(),
+            size: Decimal::from_str(size).unwrap(),
+            order_type: polymarket_clob::OrderType::Gtc,
+            expiration: 0,
+        }
+    }
+
+    #[test]
+    fn clob_fill_large_order_pays_worse_average_than_small() {
+        let book = shallow_buy_book();
+
+        // Small order rests entirely on the best ask → average == best price.
+        let small = simulate_clob_fill(&buy_params("50"), &book);
+        assert_eq!(small.status, TradeExecutionStatus::Filled);
+        assert_eq!(small.filled_size, Decimal::from(50));
+        let small_avg = small.average_price.expect("small avg");
+        assert_eq!(small_avg, Decimal::from_str("0.50").unwrap());
+
+        // Large order eats through deeper, pricier levels → worse average.
+        let large = simulate_clob_fill(&buy_params("250"), &book);
+        assert_eq!(large.status, TradeExecutionStatus::Filled);
+        assert_eq!(large.filled_size, Decimal::from(250));
+        let large_avg = large.average_price.expect("large avg");
+        // 100@0.50 + 100@0.60 + 50@0.80 = 150 notional / 250 = 0.60.
+        assert_eq!(large_avg, Decimal::from_str("0.60").unwrap());
+
+        assert!(
+            large_avg > small_avg,
+            "large order average {large_avg} should exceed small order average {small_avg}"
+        );
+    }
+
+    #[test]
+    fn clob_fill_fok_unfilled_when_depth_insufficient() {
+        let book = shallow_buy_book();
+        // Total ask depth is 1200; an FOK for 5000 cannot fully fill → no fill.
+        let mut params = buy_params("5000");
+        params.order_type = polymarket_clob::OrderType::Fok;
+        let fill = simulate_clob_fill(&params, &book);
+        assert_eq!(fill.status, TradeExecutionStatus::NoFill);
+        assert_eq!(fill.filled_size, Decimal::ZERO);
+        assert!(fill.average_price.is_none());
+    }
+
     #[test]
     fn paper_pnl_pct_gain_loss_flat_and_guard() {
         // +10% gain

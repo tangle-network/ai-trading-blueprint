@@ -25,45 +25,28 @@ function clamp(value, lo, hi) {
   return Math.min(hi, Math.max(lo, value));
 }
 
-// USDC token aliases the portfolio may use to label the same stable balance.
-// The strict `vaultSpotAmount` read gates on `position_type === 'spot'` AND an
-// exact lowercased-address match. The operator's paper portfolio synthesizer
-// (operator_api.rs `seed_initial_paper_cash_position` → `credit_fallback_position`)
-// emits the seeded cash with `token: "USDC"` (the SYMBOL, not the chain address)
-// and `position_type: null` — so the strict read returns 0 even though $10k of
-// deployable stable is sitting idle. That mismatch is what silently dropped
-// 'supply' from the candidate set; the model then (correctly) answered 'supply',
-// agenticDecision rejected the out-of-contract action → null → "model-unavailable".
-const USDC_ALIASES = new Set(['usdc', 'usd-coin', 'usdc.e']);
-
-// Resolve idle stable balance robustly across portfolio labelings. Prefers the
-// strict vault-spot read; if that is 0, falls back to any positive USDC-by-symbol
-// or USDC-by-address holding that is NOT already booked as a supplied yield
-// position. Returns the human-unit USD amount (USDC ~ $1). This is alpha-neutral:
-// it only changes whether the model is *asked* about idle cash it can actually
-// deploy — every risk guard still runs deterministically.
+// Resolve idle stable balance via the shared symbol-tolerant vault-spot read.
+// `vaultSpotAmount` now matches by exact address OR known symbol alias and
+// treats a null/undefined position_type as spot-eligible while excluding any
+// lending/derivative protocol (incl. aave_v3, the yield venue) — so it already
+// folds in the aave-supplied exclusion this helper used to do by hand and sees
+// the operator's synthesized paper cash (token "USDC" symbol, position_type
+// null) that the old strict read missed. We keep the { amount, source } shape so
+// checkedState.idle_source still distinguishes a direct address+spot read from a
+// symbol/null fallback for audit. Alpha-neutral: it only changes whether the
+// model is *asked* about deployable idle cash; every risk guard still runs.
 function resolveIdleStable(t, portfolio, usdcAddress) {
-  const strict = t.vaultSpotAmount(portfolio, usdcAddress);
-  if (strict > 0) return { amount: strict, source: 'vault_spot' };
-
+  const amount = t.vaultSpotAmount(portfolio, usdcAddress);
+  if (amount <= 0) return { amount: 0, source: 'none' };
+  // Distinguish a canonical vault-spot leg (explicit position_type 'spot' on the
+  // exact address) from a synthesized/aliased holding the symbol-tolerant read
+  // now catches, purely for the audit trail.
   const addr = String(usdcAddress || '').toLowerCase();
-  const positions = t.positionsOf(portfolio);
-  let amount = 0;
-  for (const p of positions) {
-    const protocol = String(p.protocol || '').toLowerCase();
-    // A position already counted as supplied to the yield venue is NOT idle.
-    if (protocol === PROTOCOL) continue;
-    const token = String(p.token || '').trim().toLowerCase();
-    const isUsdc = token === addr || USDC_ALIASES.has(token);
-    if (!isUsdc) continue;
-    // Prefer explicit USD value; fall back to amount (USDC is ~$1). A non-spot
-    // perp/conditional leg never reaches here because it carries a non-USDC
-    // token and/or a venue protocol, so this stays scoped to stable inventory.
-    const usd = t.asNumber(p.value_usd ?? p.amount, 0);
-    if (usd > 0) amount += usd;
-  }
-  if (amount > 0) return { amount, source: 'token_match_fallback' };
-  return { amount: 0, source: 'none' };
+  const hasDirectSpot = t.positionsOf(portfolio).some(
+    (p) => String(p.position_type || '').trim().toLowerCase() === 'spot'
+      && String(p.token || '').trim().toLowerCase() === addr,
+  );
+  return { amount, source: hasDirectSpot ? 'vault_spot' : 'token_match_fallback' };
 }
 
 function compactSignals(ctx, checkedState, metrics) {

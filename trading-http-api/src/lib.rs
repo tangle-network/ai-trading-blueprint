@@ -14,6 +14,7 @@ pub mod learning_store;
 pub mod live_portfolio;
 pub mod metrics_store;
 pub mod nav_stream;
+pub mod paper_settlement;
 pub mod rate_limit;
 pub mod risk_budget;
 pub mod routes;
@@ -561,6 +562,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
         .merge(routes::candles::multi_bot_router())
         .merge(routes::chart_studies::multi_bot_router())
         .merge(routes::cex::multi_bot_router())
+        .merge(routes::clob::multi_bot_router())
         .merge(routes::evolution::multi_bot_router())
         .merge(routes::hyperliquid::multi_bot_router())
         .merge(routes::hyperliquid_funding::multi_bot_router())

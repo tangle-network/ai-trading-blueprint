@@ -42,7 +42,11 @@ const {
   resolveUsdPrice,
   isPaperShowcaseMode,
   paperCycleWeight,
+  isVaultSpot,
+  vaultSpotAmount,
 } = loadCjs('tick_common.js')
+
+const USDC_ADDR = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
 const { coverageFinding, insufficientCoverage, recordCoverageFinding } = loadCjs('tick_coverage.js')
 
 const HOUR = 3_600_000
@@ -96,6 +100,62 @@ test('candleOpenMs normalizes seconds and ms and positional arrays', () => {
   assert.equal(candleOpenMs({ timestamp: 1_700_000_000_000 }), 1_700_000_000_000)
   assert.equal(candleOpenMs([1_700_000_000, 1, 2, 3, 4]), 1_700_000_000_000)
   assert.equal(candleOpenMs({ close: 5 }), null)
+})
+
+test('vaultSpotAmount reads synthesized paper cash labeled by SYMBOL with null type', () => {
+  // The operator's paper synthesizer seeds idle cash as { token: "USDC" (symbol),
+  // position_type: null, protocol: null }. The strict address+spot read returned
+  // 0, dropping 'buy'/'supply' candidates; the symbol-tolerant read must see it.
+  const portfolio = {
+    positions: [{ token: 'USDC', amount: 10000, value_usd: 10000 }],
+  }
+  assert.equal(vaultSpotAmount(portfolio, USDC_ADDR), 10000)
+})
+
+test('vaultSpotAmount excludes an aave_v3-supplied USDC position from idle spot', () => {
+  // A supplied/borrowed leg on a lending venue is exposure, not idle cash, even
+  // when its position_type is null — it must never be counted as spot.
+  const portfolio = {
+    positions: [
+      { token: 'USDC', protocol: 'aave_v3', amount: 8000, value_usd: 8000 },
+    ],
+  }
+  assert.equal(vaultSpotAmount(portfolio, USDC_ADDR), 0)
+  assert.equal(isVaultSpot(portfolio.positions[0]), false)
+})
+
+test('vaultSpotAmount still matches the canonical address + spot position', () => {
+  const portfolio = {
+    positions: [
+      { token: USDC_ADDR, position_type: 'spot', amount: 5000, value_usd: 5000, protocol: 'paper' },
+    ],
+  }
+  assert.equal(vaultSpotAmount(portfolio, USDC_ADDR), 5000)
+  assert.equal(isVaultSpot(portfolio.positions[0]), true)
+})
+
+test('vaultSpotAmount sums seeded-cash and venue-swapped legs of the same token', () => {
+  const portfolio = {
+    positions: [
+      { token: 'USDC', amount: 4000, value_usd: 4000 },
+      { token: USDC_ADDR, position_type: 'spot', protocol: 'aerodrome', amount: 1000, value_usd: 1000 },
+      { token: USDC_ADDR, protocol: 'aave_v3', amount: 9000, value_usd: 9000 },
+    ],
+  }
+  // 4000 (synthesized) + 1000 (venue spot); the aave-supplied 9000 is excluded.
+  assert.equal(vaultSpotAmount(portfolio, USDC_ADDR), 5000)
+})
+
+test('isVaultSpot excludes a derivative/perp leg even with positive amount', () => {
+  assert.equal(
+    isVaultSpot({ token: 'ETH-PERP', protocol: 'hyperliquid', amount: 3, position_type: 'perp' }),
+    false,
+  )
+  // A null-type leg on a derivative venue is still excluded by protocol.
+  assert.equal(
+    isVaultSpot({ token: 'ETH', protocol: 'gmx_v2', amount: 3 }),
+    false,
+  )
 })
 
 test('spotPriceFromPortfolio derives paper prices from spot amount and value', () => {
