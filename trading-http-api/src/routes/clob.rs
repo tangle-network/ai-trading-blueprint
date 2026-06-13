@@ -196,10 +196,12 @@ async fn run_clob_settlement(
                 .into(),
         ));
     }
-    let report =
-        paper_settlement::settle_resolved_paper_positions(&bot.bot_id, state.clob_client.as_deref())
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let report = paper_settlement::settle_resolved_paper_positions(
+        &bot.bot_id,
+        state.clob_client.as_deref(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(SettlementResponse { report }))
 }
 

@@ -930,7 +930,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_treats_vault_spot_as_tradeable() {
-        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("prediction_politics", ValidationTrust::PerTrade);
 
         assert!(
             prompt.contains("get-portfolio.js"),
@@ -1180,7 +1180,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_envelope_mode_skips_validate() {
-        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::Envelope);
+        let prompt = build_fast_tick_prompt("prediction_politics", ValidationTrust::Envelope);
 
         assert!(prompt.contains("envelopeStatus"));
         assert!(prompt.contains("executeWithEnvelope"));
@@ -1192,7 +1192,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_per_trade_keeps_validate() {
-        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("prediction_politics", ValidationTrust::PerTrade);
         assert!(prompt.contains("api.validate(intent)"));
         assert!(prompt.contains("api.execute(intent, validation)"));
         assert!(!prompt.contains("executeWithEnvelope"));
@@ -1349,7 +1349,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_references_slippage_learner_and_bandit() {
-        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("prediction_politics", ValidationTrust::PerTrade);
         assert!(
             prompt.contains("recommendSlippageBps"),
             "fast tick must consult the slippage learner before quoting"

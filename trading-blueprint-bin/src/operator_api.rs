@@ -7867,24 +7867,19 @@ async fn run_bot_clob_settlement(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let bot = resolve_bot(&bot_id)?;
     verify_submitter(&bot, &caller)?;
-    fetch_trading_api_json_with_method(
-        &bot,
-        reqwest::Method::POST,
-        "/clob/settlement/run",
-        &[],
-    )
-    .await
-    .map_err(|err| {
-        tracing::warn!(bot_id = %bot.id, "trading api CLOB settlement request failed: {err}");
-        (StatusCode::BAD_GATEWAY, err)
-    })?
-    .map(Json)
-    .ok_or_else(|| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Bot trading API is not available for CLOB settlement".to_string(),
-        )
-    })
+    fetch_trading_api_json_with_method(&bot, reqwest::Method::POST, "/clob/settlement/run", &[])
+        .await
+        .map_err(|err| {
+            tracing::warn!(bot_id = %bot.id, "trading api CLOB settlement request failed: {err}");
+            (StatusCode::BAD_GATEWAY, err)
+        })?
+        .map(Json)
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Bot trading API is not available for CLOB settlement".to_string(),
+            )
+        })
 }
 
 async fn proxy_hyperliquid_settlement(

@@ -284,9 +284,10 @@ pub async fn settle_resolved_paper_positions(
                 }
             },
             Ok(None) => {
-                report
-                    .skipped
-                    .insert(position.token_id.clone(), "market not yet resolved".to_string());
+                report.skipped.insert(
+                    position.token_id.clone(),
+                    "market not yet resolved".to_string(),
+                );
             }
             Err(error) => {
                 // Fail-closed: leave the position open on any resolution error.
@@ -520,7 +521,10 @@ mod tests {
         assert_eq!(pos.shares, Decimal::from(60));
         // Cost basis reduced pro-rata: 60 * (60/100) = 36.
         assert_eq!(pos.cost_basis_usd, Decimal::from(36));
-        assert_eq!(pos.entry_price(), Some(Decimal::from_str_exact("0.6").unwrap()));
+        assert_eq!(
+            pos.entry_price(),
+            Some(Decimal::from_str_exact("0.6").unwrap())
+        );
     }
 
     #[tokio::test]

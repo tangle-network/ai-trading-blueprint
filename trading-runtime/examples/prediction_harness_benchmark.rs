@@ -97,10 +97,14 @@ fn main() -> ExitCode {
         fee_bps: req.fee_bps,
     };
 
-    let kind = req
-        .strategy
-        .clone()
-        .unwrap_or_else(|| if req.harness.is_some() { "harness" } else { "threshold" }.into());
+    let kind = req.strategy.clone().unwrap_or_else(|| {
+        if req.harness.is_some() {
+            "harness"
+        } else {
+            "threshold"
+        }
+        .into()
+    });
 
     let harness_strategy;
     let strategy: &dyn PredictionStrategy = match kind.as_str() {

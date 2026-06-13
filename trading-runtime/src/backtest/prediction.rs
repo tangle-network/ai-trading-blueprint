@@ -22,8 +22,10 @@
 //! implied price `p` (= the cost of one YES share, `0 < p < 1`) buys
 //! `stake_usd / p` shares of the chosen side. At resolution the winning side's
 //! shares pay `$1` each and the losing side's pay `$0`:
+//!
 //!   - correct side: `pnl = stake * (1 - p) / p`   (price `p` for the side held)
 //!   - wrong side:   `pnl = -stake`
+//!
 //! A taker fee in bps is charged on the entry notional (`stake_usd`).
 
 use rust_decimal::Decimal;
@@ -33,7 +35,9 @@ use serde::{Deserialize, Serialize};
 use crate::leaderboard::{self, EquityPoint, LeaderboardStats};
 
 use super::engine::BacktestEngine;
-use super::types::{BacktestConfig, BacktestResult, Candle, Direction, HarnessConfig, SlippageModel};
+use super::types::{
+    BacktestConfig, BacktestResult, Candle, Direction, HarnessConfig, SlippageModel,
+};
 
 /// Final settlement of a binary prediction market.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,11 +232,13 @@ pub fn run_prediction_benchmark(
         let history = &sorted;
 
         // The strategy may enter once; reject degenerate (unfillable) prices.
-        let entry = strategy.first_entry(&sorted_market).and_then(|(side, idx)| {
-            let point = history[idx];
-            let price = side_price(side, point.yes_prob);
-            (price > 0.0 && price < 1.0).then_some((side, point))
-        });
+        let entry = strategy
+            .first_entry(&sorted_market)
+            .and_then(|(side, idx)| {
+                let point = history[idx];
+                let price = side_price(side, point.yes_prob);
+                (price > 0.0 && price < 1.0).then_some((side, point))
+            });
 
         let Some((side, point)) = entry else {
             continue;
@@ -252,7 +258,10 @@ pub fn run_prediction_benchmark(
         let pnl = gross - fee;
         equity += pnl;
 
-        let resolution_ts = history.last().map(|p| p.timestamp).unwrap_or(point.timestamp);
+        let resolution_ts = history
+            .last()
+            .map(|p| p.timestamp)
+            .unwrap_or(point.timestamp);
         trades.push(PredictionTrade {
             market_id: market.market_id.clone(),
             side,
@@ -495,10 +504,7 @@ impl PredictionStrategy for HarnessPredictionStrategy {
         let result = BacktestEngine::new(config).run(&candles, &[]).ok()?;
         // Trades are recorded in close order; the earliest entry_timestamp is
         // the first position the harness opened.
-        let first = result
-            .trades
-            .iter()
-            .min_by_key(|t| t.entry_timestamp)?;
+        let first = result.trades.iter().min_by_key(|t| t.entry_timestamp)?;
         let idx = market
             .history
             .iter()
@@ -730,7 +736,9 @@ mod tests {
         let harness = HarnessConfig {
             version: 1,
             entry_rules: vec![EntryRule {
-                signal: SignalType::PriceMomentum { lookback_candles: 5 },
+                signal: SignalType::PriceMomentum {
+                    lookback_candles: 5,
+                },
                 condition: EntryCondition::Positive,
                 weight: 1.0,
                 tokens: vec![],
@@ -746,8 +754,7 @@ mod tests {
         };
         let fixture = balanced_fixture();
         let strat = HarnessPredictionStrategy::new(harness);
-        let out =
-            run_prediction_benchmark(&fixture, &strat, &PredictionBenchmarkConfig::default());
+        let out = run_prediction_benchmark(&fixture, &strat, &PredictionBenchmarkConfig::default());
 
         // The harness MUST actually fire entries on the up-ramping YES markets
         // (momentum positive) — otherwise the integration is dead.
