@@ -260,6 +260,12 @@ pub async fn per_bot_rate_limit(
 mod tests {
     use super::*;
 
+    // Tests that mutate the process-global TRADING_RATE_LIMIT_ENABLED env var
+    // must not run concurrently with each other — cargo runs tests in parallel
+    // threads, so one test's set_var/remove_var races another's read. Serialize
+    // them on this lock.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn route_class_dispatch() {
         assert_eq!(
@@ -293,12 +299,14 @@ mod tests {
 
     #[test]
     fn rate_limit_enabled_default_true() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::remove_var("TRADING_RATE_LIMIT_ENABLED") };
         assert!(rate_limit_enabled());
     }
 
     #[test]
     fn rate_limit_enabled_respects_false_variants() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         for v in &["false", "FALSE", "False", "0", "no"] {
             unsafe { std::env::set_var("TRADING_RATE_LIMIT_ENABLED", v) };
             assert!(!rate_limit_enabled(), "value {v} should disable limiter");
