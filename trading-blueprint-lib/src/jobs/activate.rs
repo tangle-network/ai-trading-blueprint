@@ -1210,6 +1210,13 @@ pub(crate) async fn write_prebuilt_tools(
     write_file_to_sidecar(
         sidecar_url,
         token,
+        "/home/agent/tools/prediction-tick.js",
+        include_str!("../prompts/tools/prediction_tick.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
         "/home/agent/tools/get-portfolio.js",
         include_str!("../prompts/tools/get_portfolio.js"),
     )

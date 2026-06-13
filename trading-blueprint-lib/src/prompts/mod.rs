@@ -478,6 +478,7 @@ pub fn tick_tool_for_strategy(strategy_type: &str) -> Option<&'static str> {
         "multi" => Some("multi-tick.js"),
         "volatility" => Some("volatility-tick.js"),
         "perp" => Some("perp-tick.js"),
+        "prediction" => Some("prediction-tick.js"),
         _ => None,
     }
 }
@@ -1212,8 +1213,12 @@ mod tests {
             Some("volatility-tick.js")
         );
         assert_eq!(tick_tool_for_strategy("perp"), Some("perp-tick.js"));
-        // Families with no deterministic tick fall through to the LLM runner.
-        assert_eq!(tick_tool_for_strategy("prediction"), None);
+        assert_eq!(
+            tick_tool_for_strategy("prediction"),
+            Some("prediction-tick.js")
+        );
+        // Unknown families fall through to the generic LLM runner.
+        assert_eq!(tick_tool_for_strategy("unknown_family"), None);
     }
 
     #[test]
