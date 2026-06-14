@@ -116,6 +116,64 @@ function userPrompt({ family, evidence, candidates, sizing, mandate, position })
 }
 
 // Core call. Returns a validated decision or null (fail-closed). Never throws.
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// POST a chat/completions request with: a per-attempt abort timeout, a small
+// pre-call jitter (so a fleet of bots ticking on the same cron second doesn't
+// burst a shared key simultaneously), and backoff+retry on 429 (rate limit) /
+// 5xx (transient). A single ZAI key shared across the fleet hits per-minute 429s
+// under concurrency — those cleared on retry, so a bot was fail-closing to
+// `hold` on a transient throttle. Returns the parsed JSON payload or null
+// (fail-closed; the caller still never trades on a missing decision).
+async function postChatCompletion(opts) {
+  const { baseUrl, apiKey, model, messages, fetchImpl, timeoutMs } = opts;
+  const maxTokens = Number(opts.maxTokens) || DEFAULT_MAX_TOKENS;
+  const retries = Number.isFinite(Number(opts.retries)) ? Number(opts.retries) : 2;
+  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+  const body = JSON.stringify({ model, temperature: 0.2, max_tokens: maxTokens, messages });
+  // De-synchronize concurrent fleet calls: 0–600ms jitter (skipped for tests via
+  // opts.noJitter so they stay fast/deterministic).
+  if (!opts.noJitter) await sleep(Math.floor((globalThis.Math?.random?.() ?? 0) * 600));
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+        body,
+        signal: controller.signal,
+      });
+    } catch {
+      clearTimeout(timer);
+      return null; // network error / aborted timeout — don't retry (timeout is already generous)
+    }
+    clearTimeout(timer);
+    if (response && typeof response.json === 'function' && response.ok) {
+      try {
+        return await response.json();
+      } catch {
+        return null;
+      }
+    }
+    const status = response && Number(response.status);
+    const retryable = status === 429 || (status >= 500 && status < 600);
+    if (attempt < retries && retryable) {
+      // 2s, 5s backoff + up to 1s jitter — spans the ~per-minute 429 clear window.
+      const schedule = Array.isArray(opts.backoffMs) ? opts.backoffMs : [2000, 5000];
+      const base = schedule[Math.min(attempt, schedule.length - 1)] ?? 5000;
+      await sleep(base + (opts.noJitter ? 0 : Math.floor((globalThis.Math?.random?.() ?? 0) * 1000)));
+      continue;
+    }
+    return null;
+  }
+  return null;
+}
+
 async function agenticDecision(spec, opts = {}) {
   const env = opts.env || process.env;
   const fetchImpl = opts.fetch || globalThis.fetch;
@@ -135,37 +193,19 @@ async function agenticDecision(spec, opts = {}) {
     .update(JSON.stringify(messages))
     .digest('hex')}`;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
-  try {
-    response = await fetchImpl(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        max_tokens: Number(opts.maxTokens) || DEFAULT_MAX_TOKENS,
-        messages,
-      }),
-      signal: controller.signal,
-    });
-  } catch {
-    clearTimeout(timer);
-    return null;
-  }
-  clearTimeout(timer);
-
-  if (!response || typeof response.json !== 'function' || !response.ok) return null;
-  let payload;
-  try {
-    payload = await response.json();
-  } catch {
-    return null;
-  }
+  const payload = await postChatCompletion({
+    baseUrl,
+    apiKey,
+    model,
+    messages,
+    fetchImpl,
+    timeoutMs,
+    maxTokens: Number(opts.maxTokens) || DEFAULT_MAX_TOKENS,
+    noJitter: opts.noJitter ?? Boolean(opts.fetch),
+    retries: opts.retries,
+    backoffMs: opts.backoffMs,
+  });
+  if (!payload) return null;
   const choice = payload && payload.choices && payload.choices[0];
   const content = choice && choice.message && choice.message.content;
   const jsonText = stripJsonFence(content);
@@ -243,28 +283,19 @@ async function agenticAllocation(spec, opts = {}) {
   ];
   const promptHash = `sha256:${crypto.createHash('sha256').update(JSON.stringify(messages)).digest('hex')}`;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
-  try {
-    response = await fetchImpl(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, temperature: 0.2, max_tokens: Number(opts.maxTokens) || DEFAULT_MAX_TOKENS, messages }),
-      signal: controller.signal,
-    });
-  } catch {
-    clearTimeout(timer);
-    return null;
-  }
-  clearTimeout(timer);
-  if (!response || typeof response.json !== 'function' || !response.ok) return null;
-  let payload;
-  try {
-    payload = await response.json();
-  } catch {
-    return null;
-  }
+  const payload = await postChatCompletion({
+    baseUrl,
+    apiKey,
+    model,
+    messages,
+    fetchImpl,
+    timeoutMs,
+    maxTokens: Number(opts.maxTokens) || DEFAULT_MAX_TOKENS,
+    noJitter: opts.noJitter ?? Boolean(opts.fetch),
+    retries: opts.retries,
+    backoffMs: opts.backoffMs,
+  });
+  if (!payload) return null;
   const content = payload && payload.choices && payload.choices[0] && payload.choices[0].message && payload.choices[0].message.content;
   const jsonText = stripJsonFence(content);
   if (!jsonText) return null;
