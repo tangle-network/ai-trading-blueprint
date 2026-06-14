@@ -102,6 +102,13 @@ function perpPnl(position) {
   return t.asNumber(position.unrealized_pnl ?? position.unrealized_pnl_usd ?? position.pnl, 0);
 }
 
+// Best-available USD/asset price for an open perp position (mark/current first,
+// entry as a last resort). Used as the close intent's mark_price so the paper
+// executor can value the close fill.
+function perpPrice(position) {
+  return t.asNumber(position.current_price ?? position.price_usd ?? position.mark_price ?? position.entry_price, null);
+}
+
 function perpAsset(position) {
   const token = String(position.symbol || position.token || '').toUpperCase();
   // Portfolio may carry the chain address; map the common ones back to a symbol.
@@ -151,7 +158,8 @@ function leverageForNotional(notional, totalNav, maxLeverage) {
 //   target_protocol = the chosen venue, token_out = asset symbol, action =
 //   open_long/open_short/close_long/close_short, and metadata carrying the perp
 //   contract: asset (string), leverage (u64), stop_loss_distance (fraction).
-function buildPerpIntent({ config, strategyId, venue, asset, action, notional, leverage, stopLossPct, rationale, signals, reduceOnly }) {
+function buildPerpIntent({ config, strategyId, venue, asset, action, notional, leverage, stopLossPct, rationale, signals, reduceOnly, markPrice }) {
+  const price = t.asNumber(markPrice, null);
   return {
     strategy_id: strategyId || `tick-${config.bot_id || 'bot'}`,
     target_protocol: venue,
@@ -169,6 +177,11 @@ function buildPerpIntent({ config, strategyId, venue, asset, action, notional, l
       stop_loss_distance: stopLossPct / 100,
       stop_loss_pct: stopLossPct,
       notional_usdc: String(notional),
+      // Entry mark price (USD/asset). The paper executor values the perp fill
+      // as notional/price asset units at this entry, so PnL realizes as
+      // notional × price-move × direction (not a spot swap). Omitted when the
+      // tick has no live price — the executor then fails closed and rejects.
+      mark_price: price !== null && price > 0 ? String(price) : undefined,
       reduce_only: reduceOnly || undefined,
       signal: rationale,
       signals: signals || {},
@@ -259,6 +272,7 @@ async function decideAgentic({
         venue,
         asset,
         notional,
+        markPrice: currentPrice,
         leverage: leverageForNotional(notional, totalNav, envelope.maxLeverage),
         reduce_only: true,
         rationale: 'model-exit',
@@ -293,6 +307,7 @@ async function decideAgentic({
     venue,
     asset,
     notional,
+    markPrice: currentPrice,
     leverage: leverageForNotional(notional, totalNav, envelope.maxLeverage),
     rationale: 'model-entry',
     signals: { rsi_14: currentRsi, ema_12: shortEma, ema_26: longEma, price: currentPrice, confidence: decisionOut.confidence },
@@ -436,6 +451,7 @@ async function decide(ctx) {
         action: side === 'short' ? 'close_short' : 'close_long',
         notional,
         leverage: leverageForNotional(notional, totalNav, maxLeverage),
+        markPrice: perpPrice(openPosition),
         stopLossPct,
         rationale: 'drawdown-derisk-exit',
         signals: { max_drawdown_pct: maxDrawdownPct },
@@ -574,6 +590,7 @@ async function decide(ctx) {
     action: setup.action,
     notional: setup.notional,
     leverage: setup.leverage,
+    markPrice: setup.markPrice,
     stopLossPct,
     rationale: setup.rationale,
     signals: setup.signals,

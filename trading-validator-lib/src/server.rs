@@ -171,24 +171,7 @@ impl ValidatorServer {
     /// - `AI_MODEL`: Model name (default: `"glm-4.7"`)
     /// - `AI_API_ENDPOINT`: Base URL for Z.ai PaaS API (default: `"https://api.z.ai/api/coding/paas/v4"`)
     pub fn new(port: u16) -> Self {
-        let ai_provider = std::env::var("AI_API_KEY").ok().map(|api_key| {
-            let model = std::env::var("AI_MODEL").unwrap_or_else(|_| "glm-4.7".into());
-            let provider_type =
-                std::env::var("AI_PROVIDER").unwrap_or_else(|_| "zai-coding-plan".into());
-
-            match provider_type.as_str() {
-                "anthropic" => AiProvider::Anthropic { api_key, model },
-                _ => {
-                    let endpoint = std::env::var("AI_API_ENDPOINT")
-                        .unwrap_or_else(|_| "https://api.z.ai/api/coding/paas/v4".into());
-                    AiProvider::Zai {
-                        api_key,
-                        model,
-                        endpoint,
-                    }
-                }
-            }
-        });
+        let ai_provider = AiProvider::from_env();
 
         let rpc_url = std::env::var("VALIDATOR_RPC_URL").ok();
 

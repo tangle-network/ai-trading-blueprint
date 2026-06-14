@@ -666,6 +666,14 @@ fn uses_direct_non_vault_execution(protocol: &str) -> bool {
     matches!(protocol, "polymarket_clob" | "hyperliquid")
 }
 
+/// Perp venues whose paper fills must be valued as leveraged perp positions
+/// (entry price + notional + direction → realized PnL = notional × price-move ×
+/// dir, net of fees), not spot token swaps. Mirrors the policy gate in
+/// `apply_envelope_checks` (`check_perps`).
+fn is_perp_venue(protocol: &str) -> bool {
+    matches!(protocol, "hyperliquid" | "gmx_v2" | "vertex")
+}
+
 fn action_kind_for_protocol(protocol: &str) -> u64 {
     match protocol {
         "polymarket_clob" => ACTION_KIND_CLOB_ORDER,
@@ -1116,8 +1124,8 @@ async fn resolve_market_valuation(
     intent: &IntentPayload,
     live_input: Option<&LiveRiskInput>,
 ) -> Result<TradeValuationSnapshot, (StatusCode, String)> {
-    if intent.target_protocol == "hyperliquid"
-        && let Some(valuation) = resolve_hyperliquid_metadata_valuation(intent)?
+    if is_perp_venue(&intent.target_protocol)
+        && let Some(valuation) = resolve_perp_metadata_valuation(intent)?
     {
         return Ok(valuation);
     }
@@ -1170,20 +1178,33 @@ async fn resolve_market_valuation(
     }
 }
 
-fn resolve_hyperliquid_metadata_valuation(
+/// Value a paper perp open/close from intent metadata for the perp venues
+/// (`hyperliquid`, `gmx_v2`, `vertex`). A perp position is recorded with its
+/// entry price + asset-unit size so the portfolio realizes PnL as
+/// `notional × (exit − entry)/entry × dir` (Long: `(current − entry) × amount`;
+/// Short: `(entry − current) × amount` — see `PortfolioState::update_prices`),
+/// not as a spot token swap. Fees are applied downstream by `paper_fill_costs`
+/// using the canonical per-venue taker schedule.
+///
+/// Two intent shapes are supported:
+///   * Hyperliquid threads an explicit `asset_size` (asset units) plus a price
+///     and/or notional — `position_size` is the asset size directly.
+///   * gmx_v2 / vertex (`perp_tick.js buildPerpIntent`) thread `notional_usdc`
+///     (USD) + a `mark_price`; `amount_in` is the USD notional, not asset units,
+///     so `position_size = notional / entry_price` (asset units).
+///
+/// Fails closed: a priced perp with no resolvable price/notional returns an
+/// error so the trade is rejected rather than recorded as a bogus $1-entry fill.
+fn resolve_perp_metadata_valuation(
     intent: &IntentPayload,
 ) -> Result<Option<TradeValuationSnapshot>, (StatusCode, String)> {
+    let venue = intent.target_protocol.as_str();
     let amount_in = intent.amount_in.parse::<Decimal>().map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
             format!("Invalid amount_in '{}': {e}", intent.amount_in),
         )
     })?;
-    let position_size = crate::hyperliquid_intent::order_size(&intent.metadata, &amount_in)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    if position_size <= Decimal::ZERO {
-        return Ok(Some(TradeValuationSnapshot::unpriced(position_size, None)));
-    }
 
     let explicit_notional = crate::hyperliquid_intent::metadata_decimal_any(
         &intent.metadata,
@@ -1199,59 +1220,107 @@ fn resolve_hyperliquid_metadata_valuation(
             "entry_price_usd",
         ],
     );
-    if let (Some(notional), Some(price)) = (explicit_notional, explicit_price) {
-        let implied_notional = position_size * price;
-        let mismatch = if notional > implied_notional {
-            notional - implied_notional
-        } else {
-            implied_notional - notional
+
+    // Dispatch on the venue, not on metadata presence. Hyperliquid threads an
+    // explicit asset_size (asset units) and prices from notional/size or an
+    // explicit price, with a None→market-valuation fallback when it carries
+    // neither. gmx/vertex carry only a USD notional + mark_price (their
+    // amount_in is the notional, not asset units), so they derive asset-unit
+    // size as notional/price and fail closed when the price is absent.
+    if venue == "hyperliquid" {
+        // Hyperliquid path (unchanged): size = explicit asset_size (or amount_in
+        // fallback via `order_size`); entry price from notional/size or explicit
+        // price; outcome (prediction) markets additionally clamp price to <= 1.0.
+        // An intent with neither notional nor price returns None and falls
+        // through to the market/swap valuation — preserving prior behavior.
+        let position_size = crate::hyperliquid_intent::order_size(&intent.metadata, &amount_in)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        if position_size <= Decimal::ZERO {
+            return Ok(Some(TradeValuationSnapshot::unpriced(position_size, None)));
+        }
+
+        if let (Some(notional), Some(price)) = (explicit_notional, explicit_price) {
+            let implied_notional = position_size * price;
+            let mismatch = (notional - implied_notional).abs();
+            if mismatch > Decimal::new(1, 6) {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "{venue} notional_usdc {} does not match asset_size * price {}",
+                        notional.normalize(),
+                        implied_notional.normalize()
+                    ),
+                ));
+            }
+        }
+
+        let Some(entry_price) = explicit_notional
+            .map(|notional| {
+                if notional <= Decimal::ZERO {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        format!("{venue} notional_usd must be greater than zero"),
+                    ));
+                }
+                Ok(notional / position_size)
+            })
+            .transpose()?
+            .or(explicit_price)
+        else {
+            return Ok(None);
         };
-        if mismatch > Decimal::new(1, 6) {
+
+        if entry_price <= Decimal::ZERO {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("{venue} price must be greater than zero"),
+            ));
+        }
+        if crate::hyperliquid_intent::is_outcome_metadata(&intent.metadata)
+            && entry_price > Decimal::ONE
+        {
             return Err((
                 StatusCode::BAD_REQUEST,
                 format!(
-                    "Hyperliquid notional_usdc {} does not match asset_size * price {}",
-                    notional.normalize(),
-                    implied_notional.normalize()
+                    "Hyperliquid outcome price must be <= 1.0; got {}",
+                    entry_price.normalize()
                 ),
             ));
         }
+
+        return Ok(Some(TradeValuationSnapshot::priced(
+            position_size,
+            Some(position_size),
+            entry_price,
+        )));
     }
 
-    let Some(entry_price) = explicit_notional
-        .map(|notional| {
-            if notional <= Decimal::ZERO {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    "Hyperliquid notional_usd must be greater than zero".to_string(),
-                ));
-            }
-            Ok(notional / position_size)
-        })
-        .transpose()?
-        .or(explicit_price)
-    else {
-        return Ok(None);
-    };
-
-    if entry_price <= Decimal::ZERO {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Hyperliquid price must be greater than zero".to_string(),
-        ));
+    // gmx_v2 / vertex path: USD-notional intent. `amount_in` is the USD notional;
+    // metadata may also carry it as notional_usdc. The asset-unit size is
+    // notional / entry_price. A priced perp REQUIRES an entry price — fail
+    // closed if absent rather than valuing a leveraged perp as a spot swap.
+    let notional = explicit_notional.unwrap_or(amount_in);
+    if notional <= Decimal::ZERO {
+        return Ok(Some(TradeValuationSnapshot::unpriced(notional, None)));
     }
-    if crate::hyperliquid_intent::is_outcome_metadata(&intent.metadata)
-        && entry_price > Decimal::ONE
-    {
+
+    let Some(entry_price) = explicit_price else {
         return Err((
             StatusCode::BAD_REQUEST,
             format!(
-                "Hyperliquid outcome price must be <= 1.0; got {}",
-                entry_price.normalize()
+                "{venue} perp intent missing entry price (mark_price/price); cannot value a paper \
+                 perp fill without it"
             ),
+        ));
+    };
+    if entry_price <= Decimal::ZERO {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("{venue} price must be greater than zero"),
         ));
     }
 
+    let position_size = notional / entry_price;
     Ok(Some(TradeValuationSnapshot::priced(
         position_size,
         Some(position_size),
@@ -5014,7 +5083,7 @@ mod tests {
             }),
         };
 
-        let valuation = resolve_hyperliquid_metadata_valuation(&intent)
+        let valuation = resolve_perp_metadata_valuation(&intent)
             .expect("valuation")
             .expect("priced");
 
@@ -5042,8 +5111,8 @@ mod tests {
             }),
         };
 
-        let err = resolve_hyperliquid_metadata_valuation(&intent)
-            .expect_err("outcome price >1 should reject");
+        let err =
+            resolve_perp_metadata_valuation(&intent).expect_err("outcome price >1 should reject");
 
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("outcome price"));
@@ -5068,11 +5137,188 @@ mod tests {
             }),
         };
 
-        let err = resolve_hyperliquid_metadata_valuation(&intent)
+        let err = resolve_perp_metadata_valuation(&intent)
             .expect_err("notional/price mismatch should reject");
 
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("asset_size * price"));
+    }
+
+    fn perp_intent(
+        venue: &str,
+        action: &str,
+        notional: &str,
+        metadata: serde_json::Value,
+    ) -> IntentPayload {
+        IntentPayload {
+            strategy_id: "s".to_string(),
+            action: action.to_string(),
+            token_in: "USDC".to_string(),
+            token_out: "ETH".to_string(),
+            amount_in: notional.to_string(),
+            min_amount_out: "0".to_string(),
+            target_protocol: venue.to_string(),
+            amount_format: Some(AmountFormat::Human),
+            metadata,
+        }
+    }
+
+    #[test]
+    fn gmx_v2_open_long_paper_perp_records_notional_over_entry_price() {
+        // perp_tick.js threads amount_in = USD notional, token_out = asset, and
+        // metadata { notional_usdc, mark_price }. The valuation must record the
+        // entry price and an ASSET-UNIT size (notional / price), not value the
+        // USD notional as a spot token swap.
+        let intent = perp_intent(
+            "gmx_v2",
+            "open_long",
+            "30000",
+            serde_json::json!({
+                "asset": "ETH",
+                "leverage": 3,
+                "notional_usdc": "30000",
+                "mark_price": "3000"
+            }),
+        );
+
+        let valuation = resolve_perp_metadata_valuation(&intent)
+            .expect("valuation")
+            .expect("priced");
+
+        assert_eq!(valuation.entry_price_usd, Some(Decimal::from(3000)));
+        // 30_000 / 3_000 = 10 ETH of exposure.
+        assert_eq!(valuation.position_size, Decimal::from(10));
+        assert_eq!(valuation.notional_usd, Some(Decimal::from(30000)));
+    }
+
+    #[test]
+    fn vertex_open_short_paper_perp_falls_back_to_amount_in_notional() {
+        // Vertex intent without explicit notional_usdc: amount_in IS the notional.
+        let intent = perp_intent(
+            "vertex",
+            "open_short",
+            "20000",
+            serde_json::json!({
+                "asset": "ETH",
+                "leverage": 2,
+                "mark_price": "2000"
+            }),
+        );
+
+        let valuation = resolve_perp_metadata_valuation(&intent)
+            .expect("valuation")
+            .expect("priced");
+
+        assert_eq!(valuation.entry_price_usd, Some(Decimal::from(2000)));
+        // 20_000 / 2_000 = 10 ETH.
+        assert_eq!(valuation.position_size, Decimal::from(10));
+        assert_eq!(valuation.notional_usd, Some(Decimal::from(20000)));
+    }
+
+    #[test]
+    fn gmx_v2_perp_missing_price_fails_closed() {
+        // No mark_price/price → cannot value a leveraged perp. Must reject rather
+        // than record a bogus $1-entry spot-style fill.
+        let intent = perp_intent(
+            "gmx_v2",
+            "open_long",
+            "30000",
+            serde_json::json!({
+                "asset": "ETH",
+                "leverage": 3,
+                "notional_usdc": "30000"
+            }),
+        );
+
+        let err = resolve_perp_metadata_valuation(&intent).expect_err("missing price must reject");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("missing entry price"), "got: {}", err.1);
+    }
+
+    #[test]
+    fn gmx_v2_perp_rejects_zero_price() {
+        let intent = perp_intent(
+            "gmx_v2",
+            "open_long",
+            "30000",
+            serde_json::json!({
+                "asset": "ETH",
+                "notional_usdc": "30000",
+                "mark_price": "0"
+            }),
+        );
+
+        let err = resolve_perp_metadata_valuation(&intent).expect_err("zero price must reject");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("greater than zero"), "got: {}", err.1);
+    }
+
+    // End-to-end realized-PnL convention: open a gmx_v2 long perp at entry E,
+    // mark it to E*(1+x), then close → realized PnL ≈ notional * x. A short
+    // realizes the inverse. This exercises the same PortfolioState path that
+    // `update_portfolio_after_trade` drives (add_position → update_prices →
+    // close_position), so the assertion encodes the production PnL convention.
+    fn realize_perp_pnl(action: &str, notional: Decimal, entry: Decimal, exit: Decimal) -> Decimal {
+        use trading_runtime::types::{
+            PortfolioState, Position, PositionType, PriceData, ValuationStatus,
+        };
+
+        let position_size = notional / entry;
+        let position_type = match action {
+            "open_long" => PositionType::LongPerp,
+            "open_short" => PositionType::ShortPerp,
+            other => panic!("unexpected open action {other}"),
+        };
+
+        let mut portfolio = PortfolioState::default();
+        portfolio.add_position(Position {
+            token: "ETH".to_string(),
+            amount: position_size,
+            entry_price: Some(entry),
+            current_price: Some(entry),
+            unrealized_pnl: Some(Decimal::ZERO),
+            protocol: "gmx_v2".to_string(),
+            position_type,
+            valuation_status: ValuationStatus::Priced,
+        });
+
+        // A subsequent tick marks the position to the exit price.
+        portfolio.update_prices(&[PriceData {
+            token: "ETH".to_string(),
+            price_usd: exit,
+            source: "test".to_string(),
+            timestamp: chrono::Utc::now(),
+        }]);
+
+        portfolio
+            .close_position("ETH", "gmx_v2")
+            .expect("position closed")
+            .realized_pnl
+            .expect("realized pnl")
+    }
+
+    #[test]
+    fn gmx_v2_long_perp_realizes_notional_times_move() {
+        // $30k notional, entry 3000, +10% exit → +$3000.
+        let pnl = realize_perp_pnl(
+            "open_long",
+            Decimal::from(30000),
+            Decimal::from(3000),
+            Decimal::from(3300),
+        );
+        assert_eq!(pnl, Decimal::from(3000));
+    }
+
+    #[test]
+    fn gmx_v2_short_perp_realizes_inverse_move() {
+        // $30k short notional, entry 3000, +10% exit → -$3000 (short loses).
+        let pnl = realize_perp_pnl(
+            "open_short",
+            Decimal::from(30000),
+            Decimal::from(3000),
+            Decimal::from(3300),
+        );
+        assert_eq!(pnl, Decimal::from(-3000));
     }
 
     #[test]

@@ -1408,6 +1408,12 @@ pub async fn trading_workflow_tick() -> Result<TangleResult<JsonResponse>, Strin
     //      artifacts without relying on the generic workflow runner.
     crate::jobs::observatory_cadence::run_observatory_cadence(&runnable_bots).await;
 
+    // 3.8. Paper settlement cadence: redeem resolved Polymarket conditional-token
+    //      positions for paper prediction bots so a held bet's P&L realizes
+    //      ($1 winner / $0 loser) instead of sitting at its last midpoint. Real
+    //      bots redeem on-chain and are excluded; fail-closed per bot.
+    crate::jobs::settlement_cadence::run_settlement_cadence(&runnable_bots).await;
+
     // 4. Run fee settlement for winding-down bots
     let winding_down: Vec<_> = bots()?
         .values()

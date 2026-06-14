@@ -16,6 +16,53 @@ pub enum AiProvider {
 }
 
 impl AiProvider {
+    /// Build an `AiProvider` from environment, or `None` if no API key is configured.
+    ///
+    /// This is the single source of truth for AI-scoring provider configuration,
+    /// shared by the validator server and any other caller (e.g. the trading
+    /// HTTP API's paper-mode scorer).
+    ///
+    /// Env vars:
+    /// - API key: `AI_API_KEY` (preferred), falling back to `ZAI_API_KEY` then
+    ///   `ANTHROPIC_API_KEY`. No key configured → `None` (caller fails closed).
+    /// - `AI_PROVIDER`: `"anthropic"` or `"zai-coding-plan"` (default: `"zai-coding-plan"`).
+    /// - `AI_MODEL`: model name (default: `"glm-4.7"`).
+    /// - `AI_API_ENDPOINT`: base URL for the Z.ai PaaS API
+    ///   (default: `"https://api.z.ai/api/coding/paas/v4"`).
+    pub fn from_env() -> Option<Self> {
+        let api_key = std::env::var("AI_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("ZAI_API_KEY").ok())
+            .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+            .filter(|key| !key.trim().is_empty())?;
+
+        let model = std::env::var("AI_MODEL").unwrap_or_else(|_| "glm-4.7".into());
+        let provider_type = std::env::var("AI_PROVIDER").unwrap_or_else(|_| {
+            // Infer provider from which key is set when AI_PROVIDER is unset.
+            if std::env::var("AI_API_KEY").is_err()
+                && std::env::var("ZAI_API_KEY").is_err()
+                && std::env::var("ANTHROPIC_API_KEY").is_ok()
+            {
+                "anthropic".into()
+            } else {
+                "zai-coding-plan".into()
+            }
+        });
+
+        Some(match provider_type.as_str() {
+            "anthropic" => AiProvider::Anthropic { api_key, model },
+            _ => {
+                let endpoint = std::env::var("AI_API_ENDPOINT")
+                    .unwrap_or_else(|_| "https://api.z.ai/api/coding/paas/v4".into());
+                AiProvider::Zai {
+                    api_key,
+                    model,
+                    endpoint,
+                }
+            }
+        })
+    }
+
     pub fn model(&self) -> &str {
         match self {
             AiProvider::Anthropic { model, .. } => model,

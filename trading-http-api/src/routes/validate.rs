@@ -144,27 +144,122 @@ fn effective_validation_approval(result: &ValidationResult, paper_trade: bool) -
         .any(|response| has_usable_validator_signature(&response.signature))
 }
 
-fn paper_mode_bypass_response(
+/// Score recorded when no AI scoring model/key is configured, or the scorer
+/// errors. NOT a passing score — it is an honest "unscored" sentinel so the
+/// learning loop never learns from a fabricated perfect score. Paper trades
+/// still execute (approved=true) because paper has no on-chain quorum, but the
+/// recorded score reflects reality.
+const PAPER_UNSCORED_SENTINEL: u32 = 0;
+
+/// Run the real AI risk scorer over a paper trade and build the bypass response.
+///
+/// Paper trades have no on-chain validator quorum, so `approved` stays `true`
+/// regardless of score — the loop must proceed. But the score and reasoning are
+/// the genuine output of the same AI risk evaluator a real validator uses
+/// (`trading_validator_lib::risk_evaluator::evaluate_risk`), so the
+/// self-improvement loop and trade records learn from a real signal instead of a
+/// constant 100.
+///
+/// Fails closed on the SCORING path only: if no AI model/key is configured, or
+/// the scorer errors, the response carries the honest `PAPER_UNSCORED_SENTINEL`
+/// and a reasoning string that says so — never a fabricated 100. Execution is
+/// never blocked on a missing or failing scorer.
+async fn paper_mode_bypass_response(
+    intent: &TradeIntent,
+    strategy_type: Option<&str>,
+    intent_hash: String,
+    execution_hash: String,
+    deadline: u64,
+) -> ValidateResponse {
+    let (score, reasoning) =
+        score_paper_intent(intent, strategy_type, paper_ai_provider_from_env()).await;
+    build_paper_bypass_response(score, reasoning, intent_hash, execution_hash, deadline)
+}
+
+/// Assemble the paper-bypass `ValidateResponse` from an already-computed honest
+/// score + reasoning. `approved` is always `true` (paper has no on-chain quorum);
+/// the recorded `score` is whatever the scorer produced — never a fabricated 100.
+fn build_paper_bypass_response(
+    score: u32,
+    reasoning: String,
     intent_hash: String,
     execution_hash: String,
     deadline: u64,
 ) -> ValidateResponse {
     ValidateResponse {
         approved: true,
-        aggregate_score: 100,
+        aggregate_score: score,
         intent_hash,
         execution_hash,
         deadline,
         validator_responses: vec![ValidatorResponseEntry {
             validator: PAPER_MODE_VALIDATOR.into(),
-            score: 100,
-            reasoning: "Paper trade mode — validation bypassed".into(),
+            score,
+            reasoning,
             signature: zero_signature(),
             chain_id: None,
             verifying_contract: None,
             validated_at: Some(chrono::Utc::now().to_rfc3339()),
         }],
         mode: Some("paper_bypass".to_string()),
+    }
+}
+
+/// Resolve the AI scoring provider for paper-mode scoring from environment.
+/// `None` means no scorer is configured → fail closed (unscored), never fake 100.
+fn paper_ai_provider_from_env() -> Option<trading_validator_lib::risk_evaluator::AiProvider> {
+    trading_validator_lib::risk_evaluator::AiProvider::from_env()
+}
+
+/// Compute the honest (score, reasoning) for a paper intent.
+///
+/// Split out from `paper_mode_bypass_response` so it is unit-testable without an
+/// HTTP request: pass a mock-free provider (`Some` runs the real scorer, `None`
+/// fails closed to the unscored sentinel).
+async fn score_paper_intent(
+    intent: &TradeIntent,
+    strategy_type: Option<&str>,
+    provider: Option<trading_validator_lib::risk_evaluator::AiProvider>,
+) -> (u32, String) {
+    let strategy_context =
+        strategy_type.and_then(trading_validator_lib::risk_evaluator::strategy_context_for);
+
+    match provider {
+        Some(provider) => {
+            match trading_validator_lib::risk_evaluator::evaluate_risk(
+                intent,
+                &provider,
+                strategy_context.as_deref(),
+                None,
+            )
+            .await
+            {
+                Ok(result) => (
+                    result.score,
+                    format!(
+                        "Paper trade — AI risk score (no on-chain quorum). {} [{}]",
+                        result.reasoning,
+                        provider.model()
+                    ),
+                ),
+                Err(e) => {
+                    tracing::warn!("Paper-mode AI scoring failed, recording unscored: {e}");
+                    (
+                        PAPER_UNSCORED_SENTINEL,
+                        format!(
+                            "Paper trade — unscored: AI scorer error ({e}). \
+                             Executed without a real risk score."
+                        ),
+                    )
+                }
+            }
+        }
+        None => (
+            PAPER_UNSCORED_SENTINEL,
+            "Paper trade — unscored: no validator AI model/key configured. \
+             Executed without a real risk score."
+                .to_string(),
+        ),
     }
 }
 
@@ -782,11 +877,19 @@ async fn validate(
         ));
     }
     if state.paper_trade && state.validator_endpoints.is_empty() {
-        return Ok(Json(paper_mode_bypass_response(
-            intent_hash,
-            zero_hash(),
-            parsed.deadline,
-        )));
+        let strategy_type = strategy_type_from_config(&state.strategy_config)
+            .map(str::to_owned)
+            .or_else(|| strategy_type_for_protocol(&request.target_protocol).map(str::to_owned));
+        return Ok(Json(
+            paper_mode_bypass_response(
+                &parsed.intent,
+                strategy_type.as_deref(),
+                intent_hash,
+                zero_hash(),
+                parsed.deadline,
+            )
+            .await,
+        ));
     }
 
     let execution_context = build_execution_context(
@@ -1276,11 +1379,19 @@ async fn validate_multi_bot(
         ));
     }
     if bot.paper_trade && validator_endpoints.is_empty() {
-        return Ok(Json(paper_mode_bypass_response(
-            intent_hash,
-            zero_hash(),
-            parsed.deadline,
-        )));
+        let strategy_type = strategy_type_from_config(&bot.strategy_config)
+            .map(str::to_owned)
+            .or_else(|| strategy_type_for_protocol(&req.target_protocol).map(str::to_owned));
+        return Ok(Json(
+            paper_mode_bypass_response(
+                &parsed.intent,
+                strategy_type.as_deref(),
+                intent_hash,
+                zero_hash(),
+                parsed.deadline,
+            )
+            .await,
+        ));
     }
 
     // Build execution context for validators (with simulation if RPC available)
@@ -2167,6 +2278,93 @@ mod tests {
         };
         let err = parse_validate_request(&req, Some(1)).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    fn paper_test_intent() -> TradeIntent {
+        TradeIntentBuilder::new()
+            .strategy_id("paper-test")
+            .action(Action::Swap)
+            .token_in(MAINNET_WETH_ADDRESS)
+            .token_out("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+            .amount_in(rust_decimal::Decimal::new(1_000_000_000_000_000_000, 0))
+            .min_amount_out(rust_decimal::Decimal::new(2_500_000_000, 0))
+            .target_protocol("uniswap_v3")
+            .chain_id(1)
+            .metadata(serde_json::Value::Null)
+            .build()
+            .expect("valid paper test intent")
+    }
+
+    /// (b) No scorer configured → honest "unscored" sentinel, NOT a fake 100,
+    /// and the trade still executes (approved=true).
+    #[tokio::test]
+    async fn paper_bypass_with_no_scorer_is_unscored_not_100_and_still_approved() {
+        let intent = paper_test_intent();
+        let (score, reasoning) = score_paper_intent(&intent, Some("dex"), None).await;
+
+        assert_eq!(
+            score, PAPER_UNSCORED_SENTINEL,
+            "no scorer must yield the unscored sentinel"
+        );
+        assert_ne!(score, 100, "must never fabricate a perfect score");
+        assert!(
+            reasoning.to_lowercase().contains("unscored"),
+            "reasoning must honestly say the trade is unscored: {reasoning}"
+        );
+
+        let response =
+            build_paper_bypass_response(score, reasoning, zero_hash(), zero_hash(), 9_999_999_999);
+        assert!(response.approved, "paper trade must still execute");
+        assert_eq!(response.aggregate_score, PAPER_UNSCORED_SENTINEL);
+        assert_ne!(response.aggregate_score, 100);
+        assert_eq!(
+            response.validator_responses[0].score,
+            PAPER_UNSCORED_SENTINEL
+        );
+        assert_eq!(response.mode.as_deref(), Some("paper_bypass"));
+    }
+
+    /// (a) With a scorer available, paper returns the scorer's real score.
+    ///
+    /// `evaluate_risk` is HTTP-bound (real LLM call), so the mockable seam is the
+    /// response builder: prove that whatever real score the scorer produces flows
+    /// verbatim into the response — never overwritten with 100.
+    #[test]
+    fn paper_bypass_records_real_scorer_score_verbatim() {
+        // Simulate the scorer returning a genuine, non-perfect risk score.
+        let scored = trading_validator_lib::scoring::ScoringResult {
+            score: 47,
+            reasoning: "Thin liquidity; slippage risk elevated".into(),
+        };
+        let reasoning = format!(
+            "Paper trade — AI risk score (no on-chain quorum). {} [glm-4.7]",
+            scored.reasoning
+        );
+
+        let response = build_paper_bypass_response(
+            scored.score,
+            reasoning,
+            zero_hash(),
+            zero_hash(),
+            9_999_999_999,
+        );
+
+        assert_eq!(
+            response.aggregate_score, 47,
+            "real scorer score must be recorded verbatim"
+        );
+        assert_ne!(response.aggregate_score, 100);
+        assert!(
+            response.approved,
+            "paper still executes regardless of score"
+        );
+        assert_eq!(response.validator_responses[0].score, 47);
+        assert!(
+            response.validator_responses[0]
+                .reasoning
+                .contains("slippage risk elevated"),
+            "real AI reasoning must be preserved"
+        );
     }
 
     #[test]

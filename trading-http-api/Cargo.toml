@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 trading-runtime = { path = "../trading-runtime" }
+trading-validator-lib = { path = "../trading-validator-lib" }
 sandbox-runtime = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", branch = "main" }
 axum = { version = "0.8", features = ["ws"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
@@ -41,7 +42,6 @@ default = []
 test-utils = []
 
 [dev-dependencies]
-trading-validator-lib = { path = "../trading-validator-lib" }
 http-body-util = "0.1"
 hyper = "1"
 serde_json = "1"
