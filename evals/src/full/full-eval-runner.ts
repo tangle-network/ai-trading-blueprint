@@ -6,7 +6,7 @@ import { runSelfImprovementMcpEval } from '../self-improvement/mcp-eval.js'
 import { runProductBrowserEval } from '../product/browser-driver.js'
 import { runStrategyTemplateEval } from '../trading/strategy-template-runner.js'
 import { runTradingLifecycleEval } from '../trading/lifecycle-runner.js'
-import { runTradingPersonaAgentEvalBridge } from '../trading/persona-agent-eval.js'
+import { runTradingPersonaEval } from '../trading/persona-agent-eval.js'
 
 export interface FullEvalOptions {
   outputPath?: string
@@ -36,7 +36,7 @@ export async function runFullEval(options: FullEvalOptions = {}) {
   await gate(gates, 'rust-persona-coverage-test', async () => {
     run('cargo', ['test', '-p', 'trading-runtime', 'persona_eval_suite_has_required_coverage_and_passes'])
   })
-  await gate(gates, 'trading-persona-agent-eval', async () => runTradingPersonaAgentEvalBridge({
+  await gate(gates, 'trading-persona-agent-eval', async () => runTradingPersonaEval({
     reportPath: `.evolve/evals/full-personas-${stamp}.json`,
     traceDir: `.evolve/agent-eval/traces/full-personas-${stamp}`,
     runsJsonl: `.evolve/agent-eval/full-persona-runs-${stamp}.jsonl`,

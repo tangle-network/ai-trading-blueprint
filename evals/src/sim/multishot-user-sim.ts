@@ -128,6 +128,12 @@ export interface MultishotDispatchOptions {
   privateKey?: string
   maxTurnsPerShot: number
   perTurnTimeoutMs: number
+  /** Per-cell override for the in-sandbox agent's LLM credentials. When set,
+   *  this is the env `configureSecrets` writes into the bot's sandbox — i.e.
+   *  it pins WHICH model the REAL operator agent runs (the PROFILE axis of the
+   *  unified matrix). When omitted, falls back to `deterministicAgentEnv()`
+   *  (the single-profile default). */
+  agentEnv?: Record<string, string>
 }
 
 export function makeUserSimDispatch(opts: MultishotDispatchOptions, botKind: BotKind = 'real') {
@@ -185,8 +191,10 @@ async function dispatchInner(
     // Bot create is instant in operator DB; vault resolution is async
     // (on-chain). configureSecrets returns 500 without a resolved vault.
     await client.waitForVaultResolved(botId)
-    // Then configure sandbox-agent LLM credentials before chatting.
-    await client.configureSecrets(botId, deterministicAgentEnv())
+    // Then configure sandbox-agent LLM credentials before chatting. A per-cell
+    // override (the matrix PROFILE axis) pins which model the REAL operator runs;
+    // otherwise the single-profile default applies.
+    await client.configureSecrets(botId, opts.agentEnv ?? deterministicAgentEnv())
     const sessionId = await client.createSession(botId, `user-sim:${scenario.id}`)
     return runUserSimSession({
       intent: scenario.intent,
@@ -282,6 +290,43 @@ function deriveStateScores(
   return { committed, selfImprovement, evidence }
 }
 
+/** The artifact-based score for ONE user-sim session, factored out of
+ *  `userSimJudge` so other eval surfaces (the unified trading matrix) can score
+ *  a real session WITHOUT re-running a `runEval` campaign. Composite weights
+ *  OBSERVABLE state (trades/strategy/self-improve from `bot_artifacts`) at 55%
+ *  and prose (rubric judge) at 45% — the same weighting `userSimJudge` uses. */
+export interface UserSimArtifactScore {
+  composite: number
+  dimensions: Record<string, number>
+  notes: string
+}
+
+export async function scoreUserSimArtifact(
+  intent: UserIntent,
+  artifact: UserSimSessionResult,
+): Promise<UserSimArtifactScore> {
+  const r = await judgePrimaryRubric(intent, artifact)
+  const state = deriveStateScores(artifact, r.actually_traded_or_committed)
+  const composite =
+    0.20 * r.intent_fulfilled +
+    0.15 * r.respected_constraints +
+    0.40 * state.committed +
+    0.15 * state.selfImprovement +
+    0.10 * r.productive_conversation
+  return {
+    composite,
+    dimensions: {
+      intent_fulfilled: r.intent_fulfilled,
+      respected_constraints: r.respected_constraints,
+      actually_traded_or_committed: state.committed,
+      self_improvement: state.selfImprovement,
+      productive_conversation: r.productive_conversation,
+      prose_traded_claim: r.actually_traded_or_committed,
+    },
+    notes: `${r.notes} | STATE: ${state.evidence}`,
+  }
+}
+
 export function userSimJudge(opts: { dualJudge?: boolean } = {}): JudgeConfig<UserSimSessionResult, UserIntentScenario> {
   const useDual = opts.dualJudge ?? false
   return {
@@ -371,6 +416,10 @@ export interface RunMultishotUserSimOptions {
    *  bot scoring high on a newbie persona's intents but low on a
    *  veteran's is a real product signal. */
   personas?: UserPersona[]
+  /** Per-run override for the in-sandbox agent's LLM credentials — pins WHICH
+   *  model the REAL operator agent runs. Used by the unified trading matrix to
+   *  drive each PROFILE's model through the real operator stack. */
+  agentEnv?: Record<string, string>
 }
 
 export async function runMultishotUserSim(
@@ -393,6 +442,7 @@ export async function runMultishotUserSim(
       // multi-step work to land. (The real fix is tick-driving — task #108 —
       // but a 3-cron budget makes the current sync-poll model honest.)
       perTurnTimeoutMs: opts.perTurnTimeoutMs ?? 900_000,
+      ...(opts.agentEnv ? { agentEnv: opts.agentEnv } : {}),
     },
     botKind,
   )
