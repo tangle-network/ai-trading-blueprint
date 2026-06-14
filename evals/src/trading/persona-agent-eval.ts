@@ -78,6 +78,11 @@ const RUNTIME_VERSION = '0.1.0'
  *  matrix sweeps. Single source of truth = `MODEL_CONFIG` in sim/llm-call.ts. */
 export const OPERATOR_PROFILE_MODELS: readonly LlmModel[] = ['kimi-k2', 'glm-4.7', 'glm-5.1']
 
+// Snapshot tag appended to the profile's model id so runProfileMatrix can record
+// it (it requires `name@YYYY-MM-DD`). A stable eval-pin, NOT wall-clock, so the
+// scorecard timeline keys consistently across runs.
+const OPERATOR_MODEL_SNAPSHOT = '2026-06-01'
+
 export interface TradingPersonaEvalOptions {
   // ── shared ──
   reportPath?: string
@@ -325,7 +330,11 @@ export function buildOperatorProfiles(
     return {
       ...base,
       id: `${base.id}::model=${model}`,
-      model,
+      // runProfileMatrix requires a snapshot-versioned model id (name@YYYY-MM-DD)
+      // for scorecard recordability. The bare LlmModel for provider routing is
+      // carried on metadata.model (read by modelOfProfile), so routing is
+      // unaffected. The snapshot is a stable eval-pin so the timeline keys consistently.
+      model: `${model}@${OPERATOR_MODEL_SNAPSHOT}`,
       metadata: { ...base.metadata, model, modelClass: 'llm-trading-operator' },
     }
   })
@@ -552,10 +561,21 @@ async function runOperatorMatrix(
     byPersona[persona] = { meanScore: rollup.meanComposite, n: rollup.n }
   }
 
-  const integrity =
-    (options.integrity ?? 'assert') === 'off'
-      ? summarizeBackendIntegrity(result.records)
-      : assertRealBackend(result.records, { allowMixed: true })
+  // 'assert' (default) hard-fails on a stub/unconfigured backend; 'warn' logs the
+  // same diagnosis but returns the report so the caller still gets a result;
+  // 'off' is silent. Only 'assert' may throw.
+  const integrityMode = options.integrity ?? 'assert'
+  let integrity: BackendIntegrityReport
+  if (integrityMode === 'assert') {
+    integrity = assertRealBackend(result.records, { allowMixed: true })
+  } else {
+    integrity = summarizeBackendIntegrity(result.records)
+    if (integrityMode === 'warn' && integrity.verdict !== 'real') {
+      console.warn(
+        `[operator-matrix] backend integrity: ${integrity.verdict} — ${integrity.diagnosis}`,
+      )
+    }
+  }
 
   const best =
     byProfile.length === 0
