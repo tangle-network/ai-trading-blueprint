@@ -167,9 +167,33 @@ test('retries on 429 then succeeds (rate-limit backoff)', async () => {
 test('gives up fail-closed after exhausting retries on persistent 429', async () => {
   let calls = 0;
   const always429 = async () => { calls += 1; return { ok: false, status: 429, json: async () => ({}) }; };
-  const d = await agenticDecision(SPEC, { env: ENV, fetch: always429, backoffMs: [5, 5] });
+  const d = await agenticDecision(SPEC, { env: ENV, fetch: always429, backoffMs: [5, 5, 5, 5] });
   assert.equal(d, null);
-  assert.equal(calls, 3, 'initial + 2 retries');
+  assert.equal(calls, 5, 'initial + 4 retries (default)');
+});
+
+test('honors a server Retry-After header on 429', async () => {
+  let calls = 0;
+  const waits = [];
+  const start = Date.now();
+  const retryAfterThen200 = async () => {
+    calls += 1;
+    waits.push(Date.now() - start);
+    if (calls === 1) {
+      return {
+        ok: false,
+        status: 429,
+        headers: { get: (k) => (k.toLowerCase() === 'retry-after' ? '0.05' : null) },
+        json: async () => ({}),
+      };
+    }
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '{"action":"hold","size_fraction":0,"confidence":0.5}' } }] }) };
+  };
+  // backoffMs floor of 1ms; Retry-After=50ms should dominate the wait.
+  const d = await agenticDecision(SPEC, { env: ENV, fetch: retryAfterThen200, backoffMs: [1] });
+  assert.equal(calls, 2);
+  assert.ok(waits[1] >= 45, `second attempt should wait ~Retry-After (got ${waits[1]}ms)`);
+  assert.equal(d.action, 'hold');
 });
 
 test('does NOT retry a non-retryable 4xx (e.g. 400)', async () => {

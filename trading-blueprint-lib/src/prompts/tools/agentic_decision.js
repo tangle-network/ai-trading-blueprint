@@ -130,7 +130,7 @@ function sleep(ms) {
 async function postChatCompletion(opts) {
   const { baseUrl, apiKey, model, messages, fetchImpl, timeoutMs } = opts;
   const maxTokens = Number(opts.maxTokens) || DEFAULT_MAX_TOKENS;
-  const retries = Number.isFinite(Number(opts.retries)) ? Number(opts.retries) : 2;
+  const retries = Number.isFinite(Number(opts.retries)) ? Number(opts.retries) : 4;
   const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
   const body = JSON.stringify({ model, temperature: 0.2, max_tokens: maxTokens, messages });
   // De-synchronize concurrent fleet calls: 0–600ms jitter (skipped for tests via
@@ -163,10 +163,21 @@ async function postChatCompletion(opts) {
     const status = response && Number(response.status);
     const retryable = status === 429 || (status >= 500 && status < 600);
     if (attempt < retries && retryable) {
-      // 2s, 5s backoff + up to 1s jitter — spans the ~per-minute 429 clear window.
-      const schedule = Array.isArray(opts.backoffMs) ? opts.backoffMs : [2000, 5000];
-      const base = schedule[Math.min(attempt, schedule.length - 1)] ?? 5000;
-      await sleep(base + (opts.noJitter ? 0 : Math.floor((globalThis.Math?.random?.() ?? 0) * 1000)));
+      // Escalating backoff spanning a sustained-throttle window (the shared key
+      // can stay 429 across a full per-minute bucket under fleet concurrency),
+      // plus up to 1s jitter to break lockstep retries.
+      const schedule = Array.isArray(opts.backoffMs) ? opts.backoffMs : [1500, 4000, 9000, 20000];
+      const base = schedule[Math.min(attempt, schedule.length - 1)] ?? 20000;
+      // Honor a server-sent Retry-After (seconds) when present — the provider
+      // knows its own bucket reset better than our fixed schedule. Capped at 30s.
+      let retryAfterMs = 0;
+      const retryAfter = response?.headers?.get?.('retry-after');
+      if (retryAfter != null) {
+        const secs = Number(retryAfter);
+        if (Number.isFinite(secs) && secs > 0) retryAfterMs = Math.min(secs * 1000, 30000);
+      }
+      const wait = Math.max(base, retryAfterMs);
+      await sleep(wait + (opts.noJitter ? 0 : Math.floor((globalThis.Math?.random?.() ?? 0) * 1000)));
       continue;
     }
     return null;
