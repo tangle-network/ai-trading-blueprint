@@ -81,14 +81,33 @@ test('fails closed on a non-ok HTTP response', async () => {
   assert.equal(d, null);
 });
 
-test('fails closed on a network throw', async () => {
+test('fails closed after retrying a persistent network throw', async () => {
+  let calls = 0;
   const d = await agenticDecision(SPEC, {
     env: ENV,
+    backoffMs: [1, 1, 1, 1],
     fetch: async () => {
+      calls += 1;
       throw new Error('econnreset');
     },
   });
   assert.equal(d, null);
+  assert.equal(calls, 5, 'a transient network error is retried (initial + 4)');
+});
+
+test('retries a transient network throw then succeeds', async () => {
+  let calls = 0;
+  const d = await agenticDecision(SPEC, {
+    env: ENV,
+    backoffMs: [1, 1, 1, 1],
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('error sending request for url');
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '{"action":"buy","size_fraction":0.3,"confidence":0.6}' } }] }) };
+    },
+  });
+  assert.equal(calls, 2);
+  assert.equal(d.action, 'buy');
 });
 
 test('disabled when TRADING_AGENTIC_DECISIONS=0', async () => {
