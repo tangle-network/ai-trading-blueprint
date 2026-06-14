@@ -8,6 +8,7 @@ pub mod promotion_conductor;
 mod prompt;
 mod provision;
 pub mod self_improvement_cadence;
+pub mod settlement_cadence;
 mod start;
 mod status;
 mod stop;

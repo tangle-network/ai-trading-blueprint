@@ -4546,11 +4546,27 @@ async fn test_multi_bot_validate_paper_bypass() {
     assert_eq!(response.status(), 200);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["approved"], true);
-    assert_eq!(json["aggregate_score"], 100);
+    // Paper still executes (no on-chain quorum), but the score is now a REAL
+    // assessment, not a rubber-stamp. Whether a scorer is configured in this
+    // env or not, the response must never carry the old fabricated bypass:
+    // either a genuine AI risk score, or the honest "unscored" sentinel.
+    assert_eq!(json["approved"], true, "paper trade must still execute");
+    assert_eq!(json["mode"], "paper_bypass");
     let responses = json["validator_responses"].as_array().unwrap();
     assert_eq!(responses.len(), 1);
     assert_eq!(responses[0]["validator"], "paper-mode");
+    let score = json["aggregate_score"].as_u64().unwrap();
+    assert!(score <= 100);
+    let reasoning = responses[0]["reasoning"].as_str().unwrap();
+    assert_ne!(
+        reasoning, "Paper trade mode — validation bypassed",
+        "must no longer return the hardcoded rubber-stamp reasoning"
+    );
+    let reasoning_lc = reasoning.to_lowercase();
+    assert!(
+        reasoning_lc.contains("unscored") || reasoning_lc.contains("ai risk score"),
+        "reasoning must reflect a real score or an honest unscored sentinel: {reasoning}"
+    );
 }
 
 #[tokio::test]

@@ -171,6 +171,9 @@ test('model "long" opens a gmx_v2 perp with asset+leverage metadata, size clampe
   assert.equal(intent.metadata.asset, 'ETH')
   assert.equal(typeof intent.metadata.leverage, 'number')
   assert.ok(intent.metadata.stop_loss_distance > 0)
+  // Entry mark price must be threaded so the paper executor can value the perp
+  // fill as notional/price asset units (not a spot swap). Harness ETH = $2000.
+  assert.equal(intent.metadata.mark_price, '2000')
   // size_fraction=1 → max_position_pct (5%) of 10k NAV = 500.
   assert.ok(Number(intent.amount_in) <= 500.0001, `notional ${intent.amount_in} > 500 cap`)
   // leverage cap: never exceeds max_leverage=2.
@@ -260,6 +263,9 @@ test('drawdown breaker tripped while holding → deterministic flatten (reduce_o
   assert.equal(result.decision.reason, 'drawdown-derisk-exit')
   assert.equal(result.decision.intent.action, 'close_long')
   assert.equal(result.decision.intent.metadata.reduce_only, true)
+  // Close intents thread the position's mark price so the executor realizes the
+  // perp PnL at the exit price rather than failing closed on a missing price.
+  assert.equal(result.decision.intent.metadata.mark_price, '2000')
   assert.equal(result.decision.decided_by, undefined)
   assert.equal(intents.execute.length, 1)
 })
@@ -272,6 +278,7 @@ test('model "close" on an open perp exits via reduce_only with provenance', () =
   assert.equal(result.decision.action, 'trade')
   assert.equal(result.decision.intent.action, 'close_long')
   assert.equal(result.decision.intent.metadata.reduce_only, true)
+  assert.equal(result.decision.intent.metadata.mark_price, '2000')
   assert.equal(result.decision.decided_by, 'model')
 })
 
