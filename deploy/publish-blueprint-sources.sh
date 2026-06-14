@@ -106,9 +106,10 @@ curl -fsSL --retry 3 -o "$DIST_MANIFEST" "$BASE_URL/dist-manifest.json" \
 
 if [[ "$BROADCAST" == "true" ]]; then
   : "${BLUEPRINT_OWNER_PRIVATE_KEY:?ERROR: BLUEPRINT_OWNER_PRIVATE_KEY required with BROADCAST=true}"
-  # Keep the key out of argv (/proc-visible): cast honors ETH_PRIVATE_KEY.
+  # cast >=1.7 does not read the signing key from ETH_PRIVATE_KEY; pass it
+  # explicitly to the wallet/send calls instead.
   export ETH_PRIVATE_KEY="$BLUEPRINT_OWNER_PRIVATE_KEY"
-  SENDER="$(cast wallet address)"
+  SENDER="$(cast wallet address --private-key "$ETH_PRIVATE_KEY")"
   echo "  Sender:      $SENDER"
   echo
 fi
@@ -193,8 +194,10 @@ publish_one() {
   # cannot be masked by the cosmetic grep; then require an explicit success
   # status in the receipt. A failed publish must fail the release.
   local send_out
+  # cast >=1.7 does not read the signing key from ETH_PRIVATE_KEY for `cast send`;
+  # pass it explicitly. Kept out of argv otherwise (value comes from the env var).
   if ! send_out="$(cast send "$TANGLE_CORE" "$SET_SIG" "$id" "$sources" \
-    --rpc-url "$RPC_URL")"; then
+    --private-key "$ETH_PRIVATE_KEY" --rpc-url "$RPC_URL")"; then
     echo "ERROR: setBlueprintSources tx failed for blueprint $id" >&2
     return 1
   fi
