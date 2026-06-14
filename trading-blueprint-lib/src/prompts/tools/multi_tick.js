@@ -7,6 +7,40 @@
 // under-weight asset when drift exceeds the band. One bounded trade per tick.
 
 const t = require('/home/agent/tools/tick-common');
+const { agenticAllocation, agenticDecisionsEnabled } = require('/home/agent/tools/agentic-decision');
+
+// Let the model set tactical target weights from market evidence, overriding the
+// static config weights in place. The mechanical rebalancer below then trades
+// toward whatever targets are set — model (live) or config (eval/fallback). On
+// any model failure the config targets stand: fail-closed to the declared
+// mandate, never to a hidden rule.
+async function applyModelTargets(ctx, assets, total, prices) {
+  if (!agenticDecisionsEnabled()) return { source: 'config', applied: false };
+  const weth = t.pairTokens(ctx.config).weth.toLowerCase();
+  const closes = await t.fetchCandles(ctx.api, 'WETH').catch(() => []);
+  const evidence = {
+    weth_price: prices.get(weth) ?? null,
+    rsi_14: t.rsi(closes, 14),
+    ema_12: t.ema(closes, 12),
+    ema_26: t.ema(closes, 26),
+    return_24h_pct: closes.length > 24 ? ((closes[closes.length - 1] - closes[closes.length - 25]) / closes[closes.length - 25]) * 100 : null,
+    total_value_usd: total,
+  };
+  const out = await agenticAllocation({
+    family: 'multi',
+    assets: assets.map((a) => ({ symbol: a.symbol, current_weight: a.weight, target_hint: a.target, price: a.price ?? null })),
+    mandate: { max_drawdown_pct: t.asNumber((ctx.harness.risk || {}).max_drawdown_pct, 10) },
+    evidence,
+  });
+  if (!out || !out.weights) return { source: 'config', applied: false };
+  for (const a of assets) {
+    if (Number.isFinite(out.weights[a.symbol])) {
+      a.target = out.weights[a.symbol];
+      a.target_source = 'model_allocation';
+    }
+  }
+  return { source: 'model', applied: true, model: out.model, confidence: out.confidence, rationale: out.rationale, key_signals: out.key_signals, prompt_hash: out.prompt_hash };
+}
 
 function targetNumber(value, fallback = NaN) {
   if (value === null || value === undefined) return fallback;
@@ -241,6 +275,16 @@ async function decide(ctx) {
     return { decision: { action: 'skip', reason: 'portfolio-below-minimum', checkedState }, checkedState, metrics };
   }
 
+  // Tactical allocation: the model sets target weights from market evidence
+  // (config weights remain the eval/fallback baseline). Recompute checkedState
+  // targets so the decision record shows what the bot actually rebalanced toward.
+  const allocation = await applyModelTargets(ctx, assets, total, prices);
+  checkedState.assets = assets.map(checkedAsset);
+  checkedState.allocation_source = allocation.source;
+  const allocMeta = allocation.applied
+    ? { decided_by: 'model', model: allocation.model, confidence: allocation.confidence, model_rationale: allocation.rationale, key_signals: allocation.key_signals, prompt_hash: allocation.prompt_hash }
+    : {};
+
   const over = assets
     .filter((a) => a.weight - a.target > bandPct && Number.isFinite(a.price) && a.price > 0 && a.valueUsd > 0)
     .sort((x, y) => (y.weight - y.target) - (x.weight - x.target))[0];
@@ -249,7 +293,7 @@ async function decide(ctx) {
     .sort((x, y) => (y.target - y.weight) - (x.target - x.weight))[0];
 
   if (!over || !under) {
-    return { decision: { action: 'skip', reason: 'portfolio-within-band', checkedState }, checkedState, metrics };
+    return { decision: { action: 'skip', reason: 'portfolio-within-band', checkedState, ...allocMeta }, checkedState, metrics };
   }
 
   const overExcessUsd = (over.weight - over.target) * total;
@@ -277,8 +321,8 @@ async function decide(ctx) {
   }
   const submission = await t.submitIntent(api, config, intent);
   const decision = submission.approved
-    ? { action: 'trade', reason: `rebalance-${over.symbol}-to-${under.symbol}`, intent }
-    : { action: 'skip', reason: 'submission-rejected', intent };
+    ? { action: 'trade', reason: `rebalance-${over.symbol}-to-${under.symbol}`, intent, ...allocMeta }
+    : { action: 'skip', reason: 'submission-rejected', intent, ...allocMeta };
   return { decision, checkedState, metrics, resultExtra: { trade_action: { attempted: true, ...submission } } };
 }
 

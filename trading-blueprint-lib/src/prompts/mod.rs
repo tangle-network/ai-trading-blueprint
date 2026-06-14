@@ -478,6 +478,7 @@ pub fn tick_tool_for_strategy(strategy_type: &str) -> Option<&'static str> {
         "multi" => Some("multi-tick.js"),
         "volatility" => Some("volatility-tick.js"),
         "perp" => Some("perp-tick.js"),
+        "prediction" => Some("prediction-tick.js"),
         _ => None,
     }
 }
@@ -929,7 +930,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_treats_vault_spot_as_tradeable() {
-        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("prediction_politics", ValidationTrust::PerTrade);
 
         assert!(
             prompt.contains("get-portfolio.js"),
@@ -1179,7 +1180,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_envelope_mode_skips_validate() {
-        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::Envelope);
+        let prompt = build_fast_tick_prompt("prediction_politics", ValidationTrust::Envelope);
 
         assert!(prompt.contains("envelopeStatus"));
         assert!(prompt.contains("executeWithEnvelope"));
@@ -1191,7 +1192,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_prompt_per_trade_keeps_validate() {
-        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("prediction_politics", ValidationTrust::PerTrade);
         assert!(prompt.contains("api.validate(intent)"));
         assert!(prompt.contains("api.execute(intent, validation)"));
         assert!(!prompt.contains("executeWithEnvelope"));
@@ -1212,8 +1213,12 @@ mod tests {
             Some("volatility-tick.js")
         );
         assert_eq!(tick_tool_for_strategy("perp"), Some("perp-tick.js"));
-        // Families with no deterministic tick fall through to the LLM runner.
-        assert_eq!(tick_tool_for_strategy("prediction"), None);
+        assert_eq!(
+            tick_tool_for_strategy("prediction"),
+            Some("prediction-tick.js")
+        );
+        // Unknown families fall through to the generic LLM runner.
+        assert_eq!(tick_tool_for_strategy("unknown_family"), None);
     }
 
     #[test]
@@ -1344,7 +1349,7 @@ mod tests {
 
     #[test]
     fn test_fast_tick_references_slippage_learner_and_bandit() {
-        let prompt = build_fast_tick_prompt("prediction", ValidationTrust::PerTrade);
+        let prompt = build_fast_tick_prompt("prediction_politics", ValidationTrust::PerTrade);
         assert!(
             prompt.contains("recommendSlippageBps"),
             "fast tick must consult the slippage learner before quoting"

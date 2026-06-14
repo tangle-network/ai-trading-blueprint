@@ -1,21 +1,80 @@
 #!/usr/bin/env node
-// Deterministic conservative-yield tick (strategy_type "yield") for Aave V3.
+// Conservative-yield tick (strategy_type "yield") for Aave V3.
 //
-// Maintains a target supplied fraction of the bot's stable balance: supply idle
-// USDC above the buffer into Aave, hold otherwise. Supply-only by design —
-// withdraw/borrow require live health-factor metadata and are handled by the
-// wind-down path, not the routine tick. One supply per tick.
+// Decision architecture (mirrors dex_tick.js — this is the line that killed the
+// decorative-AI bug):
+//   1. Fail-closed RISK GUARDS run first and are always deterministic — pricing
+//      sanity, no-stable-balance, the drawdown breaker (withdraw to de-risk while
+//      supplied), and config completeness. Risk never asks the model.
+//   2. Inside whatever the guards still permit, the MODEL is the alpha source:
+//      it picks one action {supply, withdraw, hold} and a size from the full
+//      evidence (idle vs supplied balance, supplied fraction vs target, APY,
+//      NAV, market signals, mandate). The target-fraction rule is now an *input
+//      to the model*, no longer the decision.
+//   3. The deterministic target-fraction strategy survives ONLY as the eval/
+//      replay baseline (TRADING_AGENTIC_DECISIONS=0) so walk-forward stays
+//      reproducible. In live mode a model failure HOLDS — it never silently
+//      supplies on the rule.
 
 const t = require('/home/agent/tools/tick-common');
+const { agenticDecision, agenticDecisionsEnabled } = require('/home/agent/tools/agentic-decision');
 
-async function decide(ctx) {
+const PROTOCOL = 'aave_v3';
+
+function clamp(value, lo, hi) {
+  return Math.min(hi, Math.max(lo, value));
+}
+
+// Resolve idle stable balance via the shared symbol-tolerant vault-spot read.
+// `vaultSpotAmount` now matches by exact address OR known symbol alias and
+// treats a null/undefined position_type as spot-eligible while excluding any
+// lending/derivative protocol (incl. aave_v3, the yield venue) — so it already
+// folds in the aave-supplied exclusion this helper used to do by hand and sees
+// the operator's synthesized paper cash (token "USDC" symbol, position_type
+// null) that the old strict read missed. We keep the { amount, source } shape so
+// checkedState.idle_source still distinguishes a direct address+spot read from a
+// symbol/null fallback for audit. Alpha-neutral: it only changes whether the
+// model is *asked* about deployable idle cash; every risk guard still runs.
+function resolveIdleStable(t, portfolio, usdcAddress) {
+  const amount = t.vaultSpotAmount(portfolio, usdcAddress);
+  if (amount <= 0) return { amount: 0, source: 'none' };
+  // Distinguish a canonical vault-spot leg (explicit position_type 'spot' on the
+  // exact address) from a synthesized/aliased holding the symbol-tolerant read
+  // now catches, purely for the audit trail.
+  const addr = String(usdcAddress || '').toLowerCase();
+  const hasDirectSpot = t.positionsOf(portfolio).some(
+    (p) => String(p.position_type || '').trim().toLowerCase() === 'spot'
+      && String(p.token || '').trim().toLowerCase() === addr,
+  );
+  return { amount, source: hasDirectSpot ? 'vault_spot' : 'token_match_fallback' };
+}
+
+function compactSignals(ctx, checkedState, metrics) {
+  try {
+    const evidence = t.buildExternalSignalEvidence({
+      config: ctx.config,
+      family: 'yield',
+      checkedState,
+      metrics,
+    });
+    const signals = Array.isArray(evidence.external_signals) ? evidence.external_signals : [];
+    return signals.slice(0, 5).map((s) => ({ kind: s.kind, value: s.value, label: s.label }));
+  } catch {
+    return [];
+  }
+}
+
+async function gather(ctx) {
   const { api, config, harness } = ctx;
   const { usdc } = t.pairTokens(config);
   const y = harness.yield || harness.aave || {};
   const targetFraction = clamp(t.asNumber(y.target_supplied_fraction, 0.8), 0, 1);
   const bandPct = Math.max(0.02, t.asNumber(y.rebalance_band_pct, 0.05));
   const minOrderUsd = t.asNumber(harness.min_order_usd, 10);
-  const protocol = 'aave_v3';
+  // Optional reserve/APY context the operator can supply via harness; surfaced to
+  // the model as evidence (not a guard).
+  const supplyApyPct = Number.isFinite(Number(y.supply_apy_pct)) ? Number(y.supply_apy_pct) : null;
+  const utilizationPct = Number.isFinite(Number(y.utilization_pct)) ? Number(y.utilization_pct) : null;
 
   const [portfolioBody, pricesBody] = await Promise.all([
     api.apiCall('POST', '/portfolio/state', {}),
@@ -25,35 +84,184 @@ async function decide(ctx) {
   const prices = t.priceMap(t.body(pricesBody));
   const usdcPrice = prices.get(String(usdc).toLowerCase()) ?? 1;
   const positions = t.positionsOf(portfolio);
-  const idleUsdc = t.vaultSpotAmount(portfolio, usdc);
+  const idle = resolveIdleStable(t, portfolio, usdc);
+  const idleUsdc = idle.amount;
+  const idleSource = idle.source;
   const suppliedUsd = positions
-    .filter((p) => String(p.protocol || '').toLowerCase() === protocol)
+    .filter((p) => String(p.protocol || '').toLowerCase() === PROTOCOL)
     .reduce((sum, p) => sum + Math.abs(t.asNumber(p.value_usd ?? p.amount, 0)), 0);
   const totalStable = idleUsdc + suppliedUsd;
+  const suppliedFraction = totalStable > 0 ? suppliedUsd / totalStable : 0;
+  const totalNav = t.asNumber(portfolio.total_value_usd, totalStable);
 
   const checkedState = {
-    protocol,
+    protocol: PROTOCOL,
     target_supplied_fraction: targetFraction,
+    rebalance_band_pct: bandPct,
     idle_usdc: idleUsdc,
+    idle_source: idleSource,
     supplied_usd: suppliedUsd,
     total_stable_usd: totalStable,
-    supplied_fraction: totalStable > 0 ? suppliedUsd / totalStable : 0,
+    supplied_fraction: suppliedFraction,
     market: {
       asset: 'USDC',
       usdc_price_usd: usdcPrice,
-      yield_venue: protocol,
+      yield_venue: PROTOCOL,
+      supply_apy_pct: supplyApyPct,
+      utilization_pct: utilizationPct,
     },
   };
   const metrics = {
-    portfolio_value_usd: t.asNumber(portfolio.total_value_usd, totalStable),
+    portfolio_value_usd: totalNav,
     positions_count: positions.length,
     usdc_price_usd: usdcPrice,
     yield_venue_count: 1,
   };
 
+  return {
+    usdc,
+    targetFraction,
+    bandPct,
+    minOrderUsd,
+    supplyApyPct,
+    utilizationPct,
+    prices,
+    usdcPrice,
+    idleUsdc,
+    suppliedUsd,
+    totalStable,
+    suppliedFraction,
+    totalNav,
+    checkedState,
+    metrics,
+  };
+}
+
+async function decide(ctx) {
+  const { config, harness } = ctx;
+  const g = await gather(ctx);
+  const { usdcPrice, totalStable, suppliedUsd, idleUsdc, minOrderUsd, checkedState, metrics, prices } = g;
+  const maxDrawdownPct = t.mandateMaxDrawdownPct(config, harness, 10);
+
+  // ---- RISK GUARDS (deterministic, fail-closed, always run) ----
+  if (!Number.isFinite(usdcPrice) || usdcPrice <= 0) {
+    return { decision: { action: 'skip', reason: 'pricing-unavailable', checkedState }, checkedState, metrics };
+  }
   if (totalStable < minOrderUsd) {
     return { decision: { action: 'skip', reason: 'no-stable-balance', checkedState }, checkedState, metrics };
   }
+
+  const supplied = suppliedUsd >= minOrderUsd;
+  const withdrawAll = (rationale, signals, extraDecision) =>
+    submit(ctx, { action: 'withdraw', amountHuman: suppliedUsd, rationale, signals, prices, checkedState, metrics, extraDecision });
+
+  // A tripped drawdown breaker withdraws rather than freezes: skipping while
+  // supplied leaves the position riding the drawdown that tripped it.
+  if (await t.circuitBreakerTripped(ctx.api, maxDrawdownPct)) {
+    if (supplied) return withdrawAll('drawdown-derisk-withdraw', { max_drawdown_pct: maxDrawdownPct });
+    return { decision: { action: 'skip', reason: 'circuit-breaker-triggered', checkedState }, checkedState, metrics };
+  }
+
+  // ---- ALPHA: model decides inside the guard envelope ----
+  if (agenticDecisionsEnabled()) {
+    return decideAgentic(ctx, { ...g, maxDrawdownPct, supplied, withdrawAll });
+  }
+  return decideDeterministic(ctx, g);
+}
+
+async function decideAgentic(ctx, g) {
+  const {
+    usdc,
+    targetFraction,
+    minOrderUsd,
+    supplyApyPct,
+    utilizationPct,
+    prices,
+    idleUsdc,
+    suppliedUsd,
+    totalStable,
+    suppliedFraction,
+    totalNav,
+    checkedState,
+    metrics,
+    maxDrawdownPct,
+    supplied,
+    withdrawAll,
+  } = g;
+
+  // Deployable envelope per direction: supply is bounded by idle cash, withdraw
+  // by what is currently supplied. The model picks the action; size_fraction
+  // scales the matching envelope.
+  const canSupply = idleUsdc >= minOrderUsd;
+  const candidates = [];
+  if (canSupply) candidates.push('supply');
+  if (supplied) candidates.push('withdraw');
+  candidates.push('hold');
+
+  const evidence = {
+    idle_usdc: idleUsdc,
+    supplied_usd: suppliedUsd,
+    total_stable_usd: totalStable,
+    supplied_fraction: suppliedFraction,
+    target_supplied_fraction: targetFraction,
+    supplied_fraction_gap: targetFraction - suppliedFraction,
+    total_nav_usd: totalNav,
+    supply_apy_pct: supplyApyPct,
+    utilization_pct: utilizationPct,
+    market_signals: compactSignals(ctx, checkedState, metrics),
+  };
+
+  const decisionOut = await agenticDecision({
+    family: 'yield',
+    candidates,
+    sizing: { max_fraction: 1, min_notional_usd: minOrderUsd },
+    mandate: { max_drawdown_pct: maxDrawdownPct, asset: 'USDC', venue: PROTOCOL, target_supplied_fraction: targetFraction },
+    position: { supplied_usd: suppliedUsd, idle_usd: idleUsdc, side: supplied ? 'supplied' : 'idle' },
+    evidence,
+  });
+
+  // Fail closed: in live mode a model failure HOLDS — it never supplies on the
+  // deterministic rule behind the operator's back.
+  if (!decisionOut) {
+    return { decision: { action: 'hold', reason: 'model-unavailable', checkedState }, checkedState, metrics };
+  }
+
+  const meta = {
+    decided_by: 'model',
+    model: decisionOut.model,
+    confidence: decisionOut.confidence,
+    model_rationale: decisionOut.rationale,
+    key_signals: decisionOut.key_signals,
+    prompt_hash: decisionOut.prompt_hash,
+  };
+  const sizeFraction = clamp(Number(decisionOut.size_fraction) || 0, 0, 1);
+
+  if (decisionOut.action === 'withdraw') {
+    if (!supplied) return { decision: { action: 'hold', reason: 'model-withdraw-no-position', checkedState, ...meta }, checkedState, metrics };
+    const amountUsd = Math.min(suppliedUsd, sizeFraction * suppliedUsd);
+    if (amountUsd < minOrderUsd) {
+      return { decision: { action: 'hold', reason: 'model-size-below-minimum', checkedState, ...meta }, checkedState, metrics };
+    }
+    return submit(ctx, { action: 'withdraw', amountHuman: amountUsd, rationale: 'model-withdraw', signals: { confidence: decisionOut.confidence, ...meta }, prices, checkedState, metrics, extraDecision: meta });
+  }
+  if (decisionOut.action === 'supply') {
+    const amountUsd = Math.min(idleUsdc, sizeFraction * idleUsdc);
+    if (amountUsd < minOrderUsd) {
+      return { decision: { action: 'hold', reason: 'model-size-below-minimum', checkedState, ...meta }, checkedState, metrics };
+    }
+    return submit(ctx, { action: 'supply', amountHuman: amountUsd, rationale: 'model-supply', signals: { confidence: decisionOut.confidence, ...meta }, prices, checkedState, metrics, extraDecision: meta });
+  }
+  // hold
+  return { decision: { action: 'hold', reason: 'model-no-trade', checkedState, ...meta }, checkedState, metrics };
+}
+
+// Deterministic target-fraction baseline — eval/replay reproducibility +
+// model-disabled runs only. Supply-only by design: maintain a target supplied
+// fraction of the stable balance, holding otherwise. NOT the live decision path
+// when the model is configured.
+function decideDeterministic(ctx, g) {
+  const { targetFraction, bandPct, minOrderUsd, idleUsdc, suppliedUsd, totalStable, prices, checkedState, metrics } = g;
+
   const targetSuppliedUsd = totalStable * targetFraction;
   const shortfallUsd = targetSuppliedUsd - suppliedUsd;
   if (shortfallUsd <= totalStable * bandPct) {
@@ -63,29 +271,30 @@ async function decide(ctx) {
   if (supplyUsd < minOrderUsd) {
     return { decision: { action: 'skip', reason: 'idle-stable-below-minimum', checkedState }, checkedState, metrics };
   }
+  return submit(ctx, { action: 'supply', amountHuman: supplyUsd, rationale: 'aave-supply-to-target', signals: { target_supplied_fraction: targetFraction }, prices, checkedState, metrics });
+}
 
-  const amountInUnits = t.decimalToBaseUnits(supplyUsd, t.tokenDecimals(usdc));
+async function submit(ctx, { action, amountHuman, rationale, signals, prices, checkedState, metrics, extraDecision }) {
+  const { config } = ctx;
+  const { usdc } = t.pairTokens(config);
+  const amountInUnits = t.decimalToBaseUnits(amountHuman, t.tokenDecimals(usdc));
   const intent = {
     strategy_id: `yield-${config.bot_id || 'bot'}`,
-    action: 'supply',
+    action,
     token_in: usdc,
     token_out: usdc,
     amount_in: amountInUnits.toString(),
     min_amount_out: '0',
     amount_format: 'base_units',
-    target_protocol: protocol,
+    target_protocol: PROTOCOL,
     deadline_secs: 300,
-    metadata: { signal: 'aave-supply-to-target' },
+    metadata: { signal: rationale, signals },
   };
-  const submission = await t.submitIntent(api, config, intent);
+  const submission = await t.submitIntent(ctx.api, config, intent);
   const decision = submission.approved
-    ? { action: 'trade', reason: 'aave-supply-to-target', intent }
-    : { action: 'skip', reason: 'submission-rejected', intent };
+    ? { action: 'trade', reason: rationale, intent, ...(extraDecision || {}) }
+    : { action: 'skip', reason: 'submission-rejected', intent, ...(extraDecision || {}) };
   return { decision, checkedState, metrics, resultExtra: { trade_action: { attempted: true, ...submission } } };
-}
-
-function clamp(value, lo, hi) {
-  return Math.min(hi, Math.max(lo, value));
 }
 
 t.runTick('yield', decide);

@@ -56,6 +56,67 @@ const TOKEN_DECIMALS = (() => {
   return map;
 })();
 
+// Symbol aliases the portfolio source may use to label the same underlying
+// token. The operator's paper synthesizer labels seeded cash by SYMBOL ("USDC")
+// rather than the chain address, so a strict address match misses it. Keys are
+// the canonical symbol; values are every lowercased label that means that token.
+const TOKEN_SYMBOL_ALIASES = {
+  usdc: ['usdc', 'usd-coin', 'usdc.e', 'usdbc'],
+  weth: ['weth', 'eth', 'weth.e'],
+  usdt: ['usdt', 'tether'],
+  dai: ['dai'],
+  wbtc: ['wbtc', 'btc'],
+  cbbtc: ['cbbtc'],
+};
+
+// Reverse map: lowercased chain address -> canonical symbol, derived from the
+// per-chain token tables. Lets `vaultSpotAmount` translate a requested address
+// into the symbol aliases a synthesized position might carry.
+const ADDRESS_TO_SYMBOL = (() => {
+  const map = {};
+  for (const tokens of Object.values(DEFAULT_TOKENS_BY_CHAIN)) {
+    if (tokens.weth) map[tokens.weth.toLowerCase()] = 'weth';
+    if (tokens.usdc) map[tokens.usdc.toLowerCase()] = 'usdc';
+  }
+  return map;
+})();
+
+// Lending/derivative venues whose positions are supplied/borrowed/derivative
+// exposure, NOT idle spot inventory. A position tagged with one of these is
+// never counted as a tradable spot balance even when its position_type is
+// null/undefined — otherwise supplied or borrowed legs would read as idle cash.
+const LENDING_DERIVATIVE_PROTOCOLS = new Set([
+  'aave_v3',
+  'morpho_vault',
+  'gmx_v2',
+  'vertex',
+  'hyperliquid',
+  'polymarket_clob',
+]);
+
+// Lowercased symbol aliases that mean `tokenAddress` on its chain: the address
+// itself plus any known symbol labels (e.g. 'usdc'/'usd-coin'/'usdc.e').
+function tokenAliasesFor(tokenAddress) {
+  const addr = String(tokenAddress || '').toLowerCase();
+  const aliases = new Set();
+  if (addr) aliases.add(addr);
+  const symbol = ADDRESS_TO_SYMBOL[addr];
+  if (symbol) {
+    aliases.add(symbol);
+    for (const alias of TOKEN_SYMBOL_ALIASES[symbol] || []) aliases.add(alias);
+  }
+  return aliases;
+}
+
+// True when a position's label (`token` or `symbol`) refers to `tokenAddress`,
+// matching either the exact lowercased address or a known symbol alias.
+function positionMatchesToken(position, tokenAddress) {
+  const aliases = tokenAliasesFor(tokenAddress);
+  const token = String((position && position.token) || '').trim().toLowerCase();
+  const symbol = String((position && position.symbol) || '').trim().toLowerCase();
+  return (token && aliases.has(token)) || (symbol && aliases.has(symbol));
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -443,31 +504,46 @@ function positionsOf(portfolio) {
 // A spot inventory holding the strategy can trade. The bot manages spot
 // inventory regardless of how the portfolio source labels it: live vault reads
 // report protocol "vault"; the paper portfolio synthesizer labels seeded cash
-// "paper" and swapped tokens by their DEX venue ("aerodrome"/"uniswap"). All of
-// these are the same thing to the strategy — a positive spot balance — so we
-// gate on position_type, not the bookkeeping protocol. (Non-spot exposure —
-// perps, conditional tokens — carries a different position_type and is excluded.)
+// "paper" (and, for freshly-seeded idle cash, leaves protocol AND position_type
+// null) and swapped tokens by their DEX venue ("aerodrome"/"uniswap"). All of
+// these are the same thing to the strategy — a positive spot balance.
+//
+// We therefore accept a position as spot when its position_type is 'spot' OR is
+// null/undefined (an unlabeled cash/token holding), but EXCLUDE anything tagged
+// with a lending/derivative protocol (aave_v3, morpho_vault, gmx_v2, vertex,
+// hyperliquid, polymarket_clob) — those are supplied/borrowed/derivative legs,
+// never idle spot. A position carrying an explicit non-spot position_type
+// (e.g. 'perp', 'supplied') is also excluded.
 function isVaultSpot(position) {
-  const positionType = String(position.position_type || '').trim().toLowerCase();
-  return positionType === 'spot' && asNumber(position.amount, 0) > 0;
+  if (!position || asNumber(position.amount, 0) <= 0) return false;
+  const protocol = String(position.protocol || '').trim().toLowerCase();
+  if (LENDING_DERIVATIVE_PROTOCOLS.has(protocol)) return false;
+  const rawType = position.position_type;
+  if (rawType === null || rawType === undefined) return true;
+  return String(rawType).trim().toLowerCase() === 'spot';
 }
 
 // Human-unit spot balance held in the vault for a token address (0 if none).
+// Matches a position by exact lowercased address OR by a known symbol alias of
+// the requested token, so synthesized cash labeled by SYMBOL ("USDC") still
+// resolves. Sums across all matching spot legs (a token can appear once as
+// seeded cash and again as a venue-swapped balance).
 function vaultSpotAmount(portfolio, tokenAddress) {
-  const addr = String(tokenAddress || '').toLowerCase();
-  const match = positionsOf(portfolio).find(
-    (p) => isVaultSpot(p) && String(p.token || '').toLowerCase() === addr,
-  );
-  return match ? asNumber(match.amount, 0) : 0;
+  let total = 0;
+  for (const p of positionsOf(portfolio)) {
+    if (isVaultSpot(p) && positionMatchesToken(p, tokenAddress)) {
+      total += asNumber(p.amount, 0);
+    }
+  }
+  return total;
 }
 
 // Synthetic paper portfolios sometimes carry value_usd but not price_usd. When
 // the market-data endpoint misses a token, derive a conservative spot price
 // from the portfolio's own amount/value pair before falling back to candles.
 function spotPriceFromPortfolio(portfolio, tokenAddress) {
-  const addr = String(tokenAddress || '').toLowerCase();
   const match = positionsOf(portfolio).find(
-    (p) => isVaultSpot(p) && String(p.token || '').toLowerCase() === addr,
+    (p) => isVaultSpot(p) && positionMatchesToken(p, tokenAddress),
   );
   if (!match) return null;
   const explicit = asNumber(match.price_usd ?? match.price ?? null, null);
@@ -937,6 +1013,10 @@ module.exports = {
   METRICS_FILE,
   DEFAULT_TOKENS_BY_CHAIN,
   TOKEN_DECIMALS,
+  TOKEN_SYMBOL_ALIASES,
+  LENDING_DERIVATIVE_PROTOCOLS,
+  tokenAliasesFor,
+  positionMatchesToken,
   nowIso,
   readJson,
   lineCount,

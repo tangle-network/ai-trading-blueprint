@@ -22,6 +22,11 @@ const TOOLS_DIR = __dirname;
 const SANDBOX_MAP = {
   '/home/agent/tools/tick-common': path.join(TOOLS_DIR, 'tick_common.js'),
   '/home/agent/tools/tick-recipe-dsl': path.join(TOOLS_DIR, 'tick_recipe_dsl.js'),
+  // dex_mm_tick now requires the model alpha layer at top of module. These
+  // replay tests exercise only the deterministic pure planners (the rebalance
+  // recipe), so the real agentic-decision module loads unmodified — it stays
+  // disabled without API keys and is never invoked off the pure-planner paths.
+  '/home/agent/tools/agentic-decision': path.join(TOOLS_DIR, 'agentic_decision.js'),
 };
 
 const originalResolve = Module._resolveFilename;

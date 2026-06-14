@@ -28,6 +28,15 @@ const {
   summarizeUsageEvents,
 } = requireTool('./usage-telemetry.js', './usage_telemetry.js');
 const { readObservatoryPressure } = requireTool('./observatory-pressure.js', './observatory_pressure.js');
+// Model-authored strategy programs (FunSearch rung). Optional: if the module or
+// a model is unavailable, authorStrategy returns null and the population falls
+// back to deterministic mutation, so the loop degrades safely.
+let authorStrategy = null;
+try {
+  ({ authorStrategy } = requireTool('./agentic-strategy-author.js', './agentic_strategy_author.js'));
+} catch {
+  authorStrategy = null;
+}
 
 const ROOT = process.env.AGENT_WORKSPACE || '/home/agent';
 const EVOLVE_DIR = join(ROOT, '.evolve');
@@ -600,6 +609,29 @@ async function probeCandidate(current, candidate, token, trainPct, minPaperTrade
     : { ok: false, status: response.status, data: response.data, score: Number.NEGATIVE_INFINITY };
 }
 
+// Compact parent-performance summary handed to the strategy author so it can
+// reason about what to change. Best-effort: pulls from the latest trace snapshot
+// and the current harness; returns null when nothing useful is available.
+function compactAuthorPerformance(current, config) {
+  const snap = latestTraceSnapshot(config) || {};
+  const metrics = (snap && (snap.metrics || snap.latest_metrics)) || {};
+  const pick = (...keys) => {
+    for (const k of keys) {
+      const v = numberOrNull(metrics[k]);
+      if (v !== null) return v;
+    }
+    return null;
+  };
+  const perf = {
+    return_pct: pick('return_pct', 'total_return_pct'),
+    drawdown_pct: pick('drawdown_pct', 'max_drawdown_pct', 'current_drawdown_pct'),
+    win_rate: pick('win_rate', 'win_rate_pct'),
+    trade_count: pick('trade_count', 'trades'),
+    parent_version: numberOrNull(current && current.harness && current.harness.version),
+  };
+  return Object.values(perf).some((v) => v !== null) ? perf : { parent_version: perf.parent_version };
+}
+
 async function selectCandidate(runId, intent, current) {
   const populationSize = Math.max(1, Math.min(Number(process.env.SELF_IMPROVEMENT_POPULATION_SIZE || 16), 64));
   const config = loadConfig();
@@ -611,11 +643,32 @@ async function selectCandidate(runId, intent, current) {
   const candle_readiness = await ensureBacktestCandles(token, intent);
   const probes = [];
 
+  // FunSearch rung: a share of the population is MODEL-AUTHORED — the model
+  // designs whole strategy programs, not random parameter perturbations. They
+  // probe through the identical backtest -> paper -> promotion gate as mutations,
+  // so authored alpha is never taken on trust. Capped, and any null author
+  // result falls back to a deterministic mutation so the population never shrinks.
+  const authoredCount = authorStrategy
+    ? Math.max(0, Math.min(Number(process.env.SELF_IMPROVEMENT_AUTHORED_COUNT ?? 3), populationSize))
+    : 0;
+  const family = (current.harness && current.harness.family)
+    || (config.strategy_config && config.strategy_config.strategy_type)
+    || 'dex';
+  const authorPerformance = compactAuthorPerformance(current, config);
+
   for (let i = 0; i < populationSize; i += 1) {
-    const candidate = {
-      ...cloneJson(current),
-      harness: mutateHarness(current.harness, seedFor(runId, intent, i), intent),
-    };
+    let authored = null;
+    if (i < authoredCount) {
+      try {
+        authored = await authorStrategy({ family, parentHarness: current.harness, performance: authorPerformance, intent });
+      } catch {
+        authored = null;
+      }
+    }
+    const harness = authored
+      ? repairHarness({ ...cloneJson(authored.harness), version: Number(current.harness?.version || 1) + 1 })
+      : mutateHarness(current.harness, seedFor(runId, intent, i), intent);
+    const candidate = { ...cloneJson(current), harness };
     let probe;
     try {
       probe = await probeCandidate(current, candidate, token, trainPct, minPaperTrades, maxPaperDrawdownPct, riskBudget);
@@ -631,6 +684,8 @@ async function selectCandidate(runId, intent, current) {
       should_promote: Boolean(probe.data?.result?.should_promote),
       likely_overfit: Boolean(probe.data?.result?.likely_overfit),
       blockers: Array.isArray(probe.data?.blockers) ? probe.data.blockers : [],
+      authored_by: authored ? 'model' : 'mutation',
+      author_rationale: authored ? authored.rationale : null,
     });
   }
 

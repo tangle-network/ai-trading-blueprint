@@ -22,6 +22,11 @@ function loadMultiTick(mockTick) {
   const originalLoad = Module._load
   Module._load = function load(request, parent, isMain) {
     if (request === '/home/agent/tools/tick-common') return mockTick
+    // These config-vs-prompt target tests exercise the deterministic baseline;
+    // stub the model layer disabled so target weights come from config only.
+    if (request === '/home/agent/tools/agentic-decision') {
+      return { agenticAllocation: async () => null, agenticDecisionsEnabled: () => false }
+    }
     return originalLoad.call(this, request, parent, isMain)
   }
   try {

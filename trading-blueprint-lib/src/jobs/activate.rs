@@ -1144,6 +1144,26 @@ pub(crate) async fn write_prebuilt_tools(
         include_str!("../prompts/tools/tick_common.js"),
     )
     .await?;
+    // Model-driven trade decision engine. The family ticks call this to let the
+    // configured model pick the action/size from evidence; deterministic logic
+    // is demoted to fail-closed risk guards + the eval-only reproducible
+    // baseline. Bundled alongside tick-common so every family can require it.
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/agentic-decision.js",
+        include_str!("../prompts/tools/agentic_decision.js"),
+    )
+    .await?;
+    // Model strategy author (FunSearch rung) — the self-improvement loop authors
+    // whole strategy programs with it; bundle alongside the decision engine.
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/agentic-strategy-author.js",
+        include_str!("../prompts/tools/agentic_strategy_author.js"),
+    )
+    .await?;
     // Default no-API-key external signal provider (Fear & Greed + CoinGecko
     // global/trending). tick-common spawns it from the same directory so
     // external_signal_evidence carries real observations out of the box.
@@ -1194,6 +1214,13 @@ pub(crate) async fn write_prebuilt_tools(
         token,
         "/home/agent/tools/perp-tick.js",
         include_str!("../prompts/tools/perp_tick.js"),
+    )
+    .await?;
+    write_file_to_sidecar(
+        sidecar_url,
+        token,
+        "/home/agent/tools/prediction-tick.js",
+        include_str!("../prompts/tools/prediction_tick.js"),
     )
     .await?;
     write_file_to_sidecar(

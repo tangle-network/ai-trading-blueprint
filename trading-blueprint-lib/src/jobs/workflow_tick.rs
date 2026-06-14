@@ -790,6 +790,18 @@ fn fast_tick_tool_bundle(tool: &str) -> Option<Vec<(&'static str, &'static str)>
             "/home/agent/tools/observatory-pressure.js",
             include_str!("../prompts/tools/observatory_pressure.js"),
         ),
+        // Model-driven decision engine — every family tick now requires it, so
+        // it must ship in the per-tick sync, not only on activation.
+        (
+            "/home/agent/tools/agentic-decision.js",
+            include_str!("../prompts/tools/agentic_decision.js"),
+        ),
+        // Model strategy author (FunSearch rung): the self-improvement loop
+        // requires it to author whole strategy programs as backtest candidates.
+        (
+            "/home/agent/tools/agentic-strategy-author.js",
+            include_str!("../prompts/tools/agentic_strategy_author.js"),
+        ),
     ];
 
     match tool {
@@ -797,6 +809,16 @@ fn fast_tick_tool_bundle(tool: &str) -> Option<Vec<(&'static str, &'static str)>
             "/home/agent/tools/hyperliquid-tick.js",
             include_str!("../prompts/tools/hyperliquid_tick.js"),
         )),
+        "prediction-tick.js" => {
+            files.push((
+                "/home/agent/tools/tick-common.js",
+                include_str!("../prompts/tools/tick_common.js"),
+            ));
+            files.push((
+                "/home/agent/tools/prediction-tick.js",
+                include_str!("../prompts/tools/prediction_tick.js"),
+            ));
+        }
         "dex-tick.js" => {
             files.push((
                 "/home/agent/tools/tick-common.js",

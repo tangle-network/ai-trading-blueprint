@@ -16,12 +16,26 @@ use super::types::{BacktestConfig, BacktestSummary, FundingSnapshot, HarnessConf
 pub const DEFAULT_BASELINE_LOOKBACK_DAYS: u32 = 30;
 
 /// Tokens used for the baseline backtest, depending on strategy family.
+///
+/// Every price-driven family resolves to one or more Binance spot symbols the
+/// engine can backtest. The engine is family-agnostic — it runs any
+/// `HarnessConfig` over any candle series — so the only per-family decision
+/// here is *which* reference series to denominate the baseline in. Families
+/// that trade a single ETH/USDC-style book (dex, yield, mm) use ETH; the
+/// multi-asset families (perp, hyperliquid_perp, multi) use the canonical
+/// ETH+BTC pair so the run exercises portfolio-level position management.
+///
+/// Only `prediction` returns no tokens: its outcomes settle to $0/$1 at
+/// resolution rather than tracking a continuous price, so a kline backtest is
+/// not the right model. Prediction strategies are scored by the deterministic
+/// resolution-settled benchmark in [`super::prediction`] instead.
 fn baseline_tokens(strategy_type: &str) -> Vec<&'static str> {
     match normalize_strategy_type(strategy_type).as_str() {
-        // DEX / yield strategies — denominate in ETH (Binance ETHUSD).
-        "dex" | "yield" => vec!["ETH"],
-        // Perps strategies are typically multi-asset; pick the canonical pair.
-        "perp" => vec!["ETH", "BTC"],
+        // Single-book spot/AMM families — denominate in ETH (Binance ETHUSD).
+        "dex" | "yield" | "mm" => vec!["ETH"],
+        // Multi-asset / perp families exercise portfolio management across the
+        // canonical ETH+BTC pair.
+        "perp" | "hyperliquid_perp" | "multi" => vec!["ETH", "BTC"],
         _ => vec![],
     }
 }
@@ -153,17 +167,34 @@ mod tests {
     }
 
     #[test]
-    fn dex_yield_perp_strategies_have_baseline_tokens() {
+    fn all_price_driven_families_have_baseline_tokens() {
+        // Single-book families
         assert!(strategy_supports_baseline("dex"));
         assert!(strategy_supports_baseline("dex_trading"));
         assert!(strategy_supports_baseline("yield"));
         assert!(strategy_supports_baseline("defi_yield"));
+        assert!(strategy_supports_baseline("mm"));
+        // Multi-asset / perp families
         assert!(strategy_supports_baseline("perp"));
         assert!(strategy_supports_baseline("perp_trading"));
+        assert!(strategy_supports_baseline("hyperliquid_perp"));
+        assert!(strategy_supports_baseline("hyperliquid-perp"));
+        assert!(strategy_supports_baseline("multi"));
+    }
+
+    #[test]
+    fn multi_asset_families_backtest_eth_and_btc() {
+        assert_eq!(baseline_tokens("perp"), vec!["ETH", "BTC"]);
+        assert_eq!(baseline_tokens("hyperliquid_perp"), vec!["ETH", "BTC"]);
+        assert_eq!(baseline_tokens("multi"), vec!["ETH", "BTC"]);
+        assert_eq!(baseline_tokens("mm"), vec!["ETH"]);
     }
 
     #[test]
     fn prediction_strategy_has_no_kline_source() {
+        // Prediction settles to $0/$1 at resolution — it is scored by the
+        // deterministic resolution-settled benchmark (super::prediction), not
+        // by a continuous-price kline backtest.
         assert!(!strategy_supports_baseline("prediction"));
         assert!(!strategy_supports_baseline("prediction_market"));
     }
