@@ -151,3 +151,43 @@ test('agenticAllocation disabled returns null', async () => {
   });
   assert.equal(a, null);
 });
+
+test('retries on 429 then succeeds (rate-limit backoff)', async () => {
+  let calls = 0;
+  const fetch429then200 = async () => {
+    calls += 1;
+    if (calls === 1) return { ok: false, status: 429, json: async () => ({ error: 'rate limit' }) };
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '{"action":"buy","size_fraction":0.4,"confidence":0.7}' } }] }) };
+  };
+  const d = await agenticDecision(SPEC, { env: ENV, fetch: fetch429then200, backoffMs: [5, 5] });
+  assert.equal(calls, 2, 'should retry once after a 429');
+  assert.equal(d.action, 'buy');
+});
+
+test('gives up fail-closed after exhausting retries on persistent 429', async () => {
+  let calls = 0;
+  const always429 = async () => { calls += 1; return { ok: false, status: 429, json: async () => ({}) }; };
+  const d = await agenticDecision(SPEC, { env: ENV, fetch: always429, backoffMs: [5, 5] });
+  assert.equal(d, null);
+  assert.equal(calls, 3, 'initial + 2 retries');
+});
+
+test('does NOT retry a non-retryable 4xx (e.g. 400)', async () => {
+  let calls = 0;
+  const always400 = async () => { calls += 1; return { ok: false, status: 400, json: async () => ({}) }; };
+  const d = await agenticDecision(SPEC, { env: ENV, fetch: always400, backoffMs: [5, 5] });
+  assert.equal(d, null);
+  assert.equal(calls, 1, 'a 400 is the caller’s fault — no retry');
+});
+
+test('agenticAllocation also retries on 429', async () => {
+  let calls = 0;
+  const fetch429then200 = async () => {
+    calls += 1;
+    if (calls === 1) return { ok: false, status: 429, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '{"weights":{"WETH":0.5,"USDC":0.5}}' } }] }) };
+  };
+  const a = await agenticAllocation(ALLOC_SPEC, { env: ENV, fetch: fetch429then200, backoffMs: [5, 5] });
+  assert.equal(calls, 2);
+  assert.ok(a && a.weights);
+});
