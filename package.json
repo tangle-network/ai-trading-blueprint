@@ -18,6 +18,8 @@
     "eval:trading-lifecycle": "npm run build:evals --silent && node dist/evals/bin/trading-lifecycle-eval.js",
     "eval:trading-personas": "npm run build:evals --silent && node dist/evals/bin/agent-eval-trading-personas.js",
     "eval:trading-persona-matrix": "npm run build:evals --silent && TRADING_PERSONA_MATRIX=1 node dist/evals/bin/agent-eval-trading-personas.js",
+    "eval:trading-conversation-matrix": "npm run build:evals --silent && TRADING_CONVERSATION_MATRIX=1 node dist/evals/bin/agent-eval-trading-personas.js",
+    "eval:trading-decision-loop": "npm run build:evals --silent && TRADING_DECISION_LOOP=1 node dist/evals/bin/agent-eval-trading-personas.js",
     "agent:user-lab": "npm run build:evals --silent && node dist/evals/bin/active-user-lab.js",
     "agent:fleet-audit": "npm run build:evals --silent && node dist/evals/bin/live-agent-fleet-audit.js",
     "release:local-artifacts": "scripts/release-local-artifacts.sh",
