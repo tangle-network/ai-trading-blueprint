@@ -1228,13 +1228,19 @@ export function RunsTab({
               </div>
             )}
 
-            <IntelligenceSpendPanel
-              summary={intelligenceUsage}
-              granularity={intelligenceGranularity}
-              metric={intelligenceMetric}
-              onGranularityChange={setIntelligenceGranularity}
-              onMetricChange={setIntelligenceMetric}
-            />
+            {/* In the focused single-chat view the transcript must dominate the
+                viewport — the spend analytics panel is metrics, not conversation,
+                so it stays in the runs overview (!immersive) and out of the way
+                here. */}
+            {!immersive && (
+              <IntelligenceSpendPanel
+                summary={intelligenceUsage}
+                granularity={intelligenceGranularity}
+                metric={intelligenceMetric}
+                onGranularityChange={setIntelligenceGranularity}
+                onMetricChange={setIntelligenceMetric}
+              />
+            )}
 
             <RunsBanner
               run={activeRun}

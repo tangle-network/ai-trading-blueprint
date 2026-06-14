@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useMemo, useState } from 'react';
 import type { Bot } from '~/lib/types/bot';
 import type { Portfolio, Position } from '~/lib/types/portfolio';
 import { useChartTheme } from '~/lib/hooks/useChartTheme';
-import { LatestAgentTrades } from '~/components/arena/LatestAgentTrades';
 import {
   useBotChartStudies,
   useBotMarketCandles,
@@ -15,7 +14,6 @@ import {
 } from '~/lib/hooks/useBotApi';
 import { Skeleton } from '~/components/ui/Skeleton';
 import { formatNumber } from '~/lib/format';
-import { useOperatorAuth } from '~/lib/hooks/useOperatorAuth';
 import { readStrategyNumber } from '~/lib/utils/botStrategy';
 import { isExplicitPaperValidationBypass } from '~/lib/tradeValidation';
 import { buildPerformanceChartPoints } from './performanceChart';
@@ -25,7 +23,6 @@ import {
   formatTradeModeLabel,
   formatTradeUsd,
   getHyperliquidSizeLabel,
-  getTradeActionToneClass,
   getTradeMarketLabel,
   isBuySideTradeAction,
   isSellSideTradeAction,
@@ -36,24 +33,11 @@ import {
   type TradeChartMarker,
 } from './TradingPerformanceChart';
 import { UnverifiedDataNotice } from './shared/DataAccessNotices';
-import { buildDecisionItemsFromTrades } from '~/lib/decisionFeed';
-import { TradeInstrumentDisplay } from './shared/AssetDisplay';
 import {
   fillCountEvidenceSubvalue,
   resolveFillCountEvidence,
 } from '~/lib/tradeEvidence';
 import { resolveAssetDisplay } from '~/lib/tradeTokenMetadata';
-import {
-  WorkspaceCollapsedPane,
-  WorkspaceControlButton,
-  WorkspaceResizeHandle,
-  beginWorkspaceResize,
-  clampNumber,
-  shouldCollapsePanePercent,
-  shouldCollapsePaneSize,
-  usePersistentWorkspaceLayout,
-} from '~/components/arena/WorkspaceResizeControls';
-import { PerformanceCopilotPanel } from './PerformanceCopilotPanel';
 
 const LIVE_NAV_APPEND_THRESHOLD_MS = 60_000;
 const TRADE_MARKER_PAGE_SIZE = 200;
@@ -75,11 +59,6 @@ const freshnessTimestampFormatter = new Intl.DateTimeFormat('en-US', {
   hour: 'numeric',
   minute: '2-digit',
 });
-const fillTapeTimeFormatter = new Intl.DateTimeFormat('en-US', {
-  hour: 'numeric',
-  minute: '2-digit',
-});
-
 function readInitialCapitalUsd(strategyConfig?: Record<string, unknown>): number | null {
   const raw = strategyConfig?.initial_capital_usd
     ?? strategyConfig?.initial_capital
@@ -217,10 +196,6 @@ function formatTradeTime(timestamp: number): string {
   return freshnessTimestampFormatter.format(new Date(timestamp));
 }
 
-function formatFillTapeTime(timestamp: number): string {
-  return fillTapeTimeFormatter.format(new Date(timestamp));
-}
-
 function formatChartNumber(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return '—';
   const maximumFractionDigits = value >= 1000 ? 0 : 2;
@@ -284,6 +259,19 @@ function marketCandleIntervalForRange(range: PerformanceRange): string {
   if (range === '30d') return '15m';
   if (range === '6m') return '1h';
   return '4h';
+}
+
+// Resolve the candle interval to actually request for a range + source.
+// External feeds (Binance/Hyperliquid/…) supply fine intraday candles, so the
+// range's native interval is fine. The bot's OWN candle store only persists
+// coarse points (roughly hourly), so requesting 1m/5m for 1D/7D yields empty
+// buckets and the chart silently collapses to NAV. When there's no external
+// source, floor short ranges to ≥1h so the store's points still render.
+function resolveMarketCandleInterval(range: PerformanceRange, source: string | null): string {
+  const native = marketCandleIntervalForRange(range);
+  if (source != null) return native;
+  if (range === '1d' || range === '7d' || range === '30d') return '1h';
+  return native;
 }
 
 function inferMarketCandleSource(bot: Bot, token: string | null | undefined): string | null {
@@ -660,53 +648,11 @@ interface PerformanceTabProps {
   canCommand?: boolean;
 }
 
-interface PerformanceWorkspaceLayout {
-  chartPercent: number;
-  fillsWidth: number;
-  fillsCollapsed: boolean;
-}
-
-const PERFORMANCE_WORKSPACE_LAYOUT_KEY = 'arena:performance-workspace-layout';
-const DEFAULT_PERFORMANCE_WORKSPACE_LAYOUT: PerformanceWorkspaceLayout = {
-  chartPercent: 64,
-  fillsWidth: 340,
-  fillsCollapsed: false,
-};
-
-function normalizePerformanceWorkspaceLayout(value: Partial<PerformanceWorkspaceLayout>): PerformanceWorkspaceLayout {
-  return {
-    chartPercent: clampNumber(
-      Number(value.chartPercent) || DEFAULT_PERFORMANCE_WORKSPACE_LAYOUT.chartPercent,
-      48,
-      78,
-    ),
-    fillsWidth: clampNumber(
-      Number(value.fillsWidth) || DEFAULT_PERFORMANCE_WORKSPACE_LAYOUT.fillsWidth,
-      300,
-      520,
-    ),
-    fillsCollapsed: value.fillsCollapsed === true,
-  };
-}
-
-export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceTabProps) {
+export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
   const chartTheme = useChartTheme();
-  const operatorAuth = useOperatorAuth(bot.operatorApiUrl ?? '');
   const isHyperliquidPerpBot = bot.strategyType === 'hyperliquid_perp';
   const [range, setRange] = useState<PerformanceRange>('30d');
   const [chartMode, setChartMode] = useState<PerformanceChartMode>('market');
-  const [selectedDecisionId, setSelectedDecisionId] = useState<string | null>(null);
-  const workspaceRef = useRef<HTMLElement>(null);
-  const [usesFillsRail, setUsesFillsRail] = useState(() =>
-    typeof window === 'undefined' || typeof window.matchMedia !== 'function'
-      ? false
-      : window.matchMedia('(min-width: 1600px)').matches,
-  );
-  const [layout, setLayout] = usePersistentWorkspaceLayout(
-    PERFORMANCE_WORKSPACE_LAYOUT_KEY,
-    DEFAULT_PERFORMANCE_WORKSPACE_LAYOUT,
-    normalizePerformanceWorkspaceLayout,
-  );
   const selectedRange = PERFORMANCE_RANGES.find((item) => item.value === range) ?? PERFORMANCE_RANGES[1];
   const selectedRangeEndMs = useMemo(
     () => Date.now(),
@@ -716,15 +662,6 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const marketCandleFetchDays = marketCandleFetchDaysForRange(selectedRange.value);
   const marketCandleFetchStartMs = selectedRangeEndMs - marketCandleFetchDays * 24 * 60 * 60 * 1000;
   const tradeMarkerFetchPages = tradeMarkerPagesForRange(selectedRange.value);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
-    const mediaQuery = window.matchMedia('(min-width: 1600px)');
-    const syncLayout = () => setUsesFillsRail(mediaQuery.matches);
-    syncLayout();
-    mediaQuery.addEventListener('change', syncLayout);
-    return () => mediaQuery.removeEventListener('change', syncLayout);
-  }, []);
 
   const {
     data: apiMetrics,
@@ -751,10 +688,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     stopAtTimestampMs: marketCandleFetchStartMs,
     refetchInterval: isLive ? 30_000 : false,
   });
-  const tradePage = markerTradePage ?? latestTradePage;
-  const tradePageIsPending = latestTradePage == null && markerTradePage == null;
   const trades = markerTradePage?.trades ?? latestTradePage?.trades;
-  const latestTrades = latestTradePage?.trades ?? markerTradePage?.trades;
   const marketCandleToken = useMemo(
     () => inferMarketCandleToken(bot, trades),
     [bot, trades],
@@ -763,7 +697,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
     () => inferMarketCandleSource(bot, marketCandleToken),
     [bot, marketCandleToken],
   );
-  const marketCandleInterval = marketCandleIntervalForRange(selectedRange.value);
+  const marketCandleInterval = resolveMarketCandleInterval(selectedRange.value, marketCandleSource);
   const { data: marketCandles = [] } = useBotMarketCandles(bot.id, marketCandleToken, marketCandleFetchDays, {
     operatorApiUrl: bot.operatorApiUrl,
     operatorKind: bot.operatorKind,
@@ -947,16 +881,6 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const marketVolumeValue = marketStatCandles.length > 0
     ? marketStatCandles.reduce((sum, candle) => sum + candle.volume, 0)
     : null;
-  const recentTradeTape = useMemo(() => (latestTrades ?? []).slice(0, 12), [latestTrades]);
-  const tradeDecisionItems = useMemo(
-    () => buildDecisionItemsFromTrades(recentTradeTape),
-    [recentTradeTape],
-  );
-  const selectedDecision = tradeDecisionItems.find((item) => item.id === selectedDecisionId)
-    ?? tradeDecisionItems[0]
-    ?? null;
-
-  const canUseCopilot = Boolean(canCommand && operatorAuth.isAuthenticated && operatorAuth.token);
   const marketMoveTone = marketMove == null
     ? 'text-arena-elements-textPrimary'
     : marketMove >= 0
@@ -1063,69 +987,23 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
   const hyperliquidRiskSnapshot = isHyperliquidPerpBot
     ? buildHyperliquidRiskSnapshot(livePortfolio ?? null)
     : null;
-  const resetLayout = () => setLayout(DEFAULT_PERFORMANCE_WORKSPACE_LAYOUT);
-  const toggleFills = () => setLayout((current) => ({
-    ...current,
-    fillsCollapsed: !current.fillsCollapsed,
-  }));
-  const startFillsResize = (event: Parameters<typeof beginWorkspaceResize>[0]) => {
-    const workspace = workspaceRef.current;
-    if (!workspace) return;
-    const rect = workspace.getBoundingClientRect();
-    setLayout((current) => ({ ...current, fillsCollapsed: false }));
-    beginWorkspaceResize(event, {
-      cursor: usesFillsRail ? 'col-resize' : 'row-resize',
-      onMove: (moveEvent) => {
-        if (usesFillsRail) {
-          const maxWidth = Math.min(520, Math.max(340, rect.width * 0.42));
-          const rawWidth = rect.right - moveEvent.clientX;
-          if (shouldCollapsePaneSize(rawWidth)) {
-            setLayout((current) => ({
-              ...current,
-              fillsCollapsed: true,
-            }));
-            return;
-          }
-          const nextWidth = clampNumber(rawWidth, 300, maxWidth);
-          setLayout((current) => ({
-            ...current,
-            fillsWidth: nextWidth,
-            fillsCollapsed: false,
-          }));
-          return;
-        }
-
-        const rawPercent = ((moveEvent.clientY - rect.top) / rect.height) * 100;
-        if (shouldCollapsePanePercent(100 - rawPercent)) {
-          setLayout((current) => ({
-            ...current,
-            fillsCollapsed: true,
-          }));
-          return;
-        }
-        const nextPercent = clampNumber(rawPercent, 48, 78);
-        setLayout((current) => ({
-          ...current,
-          chartPercent: nextPercent,
-          fillsCollapsed: false,
-        }));
-      },
-    });
-  };
-  const workspaceStyle = {
-    '--performance-chart-fr': `${layout.chartPercent}fr`,
-    '--performance-fills-fr': `${100 - layout.chartPercent}fr`,
-    '--performance-fills-width': `${layout.fillsWidth}px`,
-  } as CSSProperties;
-  const workspaceGridClass = layout.fillsCollapsed
-    ? 'grid-rows-[minmax(0,1fr)_8px_44px] min-[1600px]:grid-cols-[minmax(0,1fr)_8px_44px] min-[1600px]:grid-rows-none'
-    : 'grid-rows-[minmax(0,var(--performance-chart-fr))_8px_minmax(220px,var(--performance-fills-fr))] min-[1600px]:grid-cols-[minmax(0,1fr)_8px_minmax(300px,var(--performance-fills-width))] min-[1600px]:grid-rows-none';
+  // Honest market-mode signal: the user asked for the Market chart but this
+  // range has no candles the source can supply, so the chart falls back to NAV.
+  // Surface the reason instead of silently swapping the series.
+  const marketModeFellBackToNav = chartMode === 'market'
+    && effectiveChartMode === 'nav'
+    && chartIsRenderable;
+  const marketUnavailableReason = marketCandleSource == null
+    ? marketCandleToken == null
+      ? 'no market reference asset'
+      : 'no external price feed for this asset'
+    : `${formatMarketSourceLabel(marketCandleSource, marketCandleInterval)} returned no candles for ${selectedRange.label}`;
 
   if (isLoading) {
     return (
       <div className="arena-trace-terminal flex h-full min-h-0 flex-col overflow-hidden">
         <section
-          className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_8px_minmax(220px,34fr)] gap-0 overflow-hidden"
+          className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden"
           aria-label="Loading performance workspace"
         >
           <div className="col-start-1 row-start-1 flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
@@ -1161,35 +1039,6 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
               <Skeleton className="h-full min-h-[260px] w-full" />
             </div>
           </div>
-
-          <div
-            className="col-start-1 row-start-2 hidden shrink-0 items-center justify-center bg-[var(--arena-terminal-bg)] text-[var(--arena-terminal-text-subtle)] lg:flex"
-            aria-hidden="true"
-          >
-            <span className="h-px w-12 bg-current" />
-          </div>
-
-          <aside className="col-start-1 row-start-3 flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] p-2">
-            <div className="mb-2 flex shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-1 pb-2">
-              <h3 className="font-display text-sm font-semibold text-[#f6fefd]">
-                Fills
-              </h3>
-              <span className="font-data text-xs text-[#949e9c]">
-                Loading
-              </span>
-            </div>
-            <div className="grid min-h-0 flex-1 grid-rows-4 gap-2 overflow-hidden">
-              {Array.from({ length: 4 }, (_, index) => (
-                <div
-                  key={index}
-                  className="border border-[#273035] bg-[#0b1418] px-3 py-2"
-                >
-                  <Skeleton className="h-4 w-24" />
-                  <Skeleton className="mt-2 h-3 w-40" />
-                </div>
-              ))}
-            </div>
-          </aside>
         </section>
       </div>
     );
@@ -1215,11 +1064,7 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
         <UnverifiedDataNotice subject="performance snapshots" />
       )}
 
-      <section
-        ref={workspaceRef}
-        className={`grid min-h-0 flex-1 gap-0 overflow-hidden ${workspaceGridClass}`}
-        style={workspaceStyle}
-      >
+      <section className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden">
         <div className="col-start-1 row-start-1 flex min-h-0 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] shadow-[0_22px_80px_rgba(0,0,0,0.28)]">
           <div className="flex shrink-0 flex-col border-b border-[#273035] bg-[#0f1a1e] min-[1120px]:h-[78px] min-[1120px]:flex-row min-[1120px]:items-stretch">
             <div className="flex min-w-0 shrink-0 items-center gap-2 border-b border-[#273035] px-3 py-2 min-[1120px]:w-[178px] min-[1120px]:border-b-0 min-[1120px]:border-r">
@@ -1258,16 +1103,6 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             </div>
 
             <div className="flex shrink-0 items-center gap-1 border-t border-[#273035] px-2 py-2 min-[1120px]:border-l min-[1120px]:border-t-0">
-              <WorkspaceControlButton
-                label={layout.fillsCollapsed ? 'Restore fills' : 'Minimize fills'}
-                icon={layout.fillsCollapsed ? 'i-ph:sidebar-simple' : 'i-ph:minus-bold'}
-                onClick={toggleFills}
-              />
-              <WorkspaceControlButton
-                label="Reset workspace"
-                icon="i-ph:arrow-counter-clockwise"
-                onClick={resetLayout}
-              />
               <div
                 className="inline-flex rounded-[5px] bg-[#273035] p-0.5"
                 role="group"
@@ -1427,6 +1262,18 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             </section>
           ) : null}
 
+          {marketModeFellBackToNav && (
+            <div
+              role="status"
+              className="flex shrink-0 items-center gap-2 border-b border-[#273035] bg-[#0f1a1f] px-3 py-1.5 font-data text-[11px] text-arena-elements-textSecondary min-[1440px]:text-xs"
+            >
+              <span className="i-ph:info shrink-0 text-sm" aria-hidden="true" />
+              <span className="min-w-0 truncate">
+                Market candles unavailable for {selectedRange.label} ({marketUnavailableReason}) — showing NAV instead.
+              </span>
+            </div>
+          )}
+
           <div className="min-h-0 flex-1 bg-[#0f1a1f]" aria-busy={metricsArePlaceholder}>
             {chartIsRenderable ? (
               <div className="h-full min-h-[260px] min-[1280px]:min-h-[420px]">
@@ -1483,170 +1330,6 @@ export function PerformanceTab({ bot, isLive, canCommand = false }: PerformanceT
             )}
           </div>
         </div>
-
-        <WorkspaceResizeHandle
-          orientation={usesFillsRail ? 'vertical' : 'horizontal'}
-          className="col-start-1 row-start-2 min-[1600px]:col-start-2 min-[1600px]:row-start-1"
-          ariaLabel="Resize performance fills"
-          title="Drag to resize chart and fills"
-          onPointerDown={startFillsResize}
-        />
-
-        {layout.fillsCollapsed ? (
-          <WorkspaceCollapsedPane
-            label="Fills"
-            icon="i-ph:list-bullets"
-            orientation={usesFillsRail ? 'vertical' : 'horizontal'}
-            className="col-start-1 row-start-3 min-[1600px]:col-start-3 min-[1600px]:row-start-1"
-            onClick={() => setLayout((current) => ({ ...current, fillsCollapsed: false }))}
-          />
-        ) : (
-        <aside className="col-start-1 row-start-3 flex min-h-0 flex-col overflow-hidden min-[1600px]:col-start-3 min-[1600px]:row-start-1">
-          {tradePageIsPending ? (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] p-2">
-              <div className="mb-2 flex shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-1 pb-2">
-                <h3 className="font-display text-sm font-semibold text-[#f6fefd]">
-                  Fills
-                </h3>
-                <span className="font-data text-xs text-[#949e9c]">
-                  Loading
-                </span>
-              </div>
-              <div className="space-y-2">
-                {Array.from({ length: 6 }, (_, index) => (
-                  <div
-                    key={index}
-                    className="border border-[#273035] bg-[#0b1418] px-3 py-3"
-                  >
-                    <Skeleton className="h-4 w-24" />
-                    <Skeleton className="mt-2 h-3 w-40" />
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : recentTradeTape.length === 0 ? (
-            <LatestAgentTrades
-              bots={[bot]}
-              enabled={isLive}
-              variant="panel"
-              limit={6}
-              className="min-h-0 flex-1"
-            />
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden border border-[#273035] bg-[#0f1a1f] p-2">
-              <div className="mb-1.5 flex h-8 shrink-0 items-center justify-between gap-3 border-b border-[#273035] px-1 pb-1.5">
-                <h3 className="font-display text-sm font-semibold text-[#f6fefd]">
-                  Fills
-                </h3>
-                <span className="font-data text-xs text-[#949e9c]">
-                  {formatNumber(recentTradeTape.length, { maximumFractionDigits: 0 })}
-                  {' / '}
-                  {formatNumber(tradePage?.total ?? trades?.length ?? recentTradeTape.length, { maximumFractionDigits: 0 })}
-                </span>
-              </div>
-              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_48px] overflow-hidden border border-[#273035] bg-[#0b1418]">
-                <div
-                  className="min-h-0 overflow-y-auto [scrollbar-gutter:stable]"
-                  aria-label="Recent fills"
-                  tabIndex={0}
-                >
-                  <div className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_128px] border-b border-[#273035] bg-[#0b1418]/95 px-2 py-1 font-data text-xs uppercase text-[#697371] backdrop-blur min-[1440px]:grid-cols-[minmax(0,1fr)_144px]">
-                    <span>Fill</span>
-                    <span className="text-right">Notional</span>
-                  </div>
-                  <div className="divide-y divide-[#273035]">
-                    {recentTradeTape.map((trade) => {
-                      const decisionId = `trade:${trade.id}`;
-                      const selected = selectedDecision?.id === decisionId;
-                      const fillDetail = formatTradeMicrostructure(trade);
-                      const showFillDetail = fillDetail !== 'Paper fill' ? fillDetail : null;
-
-                      return (
-                        <button
-                          key={trade.id}
-                          type="button"
-                          className={`grid min-h-[54px] w-full grid-cols-[minmax(0,1fr)_128px] items-center gap-2 px-2 py-1 text-left transition-colors min-[1440px]:grid-cols-[minmax(0,1fr)_144px] ${
-                            selected
-                              ? 'bg-[#132329] shadow-[inset_3px_0_0_rgba(80,210,193,0.82)]'
-                              : 'hover:bg-[#101f25]'
-                          }`}
-                          aria-pressed={selected}
-                          onClick={() => setSelectedDecisionId(decisionId)}
-                          title={`${formatTradeActionLabel(trade.action)} ${getTradeMarketLabel(trade)} · ${formatTradeMicrostructure(trade)}`}
-                        >
-                          <div className="min-w-0">
-                            <div className="flex min-w-0 items-center gap-2">
-                              <span className={`min-w-0 truncate font-data text-sm font-bold uppercase leading-4 ${getTradeActionToneClass(trade.action)}`}>
-                                {formatTradeActionLabel(trade.action)}
-                              </span>
-                              <span className="shrink-0 font-data text-xs leading-3 text-[#697371]">
-                                {formatFillTapeTime(trade.timestamp)}
-                              </span>
-                            </div>
-                            <TradeInstrumentDisplay
-                              trade={trade}
-                              className="mt-1 w-full overflow-hidden"
-                              size="sm"
-                              showVenue={false}
-                              showSecondary={false}
-                              labelClassName="max-w-full !truncate text-[15px] !leading-4 !text-[var(--arena-terminal-text)]"
-                            />
-                          </div>
-                          <div className="min-w-0 text-right">
-                            <div className="font-data text-base font-semibold tabular-nums leading-5 text-[#f6fefd] min-[1440px]:text-[17px]">
-                              {formatTradeUsd(trade.notionalUsd)}
-                            </div>
-                            {showFillDetail && (
-                              <div className="truncate font-data text-xs leading-3 text-[#697371]">
-                                {showFillDetail}
-                              </div>
-                            )}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <aside
-                  className="min-h-0 border-t border-[#273035] bg-[#0f1a1f] px-2.5 py-1.5"
-                  aria-label="Decision inspector"
-                >
-                  {selectedDecision ? (
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 items-center justify-between gap-3">
-                        <div className="truncate font-data text-sm font-semibold uppercase text-[var(--arena-terminal-accent)]">
-                          {selectedDecision.actionLabel}
-                        </div>
-                        <div className="shrink-0 font-data text-xs text-[#949e9c]">
-                          {selectedDecision.statusLabel}
-                        </div>
-                      </div>
-                      <p className="mt-0.5 line-clamp-1 text-sm leading-5 text-[#d2dad7]">
-                        {selectedDecision.reason}
-                      </p>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-[#949e9c]">No decisions captured yet.</p>
-                  )}
-                </aside>
-              </div>
-            </div>
-          )}
-
-          {canUseCopilot && (
-            <div className="hidden h-[260px] shrink-0 overflow-hidden min-[1600px]:flex">
-              <PerformanceCopilotPanel
-                botId={bot.id}
-                botName={bot.name}
-                operatorApiUrl={bot.operatorApiUrl}
-                operatorKind={bot.operatorKind}
-                token={operatorAuth.token as string}
-              />
-            </div>
-          )}
-
-        </aside>
-        )}
       </section>
     </div>
   );
