@@ -29,6 +29,7 @@ jobs:
       arena: ${{ steps.decide.outputs.arena }}
       contracts: ${{ steps.decide.outputs.contracts }}
       rust: ${{ steps.decide.outputs.rust }}
+      evals: ${{ steps.decide.outputs.evals }}
       full: ${{ steps.decide.outputs.full }}
     steps:
       - uses: actions/checkout@v6
@@ -73,6 +74,7 @@ jobs:
           arena=false
           contracts=false
           rust=false
+          evals=false
           ci=false
 
           while IFS= read -r file; do
@@ -93,6 +95,11 @@ jobs:
                 ;;
             esac
             case "$file" in
+              evals/*|package.json|package-lock.json|tsconfig.json|tsconfig.*.json)
+                evals=true
+                ;;
+            esac
+            case "$file" in
               .github/workflows/ci.yml)
                 ci=true
                 ;;
@@ -106,12 +113,14 @@ jobs:
             arena=true
             contracts=true
             rust=true
+            evals=true
           fi
 
           echo "full=$full" >> "$GITHUB_OUTPUT"
           echo "arena=$arena" >> "$GITHUB_OUTPUT"
           echo "contracts=$contracts" >> "$GITHUB_OUTPUT"
           echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "evals=$evals" >> "$GITHUB_OUTPUT"
 
   arena:
     name: Arena UI
@@ -324,9 +333,29 @@ jobs:
             --ignore RUSTSEC-2026-0118 \
             --ignore RUSTSEC-2026-0119
 
+  # ── Evals (TypeScript) ────────────────────────────────────────────────────
+  evals:
+    name: Evals typecheck
+    needs: changes
+    if: needs.changes.outputs.evals == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck evals
+        run: npx tsc -p evals/tsconfig.json --noEmit
+
   ci-gate:
     name: CI Gate
-    needs: [changes, arena, forge, rust, clippy, fmt, audit]
+    needs: [changes, arena, forge, rust, clippy, fmt, audit, evals]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -336,12 +365,14 @@ jobs:
           ARENA_NEEDED: ${{ needs.changes.outputs.arena }}
           CONTRACTS_NEEDED: ${{ needs.changes.outputs.contracts }}
           RUST_NEEDED: ${{ needs.changes.outputs.rust }}
+          EVALS_NEEDED: ${{ needs.changes.outputs.evals }}
           ARENA_RESULT: ${{ needs.arena.result }}
           FORGE_RESULT: ${{ needs.forge.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           CLIPPY_RESULT: ${{ needs.clippy.result }}
           FMT_RESULT: ${{ needs.fmt.result }}
           AUDIT_RESULT: ${{ needs.audit.result }}
+          EVALS_RESULT: ${{ needs.evals.result }}
         run: |
           set -euo pipefail
           failed=false
@@ -367,8 +398,9 @@ jobs:
           require_success "Clippy" "$RUST_NEEDED" "$CLIPPY_RESULT"
           require_success "Rustfmt" "$RUST_NEEDED" "$FMT_RESULT"
           require_success "Security audit" "$RUST_NEEDED" "$AUDIT_RESULT"
+          require_success "Evals typecheck" "$EVALS_NEEDED" "$EVALS_RESULT"
 
-          if [ "$ARENA_NEEDED" != "true" ] && [ "$CONTRACTS_NEEDED" != "true" ] && [ "$RUST_NEEDED" != "true" ]; then
+          if [ "$ARENA_NEEDED" != "true" ] && [ "$CONTRACTS_NEEDED" != "true" ] && [ "$RUST_NEEDED" != "true" ] && [ "$EVALS_NEEDED" != "true" ]; then
             echo "No code lanes changed; CI gate is green."
           fi
 
