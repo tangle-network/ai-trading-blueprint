@@ -100,6 +100,19 @@ export interface LlmCallResult {
   ok: boolean
 }
 
+/** Token + cost usage accumulated from the backend's `llm_call` stream
+ *  events. Zeros when the provider reported no usage (which downstream
+ *  backend-integrity guards correctly read as a stub fingerprint). */
+export interface LlmUsage {
+  input: number
+  output: number
+  costUsd: number
+}
+
+export interface LlmCallUsageResult extends LlmCallResult {
+  usage: LlmUsage
+}
+
 /** Resolve a logical model id to its provider routing. Throws on unknown
  *  model id so call sites can't silently ship a typo to prod. */
 export type { ModelRouting }
@@ -157,6 +170,54 @@ export async function llmCall(opts: LlmCallOptions): Promise<LlmCallResult> {
   }
   const output = parts.join('').trim()
   return { output, exitCode: 0, stderr: '', ok: output.length > 0 }
+}
+
+/** Core LLM call that ALSO reports provider-reported token + cost usage,
+ *  accumulated from the backend's `llm_call` stream events. Use this when a
+ *  caller must thread real usage into a `RunRecord` / `ctx.cost.observeTokens`
+ *  (the backend-integrity guard keys on nonzero token usage). Same routing +
+ *  timeout handling as `llmCall`. */
+export async function llmCallWithUsage(opts: LlmCallOptions): Promise<LlmCallUsageResult> {
+  const cfg = resolveModel(opts.model ?? DEFAULT_MODEL)
+  const backend = createOpenAICompatibleBackend({
+    apiKey: cfg.apiKey(),
+    baseUrl: cfg.baseUrl,
+    model: cfg.modelId,
+  })
+  const task: AgentTaskSpec = {
+    id: `eval-llm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    intent: 'one-shot eval LLM call with usage accounting',
+    domain: 'eval',
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 180_000)
+  const parts: string[] = []
+  const usage: LlmUsage = { input: 0, output: 0, costUsd: 0 }
+  let backendError: string | null = null
+  try {
+    for await (const ev of runAgentTaskStream({
+      task,
+      backend,
+      input: { message: opts.prompt },
+      signal: controller.signal,
+    })) {
+      if (ev.type === 'text_delta') parts.push(ev.text)
+      else if (ev.type === 'llm_call') {
+        usage.input += ev.tokensIn ?? 0
+        usage.output += ev.tokensOut ?? 0
+        usage.costUsd += ev.costUsd ?? 0
+      } else if (ev.type === 'backend_error') backendError = ev.message
+    }
+  } catch (e) {
+    return { output: parts.join('').trim(), exitCode: 1, stderr: (e as Error).message, ok: false, usage }
+  } finally {
+    clearTimeout(timer)
+  }
+  if (backendError) {
+    return { output: parts.join('').trim(), exitCode: 1, stderr: backendError, ok: false, usage }
+  }
+  const output = parts.join('').trim()
+  return { output, exitCode: 0, stderr: '', ok: output.length > 0, usage }
 }
 
 /** Extract the first JSON object from an LLM response. Tolerates code
