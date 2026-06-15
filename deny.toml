@@ -41,6 +41,15 @@ yanked = "deny"
 # first. Owner: trading-runtime maintainers.
 ignore = [
     # ── Vulnerabilities (RUSTSEC vuln class) ────────────────────────────────
+    # rsa "Marvin Attack" timing sidechannel. Pulled transitively via
+    # sandbox-runtime's TEE attestation verification (tee-verify/tee-all
+    # features), where rsa is used ONLY as rsa::pss::VerifyingKey to verify
+    # SEV-SNP / TDX attestation signatures against pinned keys — no private
+    # key, no decryption. The attack targets RSA private-key decryption timing
+    # oracles, which this code never performs, and no fixed rsa release exists
+    # upstream. Mirrors the ignore in ai-agent-sandbox-blueprint.
+    { id = "RUSTSEC-2023-0071", reason = "rsa verify-only in sandbox-runtime TEE attestation; Marvin targets private-key decryption — not applicable; no upstream fix; tracked in dep-policy.md" },
+
     # ed25519-dalek 1.x oracle attack — we depend on 2.x in workspace,
     # but `solana-zk-sdk` and a few Solana toolchain crates still pin
     # 1.x transitively. Mitigation: the affected `keypair_from_bytes`
