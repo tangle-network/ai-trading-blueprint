@@ -110,6 +110,26 @@ test('retries a transient network throw then succeeds', async () => {
   assert.equal(d.action, 'buy');
 });
 
+test('does NOT retry our own abort-timeout (would blow the tick budget)', async () => {
+  let calls = 0;
+  // A request that hangs until the AbortController fires, then rejects — exactly
+  // how a slow endpoint manifests. Distinct from a fast connection error: a
+  // timeout already consumed a full window, so retrying it would span the tick.
+  const hangUntilAbort = (_url, opts) =>
+    new Promise((_resolve, reject) => {
+      calls += 1;
+      opts.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
+  const d = await agenticDecision(SPEC, {
+    env: ENV,
+    timeoutMs: 20,
+    backoffMs: [1, 1, 1, 1],
+    fetch: hangUntilAbort,
+  });
+  assert.equal(d, null);
+  assert.equal(calls, 1, 'a timeout is not retried');
+});
+
 test('disabled when TRADING_AGENTIC_DECISIONS=0', async () => {
   assert.equal(agenticDecisionsEnabled({ ZAI_API_KEY: 'k', TRADING_AGENTIC_DECISIONS: '0' }), false);
   const d = await agenticDecision(SPEC, {

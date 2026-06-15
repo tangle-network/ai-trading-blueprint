@@ -36,7 +36,6 @@ import {
   FileSystemTraceStore,
   TraceEmitter,
   agentProfileHash,
-  assertRealBackend,
   recordRunsToScorecard,
   summarizeBackendIntegrity,
   validateRunRecord,
@@ -486,6 +485,7 @@ async function runOperatorMatrix(
     maxConcurrency: options.maxConcurrency ?? 1,
     ...(options.costCeiling !== undefined ? { costCeiling: options.costCeiling } : {}),
     integrity: options.integrity ?? 'assert',
+    allowMixed: true,
     personaOf: (s) => s.persona.id,
     dispatch: async (profile, scenario, ctx) => {
       const groundTruth = groundTruthByMarket.get(scenario.market.id)
@@ -561,21 +561,11 @@ async function runOperatorMatrix(
     byPersona[persona] = { meanScore: rollup.meanComposite, n: rollup.n }
   }
 
-  // 'assert' (default) hard-fails on a stub/unconfigured backend; 'warn' logs the
-  // same diagnosis but returns the report so the caller still gets a result;
-  // 'off' is silent. Only 'assert' may throw.
-  const integrityMode = options.integrity ?? 'assert'
-  let integrity: BackendIntegrityReport
-  if (integrityMode === 'assert') {
-    integrity = assertRealBackend(result.records, { allowMixed: true })
-  } else {
-    integrity = summarizeBackendIntegrity(result.records)
-    if (integrityMode === 'warn' && integrity.verdict !== 'real') {
-      console.warn(
-        `[operator-matrix] backend integrity: ${integrity.verdict} — ${integrity.diagnosis}`,
-      )
-    }
-  }
+  // runProfileMatrix already enforces the integrity posture passed above
+  // ('assert' throws on a stub backend, 'warn' logs, 'off' skips) and returns the
+  // whole-matrix report. Reuse it rather than re-running the guard, which would
+  // double-warn in 'warn' mode and be dead code in 'assert' mode.
+  const integrity = result.integrity
 
   const best =
     byProfile.length === 0

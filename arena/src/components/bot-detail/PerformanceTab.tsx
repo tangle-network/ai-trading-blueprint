@@ -645,7 +645,6 @@ function BenchmarkStrip({ summary }: { summary: BotPerformanceSummary }) {
 interface PerformanceTabProps {
   bot: Bot;
   isLive: boolean;
-  canCommand?: boolean;
 }
 
 export function PerformanceTab({ bot, isLive }: PerformanceTabProps) {
