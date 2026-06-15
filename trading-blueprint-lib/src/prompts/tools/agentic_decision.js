@@ -150,10 +150,7 @@ async function postChatCompletion(opts) {
         signal: controller.signal,
       });
     } catch {
-      // Connection reset / DNS / TLS / aborted-timeout reaching the provider.
-      // This was the dominant live failure ("error sending request for url") for
-      // bots that call the model every tick — and it is transient, so it MUST be
-      // retried like a 429, not fail-closed to a missed decision.
+      // Connection reset / DNS / TLS error, OR our own abort-timeout firing.
       threw = true;
     }
     clearTimeout(timer);
@@ -164,8 +161,14 @@ async function postChatCompletion(opts) {
         return null;
       }
     }
+    // A fast-failing connection error ("error sending request for url" — the
+    // dominant live failure for bots that call the model every tick) is transient
+    // and MUST be retried like a 429. But our OWN abort-timeout already consumed a
+    // full timeoutMs window, so retrying it `retries` times could span most of the
+    // ~5min tick interval — treat a timeout as non-retryable and fail closed.
+    const timedOut = threw && controller.signal.aborted;
     const status = threw ? 0 : (response && Number(response.status));
-    const retryable = threw || status === 429 || (status >= 500 && status < 600);
+    const retryable = (threw && !timedOut) || status === 429 || (status >= 500 && status < 600);
     if (attempt < retries && retryable) {
       // Escalating backoff spanning a sustained-throttle window (the shared key
       // can stay 429 across a full per-minute bucket under fleet concurrency),

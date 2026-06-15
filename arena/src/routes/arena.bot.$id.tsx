@@ -463,7 +463,7 @@ export default function BotDetailPage() {
   const renderWorkspace = () => {
     switch (activeSection) {
       case 'performance':
-        return <PerformanceTab bot={bot} isLive={botIsLive} canCommand={canCommandBot} />;
+        return <PerformanceTab bot={bot} isLive={botIsLive} />;
       case 'portfolio':
         return (
           <PortfolioWorkspace

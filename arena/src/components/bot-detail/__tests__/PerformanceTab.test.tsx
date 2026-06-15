@@ -119,10 +119,6 @@ const lightweightChartMock = vi.hoisted(() => {
     volumeSeries,
   };
 });
-const operatorAuthMock = vi.hoisted(() => ({
-  isAuthenticated: false,
-  token: null as string | null,
-}));
 const useBotMarketCandlesMock = vi.hoisted(() => vi.fn(() => ({
   data: [] as typeof mockMarketCandles,
 })));
@@ -269,19 +265,6 @@ function makeTrade(overrides: Partial<Trade>): Trade {
   };
 }
 
-vi.mock('~/lib/hooks/useOperatorAuth', () => ({
-  useOperatorAuth: () => ({
-    token: operatorAuthMock.token,
-    isAuthenticated: operatorAuthMock.isAuthenticated,
-    isAuthenticating: false,
-    authenticate: vi.fn(),
-    clearCachedToken: vi.fn(),
-    error: null,
-    getCachedToken: vi.fn(() => operatorAuthMock.token),
-    getToken: vi.fn(async () => operatorAuthMock.token),
-  }),
-}));
-
 vi.mock('~/lib/hooks/useChartTheme', () => ({
   useChartTheme: () => ({
     positive: '#0f0',
@@ -354,8 +337,6 @@ describe('PerformanceTab', () => {
       data: mockMarketCandles,
     }));
     useBotMarketCandlesMock.mockClear();
-    operatorAuthMock.isAuthenticated = false;
-    operatorAuthMock.token = null;
     lightweightChartMock.areaSeries.createPriceLine.mockClear();
     lightweightChartMock.areaSeries.applyOptions.mockClear();
     lightweightChartMock.areaSeries.removePriceLine.mockClear();

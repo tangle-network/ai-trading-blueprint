@@ -23,6 +23,18 @@ if (!operatorUrl) {
 }
 const privateKey = arg('--private-key') ?? process.env.OPERATOR_PRIVATE_KEY
 const token = arg('--token') ?? process.env.OPERATOR_API_TOKEN
+if (!privateKey && !token) {
+  console.error(
+    'operator-matrix-smoke: --private-key or --token (or OPERATOR_PRIVATE_KEY/OPERATOR_API_TOKEN) required to drive the operator',
+  )
+  process.exit(2)
+}
+
+const maxTurns = Number(arg('--max-turns') ?? 4)
+if (!Number.isFinite(maxTurns) || maxTurns < 1) {
+  console.error('operator-matrix-smoke: --max-turns must be a positive number')
+  process.exit(2)
+}
 
 // Exactly one cell: one model x one persona x one market, one rep.
 const summary = await runTradingPersonaEval({
@@ -34,7 +46,7 @@ const summary = await runTradingPersonaEval({
   markets: [defaultScenarios()[0]!],
   intents: [STANDARD_USER_INTENTS[0]!],
   reps: 1,
-  maxTurnsPerShot: Number(arg('--max-turns') ?? 4),
+  maxTurnsPerShot: maxTurns,
   maxConcurrency: 1,
   // A single live cell: warn (don't hard-throw) so the smoke reports the result
   // even if the inner operator LLM spend isn't visible to the integrity guard.

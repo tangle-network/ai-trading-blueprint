@@ -142,11 +142,7 @@ vi.mock('~/lib/stores/provisions', () => ({
 }));
 
 vi.mock('~/components/bot-detail/PerformanceTab', () => ({
-  PerformanceTab: ({ canCommand }: any) => (
-    <div data-testid="workspace-performance">
-      Performance workspace {canCommand ? 'commandable' : 'public'}
-    </div>
-  ),
+  PerformanceTab: () => <div data-testid="workspace-performance">Performance workspace</div>,
 }));
 
 vi.mock('~/components/bot-detail/PortfolioWorkspace', () => ({
@@ -162,9 +158,9 @@ vi.mock('~/components/bot-detail/ChatTab', () => ({
 }));
 
 vi.mock('~/components/bot-detail/OperationsWorkspace', () => ({
-  OperationsWorkspace: ({ initialPanel, onPanelChange }: any) => (
+  OperationsWorkspace: ({ initialPanel, onPanelChange, canCommand }: any) => (
     <div data-testid="workspace-operations">
-      Operations workspace {initialPanel}
+      Operations workspace {initialPanel} {canCommand ? 'commandable' : 'public'}
       <button type="button" onClick={() => onPanelChange?.('validation')}>
         Open Validation
       </button>
@@ -245,9 +241,9 @@ describe('bot workspace routing', () => {
   });
 
   it('uses the operator auth account as the command identity fallback', async () => {
-    renderBotWorkspace(['/arena/bot/bot-1/performance']);
+    renderBotWorkspace(['/arena/bot/bot-1/operations']);
 
-    expect(await findWorkspace('workspace-performance')).toHaveTextContent('commandable');
+    expect(await findWorkspace('workspace-operations')).toHaveTextContent('commandable');
   });
 
   it('preserves browser back navigation between route-native agent sections', async () => {
