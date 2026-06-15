@@ -1068,10 +1068,16 @@ function exactOverlayEquals(left: ExactMarketMarkerOverlay[], right: ExactMarket
   });
 }
 
-function groupExactMarketMarkerOverlay(items: ExactMarketMarkerOverlay[]): ExactMarketMarkerOverlay[] {
-  if (items.length <= DENSE_MARKER_THRESHOLD) return items;
+// Past this many on-screen overlay markers the chart becomes an unreadable wall
+// of dots (a busy MM bot can log thousands of fills). We adaptively coarsen the
+// spatial bucket until the visible marker count drops under this cap.
+const MAX_OVERLAY_MARKERS = 48;
+const OVERLAY_BUCKET_PX_CEILING = 220;
 
-  const bucketSizePx = 18;
+function bucketOverlayByPx(
+  items: ExactMarketMarkerOverlay[],
+  bucketSizePx: number,
+): Map<string, ExactMarketMarkerOverlay[]> {
   const groups = new Map<string, ExactMarketMarkerOverlay[]>();
   for (const item of items) {
     const key = `${item.side}:${Math.round(item.x / bucketSizePx)}:${Math.round(item.y / bucketSizePx)}`;
@@ -1081,6 +1087,20 @@ function groupExactMarketMarkerOverlay(items: ExactMarketMarkerOverlay[]): Exact
     } else {
       groups.set(key, [item]);
     }
+  }
+  return groups;
+}
+
+function groupExactMarketMarkerOverlay(items: ExactMarketMarkerOverlay[]): ExactMarketMarkerOverlay[] {
+  if (items.length <= DENSE_MARKER_THRESHOLD) return items;
+
+  // Start coarse and grow the bucket until the marker count is readable. The
+  // 18px floor preserved single-tick resolution; we now scale up for dense fills.
+  let bucketSizePx = 36;
+  let groups = bucketOverlayByPx(items, bucketSizePx);
+  while (groups.size > MAX_OVERLAY_MARKERS && bucketSizePx < OVERLAY_BUCKET_PX_CEILING) {
+    bucketSizePx = Math.min(bucketSizePx * 1.6, OVERLAY_BUCKET_PX_CEILING);
+    groups = bucketOverlayByPx(items, bucketSizePx);
   }
 
   return Array.from(groups.values())

@@ -130,7 +130,7 @@ function sleep(ms) {
 async function postChatCompletion(opts) {
   const { baseUrl, apiKey, model, messages, fetchImpl, timeoutMs } = opts;
   const maxTokens = Number(opts.maxTokens) || DEFAULT_MAX_TOKENS;
-  const retries = Number.isFinite(Number(opts.retries)) ? Number(opts.retries) : 2;
+  const retries = Number.isFinite(Number(opts.retries)) ? Number(opts.retries) : 4;
   const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
   const body = JSON.stringify({ model, temperature: 0.2, max_tokens: maxTokens, messages });
   // De-synchronize concurrent fleet calls: 0–600ms jitter (skipped for tests via
@@ -141,6 +141,7 @@ async function postChatCompletion(opts) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response;
+    let threw = false;
     try {
       response = await fetchImpl(url, {
         method: 'POST',
@@ -149,24 +150,38 @@ async function postChatCompletion(opts) {
         signal: controller.signal,
       });
     } catch {
-      clearTimeout(timer);
-      return null; // network error / aborted timeout — don't retry (timeout is already generous)
+      // Connection reset / DNS / TLS / aborted-timeout reaching the provider.
+      // This was the dominant live failure ("error sending request for url") for
+      // bots that call the model every tick — and it is transient, so it MUST be
+      // retried like a 429, not fail-closed to a missed decision.
+      threw = true;
     }
     clearTimeout(timer);
-    if (response && typeof response.json === 'function' && response.ok) {
+    if (!threw && response && typeof response.json === 'function' && response.ok) {
       try {
         return await response.json();
       } catch {
         return null;
       }
     }
-    const status = response && Number(response.status);
-    const retryable = status === 429 || (status >= 500 && status < 600);
+    const status = threw ? 0 : (response && Number(response.status));
+    const retryable = threw || status === 429 || (status >= 500 && status < 600);
     if (attempt < retries && retryable) {
-      // 2s, 5s backoff + up to 1s jitter — spans the ~per-minute 429 clear window.
-      const schedule = Array.isArray(opts.backoffMs) ? opts.backoffMs : [2000, 5000];
-      const base = schedule[Math.min(attempt, schedule.length - 1)] ?? 5000;
-      await sleep(base + (opts.noJitter ? 0 : Math.floor((globalThis.Math?.random?.() ?? 0) * 1000)));
+      // Escalating backoff spanning a sustained-throttle window (the shared key
+      // can stay 429 across a full per-minute bucket under fleet concurrency),
+      // plus up to 1s jitter to break lockstep retries.
+      const schedule = Array.isArray(opts.backoffMs) ? opts.backoffMs : [1500, 4000, 9000, 20000];
+      const base = schedule[Math.min(attempt, schedule.length - 1)] ?? 20000;
+      // Honor a server-sent Retry-After (seconds) when present — the provider
+      // knows its own bucket reset better than our fixed schedule. Capped at 30s.
+      let retryAfterMs = 0;
+      const retryAfter = response?.headers?.get?.('retry-after');
+      if (retryAfter != null) {
+        const secs = Number(retryAfter);
+        if (Number.isFinite(secs) && secs > 0) retryAfterMs = Math.min(secs * 1000, 30000);
+      }
+      const wait = Math.max(base, retryAfterMs);
+      await sleep(wait + (opts.noJitter ? 0 : Math.floor((globalThis.Math?.random?.() ?? 0) * 1000)));
       continue;
     }
     return null;

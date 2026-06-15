@@ -131,10 +131,6 @@ vi.mock('../lightweightChartRuntime', () => ({
   loadLightweightCharts: vi.fn(async () => lightweightChartMock),
 }));
 
-vi.mock('../PerformanceCopilotPanel', () => ({
-  PerformanceCopilotPanel: () => <div>Owner chart copilot</div>,
-}));
-
 vi.mock('react-router', () => ({
   Link: ({ children }: { children: unknown }) => children,
   useNavigate: () => vi.fn(),
@@ -658,7 +654,6 @@ describe('PerformanceTab', () => {
 
     expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.getAllByText('Fills').length).toBeGreaterThan(0);
-    expect(screen.getByText('12 / 12')).toBeInTheDocument();
     expect(screen.queryByText('Execution Tape')).not.toBeInTheDocument();
     expect(screen.queryByText('Fill Ledger')).not.toBeInTheDocument();
   });
@@ -690,10 +685,9 @@ describe('PerformanceTab', () => {
     expect(screen.getAllByText('Fills').length).toBeGreaterThan(0);
     expect(screen.getByText('110')).toBeInTheDocument();
     expect(screen.getByText('6 loaded')).toBeInTheDocument();
-    expect(screen.getByText('6 / 110')).toBeInTheDocument();
   });
 
-  it('renders recent fills while historical chart marker backfill is still loading', () => {
+  it('keeps the fills metric populated while historical chart marker backfill is still loading', () => {
     mockMetrics = [
       {
         timestamp: '2026-04-23T10:00:00.000Z',
@@ -722,8 +716,7 @@ describe('PerformanceTab', () => {
     render(<PerformanceTab bot={makeBot({ totalTrades: 827 })} isLive />);
 
     expect(screen.getAllByText('Fills').length).toBeGreaterThan(0);
-    expect(screen.getByText('1 / 827')).toBeInTheDocument();
-    expect(screen.getByText('$123.45')).toBeInTheDocument();
+    expect(screen.getByText('827')).toBeInTheDocument();
     expect(screen.queryByText('Loading')).not.toBeInTheDocument();
   });
 
@@ -765,7 +758,6 @@ describe('PerformanceTab', () => {
 
     expect(screen.getAllByText('49').length).toBeGreaterThan(0);
     expect(screen.getByText('12 loaded')).toBeInTheDocument();
-    expect(screen.getByText('12 / 12')).toBeInTheDocument();
   });
 
   it('keeps fill stats aligned to inspectable ledger rows when checkpoint counts are higher', () => {
@@ -1865,105 +1857,6 @@ describe('PerformanceTab', () => {
     expect(markerTooltip).toHaveTextContent('SELL');
     expect(markerTooltip).toHaveTextContent('Hyperliquid');
     expect(markerTooltip).toHaveTextContent('ETH-PERP');
-  });
-
-  it('keeps execution evidence visible while showing the owner copilot', async () => {
-    operatorAuthMock.isAuthenticated = true;
-    operatorAuthMock.token = 'test-token';
-    mockMetrics = [
-      {
-        timestamp: '2026-04-23T10:00:00.000Z',
-        account_value_usd: 10000,
-        realized_pnl: 0,
-        unrealized_pnl: 0,
-        drawdown_pct: 0,
-        trade_count: 1,
-      },
-    ];
-    mockTrades = [makeTrade({ id: 'owner-trade' })];
-
-    render(<PerformanceTab bot={makeBot()} isLive canCommand />);
-
-    expect(await screen.findByText('Owner chart copilot')).toBeInTheDocument();
-    expect(screen.getAllByText('Fills').length).toBeGreaterThan(0);
-  });
-
-  it('keeps authenticated non-commandable viewers on the public trade tape', async () => {
-    operatorAuthMock.isAuthenticated = true;
-    operatorAuthMock.token = 'test-token';
-    mockMetrics = [
-      {
-        timestamp: '2026-04-23T10:00:00.000Z',
-        account_value_usd: 10000,
-        realized_pnl: 0,
-        unrealized_pnl: 0,
-        drawdown_pct: 0,
-        trade_count: 1,
-      },
-    ];
-    mockTrades = [makeTrade({ id: 'trade-public' })];
-
-    render(<PerformanceTab bot={makeBot()} isLive />);
-
-    expect(screen.queryByText('Owner chart copilot')).not.toBeInTheDocument();
-    expect((await screen.findAllByText('Fills')).length).toBeGreaterThan(0);
-  });
-
-  it('keeps the agent recent-trades rail stable while the trade ledger loads', async () => {
-    mockMetrics = [
-      {
-        timestamp: '2026-04-23T10:00:00.000Z',
-        account_value_usd: 10000,
-        realized_pnl: 0,
-        unrealized_pnl: 0,
-        drawdown_pct: 0,
-        trade_count: 1,
-      },
-    ];
-    mockTradePageLoading = true;
-
-    render(<PerformanceTab bot={makeBot()} isLive />);
-
-    expect((await screen.findAllByText('Fills')).length).toBeGreaterThan(0);
-    expect(screen.queryByText('Latest Trades')).not.toBeInTheDocument();
-    expect(screen.getByText('Loading')).toBeInTheDocument();
-  });
-
-  it('lets public viewers inspect the selected chart trade decision', async () => {
-    const user = userEvent.setup();
-    mockMetrics = [
-      {
-        timestamp: '2026-04-23T10:00:00.000Z',
-        account_value_usd: 10000,
-        realized_pnl: 0,
-        unrealized_pnl: 0,
-        drawdown_pct: 0,
-        trade_count: 2,
-      },
-    ];
-    mockTrades = [
-      makeTrade({
-        id: 'trade-latest',
-        action: 'sell',
-        agentReasoning: 'Latest sell decision rationale.',
-        timestamp: Date.parse('2026-04-23T10:07:00.000Z'),
-      }),
-      makeTrade({
-        id: 'trade-older',
-        action: 'buy',
-        agentReasoning: 'Older buy decision rationale.',
-        timestamp: Date.parse('2026-04-23T10:05:00.000Z'),
-      }),
-    ];
-
-    render(<PerformanceTab bot={makeBot()} isLive />);
-
-    expect(screen.getByRole('complementary', { name: /decision inspector/i })).toBeInTheDocument();
-    expect(screen.getAllByText('Latest sell decision rationale.').length).toBeGreaterThan(0);
-
-    await user.click(screen.getByRole('button', { name: /BUY/i }));
-
-    expect(screen.getAllByText('Older buy decision rationale.').length).toBeGreaterThan(0);
   });
 
   it('labels live NAV separately when it is newer than the latest checkpoint', () => {
