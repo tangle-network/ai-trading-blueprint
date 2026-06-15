@@ -34,6 +34,8 @@ ignore = [
     "RUSTSEC-2026-0118", # transitive (via substrate)
     "RUSTSEC-2026-0119", # hickory-proto O(n²) (via substrate)
     "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained (compile-time, via alloy-sol-macro)
+    # ── sandbox-runtime TEE attestation transitive ──────────────────────────
+    "RUSTSEC-2023-0071", # rsa Marvin timing — verify-only (RSA-PSS attestation sig verification in sandbox-runtime tee-verify); no private-key decryption; no upstream fix
     # ── solana-sdk / ethers-v2 transitive ───────────────────────────────────
     "RUSTSEC-2024-0344", # curve25519-dalek 3.x timing (via solana-keypair)
     "RUSTSEC-2022-0093", # ed25519-dalek 1.x oracle (via solana-keypair)
