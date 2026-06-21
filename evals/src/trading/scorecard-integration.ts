@@ -49,12 +49,24 @@ export function buildTradingScorecardAgentProfile(input: {
    *  LLM-driven. */
   model?: string
 }): AgentProfile {
+  const surfaceId = `harness-v${input.surfaceVersion}/${input.runtimeVersion}/${input.feeScheduleVersion}`
+  const venues = [...input.venues].sort()
+  // `name` is a label and is NOT hash-bearing under agent-interface 0.10.x.
+  // The behaviour identity that used to live in the old `id` / `promptVersion`
+  // / `skills` / `tools` fields now rides the hash-bearing fields `version`,
+  // `prompt`, `resources.skills`, and `tools` so the scorecard keys stably per
+  // surface / fee / venue revision.
   return {
-    id: `ai-trading-blueprint@harness-v${input.surfaceVersion}/${input.runtimeVersion}/${input.feeScheduleVersion}`,
-    model: input.model ?? `trading-runtime@${input.runtimeVersion}`,
-    skills: [...input.venues].sort(),
-    promptVersion: `harness-config/v${input.surfaceVersion}/fees/${input.feeScheduleVersion}`,
-    tools: [...input.venues].sort(),
+    name: `ai-trading-blueprint@${surfaceId}`,
+    version: surfaceId,
+    model: { default: input.model ?? `trading-runtime@${input.runtimeVersion}` },
+    prompt: {
+      instructions: [`harness-config/v${input.surfaceVersion}/fees/${input.feeScheduleVersion}`],
+    },
+    resources: {
+      skills: venues.map((venue) => ({ kind: 'inline', name: venue, content: venue })),
+    },
+    tools: Object.fromEntries(venues.map((venue) => [venue, true])),
     metadata: {
       profileName: 'ai-trading-blueprint',
       surfaceVersion: input.surfaceVersion,

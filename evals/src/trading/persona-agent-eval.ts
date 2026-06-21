@@ -34,6 +34,7 @@ import { dirname } from 'node:path'
 
 import {
   agentProfileHash,
+  agentProfileId,
   recordRunsToScorecard,
   summarizeBackendIntegrity,
   validateRunRecord,
@@ -327,19 +328,23 @@ export function buildOperatorProfiles(
     })
     return {
       ...base,
-      id: `${base.id}::model=${model}`,
+      // `version` is hash-bearing and feeds `agentProfileId`, so the per-model
+      // variant must ride it (the old `id::model=` disambiguator). `name` is a
+      // label only; mirror the variant there for readable artifacts.
+      name: `${base.name}::model=${model}`,
+      version: `${base.version}::model=${model}`,
       // runProfileMatrix requires a snapshot-versioned model id (name@YYYY-MM-DD)
       // for scorecard recordability. The bare LlmModel for provider routing is
       // carried on metadata.model (read by modelOfProfile), so routing is
       // unaffected. The snapshot is a stable eval-pin so the timeline keys consistently.
-      model: `${model}@${OPERATOR_MODEL_SNAPSHOT}`,
+      model: { ...base.model, default: `${model}@${OPERATOR_MODEL_SNAPSHOT}` },
       metadata: { ...base.metadata, model, modelClass: 'llm-trading-operator' },
     }
   })
 }
 
 function modelOfProfile(profile: AgentProfile): LlmModel {
-  const model = (profile.metadata?.model ?? profile.model) as LlmModel
+  const model = (profile.metadata?.model ?? profile.model?.default) as LlmModel
   resolveModel(model)
   return model
 }
@@ -502,7 +507,7 @@ async function runOperatorMatrix(
         perTurnTimeoutMs,
         botKind: 'real',
         dualJudge: false,
-        runDir: `${runDir}/cells/${profile.id.replace(/[^\w.-]/g, '_')}__${scenario.id}`,
+        runDir: `${runDir}/cells/${agentProfileId(profile).replace(/[^\w.-]/g, '_')}__${scenario.id}`,
       })
       const session = firstArtifact(campaign)
       if (!session) {
@@ -534,19 +539,20 @@ async function runOperatorMatrix(
 
   let appendedCells = 0
   for (const profile of profiles) {
-    const profileRecords = recordsByProfileId.get(profile.id) ?? []
+    const profileRecords = recordsByProfileId.get(agentProfileId(profile)) ?? []
     if (profileRecords.length === 0) continue
     appendedCells += recordRunsToScorecard(scorecardPath, profileRecords, { profile, commitSha }).length
   }
 
   const byProfile = profiles.map<ProfileSummary>((profile) => {
-    const summary = result.byProfile[profile.id]
-    const profileRecords = recordsByProfileId.get(profile.id) ?? []
+    const profileId = agentProfileId(profile)
+    const summary = result.byProfile[profileId]
+    const profileRecords = recordsByProfileId.get(profileId) ?? []
     const passing = profileRecords.filter((r) => scoreOf(r) >= 0.7).length
     return {
-      profileId: profile.id,
+      profileId,
       profileHash: summary?.profileHash ?? agentProfileHash(profile),
-      model: String(profile.metadata?.model ?? profile.model),
+      model: String(profile.metadata?.model ?? profile.model?.default),
       records: profileRecords.length,
       passRate: profileRecords.length ? passing / profileRecords.length : 0,
       meanScore: summary?.meanComposite ?? meanScore(profileRecords),
