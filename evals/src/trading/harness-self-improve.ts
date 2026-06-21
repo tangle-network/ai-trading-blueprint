@@ -21,7 +21,7 @@ import { join } from 'node:path'
 import {
   type CampaignResult,
   defaultProductionGate,
-  evolutionaryDriver,
+  evolutionaryProposer,
   type LabeledScenarioStore,
   type MutableSurface,
   type RunImprovementLoopResult,
@@ -164,7 +164,7 @@ export async function runHarnessSelfImprovement(
       }
       return wiring.dispatchWithSurface(surface, scenario)
     },
-    driver: evolutionaryDriver({ mutator: harnessMutator({ baseline }) }),
+    proposer: evolutionaryProposer({ mutator: harnessMutator({ baseline }) }),
     populationSize: opts.populationSize ?? 16,
     maxGenerations: opts.maxGenerations ?? 6,
     promoteTopK: opts.promoteTopK ?? 5,

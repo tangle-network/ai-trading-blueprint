@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { FileSystemTraceStore, TraceEmitter } from '@tangle-network/agent-eval'
+import { FileSystemTraceStore, TraceEmitter } from '@tangle-network/agent-eval/traces'
 import { repoRoot } from '../lib/repo.js'
 import { runLocalProductE2E, type LocalProductE2EContext, type LocalProductE2EReport } from './local-stack-runner.js'
 

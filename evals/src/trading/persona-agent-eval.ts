@@ -33,8 +33,6 @@ import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import {
-  FileSystemTraceStore,
-  TraceEmitter,
   agentProfileHash,
   recordRunsToScorecard,
   summarizeBackendIntegrity,
@@ -43,6 +41,7 @@ import {
   type BackendIntegrityReport,
   type RunRecord,
 } from '@tangle-network/agent-eval'
+import { FileSystemTraceStore, TraceEmitter } from '@tangle-network/agent-eval/traces'
 import {
   runProfileMatrix,
   type JudgeConfig,
