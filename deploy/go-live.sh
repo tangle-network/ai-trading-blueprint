@@ -525,7 +525,7 @@ ExecStart=/root/.cargo/bin/cargo-tangle blueprint run \\
   --network testnet \\
   --settings-file /opt/trading-blueprint/repo/settings.env \\
   --no-vm \\
-  --allow-unchecked-attestations
+ 
 Restart=always
 RestartSec=10
 TimeoutStopSec=30
