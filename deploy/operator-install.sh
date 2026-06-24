@@ -203,8 +203,15 @@ ensure_cast() {
 }
 
 ensure_cargo_tangle() {
-  if command -v cargo-tangle >/dev/null 2>&1; then CARGO_TANGLE="$(command -v cargo-tangle)"; return 0; fi
-  CARGO_TANGLE="$BIN_DIR/cargo-tangle"
+  # Canonical BPM location: the systemd ExecStart references a stable absolute
+  # path (matches deploy/go-live.sh + deploy/trading-blueprint.service). If a
+  # cargo-tangle already exists elsewhere on PATH (e.g. from rustup), expose it
+  # at the canonical path via symlink instead of redownloading.
+  CARGO_TANGLE="/root/.cargo/bin/cargo-tangle"
+  if [[ ! -x "$CARGO_TANGLE" ]] && command -v cargo-tangle >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$CARGO_TANGLE")"
+    ln -sf "$(command -v cargo-tangle)" "$CARGO_TANGLE"
+  fi
   [[ -x "$CARGO_TANGLE" ]] && return 0
   if (( DRY_RUN )); then plan "download cargo-tangle ($CARGO_TANGLE_TAG, $TARGET) from github.com/$SDK_REPO_SLUG releases, sha256-verify, install to $CARGO_TANGLE"; return 0; fi
   log "installing cargo-tangle ($CARGO_TANGLE_TAG)"
@@ -215,6 +222,7 @@ ensure_cargo_tangle() {
   curl -fsSL "$url.sha256" -o "$tmp/$asset.sha256" || die "cargo-tangle checksum missing: $url.sha256"
   (cd "$tmp" && sha256sum -c "$asset.sha256") || die "sha256 verification FAILED for cargo-tangle"
   tar -xJf "$tmp/$asset" -C "$tmp"
+  mkdir -p "$(dirname "$CARGO_TANGLE")"
   install -m 755 "$(find "$tmp" -name cargo-tangle -type f | head -1)" "$CARGO_TANGLE"
   rm -rf "$tmp"
 }
@@ -340,7 +348,7 @@ fi
 # ── Step 7: systemd unit ──────────────────────────────────────────────────────
 log "Step 7: systemd unit ($UNIT_FILE)"
 if (( DRY_RUN )); then
-  plan "write $UNIT_FILE (ExecStart=$BIN_DIR/$BINARY run … --data-dir $DATA_DIR/bpm-data, EnvironmentFile=$SETTINGS), daemon-reload, enable"
+  plan "write $UNIT_FILE (ExecStart=/root/.cargo/bin/cargo-tangle blueprint run … --data-dir $DATA_DIR/bpm-data --settings-file $SETTINGS --no-vm, EnvironmentFile=$SETTINGS), daemon-reload, enable"
 else
   cat > "$UNIT_FILE" <<EOF
 [Unit]
@@ -354,7 +362,12 @@ Type=simple
 User=root
 WorkingDirectory=$DATA_DIR
 EnvironmentFile=$SETTINGS
-ExecStart=$BIN_DIR/$BINARY run -t --pretty --http-rpc-url $RPC_URL --ws-rpc-url $WS_RPC_URL --keystore-uri $KEYSTORE_DIR --data-dir $DATA_DIR/bpm-data --chain testnet --protocol tangle
+Environment=PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=RUST_LOG=info,blueprint_manager=debug,trading_blueprint=debug
+# Canonical Blueprint Manager (cargo-tangle): discovers blueprint $BLUEPRINT_ID
+# from its on-chain sources, fetches + verifies the binary, and spawns it. Flags
+# mirror deploy/go-live.sh + deploy/trading-blueprint.service.
+ExecStart=/root/.cargo/bin/cargo-tangle blueprint run --protocol tangle --network testnet --http-rpc-url $RPC_URL --ws-rpc-url $WS_RPC_URL --keystore-path $KEYSTORE_DIR --data-dir $DATA_DIR/bpm-data --settings-file $SETTINGS --no-vm
 Restart=always
 RestartSec=10
 TimeoutStopSec=60
@@ -480,6 +493,7 @@ if (( DO_REGISTER )); then
     plan "cargo-tangle operator register --amount $STAKE_AMOUNT (skip if already staked)"
     plan "wait for mempool idle, then cargo-tangle blueprint register --blueprint-id $BLUEPRINT_ID (retry/backoff on 'replacement transaction underpriced')"
     plan "verify isOperatorRegistered($BLUEPRINT_ID, $OPERATOR_ADDRESS) == true"
+    plan "ackBlueprintSources($BLUEPRINT_ID, <blueprintSourcesHash>) — operator opt-in to the published binary (skip if already acked / no sources published)"
   else
     ensure_cast; ensure_cargo_tangle
     eth_balance="$(cast balance "$OPERATOR_ADDRESS" --rpc-url "$RPC_URL")"
@@ -538,6 +552,38 @@ if (( DO_REGISTER )); then
         --blueprint-id "$BLUEPRINT_ID" --rpc-endpoint "$OPERATOR_API_ENDPOINT" \
         || die "blueprint register failed after retries — see output above (if it raced, simply re-run with --register once the mempool clears)"
       is_blueprint_registered || die "blueprint registration did not land: isOperatorRegistered($BLUEPRINT_ID, $OPERATOR_ADDRESS)=false"
+    fi
+
+    # ── Operator opt-in to the blueprint's published binary sources ──────────
+    # ackBlueprintSources binds this operator to the exact sourcesHash the BPM
+    # fetches and runs. The BPM refuses to cold-start a binary the operator has
+    # not acked, so an owner repoint of the executable is inert until re-ack.
+    # The digest is read live and must equal _blueprintSourcesHash — a stale or
+    # front-run ack reverts on-chain. Requires operator-registered status (above).
+    #
+    # NOTE: the ack facet (TangleBlueprintsManagementFacet rev with selectors
+    # 17-19) ships in tnt-core HEAD but is not deployed on every chain yet
+    # (e.g. the live Base Sepolia core still reverts these with UnknownSelector).
+    # We therefore skip — never die — when the facet is absent or no sources are
+    # published, so operator install is not blocked by a contract upgrade.
+    zero_hash="0x0000000000000000000000000000000000000000000000000000000000000000"
+    sources_out="$(cast call "$TANGLE_CONTRACT" "blueprintSourcesHash(uint64)(bytes32)" "$BLUEPRINT_ID" --rpc-url "$RPC_URL" 2>&1 || true)"
+    sources_hash="$(awk '/^0x[0-9a-fA-F]{64}$/{print $1}' <<<"$sources_out")"
+    if [[ -z "$sources_hash" && "$sources_out" == *"reverted"* ]]; then
+      warn "ackBlueprintSources is not deployed on $TANGLE_CONTRACT yet (blueprintSourcesHash reverted) — skipping ack until the contract is upgraded. Install continues; the BPM still fetches the published binary."
+    elif [[ -z "$sources_hash" || "${sources_hash,,}" == "${zero_hash,,}" ]]; then
+      warn "blueprint $BLUEPRINT_ID has no published sources (sourcesHash=0) — skipping ack. Run deploy/publish-blueprint-sources.sh first, or the BPM cannot cold-start this blueprint."
+    elif [[ "$(cast call "$TANGLE_CONTRACT" "operatorAckedCurrentSources(uint64,address)(bool)" "$BLUEPRINT_ID" "$OPERATOR_ADDRESS" --rpc-url "$RPC_URL" 2>/dev/null)" == "true" ]]; then
+      log "already acked sources $sources_hash for blueprint $BLUEPRINT_ID — skipping"
+    else
+      wait_mempool_idle
+      log "acking blueprint sources ($sources_hash) for $OPERATOR_ADDRESS"
+      retry_gas_race cast send "$TANGLE_CONTRACT" "ackBlueprintSources(uint64,bytes32)" "$BLUEPRINT_ID" "$sources_hash" \
+        --rpc-url "$RPC_URL" >/dev/null \
+        || die "ackBlueprintSources failed for blueprint $BLUEPRINT_ID (sources=$sources_hash)"
+      [[ "$(cast call "$TANGLE_CONTRACT" "operatorAckedCurrentSources(uint64,address)(bool)" "$BLUEPRINT_ID" "$OPERATOR_ADDRESS" --rpc-url "$RPC_URL" 2>/dev/null)" == "true" ]] \
+        || die "sources ack did not land: operatorAckedCurrentSources($BLUEPRINT_ID, $OPERATOR_ADDRESS)=false"
+      log "acked sources $sources_hash for blueprint $BLUEPRINT_ID"
     fi
     log "registered: isOperatorRegistered($BLUEPRINT_ID, $OPERATOR_ADDRESS)=true"
   fi
