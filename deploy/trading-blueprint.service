@@ -15,7 +15,7 @@ Environment=RUST_LOG=info,blueprint_manager=debug,trading_blueprint=debug
 
 # The BPM watches the chain, discovers blueprints, spawns binaries.
 # --no-vm: run native (not in VM sandbox)
-# --allow-unchecked-attestations: skip GitHub attestation checks (testnet)
+#: skip GitHub attestation checks (testnet)
 # --settings-file: blueprint-specific env vars
 ExecStart=/root/.cargo/bin/cargo-tangle blueprint run \
   --protocol tangle \
@@ -24,7 +24,7 @@ ExecStart=/root/.cargo/bin/cargo-tangle blueprint run \
   --data-dir /mnt/trading-data/bpm-data \
   --settings-file /opt/trading-blueprint/repo/settings.env \
   --no-vm \
-  --allow-unchecked-attestations
+ 
 
 Restart=always
 RestartSec=10
