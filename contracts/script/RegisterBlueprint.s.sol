@@ -198,6 +198,7 @@ contract RegisterBlueprint is Script {
     uint256 constant CHAIN_ID_LOCAL = 31337;
     uint256 constant CHAIN_ID_LOCAL_TESTNET = 31338; // anvil w/ Tangle snapshot
     uint256 constant CHAIN_ID_BASE_SEPOLIA = 84532;
+    uint256 constant CHAIN_ID_TEMPO = 42431; // Tempo testnet (Moderato)
     uint256 constant CHAIN_ID_MAINNET = 1;
 
     // ── Ethereum mainnet token + Chainlink USD feeds ─────────────────
@@ -594,6 +595,9 @@ contract RegisterBlueprint is Script {
             if (h == keccak256("base-sepolia")) {
                 return _sepoliaTokens();
             }
+            if (h == keccak256("tempo")) {
+                return _tempoTokens();
+            }
             if (h == keccak256("mainnet")) {
                 return _mainnetTokens();
             }
@@ -603,13 +607,24 @@ contract RegisterBlueprint is Script {
         uint256 cid = block.chainid;
         if (cid == CHAIN_ID_LOCAL || cid == CHAIN_ID_LOCAL_TESTNET) return _localTokens();
         if (cid == CHAIN_ID_BASE_SEPOLIA) return _sepoliaTokens();
+        if (cid == CHAIN_ID_TEMPO) return _tempoTokens();
         if (cid == CHAIN_ID_MAINNET) return _mainnetTokens();
         revert(
             string.concat(
-                "RegisterBlueprint: unsupported chain. Set TARGET_NETWORK=local|base-sepolia|mainnet. chainid=",
+                "RegisterBlueprint: unsupported chain. Set TARGET_NETWORK=local|base-sepolia|tempo|mainnet. chainid=",
                 vm.toString(cid)
             )
         );
+    }
+
+    /// @dev Tempo testnet (Moderato, chainId 42431) has no canonical WETH/USDC
+    ///      predeploys or Chainlink feeds today, so — like local Anvil — the
+    ///      script mints fresh MockERC20s and wires a mock valuator. Returning
+    ///      the zeroed set makes every downstream helper skip real-token wiring.
+    ///      Distinct from `_isLocalChain()`, which stays false on Tempo so the
+    ///      anvil test-account funding path never fires on a live chain.
+    function _tempoTokens() internal pure returns (TokenSet memory t) {
+        return t;
     }
 
     /// @dev Local Anvil flow uses freshly minted MockERC20s, so this set is
