@@ -22,7 +22,7 @@
  *
  * Multi-round depth in operator-matrix mode is honestly 1 round: the real
  * provision→chat→capture cycle is single-pass and cannot be fed back through
- * `loopDispatch`/`loopUntil` (those host a sandbox `runLoop` child, not an HTTP
+ * `loopDispatch`/`loopUntil` (those host a sandbox `runAgentRounds` child, not an HTTP
  * provision+chat orchestration). The multi-TURN refinement lives INSIDE each cell
  * as the user-sim's `maxTurnsPerShot` turns; `depthRounds` is surfaced so the
  * degeneracy is explicit, never faked.
