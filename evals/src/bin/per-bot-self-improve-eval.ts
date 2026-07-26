@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
  * `npm run eval:per-bot-self-improve` — drive `runPerBotSelfImprovement`
- * for a single bot, time-window split (train+holdout) on its own venue
- * data, optimize the HarnessConfig, gate the winner, optionally write
+ * for a single bot across multiple history lengths, optimize the HarnessConfig,
+ * check the winner on the final horizon, optionally write
  * it back to a local file.
  *
  *   npm run eval:per-bot-self-improve -- --bot hl-hype
- *   npm run eval:per-bot-self-improve -- --bot drift-sol --train-bars 4320 --holdout-bars 720 --generations 4 --population 8
+ *   npm run eval:per-bot-self-improve -- --bot drift-sol --train-bars 4320 --holdout-bars 720 --max-evaluations 96
  *   npm run eval:per-bot-self-improve -- --bot hl-btc --promote-to /home/agent/config/harness.json
  */
 
@@ -40,8 +40,7 @@ const promoteTo = arg('promote-to')
 const baselineFile = arg('baseline-harness-file')
 const trainBars = arg('train-bars') ? Number(arg('train-bars')) : undefined
 const holdoutBars = arg('holdout-bars') ? Number(arg('holdout-bars')) : undefined
-const generations = arg('generations') ? Number(arg('generations')) : undefined
-const populationSize = arg('population') ? Number(arg('population')) : undefined
+const maxEvaluations = arg('max-evaluations') ? Number(arg('max-evaluations')) : undefined
 const seed = arg('seed') ? Number(arg('seed')) : undefined
 
 const currentHarness: HarnessConfig | undefined = baselineFile
@@ -53,16 +52,12 @@ const result = await runPerBotSelfImprovement({
   ...(currentHarness ? { currentHarness } : {}),
   ...(trainBars !== undefined ? { trainCandlesLimit: trainBars } : {}),
   ...(holdoutBars !== undefined ? { holdoutCandlesLimit: holdoutBars } : {}),
-  ...(generations !== undefined ? { maxGenerations: generations } : {}),
-  ...(populationSize !== undefined ? { populationSize } : {}),
+  ...(maxEvaluations !== undefined ? { maxEvaluations } : {}),
   ...(seed !== undefined ? { seed } : {}),
   ...(promoteTo ? { promoteToLocalState: writeHarnessToLocalFile(promoteTo) } : {}),
 })
 
-const gateDecision =
-  typeof result.loop.gateResult === 'object' && result.loop.gateResult && 'decision' in result.loop.gateResult
-    ? (result.loop.gateResult as { decision: string }).decision
-    : 'unknown'
+const gateDecision = result.improvement.gateDecision
 
 console.log(
   JSON.stringify(
@@ -72,9 +67,9 @@ console.log(
       gate_decision: gateDecision,
       promoted: result.promoted,
       winning_harness: result.winningHarness,
-      winner_surface_hash: result.loop.winnerSurfaceHash,
-      baseline_holdout_aggregates: result.loop.baselineOnHoldout.aggregates,
-      winner_holdout_aggregates: result.loop.winnerOnHoldout.aggregates,
+      winner_surface_hash: result.improvement.raw.winnerSurfaceHash,
+      baseline_holdout_aggregates: result.improvement.raw.baselineOnHoldout.aggregates,
+      winner_holdout_aggregates: result.improvement.raw.winnerOnHoldout.aggregates,
       promoted_to_local_state: result.promoted && Boolean(promoteTo) ? promoteTo : null,
     },
     null,

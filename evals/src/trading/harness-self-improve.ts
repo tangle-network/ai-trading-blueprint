@@ -1,8 +1,7 @@
 /**
  * Developer-side HarnessConfig self-improvement loop. Runs the
- * `agent-eval` substrate's `runImprovementLoop` + `evolutionaryDriver`
- * across the canonical multi-bot fleet — TRAIN bots drive the search,
- * HOLDOUT bots gate the winner.
+ * current complete optimization method across the canonical multi-bot fleet.
+ * Train and selection bots drive search; final bots check the winner.
  *
  *   - Surface mutator → `harnessMutator()` (shared with the per-bot loop)
  *   - Cell dispatch  → `dispatchHarnessBacktest()` (Rust CLI; single
@@ -21,18 +20,19 @@ import { join } from 'node:path'
 import {
   type CampaignResult,
   defaultProductionGate,
-  evolutionaryProposer,
   type LabeledScenarioStore,
   type MutableSurface,
-  type RunImprovementLoopResult,
   runCampaign,
-  runImprovementLoop,
   type Scenario,
 } from '@tangle-network/agent-eval/campaign'
+import {
+  selfImprove,
+  type SelfImproveResult,
+} from '@tangle-network/agent-eval/contract'
 import { resolveRepo } from '../lib/repo.js'
 import { dispatchHarnessBacktest, ensureHarnessBacktestBinary } from './harness-dispatch.js'
 import { harnessJudge } from './harness-fitness.js'
-import { harnessMutator } from './harness-mutator.js'
+import { harnessOptimizationMethod } from './harness-mutator.js'
 import {
   BASELINE_HARNESS,
   type BacktestArtifact,
@@ -120,9 +120,7 @@ export interface HarnessSelfImprovementOptions extends HarnessEvalOptions {
   baselineHarness?: HarnessConfig
   /** Bot ids reserved for the gate (held OUT of training). */
   holdoutBotIds: string[]
-  populationSize?: number
-  maxGenerations?: number
-  promoteTopK?: number
+  maxEvaluations?: number
   deltaThreshold?: number
 }
 
@@ -135,14 +133,10 @@ export interface HarnessSelfImprovementOptions extends HarnessEvalOptions {
  */
 export async function runHarnessSelfImprovement(
   opts: HarnessSelfImprovementOptions,
-): Promise<RunImprovementLoopResult<BacktestArtifact, BotScenario>> {
+): Promise<SelfImproveResult<BotScenario, BacktestArtifact>> {
   ensureHarnessBacktestBinary()
   const holdoutSet = new Set(opts.holdoutBotIds)
-  const filteredBotIds = opts.botIds?.filter((id) => !holdoutSet.has(id))
-  const wiring = buildMatrix({
-    ...opts,
-    ...(filteredBotIds !== undefined ? { botIds: filteredBotIds } : {}),
-  })
+  const wiring = buildMatrix(opts)
   const train = wiring.scenarios.filter((s) => !holdoutSet.has(s.id))
   const holdout = wiring.scenarios.filter((s) => holdoutSet.has(s.id))
   if (train.length === 0 || holdout.length === 0) {
@@ -153,27 +147,28 @@ export async function runHarnessSelfImprovement(
 
   const baseline = opts.baselineHarness ?? BASELINE_HARNESS
 
-  return runImprovementLoop<BotScenario, BacktestArtifact>({
-    scenarios: train,
-    holdoutScenarios: holdout,
-    judges: [harnessJudge<BotScenario>()],
+  return selfImprove<BotScenario, BacktestArtifact>({
+    scenarios: wiring.scenarios,
+    budget: {
+      reps: opts.reps ?? 1,
+      holdoutScenarios: holdout,
+    },
+    judge: harnessJudge<BotScenario>(),
     baselineSurface: JSON.stringify(baseline),
-    dispatchWithSurface: (surface: MutableSurface, scenario) => {
+    agent: (surface: MutableSurface, scenario) => {
       if (typeof surface !== 'string') {
         throw new Error('harness self-improvement: surface must be a JSON string')
       }
       return wiring.dispatchWithSurface(surface, scenario)
     },
-    proposer: evolutionaryProposer({ mutator: harnessMutator({ baseline }) }),
-    populationSize: opts.populationSize ?? 16,
-    maxGenerations: opts.maxGenerations ?? 6,
-    promoteTopK: opts.promoteTopK ?? 5,
-    reps: opts.reps ?? 1,
+    method: harnessOptimizationMethod<BotScenario>({
+      maxEvaluations: opts.maxEvaluations ?? 96,
+      ...(opts.seed === undefined ? {} : { seedSalt: opts.seed }),
+    }),
     gate: defaultProductionGate<BacktestArtifact, BotScenario>({
       holdoutScenarios: holdout,
       deltaThreshold: opts.deltaThreshold ?? 0.05,
     }),
-    autoOnPromote: 'none',
     runDir: opts.runDir ?? resolveRepo(`.evolve/eval-runs/harness-self-improve-${Date.now()}`),
     ...(opts.labeledStore ? { labeledStore: opts.labeledStore } : {}),
     captureSource: 'eval-run',

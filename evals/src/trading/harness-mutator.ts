@@ -1,9 +1,7 @@
 /**
  * Deterministic mutator over the `HarnessConfig` genome — the single
  * source of truth for both the developer self-improvement loop and the
- * per-bot runtime loop. Same kinds the Rust impl carried before PR #116
- * deleted that duplication; now lifted into the correct layer (the
- * agent-eval `Mutator` surface that `evolutionaryDriver` consumes).
+ * per-bot runtime loop.
  *
  * Every mutation is local-step (one signal threshold, one EMA period,
  * one stop %, …) — large jumps are rare so the search behaves more
@@ -13,9 +11,14 @@
  * 0.95]`, `max_positions ∈ [1, 10]`.
  */
 
-import type { Mutator } from '@tangle-network/agent-eval/campaign'
+import {
+  externalTextOptimizationMethod,
+  type OptimizationMethod,
+  type Scenario,
+} from '@tangle-network/agent-eval/contract'
 import {
   BASELINE_HARNESS,
+  type BacktestArtifact,
   type EntryCondition,
   type EntryRule,
   type ExitRule,
@@ -179,31 +182,75 @@ export function mutateHarness(parent: HarnessConfig, seed: number): HarnessConfi
   return child
 }
 
-/**
- * The agent-eval `Mutator` over the `HarnessConfig` surface. Surface is
- * serialised as JSON so it round-trips cleanly through the substrate +
- * the Rust cell-level CLI.
- *
- * Same `Mutator` shape `gtm-agent` and `creative-agent` use for their
- * prompt-addendum surfaces — pluggable into `evolutionaryDriver({mutator})`
- * for either the developer or per-bot loops.
- */
-export function harnessMutator(opts: { baseline?: HarnessConfig; seedSalt?: number } = {}): Mutator {
-  const baseline = opts.baseline ?? BASELINE_HARNESS
-  const salt = opts.seedSalt ?? 0
-  let counter = 0
-  return {
-    kind: 'harness-config',
-    async mutate({ currentSurface, populationSize }) {
-      const parent: HarnessConfig =
-        typeof currentSurface === 'string' && currentSurface.trim().length > 0
-          ? (JSON.parse(currentSurface) as HarnessConfig)
-          : baseline
-      return Array.from({ length: populationSize }, (_, i) => {
-        counter += 1
-        const seed = ((Date.now() ^ ((i + counter) * 0x9e3779b1)) ^ salt) >>> 0
-        return JSON.stringify(mutateHarness(parent, seed))
-      })
+export function harnessOptimizationMethod<TScenario extends Scenario>(opts: {
+  maxEvaluations: number
+  seedSalt?: number
+}): OptimizationMethod<TScenario, BacktestArtifact> {
+  return externalTextOptimizationMethod<TScenario, BacktestArtifact>({
+    name: 'deterministic-harness-search',
+    source: {
+      kind: 'package',
+      package: 'ai-trading-blueprint',
+      version: '0.1.0',
+      ...(process.env.GITHUB_SHA ? { revision: process.env.GITHUB_SHA } : {}),
     },
-  }
+    objective: 'Improve a valid HarnessConfig against backtest fitness.',
+    evaluationId: 'trading-harness-backtest',
+    background:
+      'Candidates are JSON HarnessConfig values. Preserve all Rust validation constraints.',
+    maxEvaluations: opts.maxEvaluations,
+    maxOptimizerCostUsd: 0,
+    run: async (context) => {
+      if (typeof context.seedCandidate !== 'string') {
+        throw new Error('deterministic-harness-search requires a JSON text surface')
+      }
+      const examples = [...context.trainSet, ...context.selectionSet]
+      const evaluationsPerCandidate = examples.length
+      if (evaluationsPerCandidate === 0 || context.maxEvaluations < evaluationsPerCandidate * 2) {
+        throw new Error(
+          `deterministic-harness-search needs at least ${evaluationsPerCandidate * 2} evaluations`,
+        )
+      }
+
+      const score = async (candidate: string) => {
+        let trainTotal = 0
+        let selectionTotal = 0
+        for (const example of context.trainSet) {
+          trainTotal += (await context.evaluate({ candidate, exampleId: example.id })).score
+        }
+        for (const example of context.selectionSet) {
+          selectionTotal += (await context.evaluate({ candidate, exampleId: example.id })).score
+        }
+        return {
+          train: trainTotal / context.trainSet.length,
+          selection: selectionTotal / context.selectionSet.length,
+        }
+      }
+
+      let bestCandidate = context.seedCandidate
+      let bestScore = await score(bestCandidate)
+      const iterations = Math.floor(context.maxEvaluations / evaluationsPerCandidate) - 1
+      for (let index = 0; index < iterations; index += 1) {
+        const parent = JSON.parse(bestCandidate) as HarnessConfig
+        const seed =
+          (context.seed + (opts.seedSalt ?? 0) + Math.imul(index + 1, 0x9e3779b1)) >>> 0
+        const candidate = JSON.stringify(mutateHarness(parent, seed))
+        const candidateScore = await score(candidate)
+        if (
+          candidateScore.selection > bestScore.selection ||
+          (candidateScore.selection === bestScore.selection &&
+            candidateScore.train > bestScore.train)
+        ) {
+          bestCandidate = candidate
+          bestScore = candidateScore
+        }
+      }
+
+      return {
+        bestCandidate,
+        resumed: false,
+        costAccounting: { kind: 'no-paid-work' },
+      }
+    },
+  })
 }

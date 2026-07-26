@@ -1,5 +1,5 @@
-//! One-shot HarnessConfig backtest CLI — the cell-level primitive that
-//! agent-eval's `runMultiShotOptimization` Dispatch shells out to.
+//! One-shot HarnessConfig backtest CLI used by the agent-eval optimization
+//! method to score one candidate on one scenario.
 //!
 //! Reads a JSON request from stdin, runs the existing `BacktestEngine` on
 //! candles pulled from the request's native venue (with a disk cache so

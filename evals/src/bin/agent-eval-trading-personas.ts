@@ -20,7 +20,6 @@ const operatorUrl = argValue('--operator-url')
 const models = argValue('--models')
 const reps = argValue('--reps')
 const maxTurns = argValue('--max-turns')
-const costCeiling = argValue('--cost-ceiling')
 if (reportPath) options.reportPath = reportPath
 if (traceDir) options.traceDir = traceDir
 if (runsJsonl) options.runsJsonl = runsJsonl
@@ -29,7 +28,6 @@ if (operatorUrl) options.operatorUrl = operatorUrl
 if (models) options.models = models.split(',').map((m) => m.trim()) as LlmModel[]
 if (reps) options.reps = Number(reps)
 if (maxTurns) options.maxTurnsPerShot = Number(maxTurns)
-if (costCeiling) options.costCeiling = Number(costCeiling)
 if (process.env.TRADING_PERSONA_MATRIX_INTEGRITY === 'warn') options.integrity = 'warn'
 
 const summary = await runTradingPersonaEval(options)

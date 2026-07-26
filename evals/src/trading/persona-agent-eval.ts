@@ -105,7 +105,6 @@ export interface TradingPersonaEvalOptions {
   maxTurnsPerShot?: number
   perTurnTimeoutMs?: number
   maxConcurrency?: number
-  costCeiling?: number
   /** Backend-integrity posture for the matrix. Default 'assert'. */
   integrity?: 'assert' | 'warn' | 'off'
 }
@@ -487,7 +486,6 @@ async function runOperatorMatrix(
     splitTag: 'search',
     ...(options.reps !== undefined ? { reps: options.reps } : {}),
     maxConcurrency: options.maxConcurrency ?? 1,
-    ...(options.costCeiling !== undefined ? { costCeiling: options.costCeiling } : {}),
     integrity: options.integrity ?? 'assert',
     allowMixed: true,
     personaOf: (s) => s.persona.id,
@@ -495,37 +493,48 @@ async function runOperatorMatrix(
       const groundTruth = groundTruthByMarket.get(scenario.market.id)
       if (!groundTruth) throw new Error(`no backtest ground truth for market ${scenario.market.id}`)
       const model = modelOfProfile(profile)
-      const campaign = await runMultishotUserSim({
-        intents: [scenario.intent],
-        personas: [scenario.persona],
-        operatorUrl,
-        token,
-        ...(privateKey ? { privateKey } : {}),
-        agentEnv: agentEnvForModel(model),
-        reps: 1,
-        maxTurnsPerShot,
-        perTurnTimeoutMs,
-        botKind: 'real',
-        dualJudge: false,
-        runDir: `${runDir}/cells/${agentProfileId(profile).replace(/[^\w.-]/g, '_')}__${scenario.id}`,
+      const paid = await ctx.cost.runPaidCall({
+        actor: 'trading-operator-session',
+        model,
+        execute: async () => {
+          const campaign = await runMultishotUserSim({
+            intents: [scenario.intent],
+            personas: [scenario.persona],
+            operatorUrl,
+            token,
+            ...(privateKey ? { privateKey } : {}),
+            agentEnv: agentEnvForModel(model),
+            reps: 1,
+            maxTurnsPerShot,
+            perTurnTimeoutMs,
+            botKind: 'real',
+            dualJudge: false,
+            runDir: `${runDir}/cells/${agentProfileId(profile).replace(/[^\w.-]/g, '_')}__${scenario.id}`,
+          })
+          const session = firstArtifact(campaign)
+          const innerUsage = campaignTokenUsage(campaign)
+          const groundingCall = session
+            ? await metaSpendCall(model, scenario, session)
+            : undefined
+          return { session, innerUsage, groundingCall }
+        },
+        receipt: ({ innerUsage, groundingCall }) => {
+          const inputTokens = innerUsage.input + (groundingCall?.usage.input ?? 0)
+          const outputTokens = innerUsage.output + (groundingCall?.usage.output ?? 0)
+          const costUsd = innerUsage.costUsd + (groundingCall?.usage.costUsd ?? 0)
+          return {
+            model,
+            inputTokens,
+            outputTokens,
+            ...(costUsd > 0 ? { actualCostUsd: costUsd } : {}),
+          }
+        },
       })
-      const session = firstArtifact(campaign)
+      if (!paid.succeeded) throw paid.error
+      const { session } = paid.value
       if (!session) {
         return { session: emptySession(scenario.intent), groundTruth, model, operatorResponded: false }
       }
-      // Integrity fingerprint: the real operator's LLM spend is inside its
-      // sandbox (invisible to the eval), and the inner user-sim talks HTTP — so
-      // the inner cells report zero tokens. ONE metered call with this profile's
-      // model assessing its own real transcript gives the integrity guard an
-      // honest non-stub signal (genuine model work on genuine evidence).
-      const innerUsage = campaignTokenUsage(campaign)
-      const groundingCall = await metaSpendCall(model, scenario, session)
-      ctx.cost.observeTokens({
-        input: innerUsage.input + groundingCall.usage.input,
-        output: innerUsage.output + groundingCall.usage.output,
-      })
-      const cost = innerUsage.costUsd + groundingCall.usage.costUsd
-      if (cost > 0) ctx.cost.observe(cost, `operator+grounding:${model}`)
       return { session, groundTruth, model, operatorResponded: session.turns.length > 0 }
     },
   })

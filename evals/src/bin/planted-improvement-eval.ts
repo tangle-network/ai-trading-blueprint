@@ -9,7 +9,7 @@
  * 385 candidates → 384 blocked / 0 promotions).
  *
  *   npm run eval:planted-improvement
- *   npm run eval:planted-improvement -- --runs 5 --generations 6 --population 16
+ *   npm run eval:planted-improvement -- --runs 5 --max-evaluations 96
  *   npm run eval:planted-improvement -- --min-recovery-rate 0.6
  *
  * Exit codes:
@@ -27,8 +27,7 @@ function arg(name: string): string | undefined {
 }
 
 const runs = arg('runs') ? Number(arg('runs')) : undefined
-const populationSize = arg('population') ? Number(arg('population')) : undefined
-const maxGenerations = arg('generations') ? Number(arg('generations')) : undefined
+const maxEvaluations = arg('max-evaluations') ? Number(arg('max-evaluations')) : undefined
 const deltaThreshold = arg('delta-threshold') ? Number(arg('delta-threshold')) : undefined
 const seed = arg('seed') ? Number(arg('seed')) : undefined
 // Default 0: the hard assertion is promotion_count >= 1; the rate is always
@@ -37,8 +36,7 @@ const minRecoveryRate = arg('min-recovery-rate') ? Number(arg('min-recovery-rate
 
 const report = await runPlantedImprovementRecovery({
   ...(runs !== undefined ? { runs } : {}),
-  ...(populationSize !== undefined ? { populationSize } : {}),
-  ...(maxGenerations !== undefined ? { maxGenerations } : {}),
+  ...(maxEvaluations !== undefined ? { maxEvaluations } : {}),
   ...(deltaThreshold !== undefined ? { deltaThreshold } : {}),
   ...(seed !== undefined ? { seed } : {}),
 })

@@ -10,7 +10,7 @@
  *
  *   floor = −10 when n_trades < 5  (never promote a no-trade variant)
  *
- * The `JudgeConfig` plugs straight into `runCampaign` / `runImprovementLoop`.
+ * The `JudgeConfig` plugs straight into `runCampaign` and `selfImprove`.
  */
 
 import type { JudgeConfig } from '@tangle-network/agent-eval/campaign'

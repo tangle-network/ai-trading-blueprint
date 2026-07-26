@@ -1,7 +1,6 @@
 /**
- * Per-bot runtime self-improvement loop — one running bot, one venue,
- * one symbol. Time-window split on the same bot's candles: train on the
- * older window, gate the winner on the most recent holdout window.
+ * Per-bot runtime self-improvement loop for one running bot, venue, and symbol.
+ * Two history lengths drive search and a shorter final horizon checks the winner.
  *
  * Architecture:
  *
@@ -10,8 +9,8 @@
  *     (HarnessConfig → /strategy/config endpoint, prompt addendum →
  *     /home/agent/config/, knowledge → /home/agent/.agent-knowledge/).
  *
- *   ─ Worktrees are EPHEMERAL and LOCAL. The substrate's
- *     `runImprovementLoop` keeps each candidate as a `MutableSurface`
+ *   ─ Worktrees are EPHEMERAL and LOCAL. `selfImprove` keeps each
+ *     candidate as a `MutableSurface`
  *     value (the HarnessConfig JSON) — no git worktree on disk for the
  *     evolutionary path. When `agenticGenerator` is wired (future:
  *     code-level changes), worktrees materialise under
@@ -32,17 +31,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   defaultProductionGate,
-  evolutionaryProposer,
   type LabeledScenarioStore,
   type MutableSurface,
-  type RunImprovementLoopResult,
-  runImprovementLoop,
   type Scenario,
 } from '@tangle-network/agent-eval/campaign'
+import {
+  selfImprove,
+  type SelfImproveResult,
+} from '@tangle-network/agent-eval/contract'
 import { resolveRepo } from '../lib/repo.js'
 import { dispatchHarnessBacktest, ensureHarnessBacktestBinary } from './harness-dispatch.js'
 import { harnessJudge } from './harness-fitness.js'
-import { harnessMutator } from './harness-mutator.js'
+import { harnessOptimizationMethod } from './harness-mutator.js'
 import {
   BASELINE_HARNESS,
   type BacktestArtifact,
@@ -73,9 +73,7 @@ export interface PerBotImprovementOptions {
    *  running state (e.g. POST /strategy/config). Called only when the
    *  substrate's gate accepts the winner. */
   promoteToLocalState?: (winningHarness: HarnessConfig) => Promise<void>
-  populationSize?: number
-  maxGenerations?: number
-  promoteTopK?: number
+  maxEvaluations?: number
   deltaThreshold?: number
   reps?: number
   seed?: number
@@ -86,7 +84,7 @@ export interface PerBotImprovementOptions {
 
 export interface PerBotImprovementResult {
   bot: BotContext
-  loop: RunImprovementLoopResult<BacktestArtifact, BotWindowScenario>
+  improvement: SelfImproveResult<BotWindowScenario, BacktestArtifact>
   promoted: boolean
   winningHarness: HarnessConfig | null
 }
@@ -108,20 +106,28 @@ export async function runPerBotSelfImprovement(
   mkdirSync(cacheDir, { recursive: true })
   const baseline = opts.currentHarness ?? BASELINE_HARNESS
 
-  // Two scenarios: same bot, different window. The dispatch uses the
-  // scenario's `candlesLimit` to drive the Rust CLI's window length.
-  const trainScenario: BotWindowScenario = {
-    id: `${opts.bot.id}-train`,
-    kind: 'per-bot-train-window',
-    tags: [opts.bot.venue_label, opts.bot.symbol, 'train'],
-    bot: opts.bot,
-    candlesLimit: trainLimit,
-    window: 'train',
-  }
+  const searchScenarios: BotWindowScenario[] = [
+    {
+      id: `${opts.bot.id}-train-long`,
+      kind: 'per-bot-train-window',
+      tags: [opts.bot.venue_label, opts.bot.symbol, 'train-long'],
+      bot: opts.bot,
+      candlesLimit: trainLimit,
+      window: 'train',
+    },
+    {
+      id: `${opts.bot.id}-train-medium`,
+      kind: 'per-bot-train-window',
+      tags: [opts.bot.venue_label, opts.bot.symbol, 'train-medium'],
+      bot: opts.bot,
+      candlesLimit: Math.max(holdoutLimit + 1, Math.floor(trainLimit * 0.67)),
+      window: 'train',
+    },
+  ]
   const holdoutScenario: BotWindowScenario = {
-    id: `${opts.bot.id}-holdout`,
+    id: `${opts.bot.id}-final`,
     kind: 'per-bot-holdout-window',
-    tags: [opts.bot.venue_label, opts.bot.symbol, 'holdout'],
+    tags: [opts.bot.venue_label, opts.bot.symbol, 'final'],
     bot: opts.bot,
     candlesLimit: holdoutLimit,
     window: 'holdout',
@@ -140,49 +146,44 @@ export async function runPerBotSelfImprovement(
     })
   }
 
-  const loop = await runImprovementLoop<BotWindowScenario, BacktestArtifact>({
-    scenarios: [trainScenario],
-    holdoutScenarios: [holdoutScenario],
-    judges: [harnessJudge<BotWindowScenario>()],
+  const improvement = await selfImprove<BotWindowScenario, BacktestArtifact>({
+    scenarios: [...searchScenarios, holdoutScenario],
+    budget: {
+      reps: opts.reps ?? 1,
+      holdoutScenarios: [holdoutScenario],
+    },
+    judge: harnessJudge<BotWindowScenario>(),
     baselineSurface: JSON.stringify(baseline),
-    dispatchWithSurface: (surface: MutableSurface, scenario) => {
+    agent: (surface: MutableSurface, scenario) => {
       if (typeof surface !== 'string') {
         throw new Error('per-bot self-improvement: surface must be a JSON string')
       }
       return dispatchWithSurface(surface, scenario)
     },
-    proposer: evolutionaryProposer({ mutator: harnessMutator({ baseline }) }),
-    populationSize: opts.populationSize ?? 16,
-    maxGenerations: opts.maxGenerations ?? 6,
-    promoteTopK: opts.promoteTopK ?? 5,
-    reps: opts.reps ?? 1,
+    method: harnessOptimizationMethod<BotWindowScenario>({
+      maxEvaluations: opts.maxEvaluations ?? 96,
+      ...(opts.seed === undefined ? {} : { seedSalt: opts.seed }),
+    }),
     gate: defaultProductionGate<BacktestArtifact, BotWindowScenario>({
       holdoutScenarios: [holdoutScenario],
       deltaThreshold: opts.deltaThreshold ?? 0.05,
     }),
-    // PRODUCT INVARIANT: never auto-open a PR from a deployed bot.
-    autoOnPromote: 'none',
     runDir: opts.runDir ?? resolveRepo(`.evolve/eval-runs/per-bot-${opts.bot.id}-${Date.now()}`),
     ...(opts.labeledStore ? { labeledStore: opts.labeledStore } : {}),
     captureSource: 'eval-run',
   })
 
-  // Substrate's gate verdict drives the local-state writeback.
-  const decision =
-    typeof loop.gateResult === 'object' && loop.gateResult && 'decision' in loop.gateResult
-      ? (loop.gateResult as { decision: string }).decision
-      : 'unknown'
-  const promoted = decision === 'accept' || decision === 'promote' || decision === 'ship'
+  const promoted = improvement.gateDecision === 'ship'
   const winningHarness =
-    promoted && typeof loop.winnerSurface === 'string'
-      ? (JSON.parse(loop.winnerSurface) as HarnessConfig)
+    promoted && typeof improvement.winner.surface === 'string'
+      ? (JSON.parse(improvement.winner.surface) as HarnessConfig)
       : null
 
   if (promoted && winningHarness && opts.promoteToLocalState) {
     await opts.promoteToLocalState(winningHarness)
   }
 
-  return { bot: opts.bot, loop, promoted, winningHarness }
+  return { bot: opts.bot, improvement, promoted, winningHarness }
 }
 
 /**

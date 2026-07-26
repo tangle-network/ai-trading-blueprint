@@ -15,7 +15,11 @@
  */
 
 import { writeFileSync } from 'node:fs'
-import { AxAI, type AxAIService } from '@ax-llm/ax'
+import {
+  ai as createAxAI,
+  type AxAIOpenAIModel,
+  type AxAIService,
+} from '@ax-llm/ax'
 import { analyzeTraces, OtlpFileTraceStore } from '@tangle-network/agent-eval/traces'
 import { captureRunToOtlp } from './otlp-capture.js'
 import { resolveModel } from '../sim/llm-call.js'
@@ -29,15 +33,14 @@ const DEFAULT_ANALYST_MODEL = 'glm-5.1'
  *  analyst is worse than no analyst). */
 export function buildAnalystAi(model: string = DEFAULT_ANALYST_MODEL): { ai: AxAIService; modelId: string } {
   const cfg = resolveModel(model)
-  // ax types `config.model` as the OpenAI model enum; our Kimi/GLM endpoints
-  // are OpenAI-compatible and accept arbitrary model ids at runtime, so the
-  // arg is cast through the constructor's param type.
-  const ai = new AxAI({
+  const ai = createAxAI({
     name: 'openai',
     apiKey: cfg.apiKey(),
     apiURL: cfg.baseUrl,
-    config: { model: cfg.modelId },
-  } as unknown as ConstructorParameters<typeof AxAI>[0]) as unknown as AxAIService
+    // Ax accepts custom OpenAI-compatible model IDs at runtime but narrows this
+    // field to its built-in model enum.
+    config: { model: cfg.modelId as AxAIOpenAIModel },
+  })
   return { ai, modelId: cfg.modelId }
 }
 
@@ -82,7 +85,7 @@ export interface RlmAnalysisResult {
  */
 export async function runRlmAnalyst(
   runDir: string,
-  opts: { model?: string; maxTurns?: number; maxDepth?: number; question?: string } = {},
+  opts: { model?: string; maxTurns?: number; maxSubqueries?: number; question?: string } = {},
 ): Promise<RlmAnalysisResult> {
   const capture = captureRunToOtlp(runDir)
   const { ai, modelId } = buildAnalystAi(opts.model)
@@ -111,7 +114,7 @@ export async function runRlmAnalyst(
       // codegen slips (undefined helpers, missing console.log); 32 leaves room
       // to still reach final() with a full classification.
       maxTurns: opts.maxTurns ?? 32,
-      maxDepth: opts.maxDepth ?? 1,
+      maxSubqueries: opts.maxSubqueries ?? 1,
       // (actorDescription omitted — keep the SDK's OTLP-protocol actor; the
       //  trading framing rides in `question`.)
       progressLogPath: `${runDir}/rlm-analysis.progress.jsonl`,
