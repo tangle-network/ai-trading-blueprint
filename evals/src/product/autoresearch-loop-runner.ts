@@ -146,8 +146,6 @@ export async function runAutoresearchLoop(options: AutoresearchLoopOptions = {})
   const trajectoryDir = resolveRepo(options.trajectoryDir ?? '.evolve/agent-eval/feedback/product-autoresearch')
   const runsJsonl = resolveRepo(options.runsJsonl ?? '.evolve/agent-eval/product-autoresearch-runs.jsonl')
   const inputReports = normalizeInputReports(options.input)
-  // (direct imports — agent-eval 0.45)
-
 
   const judged: JudgedScenario[] = []
   const trajectoryStore = FileSystemFeedbackTrajectoryStore
@@ -338,7 +336,7 @@ async function callJudgeWithRetry(
         baseUrl: input.baseUrl,
         apiKey: input.apiKey,
         defaultTimeoutMs: 120_000,
-        maxRetries: 1,
+        maximumAttempts: 1,
       })
       return value
     } catch (error) {

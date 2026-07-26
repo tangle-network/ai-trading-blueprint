@@ -2,7 +2,7 @@
  * Scorecard wiring for trading-blueprint — mirrors
  * `creative-agent/eval/scorecard-integration.ts`.
  *
- * Bridges any benchmark's `RunRecord[]` into the agent-eval 0.34+
+ * Bridges any benchmark's `RunRecord[]` into agent-eval's
  * `(scenarioId × profileHash)` scorecard timeline. `recordRunsToScorecard`
  * folds runs into per-cell lines; `loadScorecard` + `diffScorecard` answer
  * "did this commit regress any persona / bot on the same profile?" — the
@@ -51,11 +51,6 @@ export function buildTradingScorecardAgentProfile(input: {
 }): AgentProfile {
   const surfaceId = `harness-v${input.surfaceVersion}/${input.runtimeVersion}/${input.feeScheduleVersion}`
   const venues = [...input.venues].sort()
-  // `name` is a label and is NOT hash-bearing under agent-interface 0.10.x.
-  // The behaviour identity that used to live in the old `id` / `promptVersion`
-  // / `skills` / `tools` fields now rides the hash-bearing fields `version`,
-  // `prompt`, `resources.skills`, and `tools` so the scorecard keys stably per
-  // surface / fee / venue revision.
   return {
     name: `ai-trading-blueprint@${surfaceId}`,
     version: surfaceId,

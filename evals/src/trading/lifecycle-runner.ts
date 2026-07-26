@@ -581,7 +581,6 @@ function errorLabel(source: LifecycleLabel['source'], kind: string, value: strin
 }
 
 async function maybeEmitFeedbackTrajectories(runs: TradingLifecycleRun[], feedbackJsonlPath: string): Promise<void> {
-  // (direct imports — agent-eval 0.45)
   mkdirSync(dirname(feedbackJsonlPath), { recursive: true })
   for (const run of runs) {
     const input = {

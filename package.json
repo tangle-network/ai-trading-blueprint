@@ -37,8 +37,9 @@
   },
   "dependencies": {
     "@ax-llm/ax": "23.0.5",
-    "@tangle-network/agent-eval": "0.128.2",
-    "@tangle-network/agent-knowledge": "5.0.4",
+    "@tangle-network/agent-eval": "0.129.0",
+    "@tangle-network/agent-interface": "0.34.0",
+    "@tangle-network/agent-knowledge": "6.0.0",
     "@tangle-network/agent-runtime": "0.106.0"
   }
 }
