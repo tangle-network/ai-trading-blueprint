@@ -89,25 +89,6 @@ ignore = [
     # not at runtime.
     { id = "RUSTSEC-2025-0111", reason = "build-time only; not in runtime call graph; tracked in dep-policy.md" },
 
-    # tracing-subscriber ANSI escape in user input — we structure logs
-    # via tracing macros, never pass attacker-controlled data into the
-    # subscriber's display path. Bump pending tracing 0.2 release.
-    { id = "RUSTSEC-2025-0055", reason = "no attacker-controlled data in subscriber path; tracked in dep-policy.md" },
-
-    # ── Unsound (RUSTSEC informational class) ───────────────────────────────
-    # `atty` unaligned read on Windows — Solana telemetry transitive,
-    # not in our call path. Tracking the Solana stack's atty -> is-terminal
-    # migration; will drop when solana-sdk 3.x lands.
-    { id = "RUSTSEC-2021-0145", reason = "transitive via solana-cli telemetry; not on call graph" },
-
-    # `lru` IterMut UB — we use `lru` directly for backtest caches but
-    # never via IterMut; Lru::iter() is not unsafe.
-    { id = "RUSTSEC-2026-0002", reason = "we never use IterMut; only iter() / get_or_insert" },
-
-    # `rand` 0.9 unsoundness when a custom logger calls rand::rng().
-    # We use rand only with explicit ChaCha20Rng / OsRng instances.
-    { id = "RUSTSEC-2026-0097", reason = "we use explicit Rng impls, not rand::rng()" },
-
     # ── Unmaintained (RUSTSEC informational class) ──────────────────────────
     # All of the below are deep transitive deps via Solana / Alloy /
     # Tangle blueprint stacks. Replacing them requires upstream PRs;
@@ -141,7 +122,6 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
     "Zlib",
     "MPL-2.0",
@@ -259,11 +239,5 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # Only Tangle-org git deps. Each MUST be pinned by tag or commit (not
 # branch) — verified by `cargo tree --duplicates` + manual review.
 allow-git = [
-    "https://github.com/tangle-network/blueprint",
-    "https://github.com/tangle-network/blueprint.git",
-    "https://github.com/tangle-network/ai-agent-sandbox-blueprint",
     "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git",
-    # tnt-core protocol bindings — pinned by tag in workspace Cargo.toml.
-    "https://github.com/tangle-network/tnt-core",
-    "https://github.com/tangle-network/tnt-core.git",
 ]
