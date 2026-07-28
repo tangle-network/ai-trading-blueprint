@@ -30,6 +30,8 @@ function positiveInteger(value: number, name: string): number {
 /**
  * Build reproducible search and final ranges over one candle stream.
  * Every range is [start, end), and every search end equals the final start.
+ * The two search ranges intentionally overlap: they test the same candidate
+ * across long and medium history. Only the later final range is held out.
  */
 export function buildPerBotWindowPlan(
   bot: BotContext,

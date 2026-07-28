@@ -194,17 +194,31 @@ pub async fn fetch_from_source_window(
             polymarket::fetch_ending_at(symbol, interval, fetch_limit, window.end_time_secs).await?
         }
         Source::GeckoTerminal => {
-            geckoterminal::fetch_ending_at(symbol, interval, fetch_limit, window.end_time_secs)
-                .await?
+            geckoterminal::fetch_window(
+                symbol,
+                interval,
+                fetch_limit,
+                window.start_time_secs,
+                window.end_time_secs,
+            )
+            .await?
         }
     };
-    Ok(candles_in_window(candles, window, limit))
+    Ok(select_candles(candles, limit, Some(window)))
 }
 
-fn candles_in_window(mut candles: Vec<Candle>, window: CandleWindow, limit: u32) -> Vec<Candle> {
-    candles.retain(|candle| {
-        candle.timestamp >= window.start_time_secs && candle.timestamp < window.end_time_secs
-    });
+/// Normalize venue or cache results and keep the newest `limit` candles.
+/// An optional window is always enforced as a half-open range.
+pub fn select_candles(
+    mut candles: Vec<Candle>,
+    limit: u32,
+    window: Option<CandleWindow>,
+) -> Vec<Candle> {
+    if let Some(window) = window {
+        candles.retain(|candle| {
+            candle.timestamp >= window.start_time_secs && candle.timestamp < window.end_time_secs
+        });
+    }
     candles.sort_by_key(|candle| candle.timestamp);
     candles.dedup_by_key(|candle| candle.timestamp);
     if candles.len() > limit as usize {
@@ -306,7 +320,7 @@ mod tests {
     #[test]
     fn candle_window_is_half_open_and_keeps_latest_limit() {
         let window = CandleWindow::new(100, 400).unwrap();
-        let selected = candles_in_window(
+        let selected = select_candles(
             vec![
                 candle(400),
                 candle(100),
@@ -314,8 +328,8 @@ mod tests {
                 candle(200),
                 candle(99),
             ],
-            window,
             2,
+            Some(window),
         );
         assert_eq!(
             selected.iter().map(|c| c.timestamp).collect::<Vec<_>>(),

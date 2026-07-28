@@ -138,14 +138,23 @@ fn build_otlp_provider(service_name: &str) -> Option<(SdkTracerProvider, String)
 /// Assemble export headers: the Tangle bearer token plus any standard
 /// `OTEL_EXPORTER_OTLP_HEADERS` (`k1=v1,k2=v2`) passthrough.
 fn build_headers(api_key: Option<&str>) -> HashMap<String, String> {
+    let raw_headers = non_empty_env("OTEL_EXPORTER_OTLP_HEADERS");
+    build_headers_from(api_key, raw_headers.as_deref())
+}
+
+fn build_headers_from(api_key: Option<&str>, raw_headers: Option<&str>) -> HashMap<String, String> {
     let mut headers = HashMap::new();
     if let Some(key) = api_key {
         headers.insert("Authorization".to_string(), format!("Bearer {key}"));
     }
-    if let Some(raw) = non_empty_env("OTEL_EXPORTER_OTLP_HEADERS") {
+    if let Some(raw) = raw_headers {
         for pair in raw.split(',') {
             if let Some((k, v)) = pair.split_once('=') {
-                headers.insert(k.trim().to_string(), v.trim().to_string());
+                let key = k.trim();
+                if api_key.is_some() && key.eq_ignore_ascii_case("authorization") {
+                    continue;
+                }
+                headers.insert(key.to_string(), v.trim().to_string());
             }
         }
     }
@@ -194,9 +203,13 @@ mod tests {
 
     #[test]
     fn headers_carry_bearer_and_passthrough() {
-        let h = build_headers(Some("sk-tan-abc"));
+        let h = build_headers_from(
+            Some("sk-tan-abc"),
+            Some("Authorization=Bearer ambient,x-tenant=trading"),
+        );
         assert_eq!(h.get("Authorization").unwrap(), "Bearer sk-tan-abc");
+        assert_eq!(h.get("x-tenant").unwrap(), "trading");
         // no key → no Authorization header (e.g. local unauthenticated collector)
-        assert!(!build_headers(None).contains_key("Authorization"));
+        assert!(!build_headers_from(None, None).contains_key("Authorization"));
     }
 }

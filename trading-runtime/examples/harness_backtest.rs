@@ -14,7 +14,9 @@
 //!     "symbol": "BTC" | "base:ETH" | …,
 //!     "fee_protocol": "hyperliquid_perp" | "binance" | …,
 //!     "candles_limit": 4320,
-//!     "candles_cache_dir": "/tmp/agent-eval-candles"
+//!     "candles_cache_dir": "/tmp/agent-eval-candles",
+//!     "candles_start_time_secs": 1764547200,
+//!     "candles_end_time_secs": 1767225600
 //!   }
 //!
 //! Response shape (JSON on stdout, single line):
@@ -42,7 +44,7 @@ use trading_runtime::analytics::bootstrap;
 use trading_runtime::backtest::{
     BacktestConfig, BacktestEngine, BacktestResult, Candle, HarnessConfig, Interval, SlippageModel,
 };
-use trading_runtime::candle_sources::{self, CandleWindow, Source};
+use trading_runtime::candle_sources::{self, CandleWindow, Source, select_candles};
 use trading_runtime::protocol_fees;
 
 #[derive(Debug, Deserialize)]
@@ -257,8 +259,8 @@ async fn load_or_fetch_candles(
         && let Ok(raw) = fs::read_to_string(path)
         && let Ok(c) = serde_json::from_str::<Vec<Candle>>(&raw)
     {
-        let selected = select_cached_candles(c, limit, window);
-        if selected.len() as u32 >= limit {
+        let selected = select_candles(c, limit, window);
+        if cache_entry_is_usable(&selected, limit, window) {
             return Ok(selected);
         }
     }
@@ -298,22 +300,8 @@ fn requested_candle_window(
     }
 }
 
-fn select_cached_candles(
-    mut candles: Vec<Candle>,
-    limit: u32,
-    window: Option<CandleWindow>,
-) -> Vec<Candle> {
-    if let Some(window) = window {
-        candles.retain(|candle| {
-            candle.timestamp >= window.start_time_secs && candle.timestamp < window.end_time_secs
-        });
-    }
-    candles.sort_by_key(|candle| candle.timestamp);
-    candles.dedup_by_key(|candle| candle.timestamp);
-    if candles.len() > limit as usize {
-        candles.drain(..candles.len() - limit as usize);
-    }
-    candles
+fn cache_entry_is_usable(candles: &[Candle], limit: u32, window: Option<CandleWindow>) -> bool {
+    !candles.is_empty() && (window.is_some() || candles.len() >= limit as usize)
 }
 
 fn cache_file_path(
@@ -365,5 +353,25 @@ mod tests {
             cache_file_path("/tmp", "hyperliquid", "BTC", 24, first),
             cache_file_path("/tmp", "hyperliquid", "BTC", 24, None)
         );
+    }
+
+    #[test]
+    fn exact_window_cache_accepts_a_valid_range_shorter_than_limit() {
+        let window = Some(CandleWindow::new(100, 200).unwrap());
+        assert!(cache_entry_is_usable(&[candle(100)], 24, window));
+        assert!(!cache_entry_is_usable(&[candle(100)], 24, None));
+        assert!(!cache_entry_is_usable(&[], 24, window));
+    }
+
+    fn candle(timestamp: i64) -> Candle {
+        Candle {
+            timestamp,
+            token: "TEST".into(),
+            open: Decimal::ONE,
+            high: Decimal::ONE,
+            low: Decimal::ONE,
+            close: Decimal::ONE,
+            volume: Decimal::ONE,
+        }
     }
 }

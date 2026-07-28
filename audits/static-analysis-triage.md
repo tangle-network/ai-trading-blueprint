@@ -49,6 +49,7 @@ runtime maintainers.
 | unsound     | RUSTSEC-2021-0145  | atty 0.2.14              | unaligned read on Windows                    | SUPP    | Solana telemetry; Linux-only deployment. |
 | unsound     | RUSTSEC-2026-0002  | lru 0.12.5               | IterMut UB                                    | SUPP    | We use `LruCache::get_or_insert` / `iter()`; never `iter_mut()`. |
 | unsound     | RUSTSEC-2026-0097  | rand 0.7.3               | unsound when custom logger calls rand::rng()| SUPP    | Direct `rand` usage threads explicit `ChaCha20Rng` / `OsRng`; never the global. |
+| unsound     | RUSTSEC-2026-0186  | memmap2 0.5.10            | unchecked range pointer offset               | SUPP    | Solana 2.x pins this version, but `solana-genesis-config` only calls `Mmap::map`; none of the affected range methods are reachable. The fixed version requires Solana 3.x. |
 | unmaintained| RUSTSEC-2021-0141  | dotenv 0.15.0            | unmaintained                                 | SUPP    | Dev-deps + tests fixture loading. |
 | unmaintained| RUSTSEC-2024-0375  | atty 0.2.14              | unmaintained                                 | SUPP    | See 0145 above. |
 | unmaintained| RUSTSEC-2024-0384  | instant 0.1.13           | unmaintained                                 | SUPP    | wasm-bindgen tree (substrate); not exercised at runtime. |

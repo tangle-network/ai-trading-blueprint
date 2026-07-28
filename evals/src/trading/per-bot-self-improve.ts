@@ -9,16 +9,12 @@
  *     (HarnessConfig → /strategy/config endpoint, prompt addendum →
  *     /home/agent/config/, knowledge → /home/agent/.agent-knowledge/).
  *
- *   ─ Worktrees are EPHEMERAL and LOCAL. `selfImprove` keeps each
- *     candidate as a `MutableSurface`
- *     value (the HarnessConfig JSON) — no git worktree on disk for the
- *     evolutionary path. When `agenticGenerator` is wired (future:
- *     code-level changes), worktrees materialise under
- *     `.evolve/candidates/<id>/` and are deleted at finalize/discard.
+ *   ─ Search candidates are HarnessConfig JSON values. This path does not
+ *     create git worktrees because it changes data, not repository code.
  *
  *   ─ Same primitives as `harness-self-improve.ts` (developer-side):
- *     `evolutionaryDriver({mutator: harnessMutator()})`, the shared
- *     `harnessJudge`, the shared `dispatchHarnessBacktest` Rust CLI.
+ *     `harnessOptimizationMethod`, the shared `harnessJudge`, and the shared
+ *     `dispatchHarnessBacktest` Rust CLI.
  *     The ONLY difference is the scenario set + the promotion action.
  *
  * Called by the in-sandbox `self_improvement_loop.ts` tool over HTTP
@@ -76,7 +72,7 @@ export interface PerBotImprovementOptions {
   currentHarness?: HarnessConfig
   /** Final promote step: caller writes the winning surface into the bot's
    *  running state (e.g. POST /strategy/config). Called only when the
-   *  substrate's gate accepts the winner. */
+   *  production check accepts the winner. */
   promoteToLocalState?: (winningHarness: HarnessConfig) => Promise<void>
   maxEvaluations?: number
   deltaThreshold?: number
@@ -98,8 +94,8 @@ export interface PerBotImprovementResult {
  * Run the self-improvement loop for a single bot in its production
  * runtime context. On a passing gate verdict, the optional
  * `promoteToLocalState` callback fires with the winning HarnessConfig.
- * The substrate's `autoOnPromote: 'none'` ensures no PR is ever opened
- * from this path.
+ * This function never enables automatic PR promotion, so accepted changes
+ * remain local to the bot.
  */
 export async function runPerBotSelfImprovement(
   opts: PerBotImprovementOptions,
@@ -135,7 +131,7 @@ export async function runPerBotSelfImprovement(
 
   const improvement = await selfImprove<BotWindowScenario, BacktestArtifact>({
     model: executionIdentity,
-    scenarios: [...searchScenarios, holdoutScenario],
+    scenarios: searchScenarios,
     budget: {
       reps: opts.reps ?? 1,
       holdoutScenarios: [holdoutScenario],

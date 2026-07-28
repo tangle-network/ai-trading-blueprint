@@ -89,6 +89,11 @@ ignore = [
     # not at runtime.
     { id = "RUSTSEC-2025-0111", reason = "build-time only; not in runtime call graph; tracked in dep-policy.md" },
 
+    # memmap2 0.5.10 is pinned by solana-genesis-config 2.3.0. The advisory
+    # affects advise_range and flush_range methods; that crate only calls
+    # Mmap::map. A patched memmap2 requires the breaking Solana 3.x migration.
+    { id = "RUSTSEC-2026-0186", reason = "solana-genesis-config only calls Mmap::map, not affected range methods; fixed memmap2 requires Solana 3.x; tracked in static-analysis-triage.md" },
+
     # ── Unmaintained (RUSTSEC informational class) ──────────────────────────
     # All of the below are deep transitive deps via Solana / Alloy /
     # Tangle blueprint stacks. Replacing them requires upstream PRs;
@@ -240,4 +245,5 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # branch) — verified by `cargo tree --duplicates` + manual review.
 allow-git = [
     "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git",
+    "https://github.com/tangle-network/blueprint.git",
 ]

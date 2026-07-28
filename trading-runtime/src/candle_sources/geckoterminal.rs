@@ -110,6 +110,17 @@ pub async fn fetch_pool_ending_at(
     limit: u32,
     end_time_secs: i64,
 ) -> Result<Vec<Candle>, TradingError> {
+    fetch_pool_with_bounds(network, pool_address, interval, limit, None, end_time_secs).await
+}
+
+async fn fetch_pool_with_bounds(
+    network: &str,
+    pool_address: &str,
+    interval: Interval,
+    limit: u32,
+    start_time_secs: Option<i64>,
+    end_time_secs: i64,
+) -> Result<Vec<Candle>, TradingError> {
     let client = reqwest::Client::builder()
         .user_agent("TradingBlueprint/1.0 (+geckoterminal candle backfill)")
         .timeout(std::time::Duration::from_secs(30))
@@ -179,6 +190,9 @@ pub async fn fetch_pool_ending_at(
             });
         }
 
+        if reached_start_bound(start_time_secs, earliest_t) {
+            break;
+        }
         if all.len() as u32 >= limit {
             break;
         }
@@ -193,6 +207,10 @@ pub async fn fetch_pool_ending_at(
         all.drain(..drop);
     }
     Ok(all)
+}
+
+fn reached_start_bound(start_time_secs: Option<i64>, earliest_time_secs: i64) -> bool {
+    start_time_secs.is_some_and(|start| earliest_time_secs <= start)
 }
 
 /// Convenience: take a `"network:SYMBOL"` (e.g. `"base:ETH"`) or
@@ -213,6 +231,38 @@ pub async fn fetch_ending_at(
     limit: u32,
     end_time_secs: i64,
 ) -> Result<Vec<Candle>, TradingError> {
+    fetch_with_bounds(network_and_pool, interval, limit, None, end_time_secs).await
+}
+
+pub async fn fetch_window(
+    network_and_pool: &str,
+    interval: Interval,
+    limit: u32,
+    start_time_secs: i64,
+    end_time_secs: i64,
+) -> Result<Vec<Candle>, TradingError> {
+    if start_time_secs < 0 || end_time_secs <= start_time_secs {
+        return Err(TradingError::MarketDataUnavailable(format!(
+            "invalid GeckoTerminal candle window [{start_time_secs}, {end_time_secs})"
+        )));
+    }
+    fetch_with_bounds(
+        network_and_pool,
+        interval,
+        limit,
+        Some(start_time_secs),
+        end_time_secs,
+    )
+    .await
+}
+
+async fn fetch_with_bounds(
+    network_and_pool: &str,
+    interval: Interval,
+    limit: u32,
+    start_time_secs: Option<i64>,
+    end_time_secs: i64,
+) -> Result<Vec<Candle>, TradingError> {
     let (network, pool_or_symbol) = network_and_pool.split_once(':').ok_or_else(|| {
         TradingError::MarketDataUnavailable(format!(
             "geckoterminal token must be 'network:POOL_OR_SYMBOL', got '{network_and_pool}'"
@@ -229,7 +279,15 @@ pub async fn fetch_ending_at(
             )))?
             .to_string()
         };
-    fetch_pool_ending_at(network, &pool, interval, limit, end_time_secs).await
+    fetch_pool_with_bounds(
+        network,
+        &pool,
+        interval,
+        limit,
+        start_time_secs,
+        end_time_secs,
+    )
+    .await
 }
 
 fn now_secs() -> i64 {
@@ -280,6 +338,26 @@ mod tests {
         // (No network call here — just verify the branch via the string check.)
         let s = "base:0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59";
         assert!(s.starts_with("base:0x"));
+    }
+
+    #[test]
+    fn bounded_backfill_stops_on_the_page_containing_the_start() {
+        assert!(reached_start_bound(Some(100), 100));
+        assert!(reached_start_bound(Some(100), 99));
+        assert!(!reached_start_bound(Some(100), 101));
+        assert!(!reached_start_bound(None, 99));
+    }
+
+    #[tokio::test]
+    async fn candle_window_rejects_invalid_bounds_before_network_io() {
+        let error = fetch_window("base:ETH", Interval::Hour1, 24, 200, 100)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("invalid GeckoTerminal candle window")
+        );
     }
 
     #[tokio::test]

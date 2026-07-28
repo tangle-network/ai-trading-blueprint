@@ -145,9 +145,9 @@ export async function runHarnessSelfImprovement(
   const wiring = buildMatrix(opts)
   const train = wiring.scenarios.filter((s) => !holdoutSet.has(s.id))
   const holdout = wiring.scenarios.filter((s) => holdoutSet.has(s.id))
-  if (train.length === 0 || holdout.length === 0) {
+  if (train.length < 2 || holdout.length === 0) {
     throw new Error(
-      `runHarnessSelfImprovement: need non-empty train (${train.length}) AND holdout (${holdout.length}) bot splits`,
+      `runHarnessSelfImprovement: method search needs at least 2 train bots (${train.length}) and 1 holdout bot (${holdout.length})`,
     )
   }
 
@@ -155,7 +155,7 @@ export async function runHarnessSelfImprovement(
 
   return selfImprove<BotScenario, BacktestArtifact>({
     model: executionIdentity,
-    scenarios: wiring.scenarios,
+    scenarios: train,
     budget: {
       reps: opts.reps ?? 1,
       holdoutScenarios: holdout,

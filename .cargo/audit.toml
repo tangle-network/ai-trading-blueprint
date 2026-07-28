@@ -44,4 +44,5 @@ ignore = [
     "RUSTSEC-2025-0057", # fxhash unmaintained (via ethers-providers v2)
     "RUSTSEC-2025-0119", # number_prefix unmaintained (via indicatif/solana)
     "RUSTSEC-2021-0145", # atty unaligned read (via solana-logger)
+    "RUSTSEC-2026-0186", # memmap2 range methods are unused; solana-genesis-config only calls Mmap::map
 ]

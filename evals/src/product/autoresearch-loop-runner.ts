@@ -336,7 +336,7 @@ async function callJudgeWithRetry(
         baseUrl: input.baseUrl,
         apiKey: input.apiKey,
         defaultTimeoutMs: 120_000,
-        maximumAttempts: 1,
+        maximumAttempts: 2,
       })
       return value
     } catch (error) {

@@ -58,7 +58,7 @@ export function OperatorTerminalView({
   const termRef = useRef<Terminal | null>(null);
   const isConnectedRef = useRef(false);
   const pendingInputRef = useRef('');
-  const inputFlushTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const inputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [terminalSize, setTerminalSize] = useState<{ cols: number; rows: number } | null>(null);
 
   const formatBannerLine = useCallback((value: string) => {

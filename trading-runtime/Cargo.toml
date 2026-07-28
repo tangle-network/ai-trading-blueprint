@@ -45,7 +45,7 @@ bincode = "1"
 # CEX integrations — Binance Spot (HMAC-SHA256) and Coinbase Advanced Trade (ES256 JWT).
 hmac = "0.12"
 sha2 = "0.10"
-jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
+jsonwebtoken = { version = "10.3", default-features = false, features = ["use_pem", "rust_crypto"] }
 
 # Security primitives — sourcing CSPRNG nonces (Coinbase JWT) and zeroizing
 # keypair-adjacent buffers on drop (Solana operator key loader).

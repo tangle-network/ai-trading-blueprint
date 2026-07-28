@@ -204,9 +204,11 @@ export function harnessOptimizationMethod<TScenario extends Scenario>(opts: {
       if (typeof context.seedCandidate !== 'string') {
         throw new Error('deterministic-harness-search requires a JSON text surface')
       }
-      const examples = [...context.trainSet, ...context.selectionSet]
-      const evaluationsPerCandidate = examples.length
-      if (evaluationsPerCandidate === 0 || context.maxEvaluations < evaluationsPerCandidate * 2) {
+      const evaluationsPerCandidate = harnessSearchEvaluationsPerCandidate(
+        context.trainSet.length,
+        context.selectionSet.length,
+      )
+      if (context.maxEvaluations < evaluationsPerCandidate * 2) {
         throw new Error(
           `deterministic-harness-search needs at least ${evaluationsPerCandidate * 2} evaluations`,
         )
@@ -253,4 +255,17 @@ export function harnessOptimizationMethod<TScenario extends Scenario>(opts: {
       }
     },
   })
+}
+
+export function harnessSearchEvaluationsPerCandidate(
+  trainSize: number,
+  selectionSize: number,
+): number {
+  if (!Number.isSafeInteger(trainSize) || trainSize <= 0) {
+    throw new Error('deterministic-harness-search requires a non-empty train set')
+  }
+  if (!Number.isSafeInteger(selectionSize) || selectionSize <= 0) {
+    throw new Error('deterministic-harness-search requires a non-empty selection set')
+  }
+  return trainSize + selectionSize
 }

@@ -101,28 +101,39 @@ function ssrBrowserShim(): Plugin {
 }
 
 function clientChunks(): Plugin {
+  const chunkPackages: Array<[string, string[]]> = [
+    ['react-vendor', ['react', 'react-dom', 'react-router']],
+    ['web3-vendor', ['viem', 'wagmi']],
+    ['connectkit', ['connectkit']],
+    ['query', ['@tanstack/react-query']],
+    ['chart-vendor', ['chart.js', 'react-chartjs-2']],
+    ['motion-vendor', ['framer-motion']],
+  ];
+
   return {
     name: 'client-chunks',
-    config(_, { isSsrBuild }) {
-      if (!isSsrBuild) {
-        return {
-          build: {
-            rollupOptions: {
-              output: {
-                manualChunks: {
-                  'react-vendor': ['react', 'react-dom', 'react-router'],
-                  'viem': ['viem'],
-                  'wagmi': ['wagmi'],
-                  'connectkit': ['connectkit'],
-                  'query': ['@tanstack/react-query'],
-                  'chart-vendor': ['chart.js', 'react-chartjs-2'],
-                  'motion-vendor': ['framer-motion'],
-                },
+    config() {
+      return {
+        build: {
+          rollupOptions: {
+            output: {
+              manualChunks(id) {
+                const normalizedId = id.replaceAll('\\', '/');
+                for (const [chunk, packages] of chunkPackages) {
+                  if (
+                    packages.some((packageName) =>
+                      normalizedId.includes(`/node_modules/${packageName}/`),
+                    )
+                  ) {
+                    return chunk;
+                  }
+                }
+                return undefined;
               },
             },
           },
-        };
-      }
+        },
+      };
     },
   };
 }

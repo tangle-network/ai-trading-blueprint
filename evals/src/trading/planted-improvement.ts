@@ -310,7 +310,9 @@ export async function runPlantedImprovementRecovery(
     })
 
     const decision = result.gateDecision
-    const gateReasons = result.raw.gateResult.reasons
+    const gateReasons = Array.isArray(result.raw.gateResult.reasons)
+      ? result.raw.gateResult.reasons.map(String)
+      : []
     const promoted = decision === 'ship'
     const baselineMean = meanHoldoutComposite(result.raw.baselineOnHoldout)
     const winnerMean = meanHoldoutComposite(result.raw.winnerOnHoldout)

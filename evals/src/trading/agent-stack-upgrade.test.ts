@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { runProfileMatrix } from '@tangle-network/agent-eval/campaign'
+import type { Scenario } from '@tangle-network/agent-eval/campaign'
 import { selfImprove } from '@tangle-network/agent-eval/contract'
 
 import { dollarArg } from '../bin/trading-persona-cli.js'
@@ -14,13 +15,23 @@ import {
   harnessBacktestExecutionIdentity,
   validateCandleTimeWindow,
 } from './harness-dispatch.js'
+import { harnessJudge } from './harness-fitness.js'
+import {
+  harnessOptimizationMethod,
+  harnessSearchEvaluationsPerCandidate,
+} from './harness-mutator.js'
 import { buildPerBotWindowPlan } from './per-bot-windows.js'
 import {
   deterministicExecutionIdentity,
   validateCostLimits,
 } from './persona-eval-contracts.js'
 import { buildTradingScorecardAgentProfile } from './scorecard-integration.js'
-import type { BotContext } from './harness-types.js'
+import {
+  BASELINE_HARNESS,
+  type BacktestArtifact,
+  type BotContext,
+  type HarnessConfig,
+} from './harness-types.js'
 
 const BOT: BotContext = {
   id: 'hl-btc',
@@ -46,33 +57,61 @@ test('backtest identity hashes the exact executable bytes', () => {
   }
 })
 
-test('Agent Eval 0.134.1 accepts deterministic improvement with identity and no paid usage', async () => {
+test('Agent Eval executes a deterministic optimization generation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'self-improve-contract-'))
   try {
-    const finalScenario = { id: 'final', kind: 'test' }
-    const result = await selfImprove({
+    const trainScenario: Scenario = { id: 'train', kind: 'test' }
+    const selectionScenario: Scenario = { id: 'selection', kind: 'test' }
+    const finalScenario: Scenario = { id: 'final', kind: 'test' }
+    const artifact = (score: number): BacktestArtifact => ({
+      sharpe: score,
+      sharpe_ci_lo: score,
+      sharpe_ci_hi: score,
+      sortino: score,
+      calmar: score,
+      max_drawdown_pct: 0,
+      n_trades: 30,
+      win_rate_pct: 100,
+      total_return_pct: score,
+      total_fees_usd: 0,
+      total_slippage_usd: 0,
+      total_gas_usd: 0,
+      candles_processed: 100,
+      oos_sharpe_70_30: score,
+      oos_n_trades: 10,
+      in_sample_sharpe: score,
+      is_oos_gap: 0,
+    })
+    const result = await selfImprove<Scenario, BacktestArtifact>({
       model: `trading-runtime/harness-backtest@sha256:${'a'.repeat(64)}`,
-      agent: async () => ({ score: 1 }),
-      scenarios: [{ id: 'train', kind: 'test' }, finalScenario],
-      judge: {
-        name: 'deterministic-score',
-        dimensions: [{ key: 'score', description: 'deterministic score' }],
-        score: ({ artifact }) => ({
-          dimensions: { score: artifact.score },
-          composite: artifact.score,
-          notes: 'deterministic contract check',
-        }),
+      agent: async (surface) => {
+        assert.equal(typeof surface, 'string')
+        const harness = JSON.parse(surface as string) as HarnessConfig
+        return artifact(harness.version)
       },
-      baselineSurface: '{}',
-      budget: { generations: 0, holdoutScenarios: [finalScenario] },
+      scenarios: [trainScenario, selectionScenario],
+      selectionScenarios: [selectionScenario],
+      judge: harnessJudge<Scenario>(),
+      baselineSurface: JSON.stringify(BASELINE_HARNESS),
+      method: harnessOptimizationMethod<Scenario>({ maxEvaluations: 4, seedSalt: 7 }),
+      budget: { generations: 1, holdoutScenarios: [finalScenario] },
       runDir: dir,
       captureSource: 'eval-run',
       expectUsage: 'off',
     })
-    assert.equal(result.raw.baselineCampaign.cells.length, 1)
+    assert.equal(result.optimization?.name, 'deterministic-harness-search')
+    assert.equal(result.generationsExplored, 1)
+    assert.equal(typeof result.winner.surface, 'string')
+    assert.equal((JSON.parse(result.winner.surface as string) as HarnessConfig).version, 2)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('harness search rejects an empty train or selection set', () => {
+  assert.equal(harnessSearchEvaluationsPerCandidate(2, 1), 3)
+  assert.throws(() => harnessSearchEvaluationsPerCandidate(0, 1), /non-empty train set/)
+  assert.throws(() => harnessSearchEvaluationsPerCandidate(1, 0), /non-empty selection set/)
 })
 
 test('per-bot search ranges are disjoint from the final range', () => {

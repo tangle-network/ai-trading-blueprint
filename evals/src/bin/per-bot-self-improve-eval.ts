@@ -7,10 +7,12 @@
  *
  *   npm run eval:per-bot-self-improve -- --bot hl-hype
  *   npm run eval:per-bot-self-improve -- --bot drift-sol --train-bars 4320 --holdout-bars 720 --max-evaluations 96
+ *   npm run eval:per-bot-self-improve -- --bot hl-btc --window-end-time-sec 1767225600
  *   npm run eval:per-bot-self-improve -- --bot hl-btc --promote-to /home/agent/config/harness.json
  */
 
 import { readFileSync } from 'node:fs'
+import { argValue } from './trading-persona-cli.js'
 import { DEFAULT_BOTS } from '../trading/harness-self-improve.js'
 import {
   runPerBotSelfImprovement,
@@ -19,8 +21,17 @@ import {
 import type { HarnessConfig } from '../trading/harness-types.js'
 
 function arg(name: string): string | undefined {
-  const i = process.argv.indexOf(`--${name}`)
-  return i >= 0 ? process.argv[i + 1] : undefined
+  return argValue(process.argv, `--${name}`)
+}
+
+function safeIntegerArg(name: string, minimum: number): number | undefined {
+  const raw = arg(name)
+  if (raw === undefined) return undefined
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`--${name} must be a safe integer >= ${minimum}, got "${raw}"`)
+  }
+  return value
 }
 
 const botId = arg('bot')
@@ -38,10 +49,11 @@ if (!bot) {
 
 const promoteTo = arg('promote-to')
 const baselineFile = arg('baseline-harness-file')
-const trainBars = arg('train-bars') ? Number(arg('train-bars')) : undefined
-const holdoutBars = arg('holdout-bars') ? Number(arg('holdout-bars')) : undefined
-const maxEvaluations = arg('max-evaluations') ? Number(arg('max-evaluations')) : undefined
-const seed = arg('seed') ? Number(arg('seed')) : undefined
+const trainBars = safeIntegerArg('train-bars', 1)
+const holdoutBars = safeIntegerArg('holdout-bars', 1)
+const maxEvaluations = safeIntegerArg('max-evaluations', 1)
+const windowEndTimeSec = safeIntegerArg('window-end-time-sec', 1)
+const seed = safeIntegerArg('seed', 0)
 
 const currentHarness: HarnessConfig | undefined = baselineFile
   ? (JSON.parse(readFileSync(baselineFile, 'utf8')) as HarnessConfig)
@@ -53,6 +65,7 @@ const result = await runPerBotSelfImprovement({
   ...(trainBars !== undefined ? { trainCandlesLimit: trainBars } : {}),
   ...(holdoutBars !== undefined ? { holdoutCandlesLimit: holdoutBars } : {}),
   ...(maxEvaluations !== undefined ? { maxEvaluations } : {}),
+  ...(windowEndTimeSec !== undefined ? { windowEndTimeSec } : {}),
   ...(seed !== undefined ? { seed } : {}),
   ...(promoteTo ? { promoteToLocalState: writeHarnessToLocalFile(promoteTo) } : {}),
 })
