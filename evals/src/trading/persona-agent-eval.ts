@@ -83,7 +83,7 @@ const SURFACE_VERSION = 1
 const RUNTIME_VERSION = '0.1.0'
 
 /** The PROFILE axis for operator-matrix mode: the operator model variants the
- *  matrix sweeps. Single source of truth = `MODEL_CONFIG` in sim/llm-call.ts. */
+ *  matrix sweeps. Single source of truth = `MODEL_CONFIG` in sim/model-routing.ts. */
 export const OPERATOR_PROFILE_MODELS: readonly LlmModel[] = ['kimi-k2', 'glm-4.7', 'glm-5.1']
 
 export interface TradingPersonaEvalOptions {

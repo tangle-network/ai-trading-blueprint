@@ -26,8 +26,8 @@
  *   - agent-in-loop walk-forward (evals/src/sim/agent-in-loop.ts)
  *
  * If you need an LLM call in this codebase, IMPORT from here. Do not
- * spawn a CLI, do not `fetch` an API directly — every model selection
- * + provider routing lives in this module's `MODEL_CONFIG` map.
+ * spawn a CLI or `fetch` an API directly. Model selection and provider
+ * routing live in `model-routing.ts` and are re-exported here.
  */
 
 import { createOpenAICompatibleBackend, runAgentTaskStream } from '@tangle-network/agent-runtime'
