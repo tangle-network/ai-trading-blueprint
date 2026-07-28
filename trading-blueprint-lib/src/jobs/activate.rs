@@ -33,10 +33,10 @@ pub(crate) const SIDECAR_AGENTS_MD_PATH: &str = "/home/agent/AGENTS.md";
 /// Same charter, claude-code's auto-loaded filename. The claude CLI reads
 /// `CLAUDE.md` (not `AGENTS.md`) from its working directory.
 pub(crate) const SIDECAR_CLAUDE_MD_PATH: &str = "/home/agent/CLAUDE.md";
-const TRADING_AGENT_AGENT_EVAL_VERSION: &str = "0.129.0";
-const TRADING_AGENT_AGENT_INTERFACE_VERSION: &str = "0.34.0";
-const TRADING_AGENT_AGENT_KNOWLEDGE_VERSION: &str = "6.0.0";
-const TRADING_AGENT_AGENT_RUNTIME_VERSION: &str = "0.106.0";
+const TRADING_AGENT_AGENT_EVAL_VERSION: &str = "0.134.1";
+const TRADING_AGENT_AGENT_INTERFACE_VERSION: &str = "0.36.0";
+const TRADING_AGENT_AGENT_KNOWLEDGE_VERSION: &str = "6.1.6";
+const TRADING_AGENT_AGENT_RUNTIME_VERSION: &str = "0.108.0";
 
 /// Operator identity + behavioural charter loaded into every opencode turn via
 /// `AGENTS.md`. The full operating protocol (API base URL, bearer token,

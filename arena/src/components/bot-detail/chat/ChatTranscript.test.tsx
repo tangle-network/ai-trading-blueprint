@@ -140,7 +140,6 @@ describe('ChatTranscript', () => {
     expect(hoisted.chatContainerMock).toHaveBeenCalledTimes(1);
     expect(hoisted.chatContainerMock.mock.calls[0]?.[0]).toMatchObject({
       branding,
-      hideInput: true,
       isStreaming: false,
       messages,
       presentation: 'runs',

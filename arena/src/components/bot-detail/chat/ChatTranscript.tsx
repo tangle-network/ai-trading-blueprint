@@ -173,9 +173,7 @@ export function ChatTranscript({
             partMap={visiblePartMap}
             isStreaming={isStreaming}
             branding={branding}
-            hideInput
             presentation="runs"
-            placeholder={placeholder}
             className={cn(
               'h-full min-h-0',
               isTerminal && 'arena-trace-terminal',
