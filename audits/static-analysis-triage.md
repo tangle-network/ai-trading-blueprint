@@ -1,17 +1,13 @@
-# Static-Analysis Triage — ai-trading-blueprints
+# Static-Analysis Triage: ai-trading-blueprints
 
-**Branch:** `drew/q1-roadmap-compressed`
-**Date:** 2026-05-07
 **Last updated:** 2026-07-28
-**Tools:** cargo-audit 0.22.1, cargo-deny 0.19.4, slither-analyzer 0.11.5,
-mythril 0.24.8 (with solc 0.8.20 via solc-select).
 
 This doc maps every static-analysis finding to a verdict:
 
 - **FIX**  → code change committed; commit hash + summary
 - **SUPP** → false positive or bounded by access-control; suppressed inline
             with `slither-disable-next-line <detector>` (Solidity) or via
-            `audit.toml` / `deny.toml` (Rust). Rationale below.
+            `.cargo/audit.toml` / `deny.toml` (Rust). Rationale below.
 - **DOC**  → low-severity informational; no change, no suppression — kept
             as a tracking note.
 
@@ -20,61 +16,39 @@ number where the suppression lives. Re-run quarterly.
 
 ---
 
-## 1. cargo-audit — RustSec advisory DB
+## 1. cargo-audit: RustSec advisory DB
 
-All currently flagged advisories are **transitive** through dependency
-chains we do not control directly:
+The 2026-07-28 dependency update removed the archived Ethers Hyperliquid client, OpenTelemetry 0.29 and 0.31, `ring` 0.16, and `rustls-webpki` 0.101.7.
+The exception lists now contain only advisories present in the current lockfile.
 
-1. **substrate / blueprint-sdk** — Tangle-network/blueprint upstream owns
-   the rustls / ring / libp2p / paste / lru / bincode etc. version graph.
-2. **sandbox-runtime** — TEE attestation verification pins its RSA stack.
-3. **ethers v2 and upstream Blueprint dependencies** — fxhash and older
-   utility crates remain until those projects upgrade.
+| Class | RustSec ID | Crate / Version | Current evidence |
+|-------|------------|-----------------|------------------|
+| vuln | RUSTSEC-2023-0071 | rsa 0.9.10 | Used only for TEE signature verification; no fixed release. |
+| vuln | RUSTSEC-2025-0055 | tracing-subscriber 0.2.25 | Lock-only through ark-relations; no active path from `cargo tree --target all`; direct tracing uses 0.3.23. |
+| vuln | RUSTSEC-2025-0111 | tokio-tar 0.3.1 | Dev-only through Blueprint anvil testcontainers; no fixed release. |
+| vuln | RUSTSEC-2026-0118 | hickory-proto 0.25.2 | Lock-only through libp2p; no active workspace path and no fixed release. |
+| vuln | RUSTSEC-2026-0119 | hickory-proto 0.25.2 | Lock-only through libp2p; current libp2p does not accept the fixed 0.26 line. |
+| unmaintained | RUSTSEC-2021-0141 | dotenv 0.15.0 | Upstream Phala dependency and test fixtures. |
+| unmaintained | RUSTSEC-2024-0388 | derivative 2.2.0 | Upstream cryptography and numeric crates. |
+| unmaintained | RUSTSEC-2024-0436 | paste 1.0.15 | Compile-time upstream macros. |
+| unmaintained | RUSTSEC-2025-0134 | rustls-pemfile 1.0.4 / 2.2.0 | Upstream TLS clients. |
+| unmaintained | RUSTSEC-2025-0141 | bincode 1.3.3 | Solana transaction serde compatibility. |
+| unmaintained | RUSTSEC-2025-0161 | libsecp256k1 0.7.2 | Blueprint networking. |
+| unmaintained | RUSTSEC-2026-0173 | proc-macro-error2 2.0.1 | Compile-time upstream macros. |
 
-The 2026-07-28 Solana 3 and Prometheus 0.14 upgrades removed six prior
-exceptions: RUSTSEC-2022-0093, RUSTSEC-2024-0344, RUSTSEC-2024-0375,
-RUSTSEC-2024-0437, RUSTSEC-2025-0119, and RUSTSEC-2026-0186.
-
-Direct workspace deps are advisory-clean. Triage cadence: re-evaluate
-quarterly (first Monday) or when an upstream fix lands. Owner: trading
-runtime maintainers.
-
-| Class       | RustSec ID         | Crate / Version           | Vector                                       | Verdict | Rationale |
-|-------------|--------------------|---------------------------|----------------------------------------------|---------|-----------|
-| vuln        | RUSTSEC-2025-0009  | ring 0.16.20             | AES panic on overflow check                  | SUPP    | Transitive via rustls 0.21 (substrate / solana). Production binaries ship with overflow checks off. |
-| vuln        | RUSTSEC-2026-0098  | rustls-webpki 0.101.7    | name constraints (URI)                       | SUPP    | Transitive via solana-sdk rustls. Client-only TLS, no CA-issuance role. |
-| vuln        | RUSTSEC-2026-0099  | rustls-webpki 0.101.7    | wildcard names accepted                      | SUPP    | Same chain as 0098; bump pending solana-sdk rustls 0.23 refresh. |
-| vuln        | RUSTSEC-2026-0104  | rustls-webpki 0.101.7    | CRL parser panic                             | SUPP    | Same chain; client TLS does not parse attacker CRLs. |
-| vuln        | RUSTSEC-2025-0111  | tokio-tar 0.3.1          | PAX header file smuggling                    | SUPP    | Dev-only via testcontainers (anvil setup). Not in runtime call graph. |
-| vuln        | RUSTSEC-2025-0055  | tracing-subscriber 0.2   | ANSI escape via user input                   | SUPP    | Transitive via substrate. Direct deps use tracing-subscriber 0.3.x. |
-| vuln        | RUSTSEC-2026-0119  | hickory-proto 0.24.4     | O(n²) name compression CPU exhaustion        | SUPP    | Transitive (substrate libp2p). No DNS server role; client-only resolves. |
-| unsound     | RUSTSEC-2021-0145  | atty 0.2.14              | unaligned read on Windows                    | SUPP    | Solana telemetry; Linux-only deployment. |
-| unsound     | RUSTSEC-2026-0002  | lru 0.12.5               | IterMut UB                                    | SUPP    | We use `LruCache::get_or_insert` / `iter()`; never `iter_mut()`. |
-| unsound     | RUSTSEC-2026-0097  | rand 0.7.3               | unsound when custom logger calls rand::rng()| SUPP    | Direct `rand` usage threads explicit `ChaCha20Rng` / `OsRng`; never the global. |
-| unmaintained| RUSTSEC-2021-0141  | dotenv 0.15.0            | unmaintained                                 | SUPP    | Dev-deps + tests fixture loading. |
-| unmaintained| RUSTSEC-2024-0384  | instant 0.1.13           | unmaintained                                 | SUPP    | wasm-bindgen tree (substrate); not exercised at runtime. |
-| unmaintained| RUSTSEC-2024-0388  | derivative 2.2.0         | unmaintained                                 | SUPP    | Alloy's ruint dependency still pins it; no workspace code imports it. |
-| unmaintained| RUSTSEC-2024-0436  | paste 1.0.15             | unmaintained                                 | SUPP    | Pervasive in Solana proc-macros. |
-| unmaintained| RUSTSEC-2025-0010  | ring 0.16.20             | unmaintained                                 | SUPP    | Same chain as 2025-0009. |
-| unmaintained| RUSTSEC-2025-0057  | fxhash 0.2.1             | unmaintained                                 | SUPP    | ethers-providers v2 + Solana ProgramTest transitive. |
-| unmaintained| RUSTSEC-2025-0134  | rustls-pemfile 1/2       | unmaintained                                 | SUPP    | Reqwest + webpki transitive. |
-| unmaintained| RUSTSEC-2025-0141  | bincode 1.3.3            | unmaintained                                 | SUPP    | Solana 2.x family; bincode 2 migration is part of Solana 3.x. |
-| unmaintained| RUSTSEC-2025-0161  | libsecp256k1 0.7.2       | unmaintained                                 | SUPP    | Blueprint networking pins it; workspace signing uses ed25519. |
-
-**Direct-dep advisory bar:** any future advisory whose dep tree terminates
-at a workspace member crate (no `└──` chain through substrate / solana / ethers)
-must be **fixed**, not suppressed.
+Re-evaluate this list whenever `Cargo.lock` changes.
+Fix any advisory with a consumable upstream release rather than adding an exception.
 
 ---
 
-## 2. cargo-deny — license + bans + sources
+## 2. cargo-deny: license + bans + sources
 
 Run state on this branch: **PASS**
 (`cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`).
 
 The pre-existing `deny.toml` at the repo root carries:
 
-- `[advisories]` ignore list (mirrors `.cargo/audit.toml`).
+- `[advisories]` ignore list for packages in cargo-deny's active graph.
 - `[licenses]` permissive allow-list (MIT, Apache-2.0, ISC, BSD-2/3,
   Unicode-3.0, Zlib, MPL-2.0, CC0-1.0, 0BSD, Unlicense, CDLA-Permissive-2.0,
   Apache-2.0 WITH LLVM-exception, MIT-0, OpenSSL).
@@ -84,7 +58,7 @@ The pre-existing `deny.toml` at the repo root carries:
 - `[bans]` `multiple-versions = "warn"` (Solana / Alloy stacks
   legitimately double up); `wildcards = "warn"` with
   `allow-wildcard-paths = true` for in-workspace path deps.
-- `[sources]` `allow-git` restricted to tangle-network repos.
+- `[sources]` `allow-git` restricted to pinned Tangle dependencies and the EigenSDK patch submitted upstream as Layr-Labs/eigensdk-rs#591.
 
 Multi-version warnings are tolerated (transitive duplicates from the
 Solana / Alloy stacks). Quarterly review.

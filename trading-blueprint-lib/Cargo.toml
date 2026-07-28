@@ -9,8 +9,8 @@ license.workspace = true
 [dependencies]
 trading-runtime = { path = "../trading-runtime" }
 trading-http-api = { path = "../trading-http-api" }
-sandbox-runtime = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", rev = "8ae2d24ea69e8581f25d4d2ab923ace49f3179ea" }
-ai-agent-sandbox-blueprint-lib = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", rev = "8ae2d24ea69e8581f25d4d2ab923ace49f3179ea" }
+sandbox-runtime = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", rev = "4a2e0f9652c61f26f253a957ed05ad49e9239710" }
+ai-agent-sandbox-blueprint-lib = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", rev = "4a2e0f9652c61f26f253a957ed05ad49e9239710" }
 alloy = { version = "1", default-features = false, features = ["sol-types", "contract", "providers", "provider-http", "network", "transport-http", "rpc-types", "consensus", "reqwest"] }
 axum = "0.8"
 hex = "0.4"
@@ -29,21 +29,21 @@ tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # OTLP/HTTP-JSON trace export → Tangle Intelligence (intelligence.tangle.tools).
-# Versions pinned to match blueprint-qos (opentelemetry 0.31 / tracing-opentelemetry
-# 0.32) so the bridge layer and exporter share one opentelemetry core. JSON wire +
+# Versions pinned to match blueprint-qos (opentelemetry 0.32 / tracing-opentelemetry
+# 0.33) so the bridge layer and exporter share one opentelemetry core. JSON wire +
 # blocking reqwest client: the batch processor's worker thread drives exports
 # directly, no tokio-reactor-in-worker-thread footgun. TLS for the https
 # Intelligence endpoint comes from the workspace `reqwest` rustls-tls feature
 # above (Cargo unifies both onto one reqwest 0.12 instance).
-opentelemetry = "0.31"
-opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "http-json", "reqwest-blocking-client", "reqwest-rustls"] }
-tracing-opentelemetry = "0.32"
+opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-json", "reqwest-blocking-client", "reqwest-rustls"] }
+tracing-opentelemetry = "0.33"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 anyhow = "1"
-alloy = { version = "1", features = ["node-bindings", "sol-types", "contract", "providers", "provider-http", "signer-local", "signers", "network", "transport-http", "rpc-types", "consensus", "reqwest"] }
+alloy = { version = "1", features = ["node-bindings", "sol-types", "contract", "providers", "provider-http", "signer-local", "network", "transport-http", "rpc-types", "consensus", "reqwest"] }
 axum = "0.8"
 blueprint-anvil-testing-utils = { version = "=0.2.0-alpha.10" }
 hex = "0.4"

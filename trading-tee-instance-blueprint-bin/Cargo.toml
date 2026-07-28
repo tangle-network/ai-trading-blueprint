@@ -14,8 +14,8 @@ path = "src/main.rs"
 trading-tee-instance-blueprint-lib = { path = "../trading-tee-instance-blueprint-lib" }
 trading-instance-blueprint-lib = { path = "../trading-instance-blueprint-lib" }
 trading-blueprint-lib = { path = "../trading-blueprint-lib" }
-ai-agent-sandbox-blueprint-lib = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", rev = "8ae2d24ea69e8581f25d4d2ab923ace49f3179ea" }
-sandbox-runtime = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", rev = "8ae2d24ea69e8581f25d4d2ab923ace49f3179ea", features = ["tee-all"] }
+ai-agent-sandbox-blueprint-lib = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", rev = "4a2e0f9652c61f26f253a957ed05ad49e9239710" }
+sandbox-runtime = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", rev = "4a2e0f9652c61f26f253a957ed05ad49e9239710", features = ["tee-all"] }
 blueprint-producers-extra = { version = "=0.2.0-alpha.5", features = ["cron"] }
 blueprint-sdk = { version = "=0.2.0-alpha.10", default-features = false, features = ["std", "tangle"] }
 axum = "0.8"

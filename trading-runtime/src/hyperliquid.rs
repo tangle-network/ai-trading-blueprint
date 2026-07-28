@@ -1,18 +1,16 @@
 //! Native Hyperliquid client for direct L1 API trading.
 //!
-//! Wraps the `hyperliquid` crate to provide a high-level interface for the
+//! Wraps the official Hyperliquid Rust SDK to provide a high-level interface for the
 //! trading HTTP API. All order signing, serialization, and API communication
-//! is handled by the SDK — this module provides ergonomic typed wrappers.
+//! is handled by the SDK. This module provides ergonomic typed wrappers.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use ethers_signers::{LocalWallet, Signer};
-use hyperliquid::types::Chain;
-use hyperliquid::types::exchange::request::{
-    CancelRequest, Limit, OrderRequest, OrderType, Tif, TpSl, Trigger,
+use alloy::{primitives::Address, signers::local::PrivateKeySigner};
+use hyperliquid_rust_sdk::{
+    BaseUrl, CancelRequest, ExchangeClient, ExchangeResponseStatus as HlResponse, InfoClient,
+    Limit, Order, OrderGrouping, OrderRequest, Trigger,
 };
-use hyperliquid::types::exchange::response::Response as HlResponse;
-use hyperliquid::{Exchange, Hyperliquid, Info};
 use serde::{Deserialize, Serialize};
 
 // ── Public types ────────────────────────────────────────────────────────────
@@ -107,66 +105,74 @@ pub struct AccountInfo {
 // ── Client ──────────────────────────────────────────────────────────────────
 
 pub struct HyperliquidClient {
-    exchange: Exchange,
-    info: Info,
-    wallet: Arc<LocalWallet>,
-    info_api_url: &'static str,
+    wallet: PrivateKeySigner,
+    base_url: BaseUrl,
+    exchanges: tokio::sync::RwLock<HashMap<Option<Address>, Arc<ExchangeClient>>>,
+    info: tokio::sync::OnceCell<InfoClient>,
     asset_map: tokio::sync::RwLock<Option<Vec<String>>>,
 }
 
-const HYPERLIQUID_INFO_URL_MAINNET: &str = "https://api.hyperliquid.xyz/info";
-const HYPERLIQUID_INFO_URL_TESTNET: &str = "https://api.hyperliquid-testnet.xyz/info";
 const HYPERLIQUID_OUTCOME_ASSET_OFFSET: u32 = 100_000_000;
-
-#[derive(Debug, Deserialize)]
-struct HlMetaResponse {
-    universe: Vec<HlAssetMeta>,
-}
-
-#[derive(Debug, Deserialize)]
-struct HlAssetMeta {
-    name: String,
-}
 
 impl HyperliquidClient {
     pub fn new(private_key: &str) -> Result<Self, String> {
-        let wallet: LocalWallet = private_key
-            .parse()
-            .map_err(|e| format!("invalid private key: {e}"))?;
-
-        let chain = Chain::Arbitrum;
-        let exchange: Exchange = Hyperliquid::new(chain);
-        let info: Info = Hyperliquid::new(chain);
-
-        Ok(Self {
-            exchange,
-            info,
-            wallet: Arc::new(wallet),
-            info_api_url: HYPERLIQUID_INFO_URL_MAINNET,
-            asset_map: tokio::sync::RwLock::new(None),
-        })
+        Self::with_base_url(private_key, BaseUrl::Mainnet)
     }
 
     pub fn testnet(private_key: &str) -> Result<Self, String> {
-        let wallet: LocalWallet = private_key
+        Self::with_base_url(private_key, BaseUrl::Testnet)
+    }
+
+    fn with_base_url(private_key: &str, base_url: BaseUrl) -> Result<Self, String> {
+        let wallet: PrivateKeySigner = private_key
             .parse()
             .map_err(|e| format!("invalid private key: {e}"))?;
 
-        let chain = Chain::ArbitrumTestnet;
-        let exchange: Exchange = Hyperliquid::new(chain);
-        let info: Info = Hyperliquid::new(chain);
-
         Ok(Self {
-            exchange,
-            info,
-            wallet: Arc::new(wallet),
-            info_api_url: HYPERLIQUID_INFO_URL_TESTNET,
+            wallet,
+            base_url,
+            exchanges: tokio::sync::RwLock::new(HashMap::new()),
+            info: tokio::sync::OnceCell::new(),
             asset_map: tokio::sync::RwLock::new(None),
         })
     }
 
     pub fn wallet_address(&self) -> String {
         format!("{:#x}", self.wallet.address())
+    }
+
+    async fn info(&self) -> Result<&InfoClient, String> {
+        self.info
+            .get_or_try_init(|| async {
+                InfoClient::new(None, Some(self.base_url))
+                    .await
+                    .map_err(|e| format!("HL info client: {e}"))
+            })
+            .await
+    }
+
+    async fn exchange_for_account(
+        &self,
+        account_address: Option<&str>,
+    ) -> Result<Arc<ExchangeClient>, String> {
+        let vault_address = Self::parse_account_address(account_address)?;
+        if let Some(exchange) = self.exchanges.read().await.get(&vault_address).cloned() {
+            return Ok(exchange);
+        }
+
+        let exchange = Arc::new(
+            ExchangeClient::new(
+                None,
+                self.wallet.clone(),
+                Some(self.base_url),
+                None,
+                vault_address,
+            )
+            .await
+            .map_err(|e| format!("HL exchange client: {e}"))?,
+        );
+        let mut exchanges = self.exchanges.write().await;
+        Ok(exchanges.entry(vault_address).or_insert(exchange).clone())
     }
 
     pub async fn resolve_asset(&self, id: &AssetId) -> Result<u32, String> {
@@ -198,19 +204,11 @@ impl HyperliquidClient {
     }
 
     async fn metadata_asset_names(&self) -> Result<Vec<String>, String> {
-        let response = reqwest::Client::new()
-            .post(self.info_api_url)
-            .json(&serde_json::json!({ "type": "meta" }))
-            .send()
+        let meta = self
+            .info()
             .await
-            .map_err(|e| format!("HL metadata: {e}"))?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(format!("HL metadata returned {status}: {body}"));
-        }
-        let meta = response
-            .json::<HlMetaResponse>()
+            .map_err(|e| format!("HL metadata: {e}"))?
+            .meta()
             .await
             .map_err(|e| format!("HL metadata: {e}"))?;
         Ok(meta.universe.into_iter().map(|asset| asset.name).collect())
@@ -240,8 +238,9 @@ impl HyperliquidClient {
     async fn market_ioc_price(&self, asset: u32, is_buy: bool) -> Result<String, String> {
         let symbol = self.asset_name(asset).await?;
         let mids = self
-            .info
-            .mids()
+            .info()
+            .await?
+            .all_mids()
             .await
             .map_err(|e| format!("HL mids: {e}"))?;
         let mid = mids
@@ -269,11 +268,7 @@ impl HyperliquidClient {
         Ok(format_hyperliquid_price(mid * multiplier.max(0.0001)))
     }
 
-    fn parse_account_address<T>(account_address: Option<&str>) -> Result<Option<T>, String>
-    where
-        T: std::str::FromStr,
-        T::Err: std::fmt::Display,
-    {
+    fn parse_account_address(account_address: Option<&str>) -> Result<Option<Address>, String> {
         account_address
             .filter(|raw| !raw.trim().is_empty())
             .map(|raw| {
@@ -297,14 +292,18 @@ impl HyperliquidClient {
         let (limit_px, order_type, reduce_only) = match &req.order_type {
             HlOrderType::Limit { price } => (
                 price.clone(),
-                OrderType::Limit(Limit { tif: Tif::Gtc }),
+                Order::Limit(Limit {
+                    tif: "Gtc".to_string(),
+                }),
                 req.reduce_only,
             ),
             HlOrderType::Market => {
                 let price = self.market_ioc_price(asset, req.is_buy).await?;
                 (
                     price,
-                    OrderType::Limit(Limit { tif: Tif::Ioc }),
+                    Order::Limit(Limit {
+                        tif: "Ioc".to_string(),
+                    }),
                     req.reduce_only,
                 )
             }
@@ -313,10 +312,10 @@ impl HyperliquidClient {
                 is_market,
             } => (
                 trigger_price.clone(),
-                OrderType::Trigger(Trigger {
+                Order::Trigger(Trigger {
                     is_market: *is_market,
                     trigger_px: trigger_price.clone(),
-                    tpsl: TpSl::Sl,
+                    tpsl: "sl".to_string(),
                 }),
                 true,
             ),
@@ -325,21 +324,16 @@ impl HyperliquidClient {
                 is_market,
             } => (
                 trigger_price.clone(),
-                OrderType::Trigger(Trigger {
+                Order::Trigger(Trigger {
                     is_market: *is_market,
                     trigger_px: trigger_price.clone(),
-                    tpsl: TpSl::Tp,
+                    tpsl: "tp".to_string(),
                 }),
                 true,
             ),
         };
 
-        let cloid = req
-            .cloid
-            .as_ref()
-            .map(|c| c.parse())
-            .transpose()
-            .map_err(|e| format!("invalid cloid: {e}"))?;
+        let cloid = req.cloid.as_deref().map(parse_cloid).transpose()?;
 
         let order = OrderRequest {
             asset,
@@ -351,10 +345,9 @@ impl HyperliquidClient {
             cloid,
         };
 
-        let vault_address = Self::parse_account_address(account_address)?;
-
-        self.exchange
-            .place_order(self.wallet.clone(), vec![order], vault_address)
+        let exchange = self.exchange_for_account(account_address).await?;
+        exchange
+            .bulk_order_raw_with_grouping(vec![order], None, OrderGrouping::Na)
             .await
             .map_err(|e| format!("HL place_order: {e}"))
     }
@@ -382,12 +375,20 @@ impl HyperliquidClient {
 
         // Entry
         let (entry_px, entry_ot) = match &entry.order_type {
-            HlOrderType::Limit { price } => {
-                (price.clone(), OrderType::Limit(Limit { tif: Tif::Gtc }))
-            }
+            HlOrderType::Limit { price } => (
+                price.clone(),
+                Order::Limit(Limit {
+                    tif: "Gtc".to_string(),
+                }),
+            ),
             HlOrderType::Market => {
                 let px = if entry.is_buy { "999999999" } else { "0.0001" };
-                (px.to_string(), OrderType::Limit(Limit { tif: Tif::Ioc }))
+                (
+                    px.to_string(),
+                    Order::Limit(Limit {
+                        tif: "Ioc".to_string(),
+                    }),
+                )
             }
             _ => return Err("entry must be Limit or Market".into()),
         };
@@ -416,10 +417,10 @@ impl HyperliquidClient {
                 limit_px: tp.0.clone(),
                 sz: entry.size.clone(),
                 reduce_only: true,
-                order_type: OrderType::Trigger(Trigger {
+                order_type: Order::Trigger(Trigger {
                     is_market: tp.1,
                     trigger_px: tp.0.clone(),
-                    tpsl: TpSl::Sl,
+                    tpsl: "sl".to_string(),
                 }),
                 cloid: None,
             });
@@ -440,28 +441,25 @@ impl HyperliquidClient {
                 limit_px: tp.0.clone(),
                 sz: entry.size.clone(),
                 reduce_only: true,
-                order_type: OrderType::Trigger(Trigger {
+                order_type: Order::Trigger(Trigger {
                     is_market: tp.1,
                     trigger_px: tp.0.clone(),
-                    tpsl: TpSl::Tp,
+                    tpsl: "tp".to_string(),
                 }),
                 cloid: None,
             });
         }
 
-        let vault_address = Self::parse_account_address(account_address)?;
-
-        if stop_loss.is_some() || take_profit.is_some() {
-            self.exchange
-                .normal_tpsl(self.wallet.clone(), orders, vault_address)
-                .await
-                .map_err(|e| format!("HL bracket: {e}"))
+        let exchange = self.exchange_for_account(account_address).await?;
+        let grouping = if stop_loss.is_some() || take_profit.is_some() {
+            OrderGrouping::NormalTpsl
         } else {
-            self.exchange
-                .place_order(self.wallet.clone(), orders, vault_address)
-                .await
-                .map_err(|e| format!("HL order: {e}"))
-        }
+            OrderGrouping::Na
+        };
+        exchange
+            .bulk_order_raw_with_grouping(orders, None, grouping)
+            .await
+            .map_err(|e| format!("HL bracket: {e}"))
     }
 
     pub async fn cancel_order(&self, asset: u32, order_id: u64) -> Result<HlResponse, String> {
@@ -474,16 +472,14 @@ impl HyperliquidClient {
         order_id: u64,
         account_address: Option<&str>,
     ) -> Result<HlResponse, String> {
-        let vault_address = Self::parse_account_address(account_address)?;
-
-        self.exchange
-            .cancel_order(
-                self.wallet.clone(),
+        let exchange = self.exchange_for_account(account_address).await?;
+        exchange
+            .bulk_cancel_raw(
                 vec![CancelRequest {
                     asset,
                     oid: order_id,
                 }],
-                vault_address,
+                None,
             )
             .await
             .map_err(|e| format!("HL cancel: {e}"))
@@ -495,8 +491,9 @@ impl HyperliquidClient {
         leverage: u32,
         is_cross: bool,
     ) -> Result<HlResponse, String> {
-        self.exchange
-            .update_leverage(self.wallet.clone(), leverage, asset, is_cross)
+        self.exchange_for_account(None)
+            .await?
+            .update_leverage_by_asset_index(leverage, asset, is_cross, None)
             .await
             .map_err(|e| format!("HL leverage: {e}"))
     }
@@ -517,13 +514,15 @@ impl HyperliquidClient {
         };
 
         let state = self
-            .info
+            .info()
+            .await?
             .user_state(address)
             .await
             .map_err(|e| format!("HL user_state: {e}"))?;
 
         let orders = self
-            .info
+            .info()
+            .await?
             .open_orders(address)
             .await
             .map_err(|e| format!("HL open_orders: {e}"))?;
@@ -553,7 +552,7 @@ impl HyperliquidClient {
                 coin: o.coin,
                 limit_px: o.limit_px,
                 oid: o.oid,
-                side: format!("{:?}", o.side),
+                side: o.side,
                 sz: o.sz,
                 timestamp: o.timestamp,
             })
@@ -571,7 +570,11 @@ impl HyperliquidClient {
     }
 
     pub async fn get_mids(&self) -> Result<std::collections::HashMap<String, String>, String> {
-        self.info.mids().await.map_err(|e| format!("HL mids: {e}"))
+        self.info()
+            .await?
+            .all_mids()
+            .await
+            .map_err(|e| format!("HL mids: {e}"))
     }
 
     /// Reconcile local position ledger against HL clearinghouse state.
@@ -851,6 +854,11 @@ fn parse_encoded_asset_index(symbol: &str) -> Option<u32> {
     trimmed.parse::<u32>().ok()
 }
 
+fn parse_cloid(raw: &str) -> Result<String, String> {
+    let cloid = uuid::Uuid::parse_str(raw).map_err(|e| format!("invalid cloid: {e}"))?;
+    Ok(format!("0x{}", cloid.simple()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -943,7 +951,7 @@ mod tests {
             ]
         }"#;
 
-        let meta: HlMetaResponse = serde_json::from_str(json).unwrap();
+        let meta: hyperliquid_rust_sdk::Meta = serde_json::from_str(json).unwrap();
 
         assert_eq!(
             meta.universe
@@ -952,6 +960,15 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["BTC", "ETH"]
         );
+    }
+
+    #[test]
+    fn cloid_is_validated_and_encoded_as_128_bit_hex() {
+        assert_eq!(
+            parse_cloid("00112233-4455-6677-8899-aabbccddeeff").unwrap(),
+            "0x00112233445566778899aabbccddeeff"
+        );
+        assert!(parse_cloid("not-a-uuid").is_err());
     }
 
     #[test]

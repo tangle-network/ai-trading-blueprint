@@ -40,48 +40,16 @@ yanked = "deny"
 # the affected crate becomes consumable upstream — whichever comes
 # first. Owner: trading-runtime maintainers.
 ignore = [
-    # ── Vulnerabilities (RUSTSEC vuln class) ────────────────────────────────
-    # rsa "Marvin Attack" timing sidechannel. Pulled transitively via
-    # sandbox-runtime's TEE attestation verification (tee-verify/tee-all
-    # features), where rsa is used ONLY as rsa::pss::VerifyingKey to verify
-    # SEV-SNP / TDX attestation signatures against pinned keys — no private
-    # key, no decryption. The attack targets RSA private-key decryption timing
-    # oracles, which this code never performs, and no fixed rsa release exists
-    # upstream. Mirrors the ignore in ai-agent-sandbox-blueprint.
-    { id = "RUSTSEC-2023-0071", reason = "rsa verify-only in sandbox-runtime TEE attestation; Marvin targets private-key decryption — not applicable; no upstream fix; tracked in dep-policy.md" },
+    # Vulnerabilities without a consumable fixed path.
+    { id = "RUSTSEC-2023-0071", reason = "rsa is used only to verify TEE attestation signatures; Marvin targets private-key operations; no fixed rsa release" },
+    { id = "RUSTSEC-2025-0111", reason = "tokio-tar 0.3.1 is dev-only through blueprint anvil testcontainers; no fixed tokio-tar release" },
 
-    # ring panic on AES overflow check — only triggers when overflow
-    # checks are enabled (debug builds). Production binaries ship with
-    # release profile (overflow checks off). Awaiting ring 0.18.x via
-    # rustls-webpki refresh.
-    { id = "RUSTSEC-2025-0009", reason = "release builds disable overflow checks; not a prod issue; tracked in dep-policy.md" },
-
-    # rustls-webpki name-constraints / CRL parser — pulled transitively
-    # via reqwest's TLS stack. Mitigated upstream in rustls 0.23.x
-    # which is pinned by the Solana 2.x family; bump deferred to next
-    # solana-sdk minor.
-    { id = "RUSTSEC-2026-0098", reason = "transitive via solana-sdk rustls; client-only TLS; tracked in dep-policy.md" },
-    { id = "RUSTSEC-2026-0099", reason = "transitive via solana-sdk rustls; client-only TLS; tracked in dep-policy.md" },
-    { id = "RUSTSEC-2026-0104", reason = "transitive via solana-sdk rustls; client-only TLS; tracked in dep-policy.md" },
-
-    # tokio-tar PAX header smuggling — only used by cargo build tooling,
-    # not at runtime.
-    { id = "RUSTSEC-2025-0111", reason = "build-time only; not in runtime call graph; tracked in dep-policy.md" },
-
-    # ── Unmaintained (RUSTSEC informational class) ──────────────────────────
-    # All of the below are deep transitive deps via Solana / Alloy /
-    # Tangle blueprint stacks. Replacing them requires upstream PRs;
-    # tracked in dep-policy.md "Unmaintained crate triage".
-    { id = "RUSTSEC-2021-0141", reason = "dotenv unmaintained — dev-dep only; tests use it for fixture loading" },
-    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x unmaintained — Solana 2.x family pins 1.x; bincode 2 migration is part of solana-sdk 3.x" },
-    { id = "RUSTSEC-2024-0388", reason = "derivative unmaintained — transitive via Alloy ruint; awaiting upstream replacement" },
-    { id = "RUSTSEC-2025-0057", reason = "fxhash unmaintained — transitive via Solana ProgramTest; awaiting upstream replacement" },
-    { id = "RUSTSEC-2024-0384", reason = "instant unmaintained — transitive via wasm-bindgen tree; not exercised at runtime" },
-    { id = "RUSTSEC-2025-0161", reason = "libsecp256k1 unmaintained — transitive via blueprint-networking; workspace signing uses ed25519" },
-    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained — pervasive transitive in Solana proc-macros; no exploitable runtime path" },
-    { id = "RUSTSEC-2025-0010", reason = "ring 0.16 unmaintained — transitive via rustls 0.21 in Solana stack; covered by RUSTSEC-2025-0009 mitigation note" },
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained — transitive via webpki / reqwest; covered by rustls migration plan" },
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained — proc-macro transitive via alloy-sol-macro (blueprint-sdk); compile-time only, no runtime path" },
+    # Unmaintained upstream packages that remain in the resolved graph.
+    { id = "RUSTSEC-2021-0141", reason = "dotenv remains through phala-tee-deploy-rs and test fixtures; no maintained release on the same API" },
+    { id = "RUSTSEC-2024-0436", reason = "paste is a compile-time transitive dependency; no workspace code imports it" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 1 and 2 remain transitive through upstream TLS clients; no workspace code imports them" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1 is required by Solana transaction serde compatibility; bincode 2 uses a different wire API" },
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is compile-time only through upstream macros; no workspace runtime path" },
 ]
 
 # ── Licences ────────────────────────────────────────────────────────────────
@@ -104,7 +72,6 @@ allow = [
     "MPL-2.0",
     "CC0-1.0",
     "0BSD",
-    "OpenSSL",
     "CDLA-Permissive-2.0",
     # `Unlicense` is OSI-equivalent public-domain dedication. Three
     # transitive deps of `ws_stream_wasm` (Polymarket WS client) ship
@@ -125,12 +92,6 @@ exceptions = []
 # LICENSE, compute `sha256sum LICENSE` (the cargo-deny `[hash]` is a
 # lossy 32-bit fold but we keep the long hash in this comment for
 # audit). Re-validate any clarify on each version bump.
-
-[[licenses.clarify]]
-name = "ring"
-version = "0.16"
-expression = "ISC AND MIT AND OpenSSL"
-license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [[licenses.clarify]]
 name = "eigensdk"
@@ -164,12 +125,13 @@ name = "workspace-hack"
 expression = "MIT OR Apache-2.0"
 license-files = []
 
-# solana-config-program-client publishes the standard Solana Apache-2.0
-# header in source but omits the manifest field upstream.
+# solana-config-interface publishes the standard Apache-2.0 license file
+# but omits the manifest field upstream.
 [[licenses.clarify]]
-name = "solana-config-program-client"
+name = "solana-config-interface"
+version = "2.0.0"
 expression = "Apache-2.0"
-license-files = []
+license-files = [{ path = "LICENSE", hash = 0xd0891cfa }]
 
 # ── Bans (multi-version + wildcard hygiene) ─────────────────────────────────
 [bans]
@@ -213,9 +175,10 @@ unknown-git = "deny"
 
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 
-# Only Tangle-org git deps. Each MUST be pinned by tag or commit (not
-# branch) — verified by `cargo tree --duplicates` + manual review.
+# Reviewed git dependencies. Each must be pinned by tag or commit.
 allow-git = [
+    "https://github.com/drewstone/eigensdk-rs.git",
     "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git",
     "https://github.com/tangle-network/blueprint.git",
+    "https://github.com/tangle-network/hyperliquid-rust-sdk.git",
 ]
