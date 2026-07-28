@@ -148,6 +148,10 @@ export default defineConfig(({ mode }) => {
     env.VITE_INSTANCE_OPERATOR_PROXY_TARGET || 'http://localhost:9201';
 
   return {
+    build: {
+      // UnoCSS global mode keys Vite's CSS plugin by this client output path.
+      outDir: 'build/client',
+    },
     plugins: [
       ssrBrowserShim(),
       UnoCSS(),
