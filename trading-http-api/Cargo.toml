@@ -9,7 +9,7 @@ license.workspace = true
 [dependencies]
 trading-runtime = { path = "../trading-runtime" }
 trading-validator-lib = { path = "../trading-validator-lib" }
-sandbox-runtime = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", rev = "8ae2d24ea69e8581f25d4d2ab923ace49f3179ea" }
+sandbox-runtime = { git = "https://github.com/tangle-network/ai-agent-sandbox-blueprint.git", rev = "4a2e0f9652c61f26f253a957ed05ad49e9239710" }
 axum = { version = "0.8", features = ["ws"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 once_cell = "1"
@@ -22,7 +22,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 rust_decimal = { version = "1", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
-alloy = { version = "1", default-features = false, features = ["signers"] }
+alloy = { version = "1", default-features = false, features = ["signer-local"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 solana-sdk = "3.0.0"
 solana-compute-budget-interface = "3.0.0"

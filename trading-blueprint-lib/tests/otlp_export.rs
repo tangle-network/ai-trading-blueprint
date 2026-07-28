@@ -77,6 +77,11 @@ fn operator_exports_spans_as_otlp_http_json() {
     // Point the exporter at the mock collector and give it a tenant key.
     // SAFETY: single-threaded test setup before any telemetry thread spawns.
     unsafe {
+        // The SDK reads these after programmatic headers and lets them override
+        // matching names. Keep this process-isolated test independent of the
+        // developer or CI environment.
+        std::env::remove_var("OTEL_EXPORTER_OTLP_HEADERS");
+        std::env::remove_var("OTEL_EXPORTER_OTLP_TRACES_HEADERS");
         std::env::set_var(
             "OTEL_EXPORTER_OTLP_ENDPOINT",
             format!("http://127.0.0.1:{port}"),
@@ -110,7 +115,7 @@ fn operator_exports_spans_as_otlp_http_json() {
     // Auth: the Tangle tenant bearer token.
     assert!(
         head.contains("authorization: bearer sk-tan-proof-key"),
-        "missing/!= Authorization bearer header; headers:\n{head}"
+        "missing or incorrect Authorization bearer header"
     );
     // JSON wire (the Intelligence adapter rejects protobuf).
     assert!(
