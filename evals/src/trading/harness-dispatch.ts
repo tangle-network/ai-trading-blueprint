@@ -7,7 +7,8 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 
 import { repoRoot, resolveRepo } from '../lib/repo.js'
 import type { BacktestArtifact, BotContext, HarnessConfig } from './harness-types.js'
@@ -19,11 +20,16 @@ import type { BacktestArtifact, BotContext, HarnessConfig } from './harness-type
 // ensureHarnessBacktestBinary rebuilt every call and then spawned a
 // nonexistent path.)
 const BINARY_REL = 'target/release/examples/harness_backtest'
+let preparedBinaryPath: string | undefined
 
-/** Build the Rust cell-level CLI if it isn't already on disk. */
+/**
+ * Build the Rust cell-level CLI once per process. Cargo's incremental check is
+ * cheap when it is current and prevents an old binary from silently ignoring a
+ * request field added by newer source.
+ */
 export function ensureHarnessBacktestBinary(): string {
+  if (preparedBinaryPath) return preparedBinaryPath
   const abs = resolveRepo(BINARY_REL)
-  if (existsSync(abs)) return abs
   const proc = spawnSync(
     'cargo',
     ['build', '-p', 'trading-runtime', '--example', 'harness_backtest', '--release'],
@@ -32,12 +38,51 @@ export function ensureHarnessBacktestBinary(): string {
   if (proc.status !== 0) {
     throw new Error(`harness_backtest build failed (status ${proc.status})`)
   }
-  return abs
+  if (!existsSync(abs) || !statSync(abs).isFile()) {
+    throw new Error(`harness_backtest build succeeded but did not produce ${abs}`)
+  }
+  preparedBinaryPath = abs
+  return preparedBinaryPath
+}
+
+/** Immutable identity of the exact executable used by every backtest cell. */
+export function harnessBacktestExecutionIdentity(binaryPath: string): string {
+  if (!existsSync(binaryPath) || !statSync(binaryPath).isFile()) {
+    throw new Error(`harness_backtest executable does not exist: ${binaryPath}`)
+  }
+  const digest = createHash('sha256').update(readFileSync(binaryPath)).digest('hex')
+  if (!/^[a-f0-9]{64}$/.test(digest)) {
+    throw new Error('harness_backtest executable did not produce a SHA-256 identity')
+  }
+  return `trading-runtime/harness-backtest@sha256:${digest}`
+}
+
+export interface CandleTimeWindow {
+  /** Inclusive Unix timestamp in seconds. */
+  startTimeSec: number
+  /** Exclusive Unix timestamp in seconds. */
+  endTimeSec: number
+}
+
+export function validateCandleTimeWindow(window: CandleTimeWindow): CandleTimeWindow {
+  if (
+    !Number.isSafeInteger(window.startTimeSec) ||
+    !Number.isSafeInteger(window.endTimeSec) ||
+    window.startTimeSec < 0 ||
+    window.endTimeSec <= window.startTimeSec
+  ) {
+    throw new Error(
+      `invalid candle window [${window.startTimeSec}, ${window.endTimeSec}); expected non-negative Unix seconds with start < end`,
+    )
+  }
+  return window
 }
 
 export interface DispatchOptions {
   candlesLimit: number
   cacheDir: string
+  /** Explicit half-open candle range. Omit only for latest-history evaluations. */
+  candleWindow?: CandleTimeWindow
   /** Optional seed for the cell's bootstrap CI — deterministic if set. */
   seed?: number
 }
@@ -53,6 +98,9 @@ export function dispatchHarnessBacktest(
   opts: DispatchOptions,
 ): BacktestArtifact {
   const bin = ensureHarnessBacktestBinary()
+  const candleWindow = opts.candleWindow
+    ? validateCandleTimeWindow(opts.candleWindow)
+    : undefined
   const request = {
     harness,
     source: bot.source,
@@ -60,6 +108,12 @@ export function dispatchHarnessBacktest(
     fee_protocol: bot.fee_protocol,
     candles_limit: opts.candlesLimit,
     candles_cache_dir: opts.cacheDir,
+    ...(candleWindow
+      ? {
+          candles_start_time_secs: candleWindow.startTimeSec,
+          candles_end_time_secs: candleWindow.endTimeSec,
+        }
+      : {}),
     ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
   }
   const proc = spawnSync(bin, [], {

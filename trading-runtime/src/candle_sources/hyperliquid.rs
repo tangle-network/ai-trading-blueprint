@@ -103,6 +103,15 @@ pub async fn fetch(
     interval: Interval,
     limit: u32,
 ) -> Result<Vec<Candle>, TradingError> {
+    fetch_ending_at(token, interval, limit, now_ms() / 1000).await
+}
+
+pub async fn fetch_ending_at(
+    token: &str,
+    interval: Interval,
+    limit: u32,
+    end_time_secs: i64,
+) -> Result<Vec<Candle>, TradingError> {
     let client = reqwest::Client::builder()
         .user_agent("TradingBlueprint/1.0 (+hyperliquid candle backfill)")
         .timeout(std::time::Duration::from_secs(30))
@@ -114,7 +123,7 @@ pub async fn fetch(
     let bar_ms = interval.duration_ms();
 
     let mut all: Vec<Candle> = Vec::with_capacity(limit as usize);
-    let mut end_ms: i64 = now_ms();
+    let mut end_ms = end_time_secs.saturating_mul(1000).saturating_sub(1);
     let mut remaining = limit;
 
     while remaining > 0 {

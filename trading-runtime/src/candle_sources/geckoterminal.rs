@@ -100,6 +100,16 @@ pub async fn fetch_pool(
     interval: Interval,
     limit: u32,
 ) -> Result<Vec<Candle>, TradingError> {
+    fetch_pool_ending_at(network, pool_address, interval, limit, now_secs()).await
+}
+
+pub async fn fetch_pool_ending_at(
+    network: &str,
+    pool_address: &str,
+    interval: Interval,
+    limit: u32,
+    end_time_secs: i64,
+) -> Result<Vec<Candle>, TradingError> {
     let client = reqwest::Client::builder()
         .user_agent("TradingBlueprint/1.0 (+geckoterminal candle backfill)")
         .timeout(std::time::Duration::from_secs(30))
@@ -108,7 +118,7 @@ pub async fn fetch_pool(
 
     let (tf, aggregate) = timeframe(interval);
     let mut all: Vec<Candle> = Vec::with_capacity(limit as usize);
-    let mut before_ts: Option<i64> = None;
+    let mut before_ts = Some(end_time_secs);
     let mut remaining = limit;
 
     // Free tier ~30 requests / minute; throttle to be a good citizen.
@@ -194,6 +204,15 @@ pub async fn fetch(
     interval: Interval,
     limit: u32,
 ) -> Result<Vec<Candle>, TradingError> {
+    fetch_ending_at(network_and_pool, interval, limit, now_secs()).await
+}
+
+pub async fn fetch_ending_at(
+    network_and_pool: &str,
+    interval: Interval,
+    limit: u32,
+    end_time_secs: i64,
+) -> Result<Vec<Candle>, TradingError> {
     let (network, pool_or_symbol) = network_and_pool.split_once(':').ok_or_else(|| {
         TradingError::MarketDataUnavailable(format!(
             "geckoterminal token must be 'network:POOL_OR_SYMBOL', got '{network_and_pool}'"
@@ -210,7 +229,15 @@ pub async fn fetch(
             )))?
             .to_string()
         };
-    fetch_pool(network, &pool, interval, limit).await
+    fetch_pool_ending_at(network, &pool, interval, limit, end_time_secs).await
+}
+
+fn now_secs() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn dec_from(value: f64, field: &'static str) -> Result<Decimal, TradingError> {

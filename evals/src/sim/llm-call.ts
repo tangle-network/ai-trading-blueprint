@@ -32,47 +32,19 @@
 
 import { createOpenAICompatibleBackend, runAgentTaskStream } from '@tangle-network/agent-runtime'
 import type { AgentTaskSpec } from '@tangle-network/agent-runtime'
+import {
+  modelExecutionIdentity,
+  resolveModel,
+  type LlmModel,
+  type ModelRouting,
+} from './model-routing.js'
 
-/** Logical model identifiers — what callers ask for. The concrete
- *  provider/baseUrl/api-key resolution lives in MODEL_CONFIG below. */
-export type LlmModel =
-  | 'kimi-k2'        // Moonshot K2.6 — fast, cheap, great for user-sim turns
-  | 'glm-4.7'        // Z.AI GLM-4.7 — solid generalist
-  | 'glm-5.1'        // Z.AI GLM-5.1 — sharper, prefer for judge rubrics
-  | string           // fallback: anything else MODEL_CONFIG knows about
-
-interface ModelRouting {
-  /** API key resolved at call time so env updates propagate without re-import. */
-  apiKey: () => string
-  baseUrl: string
-  /** Model name to send over the wire — provider-specific. */
-  modelId: string
-  /** Human label for error messages + debug. */
-  label: string
-}
-
-/** Single source of truth for which provider + endpoint each logical
- *  model resolves to. Add new models here, never in the call sites. */
-const MODEL_CONFIG: Record<string, ModelRouting> = {
-  'kimi-k2': {
-    apiKey: () => process.env.MOONSHOT_API_KEY ?? '',
-    baseUrl: 'https://api.moonshot.ai/v1',
-    modelId: 'kimi-k2.6',
-    label: 'Moonshot Kimi K2.6',
-  },
-  'glm-4.7': {
-    apiKey: () => process.env.ZAI_API_KEY ?? '',
-    baseUrl: 'https://api.z.ai/api/coding/paas/v4',
-    modelId: 'glm-4.7',
-    label: 'Z.AI GLM-4.7',
-  },
-  'glm-5.1': {
-    apiKey: () => process.env.ZAI_GLM_API_KEY ?? process.env.ZAI_API_KEY ?? '',
-    baseUrl: 'https://api.z.ai/api/coding/paas/v4',
-    modelId: 'glm-5.1',
-    label: 'Z.AI GLM-5.1',
-  },
-}
+export {
+  modelExecutionIdentity,
+  resolveModel,
+  type LlmModel,
+  type ModelRouting,
+} from './model-routing.js'
 
 /** Default model — Kimi K2.6. Cheap, fast, and on Moonshot rate-limit
  *  budget separate from Anthropic / Z.AI so a Claude rate-limit hit
@@ -111,26 +83,6 @@ export interface LlmUsage {
 
 export interface LlmCallUsageResult extends LlmCallResult {
   usage: LlmUsage
-}
-
-/** Resolve a logical model id to its provider routing. Throws on unknown
- *  model id so call sites can't silently ship a typo to prod. */
-export type { ModelRouting }
-
-/** Resolve a model alias to its provider routing, validating the API key is
- *  set. Exported so other eval surfaces (e.g. the RLM trace analyst) reuse the
- *  single provider table instead of duplicating it. Throws on unknown model or
- *  missing key. */
-export function resolveModel(model: LlmModel): ModelRouting {
-  const cfg = MODEL_CONFIG[model]
-  if (!cfg) {
-    const known = Object.keys(MODEL_CONFIG).join(', ')
-    throw new Error(`unknown LLM model "${model}"; known: ${known}`)
-  }
-  if (!cfg.apiKey()) {
-    throw new Error(`${cfg.label} requires env var (MOONSHOT_API_KEY / ZAI_API_KEY etc.) — not set`)
-  }
-  return cfg
 }
 
 /** Core LLM call. Async — returns a promise. */

@@ -33,14 +33,17 @@ import {
   defaultProductionGate,
   type LabeledScenarioStore,
   type MutableSurface,
-  type Scenario,
 } from '@tangle-network/agent-eval/campaign'
 import {
   selfImprove,
   type SelfImproveResult,
 } from '@tangle-network/agent-eval/contract'
 import { resolveRepo } from '../lib/repo.js'
-import { dispatchHarnessBacktest, ensureHarnessBacktestBinary } from './harness-dispatch.js'
+import {
+  dispatchHarnessBacktest,
+  ensureHarnessBacktestBinary,
+  harnessBacktestExecutionIdentity,
+} from './harness-dispatch.js'
 import { harnessJudge } from './harness-fitness.js'
 import { harnessOptimizationMethod } from './harness-mutator.js'
 import {
@@ -49,16 +52,16 @@ import {
   type BotContext,
   type HarnessConfig,
 } from './harness-types.js'
+import {
+  buildPerBotWindowPlan,
+  type BotWindowScenario,
+} from './per-bot-windows.js'
 
-/** A time-window scenario over a single bot's candle stream. */
-export interface BotWindowScenario extends Scenario {
-  bot: BotContext
-  /** Hourly bars to fetch from the venue, ending at the window's `endsAt`. */
-  candlesLimit: number
-  /** `train`: older history, used by the optimizer.
-   *  `holdout`: most-recent window the gate evaluates. */
-  window: 'train' | 'holdout'
-}
+export {
+  buildPerBotWindowPlan,
+  type BotWindowScenario,
+  type PerBotWindowPlan,
+} from './per-bot-windows.js'
 
 export interface PerBotImprovementOptions {
   bot: BotContext
@@ -66,6 +69,8 @@ export interface PerBotImprovementOptions {
   trainCandlesLimit?: number
   /** Bars in the HOLDOUT window. Default 720 (30 days hourly). */
   holdoutCandlesLimit?: number
+  /** Exclusive end of the final window. Defaults to the latest completed hour. */
+  windowEndTimeSec?: number
   /** Current running HarnessConfig — defaults to the canonical baseline.
    *  Loaded by the caller from `data/trading.db` or `/home/agent/config/harness.json`. */
   currentHarness?: HarnessConfig
@@ -99,39 +104,20 @@ export interface PerBotImprovementResult {
 export async function runPerBotSelfImprovement(
   opts: PerBotImprovementOptions,
 ): Promise<PerBotImprovementResult> {
-  ensureHarnessBacktestBinary()
-  const trainLimit = opts.trainCandlesLimit ?? 4320
-  const holdoutLimit = opts.holdoutCandlesLimit ?? 720
+  const binaryPath = ensureHarnessBacktestBinary()
+  const executionIdentity = harnessBacktestExecutionIdentity(binaryPath)
   const cacheDir = opts.cacheDir ?? mkdtempSync(join(tmpdir(), `per-bot-${opts.bot.id}-`))
   mkdirSync(cacheDir, { recursive: true })
   const baseline = opts.currentHarness ?? BASELINE_HARNESS
-
-  const searchScenarios: BotWindowScenario[] = [
-    {
-      id: `${opts.bot.id}-train-long`,
-      kind: 'per-bot-train-window',
-      tags: [opts.bot.venue_label, opts.bot.symbol, 'train-long'],
-      bot: opts.bot,
-      candlesLimit: trainLimit,
-      window: 'train',
-    },
-    {
-      id: `${opts.bot.id}-train-medium`,
-      kind: 'per-bot-train-window',
-      tags: [opts.bot.venue_label, opts.bot.symbol, 'train-medium'],
-      bot: opts.bot,
-      candlesLimit: Math.max(holdoutLimit + 1, Math.floor(trainLimit * 0.67)),
-      window: 'train',
-    },
-  ]
-  const holdoutScenario: BotWindowScenario = {
-    id: `${opts.bot.id}-final`,
-    kind: 'per-bot-holdout-window',
-    tags: [opts.bot.venue_label, opts.bot.symbol, 'final'],
-    bot: opts.bot,
-    candlesLimit: holdoutLimit,
-    window: 'holdout',
-  }
+  const { searchScenarios, holdoutScenario } = buildPerBotWindowPlan(opts.bot, {
+    ...(opts.trainCandlesLimit !== undefined
+      ? { trainCandlesLimit: opts.trainCandlesLimit }
+      : {}),
+    ...(opts.holdoutCandlesLimit !== undefined
+      ? { holdoutCandlesLimit: opts.holdoutCandlesLimit }
+      : {}),
+    ...(opts.windowEndTimeSec !== undefined ? { windowEndTimeSec: opts.windowEndTimeSec } : {}),
+  })
 
   const dispatchWithSurface = async (
     surface: string,
@@ -142,11 +128,13 @@ export async function runPerBotSelfImprovement(
     return dispatchHarnessBacktest(harness, scenario.bot, {
       candlesLimit: scenario.candlesLimit,
       cacheDir,
+      candleWindow: scenario.candleWindow,
       ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
     })
   }
 
   const improvement = await selfImprove<BotWindowScenario, BacktestArtifact>({
+    model: executionIdentity,
     scenarios: [...searchScenarios, holdoutScenario],
     budget: {
       reps: opts.reps ?? 1,
@@ -171,6 +159,8 @@ export async function runPerBotSelfImprovement(
     runDir: opts.runDir ?? resolveRepo(`.evolve/eval-runs/per-bot-${opts.bot.id}-${Date.now()}`),
     ...(opts.labeledStore ? { labeledStore: opts.labeledStore } : {}),
     captureSource: 'eval-run',
+    // The evaluated worker is a deterministic Rust executable, not a paid model.
+    expectUsage: 'off',
   })
 
   const promoted = improvement.gateDecision === 'ship'

@@ -30,7 +30,11 @@ import {
   type SelfImproveResult,
 } from '@tangle-network/agent-eval/contract'
 import { resolveRepo } from '../lib/repo.js'
-import { dispatchHarnessBacktest, ensureHarnessBacktestBinary } from './harness-dispatch.js'
+import {
+  dispatchHarnessBacktest,
+  ensureHarnessBacktestBinary,
+  harnessBacktestExecutionIdentity,
+} from './harness-dispatch.js'
 import { harnessJudge } from './harness-fitness.js'
 import { harnessOptimizationMethod } from './harness-mutator.js'
 import {
@@ -113,6 +117,7 @@ export async function runHarnessEval(
     ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
     ...(opts.labeledStore ? { labeledStore: opts.labeledStore } : {}),
     captureSource: 'eval-run',
+    expectUsage: 'off',
   })
 }
 
@@ -134,7 +139,8 @@ export interface HarnessSelfImprovementOptions extends HarnessEvalOptions {
 export async function runHarnessSelfImprovement(
   opts: HarnessSelfImprovementOptions,
 ): Promise<SelfImproveResult<BotScenario, BacktestArtifact>> {
-  ensureHarnessBacktestBinary()
+  const binaryPath = ensureHarnessBacktestBinary()
+  const executionIdentity = harnessBacktestExecutionIdentity(binaryPath)
   const holdoutSet = new Set(opts.holdoutBotIds)
   const wiring = buildMatrix(opts)
   const train = wiring.scenarios.filter((s) => !holdoutSet.has(s.id))
@@ -148,6 +154,7 @@ export async function runHarnessSelfImprovement(
   const baseline = opts.baselineHarness ?? BASELINE_HARNESS
 
   return selfImprove<BotScenario, BacktestArtifact>({
+    model: executionIdentity,
     scenarios: wiring.scenarios,
     budget: {
       reps: opts.reps ?? 1,
@@ -172,5 +179,7 @@ export async function runHarnessSelfImprovement(
     runDir: opts.runDir ?? resolveRepo(`.evolve/eval-runs/harness-self-improve-${Date.now()}`),
     ...(opts.labeledStore ? { labeledStore: opts.labeledStore } : {}),
     captureSource: 'eval-run',
+    // The evaluated worker is a deterministic Rust executable, not a paid model.
+    expectUsage: 'off',
   })
 }

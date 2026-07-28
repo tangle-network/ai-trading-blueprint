@@ -35,7 +35,7 @@ pub(crate) const SIDECAR_AGENTS_MD_PATH: &str = "/home/agent/AGENTS.md";
 pub(crate) const SIDECAR_CLAUDE_MD_PATH: &str = "/home/agent/CLAUDE.md";
 const TRADING_AGENT_AGENT_EVAL_VERSION: &str = "0.134.1";
 const TRADING_AGENT_AGENT_INTERFACE_VERSION: &str = "0.36.0";
-const TRADING_AGENT_AGENT_KNOWLEDGE_VERSION: &str = "6.1.6";
+const TRADING_AGENT_AGENT_KNOWLEDGE_VERSION: &str = "6.1.7";
 const TRADING_AGENT_AGENT_RUNTIME_VERSION: &str = "0.108.0";
 
 /// Operator identity + behavioural charter loaded into every opencode turn via
