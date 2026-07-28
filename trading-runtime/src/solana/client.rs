@@ -23,8 +23,7 @@ use std::time::Duration;
 
 use solana_client::client_error::ClientErrorKind;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_client::rpc_config::RpcSendTransactionConfig;
-use solana_sdk::commitment_config::CommitmentConfig;
+use solana_client::rpc_config::{CommitmentConfig, CommitmentLevel, RpcSendTransactionConfig};
 use solana_sdk::hash::Hash;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
@@ -93,7 +92,7 @@ impl SolanaClient {
     pub async fn submit(&self, tx: VersionedTransaction) -> Result<Signature, SolanaError> {
         let cfg = RpcSendTransactionConfig {
             skip_preflight: false,
-            preflight_commitment: Some(solana_sdk::commitment_config::CommitmentLevel::Confirmed),
+            preflight_commitment: Some(CommitmentLevel::Confirmed),
             ..RpcSendTransactionConfig::default()
         };
         self.inner

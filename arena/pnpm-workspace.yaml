@@ -5,9 +5,11 @@ minimumReleaseAgeExclude:
   - '@tangle-network/agent-interface@0.36.0'
   - '@tangle-network/sandbox-ui@0.90.3'
 
-onlyBuiltDependencies:
-  - '@parcel/watcher'
-  - esbuild
+allowBuilds:
+  '@bufbuild/buf': true
+  '@parcel/watcher': true
+  canvas: true
+  esbuild: true
 
 peerDependencyRules:
   allowedVersions:

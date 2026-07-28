@@ -32,9 +32,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # toolchain; we hand-build the place_perp_order instruction with
 # solana-sdk + borsh to keep the dep footprint reasonable
 # (see solana::drift for details).
-solana-sdk = "2"
-solana-client = "2"
-solana-transaction-status = "2"
+solana-sdk = "3.0.0"
+solana-client = "3.1.8"
+solana-transaction-status = "3.1.8"
 spl-token = "8"
 spl-associated-token-account = "8"
 ed25519-dalek = "2"

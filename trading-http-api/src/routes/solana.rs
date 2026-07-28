@@ -29,7 +29,7 @@ use axum::{
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use solana_sdk::compute_budget::ComputeBudgetInstruction;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::instruction::Instruction;
 use solana_sdk::message::VersionedMessage;
 use solana_sdk::pubkey::Pubkey;
@@ -853,7 +853,7 @@ mod tests {
     fn drift_compute_budget_ixs_emit_limit_then_price() {
         let ixs = drift_compute_budget_ixs();
         // Compute-budget program id is fixed.
-        let cb_pid = solana_sdk::compute_budget::id();
+        let cb_pid = solana_compute_budget_interface::id();
         assert_eq!(ixs[0].program_id, cb_pid);
         assert_eq!(ixs[1].program_id, cb_pid);
         // The first byte of the data is the variant discriminator.
