@@ -183,7 +183,7 @@ export function useOperatorTerminalSession({
 
   const sessionIdRef = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const mountedRef = useRef(true);
   const hasStartedRef = useRef(false);
   const onOutputRef = useRef(onOutput);

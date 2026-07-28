@@ -33,9 +33,12 @@ pub(crate) const SIDECAR_AGENTS_MD_PATH: &str = "/home/agent/AGENTS.md";
 /// Same charter, claude-code's auto-loaded filename. The claude CLI reads
 /// `CLAUDE.md` (not `AGENTS.md`) from its working directory.
 pub(crate) const SIDECAR_CLAUDE_MD_PATH: &str = "/home/agent/CLAUDE.md";
-const TRADING_AGENT_AGENT_EVAL_VERSION: &str = "^0.91.0";
-const TRADING_AGENT_AGENT_KNOWLEDGE_VERSION: &str = "^1.7.0";
-const TRADING_AGENT_AGENT_RUNTIME_VERSION: &str = "^0.52.0";
+const TRADING_AGENT_AGENT_EVAL_VERSION: &str = "0.134.2";
+// Required by agent-eval and agent-runtime even when the provisioned tools
+// only import their higher-level package exports.
+const TRADING_AGENT_AGENT_INTERFACE_VERSION: &str = "0.36.0";
+const TRADING_AGENT_AGENT_KNOWLEDGE_VERSION: &str = "6.1.8";
+const TRADING_AGENT_AGENT_RUNTIME_VERSION: &str = "0.108.1";
 
 /// Operator identity + behavioural charter loaded into every opencode turn via
 /// `AGENTS.md`. The full operating protocol (API base URL, bearer token,
@@ -83,11 +86,12 @@ fn trading_agent_package_json() -> String {
         },
         "dependencies": {
             "@tangle-network/agent-eval": TRADING_AGENT_AGENT_EVAL_VERSION,
+            "@tangle-network/agent-interface": TRADING_AGENT_AGENT_INTERFACE_VERSION,
             "@tangle-network/agent-knowledge": TRADING_AGENT_AGENT_KNOWLEDGE_VERSION,
             "@tangle-network/agent-runtime": TRADING_AGENT_AGENT_RUNTIME_VERSION
         },
         "engines": {
-            "node": ">=20"
+            "node": ">=22.13.0"
         }
     })
     .to_string()
@@ -1609,10 +1613,14 @@ mod tests {
             TRADING_AGENT_AGENT_RUNTIME_VERSION
         );
         assert_eq!(
+            package["dependencies"]["@tangle-network/agent-interface"],
+            TRADING_AGENT_AGENT_INTERFACE_VERSION
+        );
+        assert_eq!(
             package["dependencies"]["@tangle-network/agent-knowledge"],
             TRADING_AGENT_AGENT_KNOWLEDGE_VERSION
         );
-        assert_eq!(package["engines"]["node"], ">=20");
+        assert_eq!(package["engines"]["node"], ">=22.13.0");
     }
 
     #[test]
@@ -1623,6 +1631,7 @@ mod tests {
             serde_json::from_str(include_str!("../../../package.json")).expect("root package json");
         for dependency in [
             "@tangle-network/agent-eval",
+            "@tangle-network/agent-interface",
             "@tangle-network/agent-runtime",
             "@tangle-network/agent-knowledge",
         ] {

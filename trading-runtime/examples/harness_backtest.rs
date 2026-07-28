@@ -1,5 +1,5 @@
-//! One-shot HarnessConfig backtest CLI — the cell-level primitive that
-//! agent-eval's `runMultiShotOptimization` Dispatch shells out to.
+//! One-shot HarnessConfig backtest CLI used by the agent-eval optimization
+//! method to score one candidate on one scenario.
 //!
 //! Reads a JSON request from stdin, runs the existing `BacktestEngine` on
 //! candles pulled from the request's native venue (with a disk cache so
@@ -14,7 +14,9 @@
 //!     "symbol": "BTC" | "base:ETH" | …,
 //!     "fee_protocol": "hyperliquid_perp" | "binance" | …,
 //!     "candles_limit": 4320,
-//!     "candles_cache_dir": "/tmp/agent-eval-candles"
+//!     "candles_cache_dir": "/tmp/agent-eval-candles",
+//!     "candles_start_time_secs": 1764547200,
+//!     "candles_end_time_secs": 1767225600
 //!   }
 //!
 //! Response shape (JSON on stdout, single line):
@@ -26,8 +28,8 @@
 //!
 //! On any error: a one-line JSON `{"error": "<message>"}` and exit code 1.
 //!
-//! Cache key: `{source}-{symbol}-{interval}-{limit}.json` under
-//! `candles_cache_dir`. Cell N+1 on the same bot reuses cell N's candles.
+//! Cache key includes source, symbol, interval, limit, and optional time range
+//! under `candles_cache_dir`. Cells only reuse candles from the same range.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -42,7 +44,7 @@ use trading_runtime::analytics::bootstrap;
 use trading_runtime::backtest::{
     BacktestConfig, BacktestEngine, BacktestResult, Candle, HarnessConfig, Interval, SlippageModel,
 };
-use trading_runtime::candle_sources::{self, Source};
+use trading_runtime::candle_sources::{self, CandleWindow, Source, select_candles};
 use trading_runtime::protocol_fees;
 
 #[derive(Debug, Deserialize)]
@@ -56,6 +58,12 @@ struct Request {
     candles_limit: u32,
     #[serde(default)]
     candles_cache_dir: Option<String>,
+    /// Inclusive start of an explicit candle range, in Unix seconds.
+    #[serde(default)]
+    candles_start_time_secs: Option<i64>,
+    /// Exclusive end of an explicit candle range, in Unix seconds.
+    #[serde(default)]
+    candles_end_time_secs: Option<i64>,
     /// Optional seed for bootstrap CI reproducibility. Defaults to a hash of
     /// the harness JSON so the same config always produces the same CI.
     #[serde(default)]
@@ -107,6 +115,11 @@ async fn main() -> ExitCode {
         Ok(s) => s,
         Err(e) => return fail(format!("unknown source: {e}")),
     };
+    let candle_window =
+        match requested_candle_window(req.candles_start_time_secs, req.candles_end_time_secs) {
+            Ok(window) => window,
+            Err(error) => return fail(error),
+        };
 
     // ── Candle ingestion, disk-cached per (source, symbol, interval, limit) ──
     let candles = match load_or_fetch_candles(
@@ -114,6 +127,7 @@ async fn main() -> ExitCode {
         &req.symbol,
         req.candles_limit,
         req.candles_cache_dir.as_deref(),
+        candle_window,
     )
     .await
     {
@@ -236,22 +250,29 @@ async fn load_or_fetch_candles(
     symbol: &str,
     limit: u32,
     cache_dir: Option<&str>,
+    window: Option<CandleWindow>,
 ) -> Result<Vec<Candle>, String> {
-    let cache_path = cache_dir.map(|d| cache_file_path(d, source.name(), symbol, limit));
+    let cache_path = cache_dir.map(|d| cache_file_path(d, source.name(), symbol, limit, window));
 
     if let Some(path) = &cache_path
         && path.exists()
         && let Ok(raw) = fs::read_to_string(path)
         && let Ok(c) = serde_json::from_str::<Vec<Candle>>(&raw)
     {
-        if c.len() as u32 >= limit {
-            return Ok(c);
+        let selected = select_candles(c, limit, window);
+        if cache_entry_is_usable(&selected, limit, window) {
+            return Ok(selected);
         }
     }
 
-    let candles = candle_sources::fetch_from_source(source, symbol, Interval::Hour1, limit)
-        .await
-        .map_err(|e| e.to_string())?;
+    let candles = match window {
+        Some(window) => {
+            candle_sources::fetch_from_source_window(source, symbol, Interval::Hour1, limit, window)
+                .await
+        }
+        None => candle_sources::fetch_from_source(source, symbol, Interval::Hour1, limit).await,
+    }
+    .map_err(|e| e.to_string())?;
 
     if let Some(path) = &cache_path
         && let Some(parent) = path.parent()
@@ -264,8 +285,93 @@ async fn load_or_fetch_candles(
     Ok(candles)
 }
 
-fn cache_file_path(dir: &str, source: &str, symbol: &str, limit: u32) -> PathBuf {
+fn requested_candle_window(
+    start_time_secs: Option<i64>,
+    end_time_secs: Option<i64>,
+) -> Result<Option<CandleWindow>, String> {
+    match (start_time_secs, end_time_secs) {
+        (None, None) => Ok(None),
+        (Some(start), Some(end)) => CandleWindow::new(start, end)
+            .map(Some)
+            .map_err(|error| error.to_string()),
+        _ => Err(
+            "candles_start_time_secs and candles_end_time_secs must be supplied together".into(),
+        ),
+    }
+}
+
+fn cache_entry_is_usable(candles: &[Candle], limit: u32, window: Option<CandleWindow>) -> bool {
+    !candles.is_empty() && (window.is_some() || candles.len() >= limit as usize)
+}
+
+fn cache_file_path(
+    dir: &str,
+    source: &str,
+    symbol: &str,
+    limit: u32,
+    window: Option<CandleWindow>,
+) -> PathBuf {
     // Safe-name the symbol: GeckoTerminal symbols contain ":" (e.g. "base:ETH").
     let safe = symbol.replace([':', '/', ' '], "_");
-    Path::new(dir).join(format!("{source}-{safe}-1h-{limit}.json"))
+    let suffix = match window {
+        Some(window) => format!(
+            "{}-{}-{limit}",
+            window.start_time_secs, window.end_time_secs
+        ),
+        None => limit.to_string(),
+    };
+    Path::new(dir).join(format!("{source}-{safe}-1h-{suffix}.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_window_requires_both_valid_bounds() {
+        assert!(requested_candle_window(Some(100), None).is_err());
+        assert!(requested_candle_window(None, Some(200)).is_err());
+        assert!(requested_candle_window(Some(200), Some(100)).is_err());
+        assert_eq!(
+            requested_candle_window(Some(100), Some(200)).unwrap(),
+            Some(CandleWindow {
+                start_time_secs: 100,
+                end_time_secs: 200,
+            })
+        );
+    }
+
+    #[test]
+    fn bounded_cache_keys_do_not_alias_latest_or_other_ranges() {
+        let first = Some(CandleWindow::new(100, 200).unwrap());
+        let second = Some(CandleWindow::new(200, 300).unwrap());
+        assert_ne!(
+            cache_file_path("/tmp", "hyperliquid", "BTC", 24, first),
+            cache_file_path("/tmp", "hyperliquid", "BTC", 24, second)
+        );
+        assert_ne!(
+            cache_file_path("/tmp", "hyperliquid", "BTC", 24, first),
+            cache_file_path("/tmp", "hyperliquid", "BTC", 24, None)
+        );
+    }
+
+    #[test]
+    fn exact_window_cache_accepts_a_valid_range_shorter_than_limit() {
+        let window = Some(CandleWindow::new(100, 200).unwrap());
+        assert!(cache_entry_is_usable(&[candle(100)], 24, window));
+        assert!(!cache_entry_is_usable(&[candle(100)], 24, None));
+        assert!(!cache_entry_is_usable(&[], 24, window));
+    }
+
+    fn candle(timestamp: i64) -> Candle {
+        Candle {
+            timestamp,
+            token: "TEST".into(),
+            open: Decimal::ONE,
+            high: Decimal::ONE,
+            low: Decimal::ONE,
+            close: Decimal::ONE,
+            volume: Decimal::ONE,
+        }
+    }
 }

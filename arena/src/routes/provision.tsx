@@ -1631,7 +1631,7 @@ export default function ProvisionPage() {
   >(null);
   const handledActivationAttemptKeysRef = useRef<Set<string>>(new Set());
   const instanceAutoProvisionInFlightRef = useRef<string | null>(null);
-  const activationGuardTxHashRef = useRef<`0x${string}` | undefined>();
+  const activationGuardTxHashRef = useRef<`0x${string}` | undefined>(undefined);
   const submitSnapshotRef = useRef<SubmitSnapshot | null>(null);
   const processedSubmitTxHashesRef = useRef<Set<`0x${string}`>>(new Set());
   const instanceRouteTarget = useMemo<InstanceProvisionIdentity>(

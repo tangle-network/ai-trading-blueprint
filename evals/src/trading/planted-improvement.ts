@@ -36,8 +36,7 @@
  *     flakiness is a number, not an anecdote.
  *
  * REUSES the production machinery end-to-end: `runHarnessSelfImprovement`
- * (substrate runImprovementLoop + evolutionaryDriver + harnessMutator +
- * harnessJudge + defaultProductionGate) — no parallel loop implementation.
+ * (complete harness method + harnessJudge + defaultProductionGate).
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -257,8 +256,7 @@ export interface PlantedRecoveryReport {
 export interface PlantedRecoveryOptions {
   /** Independent loop repetitions for the recovery-rate denominator. Default 3. */
   runs?: number
-  populationSize?: number
-  maxGenerations?: number
+  maxEvaluations?: number
   deltaThreshold?: number
   reps?: number
   seed?: number
@@ -304,23 +302,20 @@ export async function runPlantedImprovementRecovery(
       baselineHarness: MISPARAMETERIZED_BASELINE,
       candlesLimit: PLANTED_CANDLES_LIMIT,
       cacheDir,
-      populationSize: opts.populationSize ?? 12,
-      maxGenerations: opts.maxGenerations ?? 5,
+      maxEvaluations: opts.maxEvaluations ?? 60,
       deltaThreshold: opts.deltaThreshold ?? 0.05,
       reps: opts.reps ?? 1,
       runDir: join(runDirBase, `run-${i}`),
       ...(opts.seed !== undefined ? { seed: opts.seed + i } : {}),
     })
 
-    const gate =
-      typeof result.gateResult === 'object' && result.gateResult !== null
-        ? (result.gateResult as { decision?: unknown; reasons?: unknown })
-        : {}
-    const decision = 'decision' in gate ? String(gate.decision) : 'unknown'
-    const gateReasons = Array.isArray(gate.reasons) ? gate.reasons.map(String) : []
+    const decision = result.gateDecision
+    const gateReasons = Array.isArray(result.raw.gateResult.reasons)
+      ? result.raw.gateResult.reasons.map(String)
+      : []
     const promoted = decision === 'ship'
-    const baselineMean = meanHoldoutComposite(result.baselineOnHoldout)
-    const winnerMean = meanHoldoutComposite(result.winnerOnHoldout)
+    const baselineMean = meanHoldoutComposite(result.raw.baselineOnHoldout)
+    const winnerMean = meanHoldoutComposite(result.raw.winnerOnHoldout)
     const beats = winnerMean > baselineMean
     runs.push({
       run: i,
@@ -331,8 +326,8 @@ export async function runPlantedImprovementRecovery(
       winner_holdout_mean: winnerMean,
       winner_beats_baseline_on_holdout: beats,
       recovered: promoted && beats,
-      winner_rsi_below_thresholds: rsiBelowThresholds(result.winnerSurface),
-      winner_surface_hash: typeof result.winnerSurfaceHash === 'string' ? result.winnerSurfaceHash : undefined,
+      winner_rsi_below_thresholds: rsiBelowThresholds(result.winner.surface),
+      winner_surface_hash: result.raw.winnerSurfaceHash,
     })
   }
 

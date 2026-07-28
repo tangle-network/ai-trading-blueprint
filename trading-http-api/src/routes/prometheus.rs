@@ -355,10 +355,15 @@ pub fn record_execution(
 ) {
     let (bot_label, protocol_label) = resolve_labels("trading_executions_total", bot_id, protocol);
     EXECUTIONS_TOTAL
-        .with_label_values(&[&bot_label, &protocol_label, action, status.as_str()])
+        .with_label_values(&[
+            bot_label.as_str(),
+            protocol_label.as_str(),
+            action,
+            status.as_str(),
+        ])
         .inc();
     EXECUTION_LATENCY_SECONDS
-        .with_label_values(&[&bot_label, &protocol_label, action])
+        .with_label_values(&[bot_label.as_str(), protocol_label.as_str(), action])
         .observe(started_at.elapsed().as_secs_f64());
 }
 
@@ -409,7 +414,7 @@ pub fn record_slippage_recommendation(bot_id: &str, token_in: &str, token_out: &
     let pair = format!("{token_in}->{token_out}");
     let (bot_label, _) = resolve_labels("trading_learning_slippage_bps", bot_id, &pair);
     LEARNING_SLIPPAGE_BPS
-        .with_label_values(&[&bot_label, token_in, token_out])
+        .with_label_values(&[bot_label.as_str(), token_in, token_out])
         .set(bps as f64);
 }
 

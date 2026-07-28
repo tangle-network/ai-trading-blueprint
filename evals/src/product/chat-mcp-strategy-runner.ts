@@ -385,7 +385,6 @@ async function writeAgentEvalTrace(outputDir: string, report: ChatMcpStrategyE2E
   const traceDir = resolve(outputDir, 'agent-eval-traces')
   mkdirSync(traceDir, { recursive: true })
   try {
-    // (direct imports — agent-eval 0.45)
     const store = new FileSystemTraceStore({ dir: traceDir })
     const runId = `${SCENARIO_ID}-${Date.now()}`
     const emitter = new TraceEmitter(store, { runId })

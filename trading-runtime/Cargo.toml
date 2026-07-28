@@ -32,9 +32,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # toolchain; we hand-build the place_perp_order instruction with
 # solana-sdk + borsh to keep the dep footprint reasonable
 # (see solana::drift for details).
-solana-sdk = "2"
-solana-client = "2"
-solana-transaction-status = "2"
+solana-sdk = "3.0.0"
+solana-client = "3.1.8"
+solana-transaction-status = "3.1.8"
 spl-token = "8"
 spl-associated-token-account = "8"
 ed25519-dalek = "2"
@@ -45,7 +45,7 @@ bincode = "1"
 # CEX integrations — Binance Spot (HMAC-SHA256) and Coinbase Advanced Trade (ES256 JWT).
 hmac = "0.12"
 sha2 = "0.10"
-jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
+jsonwebtoken = { version = "10.3", default-features = false, features = ["use_pem", "rust_crypto"] }
 
 # Security primitives — sourcing CSPRNG nonces (Coinbase JWT) and zeroizing
 # keypair-adjacent buffers on drop (Solana operator key loader).

@@ -4,7 +4,7 @@
 //!
 //! `drift-rs` only publishes a `1.0.0-alpha` on crates.io that pulls a
 //! significant Anchor toolchain (`anchor-lang`, `anchor-client`, multiple
-//! cargo features that conflict with our existing `solana-sdk` v2 graph).
+//! cargo features that conflict with our existing `solana-sdk` graph).
 //! That's too heavy for what amounts to one borsh-serialized instruction
 //! payload. We build the payload directly with `solana-sdk` + `borsh`.
 //!

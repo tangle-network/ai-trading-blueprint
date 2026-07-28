@@ -2,7 +2,7 @@
 //!
 //! Endpoint:
 //!   GET https://data.api.drift.trade/market/{COIN}-PERP/candles/{resolution}
-//!       ?limit=N&startTs=<unix-seconds>
+//!       ?limit=N&startTs=<unix-seconds>&endTs=<unix-seconds>
 //!
 //! Resolutions are minutes-encoded as a path segment: 1, 5, 15, 60, 240, 1440.
 //!
@@ -74,6 +74,15 @@ pub async fn fetch(
     interval: Interval,
     limit: u32,
 ) -> Result<Vec<Candle>, TradingError> {
+    fetch_ending_at(token, interval, limit, now_secs()).await
+}
+
+pub async fn fetch_ending_at(
+    token: &str,
+    interval: Interval,
+    limit: u32,
+    end_time_secs: i64,
+) -> Result<Vec<Candle>, TradingError> {
     let client = reqwest::Client::builder()
         .user_agent("TradingBlueprint/1.0 (+drift candle backfill)")
         .timeout(std::time::Duration::from_secs(30))
@@ -85,16 +94,14 @@ pub async fn fetch(
     let bar_sec = interval.duration_ms() / 1000;
 
     let mut all: Vec<Candle> = Vec::with_capacity(limit as usize);
-    let mut end_ts = now_secs();
+    let mut end_ts = end_time_secs;
     let mut remaining = limit;
 
     while remaining > 0 {
         let page_size = remaining.min(MAX_BARS_PER_PAGE) as i64;
         let start_ts = end_ts.saturating_sub(page_size * bar_sec);
 
-        let url = format!(
-            "{DRIFT_BASE}/market/{coin}-PERP/candles/{resolution}?limit={page_size}&startTs={start_ts}",
-        );
+        let url = drift_candles_url(&coin, resolution, page_size, start_ts, end_ts);
 
         let resp = client
             .get(&url)
@@ -153,6 +160,18 @@ pub async fn fetch(
     Ok(all)
 }
 
+fn drift_candles_url(
+    coin: &str,
+    resolution: &str,
+    page_size: i64,
+    start_ts: i64,
+    end_ts: i64,
+) -> String {
+    format!(
+        "{DRIFT_BASE}/market/{coin}-PERP/candles/{resolution}?limit={page_size}&startTs={start_ts}&endTs={end_ts}",
+    )
+}
+
 fn dec_from(value: f64, field: &'static str) -> Result<Decimal, TradingError> {
     if !value.is_finite() {
         return Err(TradingError::MarketDataUnavailable(format!(
@@ -187,6 +206,14 @@ mod tests {
     fn coin_normalization() {
         assert_eq!(drift_market_coin("sol"), "SOL");
         assert_eq!(drift_market_coin("BTC"), "BTC");
+    }
+
+    #[test]
+    fn historical_request_sends_both_time_bounds() {
+        assert_eq!(
+            drift_candles_url("SOL", "60", 24, 100, 200),
+            "https://data.api.drift.trade/market/SOL-PERP/candles/60?limit=24&startTs=100&endTs=200"
+        );
     }
 
     #[tokio::test]

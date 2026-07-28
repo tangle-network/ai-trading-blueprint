@@ -94,6 +94,16 @@ pub async fn fetch_candles(
     interval: Interval,
     limit: u32,
 ) -> Result<Vec<Candle>, TradingError> {
+    fetch_candles_ending_at(token, interval, limit, now_secs()).await
+}
+
+/// Fetch historical candles whose open time is before `end_time_secs`.
+pub async fn fetch_candles_ending_at(
+    token: &str,
+    interval: Interval,
+    limit: u32,
+    end_time_secs: i64,
+) -> Result<Vec<Candle>, TradingError> {
     let client = reqwest::Client::builder()
         .user_agent("TradingBlueprint/1.0")
         .build()
@@ -101,7 +111,7 @@ pub async fn fetch_candles(
 
     let symbol = binance_symbol(token);
     let mut all_candles = Vec::new();
-    let mut end_time: Option<i64> = None;
+    let mut end_time = Some(end_time_secs.saturating_mul(1000).saturating_sub(1));
     let mut remaining = limit;
 
     while remaining > 0 {
@@ -164,6 +174,14 @@ pub async fn fetch_candles(
     all_candles.dedup_by_key(|c| c.timestamp);
 
     Ok(all_candles)
+}
+
+fn now_secs() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

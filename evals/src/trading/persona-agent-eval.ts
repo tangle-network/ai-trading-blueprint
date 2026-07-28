@@ -22,7 +22,7 @@
  *
  * Multi-round depth in operator-matrix mode is honestly 1 round: the real
  * provision→chat→capture cycle is single-pass and cannot be fed back through
- * `loopDispatch`/`loopUntil` (those host a sandbox `runLoop` child, not an HTTP
+ * `loopDispatch`/`loopUntil` (those host a sandbox `runAgentRounds` child, not an HTTP
  * provision+chat orchestration). The multi-TURN refinement lives INSIDE each cell
  * as the user-sim's `maxTurnsPerShot` turns; `depthRounds` is surfaced so the
  * degeneracy is explicit, never faked.
@@ -35,6 +35,7 @@ import { dirname } from 'node:path'
 import {
   agentProfileHash,
   agentProfileId,
+  modelHasSnapshot,
   recordRunsToScorecard,
   summarizeBackendIntegrity,
   validateRunRecord,
@@ -52,12 +53,21 @@ import {
 
 import { sha256 } from '../lib/crypto.js'
 import { isoStamp, resolveRepo } from '../lib/repo.js'
-import { llmCallWithUsage, resolveModel, type LlmModel } from '../sim/llm-call.js'
+import {
+  llmCallWithUsage,
+  modelExecutionIdentity,
+  resolveModel,
+  type LlmModel,
+} from '../sim/llm-call.js'
 import { runMultishotUserSim, scoreUserSimArtifact } from '../sim/multishot-user-sim.js'
 import { STANDARD_USER_INTENTS } from '../sim/user-intents.js'
 import { STANDARD_USER_PERSONAS, type UserPersona } from '../sim/user-personas.js'
 import type { UserIntent, UserSimSessionResult } from '../sim/user-sim-driver.js'
 import { currentCommitSha, runPersonaSuite } from './persona-runner.js'
+import {
+  deterministicExecutionIdentity,
+  validateCostLimits,
+} from './persona-eval-contracts.js'
 import { normalizeSplit, numericRaw, type PersonaEvalResult } from './persona-types.js'
 import { evaluateScenario } from './personas/walk-forward.js'
 import { defaultScenarios, type TradingEvalScenario } from './personas/scenarios.js'
@@ -67,20 +77,14 @@ import {
   type ScorecardWiringResult,
 } from './scorecard-integration.js'
 
-const MODEL_FINGERPRINT = 'deterministic-trading-runtime@2026-05-21'
 const VENUES = ['hyperliquid', 'binance', 'coinbase', 'drift', 'aerodrome', 'polymarket']
 const FEE_SCHEDULE_VERSION = 'protocol-fees@2026-05'
 const SURFACE_VERSION = 1
 const RUNTIME_VERSION = '0.1.0'
 
 /** The PROFILE axis for operator-matrix mode: the operator model variants the
- *  matrix sweeps. Single source of truth = `MODEL_CONFIG` in sim/llm-call.ts. */
+ *  matrix sweeps. Single source of truth = `MODEL_CONFIG` in sim/model-routing.ts. */
 export const OPERATOR_PROFILE_MODELS: readonly LlmModel[] = ['kimi-k2', 'glm-4.7', 'glm-5.1']
-
-// Snapshot tag appended to the profile's model id so runProfileMatrix can record
-// it (it requires `name@YYYY-MM-DD`). A stable eval-pin, NOT wall-clock, so the
-// scorecard timeline keys consistently across runs.
-const OPERATOR_MODEL_SNAPSHOT = '2026-06-01'
 
 export interface TradingPersonaEvalOptions {
   // ── shared ──
@@ -105,7 +109,13 @@ export interface TradingPersonaEvalOptions {
   maxTurnsPerShot?: number
   perTurnTimeoutMs?: number
   maxConcurrency?: number
+  /** Cumulative USD cap for each profile campaign. */
   costCeiling?: number
+  /**
+   * Hard per-cell maximum already enforced by the model provider or billing
+   * proxy. Required with costCeiling so Agent Eval can reserve spend before work.
+   */
+  providerCellCostLimit?: number
   /** Backend-integrity posture for the matrix. Default 'assert'. */
   integrity?: 'assert' | 'warn' | 'off'
 }
@@ -180,6 +190,7 @@ async function runDeterministicBacktest(
   const started = Date.now()
   const report = runPersonaSuite(reportPath)
   const commitSha = currentCommitSha()
+  const modelFingerprint = deterministicExecutionIdentity(commitSha)
   const store = new FileSystemTraceStore({ dir: traceDir })
   mkdirSync(dirname(runsJsonl), { recursive: true })
   mkdirSync(dirname(scorecardPath), { recursive: true })
@@ -189,7 +200,7 @@ async function runDeterministicBacktest(
     runtimeVersion: RUNTIME_VERSION,
     venues: VENUES,
     feeScheduleVersion: FEE_SCHEDULE_VERSION,
-    model: MODEL_FINGERPRINT,
+    model: modelFingerprint,
   })
 
   const collectedRuns: RunRecord[] = []
@@ -208,7 +219,7 @@ async function runDeterministicBacktest(
       experimentId: report.suite,
       candidateId: 'trading-runtime-specialist-candidate',
       seed: index,
-      model: MODEL_FINGERPRINT,
+      model: modelFingerprint,
       promptHash,
       configHash,
       commitSha,
@@ -222,7 +233,17 @@ async function runDeterministicBacktest(
     }) as RunRecord
     collectedRuns.push(record)
     appendFileSync(runsJsonl, `${JSON.stringify(record)}\n`, 'utf8')
-    await writeTrace({ store, runId, result, reportPath, suite: report.suite, commitSha, promptHash, configHash })
+    await writeTrace({
+      store,
+      runId,
+      result,
+      reportPath,
+      suite: report.suite,
+      commitSha,
+      modelFingerprint,
+      promptHash,
+      configHash,
+    })
     records += 1
   }
 
@@ -266,17 +287,28 @@ async function writeTrace(input: {
   reportPath: string
   suite: string
   commitSha: string
+  modelFingerprint: string
   promptHash: string
   configHash: string
 }): Promise<void> {
-  const { store, runId, result, reportPath, suite, commitSha, promptHash, configHash } = input
+  const {
+    store,
+    runId,
+    result,
+    reportPath,
+    suite,
+    commitSha,
+    modelFingerprint,
+    promptHash,
+    configHash,
+  } = input
   const emitter = new TraceEmitter(store, { runId })
   await emitter.startRun({
     scenarioId: result.scenario_id,
     variantId: 'trading-runtime-specialist-candidate',
     codeSha: commitSha,
     promptSha: promptHash,
-    modelFingerprint: MODEL_FINGERPRINT,
+    modelFingerprint,
     layer: 'app-runtime',
     tags: { suite, persona_id: result.persona_id, split: result.split, config_hash: configHash },
   })
@@ -319,6 +351,12 @@ export function buildOperatorProfiles(
   models: readonly LlmModel[] = OPERATOR_PROFILE_MODELS,
 ): AgentProfile[] {
   return models.map((model) => {
+    const executionIdentity = modelExecutionIdentity(model)
+    if (!modelHasSnapshot(executionIdentity)) {
+      throw new Error(
+        `model "${model}" execution identity "${executionIdentity}" is not snapshot-bearing`,
+      )
+    }
     const base = buildTradingScorecardAgentProfile({
       surfaceVersion: SURFACE_VERSION,
       runtimeVersion: RUNTIME_VERSION,
@@ -333,11 +371,7 @@ export function buildOperatorProfiles(
       // label only; mirror the variant there for readable artifacts.
       name: `${base.name}::model=${model}`,
       version: `${base.version}::model=${model}`,
-      // runProfileMatrix requires a snapshot-versioned model id (name@YYYY-MM-DD)
-      // for scorecard recordability. The bare LlmModel for provider routing is
-      // carried on metadata.model (read by modelOfProfile), so routing is
-      // unaffected. The snapshot is a stable eval-pin so the timeline keys consistently.
-      model: { ...base.model, default: `${model}@${OPERATOR_MODEL_SNAPSHOT}` },
+      model: { ...base.model, default: executionIdentity },
       metadata: { ...base.metadata, model, modelClass: 'llm-trading-operator' },
     }
   })
@@ -457,7 +491,15 @@ async function runOperatorMatrix(
     )
   }
 
-  const profiles = buildOperatorProfiles(options.models ?? OPERATOR_PROFILE_MODELS)
+  const costLimits = validateCostLimits(options.costCeiling, options.providerCellCostLimit)
+  const models = options.models ?? OPERATOR_PROFILE_MODELS
+  // Validate every route, credential, and immutable identity before backtests
+  // or remote operator work begins.
+  for (const model of models) {
+    resolveModel(model)
+    modelExecutionIdentity(model)
+  }
+  const profiles = buildOperatorProfiles(models)
   const personas = options.personas ?? STANDARD_USER_PERSONAS
   const markets = options.markets ?? defaultScenarios()
   const intents = options.intents ?? STANDARD_USER_INTENTS
@@ -487,7 +529,7 @@ async function runOperatorMatrix(
     splitTag: 'search',
     ...(options.reps !== undefined ? { reps: options.reps } : {}),
     maxConcurrency: options.maxConcurrency ?? 1,
-    ...(options.costCeiling !== undefined ? { costCeiling: options.costCeiling } : {}),
+    ...(costLimits ? { costCeiling: costLimits.costCeiling } : {}),
     integrity: options.integrity ?? 'assert',
     allowMixed: true,
     personaOf: (s) => s.persona.id,
@@ -495,38 +537,67 @@ async function runOperatorMatrix(
       const groundTruth = groundTruthByMarket.get(scenario.market.id)
       if (!groundTruth) throw new Error(`no backtest ground truth for market ${scenario.market.id}`)
       const model = modelOfProfile(profile)
-      const campaign = await runMultishotUserSim({
-        intents: [scenario.intent],
-        personas: [scenario.persona],
-        operatorUrl,
-        token,
-        ...(privateKey ? { privateKey } : {}),
-        agentEnv: agentEnvForModel(model),
-        reps: 1,
-        maxTurnsPerShot,
-        perTurnTimeoutMs,
-        botKind: 'real',
-        dualJudge: false,
-        runDir: `${runDir}/cells/${agentProfileId(profile).replace(/[^\w.-]/g, '_')}__${scenario.id}`,
+      const executionIdentity = modelExecutionIdentity(model)
+      const paid = await ctx.cost.runPaidCall({
+        actor: 'trading-operator-session',
+        model: executionIdentity,
+        ...(costLimits
+          ? {
+              maximumCharge: {
+                externallyEnforcedMaximumUsd: costLimits.providerCellCostLimit,
+              },
+            }
+          : {}),
+        execute: async () => {
+          const campaign = await runMultishotUserSim({
+            intents: [scenario.intent],
+            personas: [scenario.persona],
+            operatorUrl,
+            token,
+            ...(privateKey ? { privateKey } : {}),
+            agentEnv: agentEnvForModel(model),
+            reps: 1,
+            maxTurnsPerShot,
+            perTurnTimeoutMs,
+            botKind: 'real',
+            dualJudge: false,
+            runDir: `${runDir}/cells/${agentProfileId(profile).replace(/[^\w.-]/g, '_')}__${scenario.id}`,
+          })
+          const session = firstArtifact(campaign)
+          const innerUsage = campaignTokenUsage(campaign)
+          const groundingCall = session
+            ? await metaSpendCall(model, scenario, session)
+            : undefined
+          return { session, innerUsage, groundingCall }
+        },
+        receipt: ({ innerUsage, groundingCall }) => {
+          const inputTokens = innerUsage.input + (groundingCall?.usage.input ?? 0)
+          const outputTokens = innerUsage.output + (groundingCall?.usage.output ?? 0)
+          const costUsd = innerUsage.costUsd + (groundingCall?.usage.costUsd ?? 0)
+          return {
+            model: executionIdentity,
+            inputTokens,
+            outputTokens,
+            ...(costUsd > 0 ? { actualCostUsd: costUsd } : {}),
+          }
+        },
       })
-      const session = firstArtifact(campaign)
+      if (!paid.succeeded) throw paid.error
+      const { session } = paid.value
       if (!session) {
-        return { session: emptySession(scenario.intent), groundTruth, model, operatorResponded: false }
+        return {
+          session: emptySession(scenario.intent),
+          groundTruth,
+          model: executionIdentity,
+          operatorResponded: false,
+        }
       }
-      // Integrity fingerprint: the real operator's LLM spend is inside its
-      // sandbox (invisible to the eval), and the inner user-sim talks HTTP — so
-      // the inner cells report zero tokens. ONE metered call with this profile's
-      // model assessing its own real transcript gives the integrity guard an
-      // honest non-stub signal (genuine model work on genuine evidence).
-      const innerUsage = campaignTokenUsage(campaign)
-      const groundingCall = await metaSpendCall(model, scenario, session)
-      ctx.cost.observeTokens({
-        input: innerUsage.input + groundingCall.usage.input,
-        output: innerUsage.output + groundingCall.usage.output,
-      })
-      const cost = innerUsage.costUsd + groundingCall.usage.costUsd
-      if (cost > 0) ctx.cost.observe(cost, `operator+grounding:${model}`)
-      return { session, groundTruth, model, operatorResponded: session.turns.length > 0 }
+      return {
+        session,
+        groundTruth,
+        model: executionIdentity,
+        operatorResponded: session.turns.length > 0,
+      }
     },
   })
 

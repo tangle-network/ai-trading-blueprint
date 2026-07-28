@@ -11,7 +11,7 @@ pub use baseline::{
     DEFAULT_BASELINE_LOOKBACK_DAYS, run_baseline_backtest, strategy_supports_baseline,
 };
 pub use engine::BacktestEngine;
-pub use history::{Interval, fetch_candles};
+pub use history::{Interval, fetch_candles, fetch_candles_ending_at};
 pub use prediction::{
     AlwaysCorrectStrategy, CoinFlipStrategy, HarnessPredictionStrategy, PredictionBenchmarkConfig,
     PredictionBenchmarkResult, PredictionMarket, PredictionSignal, PredictionStrategy,

@@ -24,7 +24,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::backtest::types::Candle;
-use crate::backtest::{Interval, fetch_candles as binance_fetch};
+use crate::backtest::{
+    Interval, fetch_candles as binance_fetch, fetch_candles_ending_at as binance_fetch_ending_at,
+};
 use crate::error::TradingError;
 
 pub mod coinbase;
@@ -53,6 +55,27 @@ pub enum Source {
     /// Multi-DEX aggregator across 100+ networks. Pass `token` as
     /// `"network:POOL_OR_SYMBOL"` (e.g. `"base:ETH"`, `"eth:0x88e6…"`).
     GeckoTerminal,
+}
+
+/// Explicit half-open candle range in Unix seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CandleWindow {
+    pub start_time_secs: i64,
+    pub end_time_secs: i64,
+}
+
+impl CandleWindow {
+    pub fn new(start_time_secs: i64, end_time_secs: i64) -> Result<Self, TradingError> {
+        if start_time_secs < 0 || end_time_secs <= start_time_secs {
+            return Err(TradingError::MarketDataUnavailable(format!(
+                "invalid candle window [{start_time_secs}, {end_time_secs}); expected 0 <= start < end"
+            )));
+        }
+        Ok(Self {
+            start_time_secs,
+            end_time_secs,
+        })
+    }
 }
 
 impl Source {
@@ -140,9 +163,86 @@ pub async fn fetch_from_source(
     }
 }
 
+/// Fetch at most `limit` candles inside an explicit `[start, end)` range.
+///
+/// Venue APIs disagree on whether their end cursor is inclusive. Fetch one
+/// extra bar, then enforce the half-open range here so callers get one contract.
+pub async fn fetch_from_source_window(
+    source: Source,
+    symbol: &str,
+    interval: Interval,
+    limit: u32,
+    window: CandleWindow,
+) -> Result<Vec<Candle>, TradingError> {
+    let window = CandleWindow::new(window.start_time_secs, window.end_time_secs)?;
+    let fetch_limit = limit.saturating_add(1);
+    let candles = match source {
+        Source::Hyperliquid => {
+            hyperliquid::fetch_ending_at(symbol, interval, fetch_limit, window.end_time_secs)
+                .await?
+        }
+        Source::Binance => {
+            binance_fetch_ending_at(symbol, interval, fetch_limit, window.end_time_secs).await?
+        }
+        Source::Coinbase => {
+            coinbase::fetch_ending_at(symbol, interval, fetch_limit, window.end_time_secs).await?
+        }
+        Source::Drift => {
+            drift::fetch_ending_at(symbol, interval, fetch_limit, window.end_time_secs).await?
+        }
+        Source::Polymarket => {
+            polymarket::fetch_ending_at(symbol, interval, fetch_limit, window.end_time_secs).await?
+        }
+        Source::GeckoTerminal => {
+            geckoterminal::fetch_window(
+                symbol,
+                interval,
+                fetch_limit,
+                window.start_time_secs,
+                window.end_time_secs,
+            )
+            .await?
+        }
+    };
+    Ok(select_candles(candles, limit, Some(window)))
+}
+
+/// Normalize venue or cache results and keep the newest `limit` candles.
+/// An optional window is always enforced as a half-open range.
+pub fn select_candles(
+    mut candles: Vec<Candle>,
+    limit: u32,
+    window: Option<CandleWindow>,
+) -> Vec<Candle> {
+    if let Some(window) = window {
+        candles.retain(|candle| {
+            candle.timestamp >= window.start_time_secs && candle.timestamp < window.end_time_secs
+        });
+    }
+    candles.sort_by_key(|candle| candle.timestamp);
+    candles.dedup_by_key(|candle| candle.timestamp);
+    if candles.len() > limit as usize {
+        candles.drain(..candles.len() - limit as usize);
+    }
+    candles
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rust_decimal::Decimal;
+
+    fn candle(timestamp: i64) -> Candle {
+        Candle {
+            timestamp,
+            token: "TEST".into(),
+            open: Decimal::ONE,
+            high: Decimal::ONE,
+            low: Decimal::ONE,
+            close: Decimal::ONE,
+            volume: Decimal::ONE,
+        }
+    }
 
     #[test]
     fn parses_all_canonical_names() {
@@ -215,5 +315,32 @@ mod tests {
         );
         assert_eq!(Source::parse("gecko").unwrap(), Source::GeckoTerminal);
         assert_eq!(Source::parse("gt").unwrap(), Source::GeckoTerminal);
+    }
+
+    #[test]
+    fn candle_window_is_half_open_and_keeps_latest_limit() {
+        let window = CandleWindow::new(100, 400).unwrap();
+        let selected = select_candles(
+            vec![
+                candle(400),
+                candle(100),
+                candle(300),
+                candle(200),
+                candle(99),
+            ],
+            2,
+            Some(window),
+        );
+        assert_eq!(
+            selected.iter().map(|c| c.timestamp).collect::<Vec<_>>(),
+            vec![200, 300]
+        );
+    }
+
+    #[test]
+    fn candle_window_rejects_empty_or_reversed_ranges() {
+        assert!(CandleWindow::new(100, 100).is_err());
+        assert!(CandleWindow::new(101, 100).is_err());
+        assert!(CandleWindow::new(-1, 100).is_err());
     }
 }

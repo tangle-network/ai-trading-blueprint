@@ -1,7 +1,6 @@
 /**
- * Per-bot runtime self-improvement loop — one running bot, one venue,
- * one symbol. Time-window split on the same bot's candles: train on the
- * older window, gate the winner on the most recent holdout window.
+ * Per-bot runtime self-improvement loop for one running bot, venue, and symbol.
+ * Two history lengths drive search and a shorter final horizon checks the winner.
  *
  * Architecture:
  *
@@ -10,16 +9,12 @@
  *     (HarnessConfig → /strategy/config endpoint, prompt addendum →
  *     /home/agent/config/, knowledge → /home/agent/.agent-knowledge/).
  *
- *   ─ Worktrees are EPHEMERAL and LOCAL. The substrate's
- *     `runImprovementLoop` keeps each candidate as a `MutableSurface`
- *     value (the HarnessConfig JSON) — no git worktree on disk for the
- *     evolutionary path. When `agenticGenerator` is wired (future:
- *     code-level changes), worktrees materialise under
- *     `.evolve/candidates/<id>/` and are deleted at finalize/discard.
+ *   ─ Search candidates are HarnessConfig JSON values. This path does not
+ *     create git worktrees because it changes data, not repository code.
  *
  *   ─ Same primitives as `harness-self-improve.ts` (developer-side):
- *     `evolutionaryDriver({mutator: harnessMutator()})`, the shared
- *     `harnessJudge`, the shared `dispatchHarnessBacktest` Rust CLI.
+ *     `harnessOptimizationMethod`, the shared `harnessJudge`, and the shared
+ *     `dispatchHarnessBacktest` Rust CLI.
  *     The ONLY difference is the scenario set + the promotion action.
  *
  * Called by the in-sandbox `self_improvement_loop.ts` tool over HTTP
@@ -32,33 +27,37 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   defaultProductionGate,
-  evolutionaryProposer,
   type LabeledScenarioStore,
   type MutableSurface,
-  type RunImprovementLoopResult,
-  runImprovementLoop,
-  type Scenario,
 } from '@tangle-network/agent-eval/campaign'
+import {
+  selfImprove,
+  type SelfImproveResult,
+} from '@tangle-network/agent-eval/contract'
 import { resolveRepo } from '../lib/repo.js'
-import { dispatchHarnessBacktest, ensureHarnessBacktestBinary } from './harness-dispatch.js'
+import {
+  dispatchHarnessBacktest,
+  ensureHarnessBacktestBinary,
+  harnessBacktestExecutionIdentity,
+} from './harness-dispatch.js'
 import { harnessJudge } from './harness-fitness.js'
-import { harnessMutator } from './harness-mutator.js'
+import { harnessOptimizationMethod } from './harness-mutator.js'
 import {
   BASELINE_HARNESS,
   type BacktestArtifact,
   type BotContext,
   type HarnessConfig,
 } from './harness-types.js'
+import {
+  buildPerBotWindowPlan,
+  type BotWindowScenario,
+} from './per-bot-windows.js'
 
-/** A time-window scenario over a single bot's candle stream. */
-export interface BotWindowScenario extends Scenario {
-  bot: BotContext
-  /** Hourly bars to fetch from the venue, ending at the window's `endsAt`. */
-  candlesLimit: number
-  /** `train`: older history, used by the optimizer.
-   *  `holdout`: most-recent window the gate evaluates. */
-  window: 'train' | 'holdout'
-}
+export {
+  buildPerBotWindowPlan,
+  type BotWindowScenario,
+  type PerBotWindowPlan,
+} from './per-bot-windows.js'
 
 export interface PerBotImprovementOptions {
   bot: BotContext
@@ -66,16 +65,16 @@ export interface PerBotImprovementOptions {
   trainCandlesLimit?: number
   /** Bars in the HOLDOUT window. Default 720 (30 days hourly). */
   holdoutCandlesLimit?: number
+  /** Exclusive end of the final window. Defaults to the latest completed hour. */
+  windowEndTimeSec?: number
   /** Current running HarnessConfig — defaults to the canonical baseline.
    *  Loaded by the caller from `data/trading.db` or `/home/agent/config/harness.json`. */
   currentHarness?: HarnessConfig
   /** Final promote step: caller writes the winning surface into the bot's
    *  running state (e.g. POST /strategy/config). Called only when the
-   *  substrate's gate accepts the winner. */
+   *  production check accepts the winner. */
   promoteToLocalState?: (winningHarness: HarnessConfig) => Promise<void>
-  populationSize?: number
-  maxGenerations?: number
-  promoteTopK?: number
+  maxEvaluations?: number
   deltaThreshold?: number
   reps?: number
   seed?: number
@@ -86,7 +85,7 @@ export interface PerBotImprovementOptions {
 
 export interface PerBotImprovementResult {
   bot: BotContext
-  loop: RunImprovementLoopResult<BacktestArtifact, BotWindowScenario>
+  improvement: SelfImproveResult<BotWindowScenario, BacktestArtifact>
   promoted: boolean
   winningHarness: HarnessConfig | null
 }
@@ -95,37 +94,26 @@ export interface PerBotImprovementResult {
  * Run the self-improvement loop for a single bot in its production
  * runtime context. On a passing gate verdict, the optional
  * `promoteToLocalState` callback fires with the winning HarnessConfig.
- * The substrate's `autoOnPromote: 'none'` ensures no PR is ever opened
- * from this path.
+ * This function never enables automatic PR promotion, so accepted changes
+ * remain local to the bot.
  */
 export async function runPerBotSelfImprovement(
   opts: PerBotImprovementOptions,
 ): Promise<PerBotImprovementResult> {
-  ensureHarnessBacktestBinary()
-  const trainLimit = opts.trainCandlesLimit ?? 4320
-  const holdoutLimit = opts.holdoutCandlesLimit ?? 720
+  const binaryPath = ensureHarnessBacktestBinary()
+  const executionIdentity = harnessBacktestExecutionIdentity(binaryPath)
   const cacheDir = opts.cacheDir ?? mkdtempSync(join(tmpdir(), `per-bot-${opts.bot.id}-`))
   mkdirSync(cacheDir, { recursive: true })
   const baseline = opts.currentHarness ?? BASELINE_HARNESS
-
-  // Two scenarios: same bot, different window. The dispatch uses the
-  // scenario's `candlesLimit` to drive the Rust CLI's window length.
-  const trainScenario: BotWindowScenario = {
-    id: `${opts.bot.id}-train`,
-    kind: 'per-bot-train-window',
-    tags: [opts.bot.venue_label, opts.bot.symbol, 'train'],
-    bot: opts.bot,
-    candlesLimit: trainLimit,
-    window: 'train',
-  }
-  const holdoutScenario: BotWindowScenario = {
-    id: `${opts.bot.id}-holdout`,
-    kind: 'per-bot-holdout-window',
-    tags: [opts.bot.venue_label, opts.bot.symbol, 'holdout'],
-    bot: opts.bot,
-    candlesLimit: holdoutLimit,
-    window: 'holdout',
-  }
+  const { searchScenarios, holdoutScenario } = buildPerBotWindowPlan(opts.bot, {
+    ...(opts.trainCandlesLimit !== undefined
+      ? { trainCandlesLimit: opts.trainCandlesLimit }
+      : {}),
+    ...(opts.holdoutCandlesLimit !== undefined
+      ? { holdoutCandlesLimit: opts.holdoutCandlesLimit }
+      : {}),
+    ...(opts.windowEndTimeSec !== undefined ? { windowEndTimeSec: opts.windowEndTimeSec } : {}),
+  })
 
   const dispatchWithSurface = async (
     surface: string,
@@ -136,53 +124,52 @@ export async function runPerBotSelfImprovement(
     return dispatchHarnessBacktest(harness, scenario.bot, {
       candlesLimit: scenario.candlesLimit,
       cacheDir,
+      candleWindow: scenario.candleWindow,
       ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
     })
   }
 
-  const loop = await runImprovementLoop<BotWindowScenario, BacktestArtifact>({
-    scenarios: [trainScenario],
-    holdoutScenarios: [holdoutScenario],
-    judges: [harnessJudge<BotWindowScenario>()],
+  const improvement = await selfImprove<BotWindowScenario, BacktestArtifact>({
+    model: executionIdentity,
+    scenarios: searchScenarios,
+    budget: {
+      reps: opts.reps ?? 1,
+      holdoutScenarios: [holdoutScenario],
+    },
+    judge: harnessJudge<BotWindowScenario>(),
     baselineSurface: JSON.stringify(baseline),
-    dispatchWithSurface: (surface: MutableSurface, scenario) => {
+    agent: (surface: MutableSurface, scenario) => {
       if (typeof surface !== 'string') {
         throw new Error('per-bot self-improvement: surface must be a JSON string')
       }
       return dispatchWithSurface(surface, scenario)
     },
-    proposer: evolutionaryProposer({ mutator: harnessMutator({ baseline }) }),
-    populationSize: opts.populationSize ?? 16,
-    maxGenerations: opts.maxGenerations ?? 6,
-    promoteTopK: opts.promoteTopK ?? 5,
-    reps: opts.reps ?? 1,
+    method: harnessOptimizationMethod<BotWindowScenario>({
+      maxEvaluations: opts.maxEvaluations ?? 96,
+      ...(opts.seed === undefined ? {} : { seedSalt: opts.seed }),
+    }),
     gate: defaultProductionGate<BacktestArtifact, BotWindowScenario>({
       holdoutScenarios: [holdoutScenario],
       deltaThreshold: opts.deltaThreshold ?? 0.05,
     }),
-    // PRODUCT INVARIANT: never auto-open a PR from a deployed bot.
-    autoOnPromote: 'none',
     runDir: opts.runDir ?? resolveRepo(`.evolve/eval-runs/per-bot-${opts.bot.id}-${Date.now()}`),
     ...(opts.labeledStore ? { labeledStore: opts.labeledStore } : {}),
     captureSource: 'eval-run',
+    // The evaluated worker is a deterministic Rust executable, not a paid model.
+    expectUsage: 'off',
   })
 
-  // Substrate's gate verdict drives the local-state writeback.
-  const decision =
-    typeof loop.gateResult === 'object' && loop.gateResult && 'decision' in loop.gateResult
-      ? (loop.gateResult as { decision: string }).decision
-      : 'unknown'
-  const promoted = decision === 'accept' || decision === 'promote' || decision === 'ship'
+  const promoted = improvement.gateDecision === 'ship'
   const winningHarness =
-    promoted && typeof loop.winnerSurface === 'string'
-      ? (JSON.parse(loop.winnerSurface) as HarnessConfig)
+    promoted && typeof improvement.winner.surface === 'string'
+      ? (JSON.parse(improvement.winner.surface) as HarnessConfig)
       : null
 
   if (promoted && winningHarness && opts.promoteToLocalState) {
     await opts.promoteToLocalState(winningHarness)
   }
 
-  return { bot: opts.bot, loop, promoted, winningHarness }
+  return { bot: opts.bot, improvement, promoted, winningHarness }
 }
 
 /**

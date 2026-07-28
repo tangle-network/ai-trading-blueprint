@@ -62,6 +62,15 @@ pub async fn fetch(
     interval: Interval,
     limit: u32,
 ) -> Result<Vec<Candle>, TradingError> {
+    fetch_ending_at(token, interval, limit, now_secs()).await
+}
+
+pub async fn fetch_ending_at(
+    token: &str,
+    interval: Interval,
+    limit: u32,
+    end_time_secs: i64,
+) -> Result<Vec<Candle>, TradingError> {
     let granularity = coinbase_granularity(interval)?;
     let product = coinbase_product(token);
     let bar_sec = granularity as i64;
@@ -72,7 +81,7 @@ pub async fn fetch(
         .map_err(|e| TradingError::HttpError(e.to_string()))?;
 
     let mut all: Vec<Candle> = Vec::with_capacity(limit as usize);
-    let mut end_ts = now_secs();
+    let mut end_ts = end_time_secs;
     let mut remaining = limit;
 
     while remaining > 0 {

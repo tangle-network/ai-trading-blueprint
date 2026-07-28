@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 /**
  * `npm run eval:per-bot-self-improve` — drive `runPerBotSelfImprovement`
- * for a single bot, time-window split (train+holdout) on its own venue
- * data, optimize the HarnessConfig, gate the winner, optionally write
+ * for a single bot across multiple history lengths, optimize the HarnessConfig,
+ * check the winner on the final horizon, optionally write
  * it back to a local file.
  *
  *   npm run eval:per-bot-self-improve -- --bot hl-hype
- *   npm run eval:per-bot-self-improve -- --bot drift-sol --train-bars 4320 --holdout-bars 720 --generations 4 --population 8
+ *   npm run eval:per-bot-self-improve -- --bot drift-sol --train-bars 4320 --holdout-bars 720 --max-evaluations 96
+ *   npm run eval:per-bot-self-improve -- --bot hl-btc --window-end-time-sec 1767225600
  *   npm run eval:per-bot-self-improve -- --bot hl-btc --promote-to /home/agent/config/harness.json
  */
 
 import { readFileSync } from 'node:fs'
+import { argValue } from './trading-persona-cli.js'
 import { DEFAULT_BOTS } from '../trading/harness-self-improve.js'
 import {
   runPerBotSelfImprovement,
@@ -19,8 +21,17 @@ import {
 import type { HarnessConfig } from '../trading/harness-types.js'
 
 function arg(name: string): string | undefined {
-  const i = process.argv.indexOf(`--${name}`)
-  return i >= 0 ? process.argv[i + 1] : undefined
+  return argValue(process.argv, `--${name}`)
+}
+
+function safeIntegerArg(name: string, minimum: number): number | undefined {
+  const raw = arg(name)
+  if (raw === undefined) return undefined
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`--${name} must be a safe integer >= ${minimum}, got "${raw}"`)
+  }
+  return value
 }
 
 const botId = arg('bot')
@@ -38,11 +49,11 @@ if (!bot) {
 
 const promoteTo = arg('promote-to')
 const baselineFile = arg('baseline-harness-file')
-const trainBars = arg('train-bars') ? Number(arg('train-bars')) : undefined
-const holdoutBars = arg('holdout-bars') ? Number(arg('holdout-bars')) : undefined
-const generations = arg('generations') ? Number(arg('generations')) : undefined
-const populationSize = arg('population') ? Number(arg('population')) : undefined
-const seed = arg('seed') ? Number(arg('seed')) : undefined
+const trainBars = safeIntegerArg('train-bars', 1)
+const holdoutBars = safeIntegerArg('holdout-bars', 1)
+const maxEvaluations = safeIntegerArg('max-evaluations', 1)
+const windowEndTimeSec = safeIntegerArg('window-end-time-sec', 1)
+const seed = safeIntegerArg('seed', 0)
 
 const currentHarness: HarnessConfig | undefined = baselineFile
   ? (JSON.parse(readFileSync(baselineFile, 'utf8')) as HarnessConfig)
@@ -53,16 +64,13 @@ const result = await runPerBotSelfImprovement({
   ...(currentHarness ? { currentHarness } : {}),
   ...(trainBars !== undefined ? { trainCandlesLimit: trainBars } : {}),
   ...(holdoutBars !== undefined ? { holdoutCandlesLimit: holdoutBars } : {}),
-  ...(generations !== undefined ? { maxGenerations: generations } : {}),
-  ...(populationSize !== undefined ? { populationSize } : {}),
+  ...(maxEvaluations !== undefined ? { maxEvaluations } : {}),
+  ...(windowEndTimeSec !== undefined ? { windowEndTimeSec } : {}),
   ...(seed !== undefined ? { seed } : {}),
   ...(promoteTo ? { promoteToLocalState: writeHarnessToLocalFile(promoteTo) } : {}),
 })
 
-const gateDecision =
-  typeof result.loop.gateResult === 'object' && result.loop.gateResult && 'decision' in result.loop.gateResult
-    ? (result.loop.gateResult as { decision: string }).decision
-    : 'unknown'
+const gateDecision = result.improvement.gateDecision
 
 console.log(
   JSON.stringify(
@@ -72,9 +80,9 @@ console.log(
       gate_decision: gateDecision,
       promoted: result.promoted,
       winning_harness: result.winningHarness,
-      winner_surface_hash: result.loop.winnerSurfaceHash,
-      baseline_holdout_aggregates: result.loop.baselineOnHoldout.aggregates,
-      winner_holdout_aggregates: result.loop.winnerOnHoldout.aggregates,
+      winner_surface_hash: result.improvement.raw.winnerSurfaceHash,
+      baseline_holdout_aggregates: result.improvement.raw.baselineOnHoldout.aggregates,
+      winner_holdout_aggregates: result.improvement.raw.winnerOnHoldout.aggregates,
       promoted_to_local_state: result.promoted && Boolean(promoteTo) ? promoteTo : null,
     },
     null,

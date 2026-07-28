@@ -749,7 +749,6 @@ async function writeAgentEvalTrace(outputDir: string, report: ChatSandboxE2ERepo
   const traceDir = resolve(outputDir, 'agent-eval-traces')
   mkdirSync(traceDir, { recursive: true })
   try {
-    // (direct imports — agent-eval 0.45)
     const store = new FileSystemTraceStore({ dir: traceDir })
     const emitter = new TraceEmitter(store, { runId: `${SCENARIO_ID}-${Date.now()}` })
     await recordTrace(emitter, report)

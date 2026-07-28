@@ -239,8 +239,6 @@ function validateAgentStrategyResult(
 }
 
 async function emitRunRecord(summary: AgentStrategyEvalSummary, scenarioId: string): Promise<void> {
-  // (direct imports — agent-eval 0.45)
-  
   mkdirSync(dirname(summary.runs_jsonl), { recursive: true })
   const record = validateRunRecord({
     runId: randomUUID(),

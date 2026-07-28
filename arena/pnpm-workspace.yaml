@@ -1,5 +1,40 @@
 packages:
   - .
 
-onlyBuiltDependencies:
-  - esbuild
+minimumReleaseAgeExclude:
+  - '@tangle-network/agent-interface@0.36.0'
+  - '@tangle-network/sandbox-ui@0.90.3'
+
+allowBuilds:
+  '@bufbuild/buf': true
+  '@parcel/watcher': true
+  canvas: true
+  esbuild: true
+
+peerDependencyRules:
+  allowedVersions:
+    '@aave/account@0.2.0>wagmi': '3.7.4'
+    '@tangle-network/blueprint-ui@0.5.7>@nanostores/react': '1.1.0'
+    '@tangle-network/blueprint-ui@0.5.7>nanostores': '1.4.1'
+    '@tangle-network/blueprint-ui@0.5.7>react-router': '8.3.0'
+    '@tangle-network/ui@11.2.1>react-router': '8.3.0'
+    'connectkit@1.9.2>react': '19.2.8'
+    'connectkit@1.9.2>react-dom': '19.2.8'
+    'connectkit@1.9.2>wagmi': '3.7.4'
+
+overrides:
+  '@babel/core': 7.29.7
+  'brace-expansion@>=5.0.0 <6.0.0': 5.0.8
+  babel-plugin-styled-components: 2.3.0
+  defu: 6.1.7
+  esbuild: 0.28.1
+  form-data: 4.0.6
+  immutable: 5.1.9
+  lodash: 4.18.1
+  picomatch@<2.3.2: 2.3.2
+  picomatch@>=4.0.0 <4.0.4: 4.0.4
+  picomatch@>=4.0.4 <5: 4.0.4
+  postcss: 8.5.18
+  rollup: 4.61.0
+  valibot: 1.4.2
+  ws: 8.21.1

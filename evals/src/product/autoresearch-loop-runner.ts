@@ -146,8 +146,6 @@ export async function runAutoresearchLoop(options: AutoresearchLoopOptions = {})
   const trajectoryDir = resolveRepo(options.trajectoryDir ?? '.evolve/agent-eval/feedback/product-autoresearch')
   const runsJsonl = resolveRepo(options.runsJsonl ?? '.evolve/agent-eval/product-autoresearch-runs.jsonl')
   const inputReports = normalizeInputReports(options.input)
-  // (direct imports — agent-eval 0.45)
-
 
   const judged: JudgedScenario[] = []
   const trajectoryStore = FileSystemFeedbackTrajectoryStore
@@ -338,7 +336,7 @@ async function callJudgeWithRetry(
         baseUrl: input.baseUrl,
         apiKey: input.apiKey,
         defaultTimeoutMs: 120_000,
-        maxRetries: 1,
+        maximumAttempts: 2,
       })
       return value
     } catch (error) {
@@ -445,16 +443,9 @@ function labelsFromJudgment(judge: QualityJudgment, deterministic: Deterministic
   return labels
 }
 
-// Policy enumeration: the original `runMultiShotOptimization` invocation was
-// effectively a tournament over three hand-tuned PromptPolicy candidates
-// plus optional `proposePolicyMutations`-generated variants. agent-eval 0.45
-// removed `runMultiShotOptimization` in favour of `runImprovementLoop`,
-// which expects a `MutableSurface` + a code-or-prompt mutator. The three
-// policies here are not code, and reflective mutation is overkill for a
-// three-way tournament. We do the same enumeration in-process, score each
-// candidate per scenario, average across scenarios, and emit an object
-// shaped like the upstream call so downstream `extractPromotedPolicy` +
-// `buildAssertions` consumers stay unchanged.
+// This is a fixed three-policy product experiment, not an optimizer search.
+// Score every declared policy over the same scenarios and return the winner
+// plus the complete trial table consumed by the product report.
 async function runPolicyOptimization(
   judged: JudgedScenario[],
   _options: AutoresearchLoopOptions,

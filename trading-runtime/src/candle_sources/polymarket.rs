@@ -57,6 +57,15 @@ pub async fn fetch(
     interval: Interval,
     limit: u32,
 ) -> Result<Vec<Candle>, TradingError> {
+    fetch_ending_at(token_id, interval, limit, now_secs()).await
+}
+
+pub async fn fetch_ending_at(
+    token_id: &str,
+    interval: Interval,
+    limit: u32,
+    end_time_secs: i64,
+) -> Result<Vec<Candle>, TradingError> {
     let client = reqwest::Client::builder()
         .user_agent("TradingBlueprint/1.0 (+polymarket history)")
         .timeout(std::time::Duration::from_secs(30))
@@ -65,7 +74,7 @@ pub async fn fetch(
 
     let interval_str = polymarket_interval(interval)?;
     let bar_sec = interval.duration_ms() / 1000;
-    let end_ts = now_secs();
+    let end_ts = end_time_secs;
     let start_ts = end_ts.saturating_sub((limit as i64).saturating_mul(bar_sec));
 
     let url = format!(
