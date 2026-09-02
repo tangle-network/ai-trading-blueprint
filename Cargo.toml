@@ -62,6 +62,4 @@ blueprint-stores = { git = "https://github.com/tangle-network/blueprint.git", re
 blueprint-tangle-extra = { git = "https://github.com/tangle-network/blueprint.git", rev = "9462282a9f72c98a3746b816478b4b889761a537" }
 blueprint-testing-utils = { git = "https://github.com/tangle-network/blueprint.git", rev = "9462282a9f72c98a3746b816478b4b889761a537" }
 eigen-signer = { git = "https://github.com/drewstone/eigensdk-rs.git", rev = "efcc7f926f21bd159cfa847186538a360064eacc" }
-
-# Keep the transitive testcontainers archive dependency on the maintained fork.
-tokio-tar = { path = "vendor/tokio-tar" }
+testcontainers = { path = "vendor/testcontainers" }
