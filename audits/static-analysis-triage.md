@@ -25,7 +25,6 @@ The exception lists now contain only advisories present in the current lockfile.
 |-------|------------|-----------------|------------------|
 | vuln | RUSTSEC-2023-0071 | rsa 0.9.10 | Used only for TEE signature verification; no fixed release. |
 | vuln | RUSTSEC-2025-0055 | tracing-subscriber 0.2.25 | Lock-only through ark-relations; no active path from `cargo tree --target all`; direct tracing uses 0.3.23. |
-| vuln | RUSTSEC-2025-0111 | tokio-tar 0.3.1 | Dev-only through Blueprint anvil testcontainers; no fixed release. |
 | vuln | RUSTSEC-2026-0118 | hickory-proto 0.25.2 | Lock-only through libp2p; no active workspace path and no fixed release. |
 | vuln | RUSTSEC-2026-0119 | hickory-proto 0.25.2 | Lock-only through libp2p; current libp2p does not accept the fixed 0.26 line. |
 | unmaintained | RUSTSEC-2021-0141 | dotenv 0.15.0 | Upstream Phala dependency and test fixtures. |
