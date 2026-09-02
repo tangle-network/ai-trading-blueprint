@@ -6,7 +6,6 @@ ignore = [
     # Vulnerabilities with no consumable fixed path.
     "RUSTSEC-2023-0071", # rsa: verify-only TEE attestation path; no fixed release
     "RUSTSEC-2025-0055", # tracing-subscriber 0.2: inactive lock-only Ark dependency
-    "RUSTSEC-2025-0111", # tokio-tar: testcontainers dev path; no fixed release
     "RUSTSEC-2026-0118", # hickory-proto: inactive lock-only libp2p dependency; no fix
     "RUSTSEC-2026-0119", # hickory-proto: inactive lock-only libp2p dependency
 

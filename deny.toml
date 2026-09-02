@@ -42,7 +42,6 @@ yanked = "deny"
 ignore = [
     # Vulnerabilities without a consumable fixed path.
     { id = "RUSTSEC-2023-0071", reason = "rsa is used only to verify TEE attestation signatures; Marvin targets private-key operations; no fixed rsa release" },
-    { id = "RUSTSEC-2025-0111", reason = "tokio-tar 0.3.1 is dev-only through blueprint anvil testcontainers; no fixed tokio-tar release" },
 
     # Unmaintained upstream packages that remain in the resolved graph.
     { id = "RUSTSEC-2021-0141", reason = "dotenv remains through phala-tee-deploy-rs and test fixtures; no maintained release on the same API" },
