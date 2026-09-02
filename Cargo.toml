@@ -63,3 +63,6 @@ blueprint-tangle-extra = { git = "https://github.com/tangle-network/blueprint.gi
 blueprint-testing-utils = { git = "https://github.com/tangle-network/blueprint.git", rev = "9462282a9f72c98a3746b816478b4b889761a537" }
 eigen-signer = { git = "https://github.com/drewstone/eigensdk-rs.git", rev = "efcc7f926f21bd159cfa847186538a360064eacc" }
 testcontainers = { path = "vendor/testcontainers" }
+# libp2p 0.56 retains the vulnerable yamux 0.12 compatibility path.
+# This copy follows upstream libp2p-yamux 0.48 while preserving the 0.47 package version.
+libp2p-yamux = { path = "vendor/libp2p-yamux" }
