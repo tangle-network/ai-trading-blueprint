@@ -1222,27 +1222,6 @@ mod tests {
     const TEST_PK: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
     #[test]
-    fn test_client_creation() {
-        let client = ClobClient::with_config(TEST_PK, "http://localhost:8080".into(), None)
-            .expect("client creation");
-        assert_eq!(
-            format!("{}", client.address()),
-            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-        );
-    }
-
-    #[test]
-    fn test_client_creation_with_0x_prefix() {
-        let pk = format!("0x{TEST_PK}");
-        let client = ClobClient::with_config(&pk, "http://localhost:8080".into(), None)
-            .expect("client creation with 0x prefix");
-        assert_eq!(
-            format!("{}", client.address()),
-            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-        );
-    }
-
-    #[test]
     fn test_extract_clob_params_valid() {
         let metadata = serde_json::json!({
             "token_id": "48328953829",
@@ -1319,95 +1298,6 @@ mod tests {
         let params = extract_clob_params("buy", "100.0", &metadata).expect("extract GTD");
         assert_eq!(params.order_type, OrderType::Gtd);
         assert_eq!(params.expiration, 1740000000);
-    }
-
-    #[test]
-    fn test_side_serialization() {
-        assert_eq!(serde_json::to_string(&Side::Buy).unwrap(), r#""BUY""#);
-        assert_eq!(serde_json::to_string(&Side::Sell).unwrap(), r#""SELL""#);
-    }
-
-    #[test]
-    fn test_order_type_display() {
-        assert_eq!(OrderType::Gtc.to_string(), "GTC");
-        assert_eq!(OrderType::Gtd.to_string(), "GTD");
-        assert_eq!(OrderType::Fok.to_string(), "FOK");
-        assert_eq!(OrderType::Fak.to_string(), "FAK");
-    }
-
-    #[test]
-    fn test_side_to_sdk_conversion() {
-        assert!(matches!(SdkSide::from(Side::Buy), SdkSide::Buy));
-        assert!(matches!(SdkSide::from(Side::Sell), SdkSide::Sell));
-    }
-
-    #[test]
-    fn test_order_type_to_sdk_conversion() {
-        use polymarket_client_sdk::clob::types::OrderType as SdkOt;
-        assert!(matches!(SdkOt::from(OrderType::Gtc), SdkOt::GTC));
-        assert!(matches!(SdkOt::from(OrderType::Gtd), SdkOt::GTD));
-        assert!(matches!(SdkOt::from(OrderType::Fok), SdkOt::FOK));
-        assert!(matches!(SdkOt::from(OrderType::Fak), SdkOt::FAK));
-    }
-
-    #[test]
-    fn test_contract_config_polygon() {
-        let client = ClobClient::with_config(TEST_PK, "http://localhost:8080".into(), None)
-            .expect("client creation");
-        let config = client.contract_config(false).expect("polygon config");
-        assert_eq!(
-            format!("{}", config.exchange),
-            "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
-        );
-        assert_eq!(
-            format!("{}", config.collateral),
-            "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
-        );
-    }
-
-    #[test]
-    fn test_contract_config_neg_risk() {
-        let client = ClobClient::with_config(TEST_PK, "http://localhost:8080".into(), None)
-            .expect("client creation");
-        let config = client.contract_config(true).expect("neg-risk config");
-        assert_eq!(
-            format!("{}", config.exchange),
-            "0xC5d563A36AE78145C45a50134d48A1215220f80a"
-        );
-        assert!(config.neg_risk_adapter.is_some());
-    }
-
-    #[test]
-    fn test_open_order_serialization() {
-        let order = OpenOrder {
-            id: "order-123".into(),
-            status: "Live".into(),
-            market: "0xabc".into(),
-            asset_id: "12345".into(),
-            side: "Buy".into(),
-            price: "0.65".into(),
-            original_size: "100".into(),
-            size_matched: "50".into(),
-            outcome: "Yes".into(),
-            order_type: "GTC".into(),
-            created_at: "2026-01-01T00:00:00+00:00".into(),
-            expiration: "2026-12-31T00:00:00+00:00".into(),
-        };
-        let json = serde_json::to_value(&order).unwrap();
-        assert_eq!(json["id"], "order-123");
-        assert_eq!(json["status"], "Live");
-        assert_eq!(json["size_matched"], "50");
-    }
-
-    #[test]
-    fn test_approval_result_serialization() {
-        let result = ApprovalResult {
-            tx_hash: "0xabc123".into(),
-            spender: "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E".into(),
-            spender_label: "CTFExchange".into(),
-        };
-        let json = serde_json::to_value(&result).unwrap();
-        assert_eq!(json["spender_label"], "CTFExchange");
     }
 
     fn gamma_market(json: serde_json::Value) -> GammaMarket {

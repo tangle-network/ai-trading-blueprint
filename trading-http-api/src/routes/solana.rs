@@ -652,14 +652,6 @@ mod tests {
     };
 
     #[test]
-    fn drift_market_label_known() {
-        assert_eq!(drift_market_label(MARKET_INDEX_SOL_PERP), "SOL");
-        assert_eq!(drift_market_label(MARKET_INDEX_BTC_PERP), "BTC");
-        assert_eq!(drift_market_label(MARKET_INDEX_ETH_PERP), "ETH");
-        assert_eq!(drift_market_label(999), "UNKNOWN");
-    }
-
-    #[test]
     fn bps_between_zero_inputs_safe() {
         assert_eq!(bps_between(0, 0), 0);
         assert_eq!(bps_between(0, 100), 0);

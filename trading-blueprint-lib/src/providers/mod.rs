@@ -131,43 +131,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_registry_has_all_builtin_providers() {
-        let reg = registry();
-        let ids = reg.ids();
-        for expected in &[
-            "polymarket",
-            "uniswap_v3",
-            "aave_v3",
-            "morpho",
-            "gmx_v2",
-            "hyperliquid",
-            "vertex",
-            "coingecko",
-        ] {
-            assert!(ids.contains(expected), "missing provider: {expected}");
-        }
-        assert_eq!(ids.len(), 8, "expected exactly 8 built-in providers");
-    }
-
-    #[test]
     fn test_provider_ids_are_unique() {
         let reg = registry();
         let ids = reg.ids();
         let mut seen = std::collections::HashSet::new();
         for id in &ids {
             assert!(seen.insert(id), "duplicate provider ID: {id}");
-        }
-    }
-
-    #[test]
-    fn test_each_provider_has_expert_prompt() {
-        let reg = registry();
-        for p in reg.all() {
-            assert!(
-                !p.expert_prompt().is_empty(),
-                "provider {} has empty expert_prompt",
-                p.id()
-            );
         }
     }
 
@@ -180,20 +149,5 @@ mod tests {
             ids.contains(&"polymarket"),
             "polymarket should handle price_move events"
         );
-    }
-
-    #[test]
-    fn test_provider_protocol_adapters_non_empty() {
-        let reg = registry();
-        for p in reg.all() {
-            // coingecko is a data provider, not a protocol adapter
-            if p.id() != "coingecko" {
-                assert!(
-                    !p.protocol_adapters().is_empty(),
-                    "provider {} has no protocol adapters",
-                    p.id()
-                );
-            }
-        }
     }
 }

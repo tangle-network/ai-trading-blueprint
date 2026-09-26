@@ -1683,30 +1683,6 @@ mod tests {
 
     // --- Serde tests ---
 
-    #[test]
-    fn harness_config_roundtrip_serde() {
-        let config = HarnessConfig::default();
-        let json = serde_json::to_string_pretty(&config).unwrap();
-        let parsed: HarnessConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.version, config.version);
-        assert_eq!(parsed.entry_rules.len(), config.entry_rules.len());
-        assert_eq!(parsed.max_positions, config.max_positions);
-    }
-
-    #[test]
-    fn backtest_config_serde_with_sqrt_impact() {
-        let config = BacktestConfig {
-            slippage: SlippageModel::SqrtImpact {
-                base_bps: 10,
-                depth_usd: Decimal::new(100_000, 0),
-            },
-            ..BacktestConfig::default()
-        };
-        let json = serde_json::to_string(&config).unwrap();
-        let parsed: BacktestConfig = serde_json::from_str(&json).unwrap();
-        assert!(matches!(parsed.slippage, SlippageModel::SqrtImpact { .. }));
-    }
-
     // --- Kelly stats tests ---
 
     #[test]

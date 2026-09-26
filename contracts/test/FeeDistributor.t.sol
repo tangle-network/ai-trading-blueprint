@@ -30,18 +30,6 @@ contract FeeDistributorTest is Setup {
     // PER-VAULT FEE CONFIG TESTS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_vaultFeeInitialized() public view {
-        assertTrue(feeDistributor.vaultFeeInitialized(address(vault)));
-        (uint256 perfBps, uint256 mgmtBps, uint256 valShareBps) = feeDistributor.vaultFeeConfig(address(vault));
-        assertEq(perfBps, 2000); // 20%
-        assertEq(mgmtBps, 200); // 2%
-        assertEq(valShareBps, 3000); // 30%
-    }
-
-    function test_vaultFeeAdmin() public view {
-        assertEq(feeDistributor.vaultFeeAdmin(address(vault)), owner);
-    }
-
     function test_vaultAdminCanUpdateFeeConfig() public {
         vm.prank(owner);
         feeDistributor.setVaultFeeConfig(

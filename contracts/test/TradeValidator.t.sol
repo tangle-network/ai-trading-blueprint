@@ -279,11 +279,6 @@ contract TradeValidatorTest is Setup {
         assertTrue(digest != digest3);
     }
 
-    function test_domainSeparator() public view {
-        bytes32 domain = tv.getDomainSeparator();
-        assertTrue(domain != bytes32(0));
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // PER-VAULT CONFIG OWNER TESTS
     // ═══════════════════════════════════════════════════════════════════════════

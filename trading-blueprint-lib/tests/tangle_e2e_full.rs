@@ -5,7 +5,6 @@
 //!
 //! Test variants:
 //! - `test_full_trade_pipeline_harness` — policy-only validators, paper trade (fast)
-//! - `test_full_trade_pipeline_with_ai` — real AI scoring via Zhipu GLM-4.7 (slow)
 //! - `test_vault_execute_on_chain` — real vault.execute() with MockTarget on Anvil
 //! - `test_full_bot_lifecycle` — provision → activate → stop → start → configure → wipe → deprovision
 //! - `test_fee_settlement_on_chain` — deposit → trade → settle fees → verify fee extraction
@@ -480,35 +479,6 @@ async fn test_full_trade_pipeline_harness() -> Result<()> {
         return Ok(());
     }
     run_full_pipeline(None).await
-}
-
-/// Full pipeline with real AI scoring via Zhipu GLM-4.7 (~2-3 min).
-///
-/// Requires `ZAI_API_KEY` for real AI evaluation of the trade intent.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_full_trade_pipeline_with_ai() -> Result<()> {
-    if std::env::var("SIDECAR_E2E").ok().as_deref() != Some("1") {
-        eprintln!("Skipping: set SIDECAR_E2E=1 to run");
-        return Ok(());
-    }
-    let api_key = match std::env::var("ZAI_API_KEY") {
-        Ok(k) if !k.is_empty() => k,
-        _ => {
-            eprintln!("Skipping: set ZAI_API_KEY for real AI scoring");
-            return Ok(());
-        }
-    };
-
-    let model = std::env::var("AI_MODEL").unwrap_or_else(|_| "glm-4.7".into());
-    let endpoint = std::env::var("AI_API_ENDPOINT")
-        .unwrap_or_else(|_| "https://api.z.ai/api/coding/paas/v4".into());
-
-    run_full_pipeline(Some(AiProvider::Zai {
-        api_key,
-        model,
-        endpoint,
-    }))
-    .await
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

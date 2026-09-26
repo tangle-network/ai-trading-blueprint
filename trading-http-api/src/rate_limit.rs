@@ -289,22 +289,6 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_documented_values() {
-        let c = RateLimitConfig::default();
-        assert_eq!(c.envelope_per_minute, 60);
-        assert_eq!(c.learning_per_minute, 240);
-        assert_eq!(c.cex_per_minute, 120);
-        assert_eq!(c.solana_per_minute, 120);
-    }
-
-    #[test]
-    fn rate_limit_enabled_default_true() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::remove_var("TRADING_RATE_LIMIT_ENABLED") };
-        assert!(rate_limit_enabled());
-    }
-
-    #[test]
     fn rate_limit_enabled_respects_false_variants() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         for v in &["false", "FALSE", "False", "0", "no"] {

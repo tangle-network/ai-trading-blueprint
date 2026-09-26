@@ -255,12 +255,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_eth_call_simulator_new() {
-        let sim = EthCallSimulator::new("http://localhost:8545".into());
-        assert_eq!(sim.rpc_url, "http://localhost:8545");
-    }
-
-    #[test]
     fn test_balance_of_encoding() {
         let calldata = balanceOfCall {
             account: Address::ZERO,

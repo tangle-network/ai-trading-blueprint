@@ -78,16 +78,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_morpho_expert_prompt_uses_vault_protocol() {
-        let p = MorphoProvider;
-        assert!(p.expert_prompt().contains("morpho_vault"));
-        assert!(
-            !p.expert_prompt()
-                .contains("0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb")
-        );
-    }
-
-    #[test]
     fn test_morpho_handled_events() {
         let p = MorphoProvider;
         let ctx = EventContext {

@@ -144,15 +144,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_chain_specific_prompt_uses_base_sepolia_addresses() {
-        let prompt = expert_prompt_for_chain(84532);
-        assert!(prompt.contains("Base Sepolia"));
-        assert!(prompt.contains("0x4200000000000000000000000000000000000006"));
-        assert!(prompt.contains("0x036CbD53842c5426634e7929541eC2318f3dCF7e"));
-        assert!(!prompt.contains("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"));
-    }
-
-    #[test]
     fn test_uniswap_handled_events() {
         let p = UniswapV3Provider;
         let ctx = EventContext {

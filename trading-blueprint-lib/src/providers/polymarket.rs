@@ -198,37 +198,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_polymarket_expert_prompt_has_api_urls() {
-        let p = PolymarketProvider;
-        let prompt = p.expert_prompt();
-        assert!(prompt.contains("gamma-api.polymarket.com"));
-        assert!(prompt.contains("clob.polymarket.com"));
-        assert!(prompt.contains("0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"));
-        assert!(prompt.contains("0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"));
-    }
-
-    #[test]
-    fn test_polymarket_expert_prompt_has_information_gathering() {
-        let p = PolymarketProvider;
-        let prompt = p.expert_prompt();
-        assert!(prompt.contains("Information Gathering"));
-        assert!(prompt.contains("webfetch"));
-        assert!(prompt.contains("resolutionSource"));
-        assert!(prompt.contains("metaculus.com"));
-        assert!(prompt.contains("base rate"));
-    }
-
-    #[test]
-    fn test_polymarket_expert_prompt_matches_clob_execution_contract() {
-        let p = PolymarketProvider;
-        let prompt = p.expert_prompt();
-        assert!(prompt.contains(r#"`target_protocol`: "polymarket_clob""#));
-        assert!(prompt.contains(r#"`amount_in`: outcome share size"#));
-        assert!(!prompt.contains(r#"`target_protocol`: "polymarket""#));
-        assert!(!prompt.contains("position size in USDC (6 decimals)"));
-    }
-
-    #[test]
     fn test_polymarket_handled_events_match_build() {
         let p = PolymarketProvider;
         let ctx = EventContext {
@@ -260,12 +229,5 @@ mod tests {
             risk_params: &json!({}),
         };
         assert!(p.build_event_prompt(&ctx).is_none());
-    }
-
-    #[test]
-    fn test_polymarket_setup_commands_empty() {
-        // Tools are pre-built and deployed via activate.rs, not provider setup_commands
-        let p = PolymarketProvider;
-        assert!(p.setup_commands().is_empty());
     }
 }

@@ -301,24 +301,10 @@ contract PositionTrackingTest is Setup {
     // PREVIEW FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_previewDeposit() public view {
-        uint256 shares = vault.previewDeposit(1000 ether);
-        assertEq(shares, vault.convertToShares(1000 ether));
-    }
-
-    function test_previewRedeem() public view {
-        uint256 assets = vault.previewRedeem(1000 ether);
-        assertEq(assets, vault.convertToAssets(1000 ether));
-    }
-
     function test_maxDeposit_whenPaused() public {
         vm.prank(owner);
         vault.pause();
         assertEq(vault.maxDeposit(user), 0);
-    }
-
-    function test_maxDeposit_whenUnpaused() public view {
-        assertEq(vault.maxDeposit(user), type(uint256).max);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

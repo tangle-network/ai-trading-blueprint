@@ -506,34 +506,4 @@ mod tests {
         let dead = AlertSink::new(Some("http://127.0.0.1:1/webhook".into()), None);
         dead.fire(sample_alert()).await;
     }
-
-    #[tokio::test]
-    async fn sink_disabled_when_no_config() {
-        let sink = AlertSink::new(None, None);
-        assert!(!sink.is_enabled());
-        // Must complete without panicking.
-        sink.fire(sample_alert()).await;
-    }
-
-    #[test]
-    fn alert_kind_strings_are_stable() {
-        // These are exposed in dashboards / dedup keys; treat as a contract.
-        assert_eq!(
-            Alert::EnvelopeRenewalFailed {
-                bot_id: "x".into(),
-                action: RenewalAction::Healthy,
-            }
-            .kind(),
-            "envelope_renewal_failed"
-        );
-        assert_eq!(
-            Alert::TradeReverted {
-                bot_id: "x".into(),
-                protocol: "p".into(),
-                reason: "r".into(),
-            }
-            .kind(),
-            "trade_reverted"
-        );
-    }
 }

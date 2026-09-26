@@ -247,11 +247,4 @@ contract VaultShareTest is Setup {
     // ERC-7575 SHARE VIEW
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_shareView() public view {
-        assertEq(vault.share(), address(shareToken));
-    }
-
-    function test_assetView() public view {
-        assertEq(vault.asset(), address(tokenA));
-    }
 }

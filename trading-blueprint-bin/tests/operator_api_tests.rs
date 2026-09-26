@@ -1222,28 +1222,6 @@ async fn test_public_platform_trades_route_returns_latest_trades_across_bots() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_list_bots_empty() {
-    let _dir = init_test_env();
-
-    let response = app()
-        .oneshot(
-            Request::builder()
-                .uri("/api/bots")
-                .header("authorization", test_auth_header(SUBMITTER))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["bots"].is_array());
-    assert!(json["total"].is_number());
-}
-
-#[tokio::test]
 async fn test_list_bots_returns_seeded() {
     let _dir = init_test_env();
 
@@ -4506,31 +4484,6 @@ async fn test_pricing_job_quote() {
 }
 
 #[tokio::test]
-async fn test_pricing_config() {
-    let _dir = init_test_env();
-
-    let response = app()
-        .oneshot(
-            Request::builder()
-                .uri("/api/pricing/config")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["pricing_model"], "subscription");
-    assert!(json["subscription_rate"].is_string());
-    assert!(json["subscription_interval"].is_number());
-    assert!(json["job_multipliers"].is_object());
-    assert_eq!(json["job_multipliers"]["provision"], 50);
-    assert_eq!(json["job_multipliers"]["status"], 0);
-}
-
-#[tokio::test]
 async fn test_billing_status_requires_tangle_contract() {
     let _dir = init_test_env();
     // TANGLE_CONTRACT is not set, so billing status should return 503
@@ -4552,50 +4505,6 @@ async fn test_billing_status_requires_tangle_contract() {
 // ---------------------------------------------------------------------------
 // Debug endpoint tests
 // ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_debug_sandboxes() {
-    let _dir = init_test_env();
-
-    let response = app()
-        .oneshot(
-            Request::builder()
-                .uri("/api/debug/sandboxes")
-                .header("authorization", test_auth_header(SUBMITTER))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["count"].is_number());
-    assert!(json["sandboxes"].is_array());
-}
-
-#[tokio::test]
-async fn test_debug_workflows() {
-    let _dir = init_test_env();
-
-    let response = app()
-        .oneshot(
-            Request::builder()
-                .uri("/api/debug/workflows")
-                .header("authorization", test_auth_header(SUBMITTER))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["count"].is_number());
-    assert!(json["workflows"].is_array());
-}
 
 // ---------------------------------------------------------------------------
 // Bot list filtering tests

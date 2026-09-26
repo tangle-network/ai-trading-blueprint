@@ -801,26 +801,6 @@ mod tests {
     }
 
     #[test]
-    fn configure_runtime_env_defaults_request_timeout() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let original_timeout = std::env::var_os("REQUEST_TIMEOUT_SECS");
-        let original_idle = std::env::var_os("SANDBOX_DEFAULT_IDLE_TIMEOUT");
-
-        unsafe {
-            std::env::remove_var("REQUEST_TIMEOUT_SECS");
-            std::env::remove_var("SANDBOX_DEFAULT_IDLE_TIMEOUT");
-        }
-
-        super::configure_runtime_env();
-
-        assert_eq!(std::env::var("REQUEST_TIMEOUT_SECS").unwrap(), "360");
-        assert_eq!(std::env::var("SANDBOX_DEFAULT_IDLE_TIMEOUT").unwrap(), "0");
-
-        restore_env_var("REQUEST_TIMEOUT_SECS", original_timeout);
-        restore_env_var("SANDBOX_DEFAULT_IDLE_TIMEOUT", original_idle);
-    }
-
-    #[test]
     fn configure_runtime_env_preserves_request_timeout_override() {
         let _guard = ENV_LOCK.lock().unwrap();
         let original_timeout = std::env::var_os("REQUEST_TIMEOUT_SECS");

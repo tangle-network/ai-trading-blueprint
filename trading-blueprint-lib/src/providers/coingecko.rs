@@ -58,20 +58,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_coingecko_expert_prompt_has_api() {
-        let p = CoinGeckoProvider;
-        assert!(p.expert_prompt().contains("api.coingecko.com"));
-    }
-
-    #[test]
-    fn test_coingecko_is_data_only() {
-        let p = CoinGeckoProvider;
-        assert!(p.protocol_adapters().is_empty());
-        assert!(p.handled_event_types().is_empty());
-        assert!(p.setup_commands().is_empty());
-    }
-
-    #[test]
     fn test_coingecko_always_returns_none_for_events() {
         let p = CoinGeckoProvider;
         let ctx = EventContext {

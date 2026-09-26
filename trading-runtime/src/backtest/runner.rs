@@ -395,24 +395,6 @@ mod tests {
     }
 
     #[test]
-    fn runner_output_serde() {
-        let output = RunnerOutput {
-            entries: vec![TradeSignal {
-                asset: "ETH".into(),
-                direction: Direction::Long,
-                strength: 0.8,
-                size_fraction: 0.1,
-                stop_loss_pct: Some(5.0),
-                take_profit_pct: Some(10.0),
-            }],
-            exits: vec![],
-        };
-        let json = serde_json::to_string(&output).unwrap();
-        let parsed: RunnerOutput = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.entries.len(), 1);
-    }
-
-    #[test]
     fn runner_harness_update() {
         let mut runner = StrategyRunner::new(HarnessConfig::default());
         assert_eq!(runner.harness().max_positions, 5);

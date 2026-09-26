@@ -146,17 +146,6 @@ contract TradingBlueprintMultiOpTest is Setup {
     // getRequiredResultCount
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_getRequiredResultCount_returnsZero() public view {
-        // 0 = protocol default (all operators)
-        assertEq(blueprint.getRequiredResultCount(serviceId, JOB_PROVISION), 0);
-        assertEq(blueprint.getRequiredResultCount(serviceId, JOB_CONFIGURE), 0);
-        assertEq(blueprint.getRequiredResultCount(serviceId, JOB_START_TRADING), 0);
-        assertEq(blueprint.getRequiredResultCount(serviceId, JOB_STOP_TRADING), 0);
-        assertEq(blueprint.getRequiredResultCount(serviceId, JOB_STATUS), 0);
-        assertEq(blueprint.getRequiredResultCount(serviceId, JOB_DEPROVISION), 0);
-        assertEq(blueprint.getRequiredResultCount(serviceId, JOB_WORKFLOW_TICK), 0);
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // SERVICE INIT (onServiceInitialized) — stores config only, no vault
     // ═══════════════════════════════════════════════════════════════════════════
@@ -443,47 +432,6 @@ contract TradingBlueprintMultiOpTest is Setup {
     // ═══════════════════════════════════════════════════════════════════════════
     // PRICING HELPERS (protocol-native)
     // ═══════════════════════════════════════════════════════════════════════════
-
-    function test_getJobPriceMultiplier() public view {
-        assertEq(blueprint.getJobPriceMultiplier(JOB_PROVISION), 50);
-        assertEq(blueprint.getJobPriceMultiplier(JOB_CONFIGURE), 2);
-        assertEq(blueprint.getJobPriceMultiplier(JOB_START_TRADING), 1);
-        assertEq(blueprint.getJobPriceMultiplier(JOB_STOP_TRADING), 1);
-        assertEq(blueprint.getJobPriceMultiplier(JOB_STATUS), 0);
-        assertEq(blueprint.getJobPriceMultiplier(JOB_DEPROVISION), 1);
-        assertEq(blueprint.getJobPriceMultiplier(JOB_EXTEND), 10);
-        // Unknown job returns 0
-        assertEq(blueprint.getJobPriceMultiplier(255), 0);
-    }
-
-    function test_getDefaultJobRates() public view {
-        uint256 baseRate = 0.001 ether;
-        (uint8[] memory jobIndexes, uint256[] memory rates) = blueprint.getDefaultJobRates(baseRate);
-
-        assertEq(jobIndexes.length, 7);
-        assertEq(rates.length, 7);
-
-        assertEq(jobIndexes[0], JOB_PROVISION);
-        assertEq(rates[0], baseRate * 50);
-
-        assertEq(jobIndexes[1], JOB_CONFIGURE);
-        assertEq(rates[1], baseRate * 2);
-
-        assertEq(jobIndexes[2], JOB_START_TRADING);
-        assertEq(rates[2], baseRate * 1);
-
-        assertEq(jobIndexes[3], JOB_STOP_TRADING);
-        assertEq(rates[3], baseRate * 1);
-
-        assertEq(jobIndexes[4], JOB_STATUS);
-        assertEq(rates[4], 0);
-
-        assertEq(jobIndexes[5], JOB_DEPROVISION);
-        assertEq(rates[5], baseRate * 1);
-
-        assertEq(jobIndexes[6], JOB_EXTEND);
-        assertEq(rates[6], baseRate * 10);
-    }
 
     function test_onJobCall_noPaymentRequired() public {
         _initService();

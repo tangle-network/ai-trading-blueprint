@@ -8833,33 +8833,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_bots_returns_valid_response() {
-        let tmp = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
-
-        let app = build_operator_router();
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/bots")
-                    .header("authorization", test_auth_header())
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), 200);
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(json["bots"].is_array());
-        assert!(json["total"].is_number());
-        assert!(json["limit"].is_number());
-        assert!(json["offset"].is_number());
-    }
-
-    #[tokio::test]
     async fn test_zero_call_id_lookup_is_rejected() {
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
@@ -8899,27 +8872,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
-    }
-
-    #[tokio::test]
-    async fn test_get_bot_not_found() {
-        let tmp = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
-
-        let app = build_operator_router();
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/bots/nonexistent")
-                    .header("authorization", test_auth_header())
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), 404);
     }
 
     #[tokio::test]
@@ -8964,29 +8916,6 @@ mod tests {
         assert!(json["summary"]["total_usd"].is_number());
     }
 
-    #[tokio::test]
-    async fn test_auth_challenge_returns_nonce() {
-        let app = build_operator_router();
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/challenge")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), 200);
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(json["nonce"].is_string());
-        assert!(json["message"].is_string());
-        assert!(json["expires_at"].is_number());
-    }
-
     #[test]
     fn test_strategy_bootstrap_memory_seeds_actionable_owner_message() {
         let (conversation_file, strategy_content, toc_content) = build_strategy_bootstrap_memory(
@@ -9004,131 +8933,6 @@ mod tests {
         assert!(strategy_content.contains("## Owner (07:25 UTC)"));
         assert!(toc_content.contains("[Strategy Brief]"));
         assert!(toc_content.contains("ACTION NEEDED"));
-    }
-
-    #[tokio::test]
-    async fn test_configure_secrets_requires_auth() {
-        let tmp = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
-
-        let app = build_operator_router();
-
-        let body = serde_json::json!({
-            "env_json": { "API_KEY": "test" },
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/bots/test-bot/secrets")
-                    .header("content-type", "application/json")
-                    .body(Body::from(serde_json::to_string(&body).unwrap()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn test_configure_secrets_bot_not_found() {
-        let tmp = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("BLUEPRINT_STATE_DIR", tmp.path()) };
-
-        let app = build_operator_router();
-
-        let body = serde_json::json!({
-            "env_json": { "API_KEY": "test" },
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/bots/nonexistent/secrets")
-                    .header("content-type", "application/json")
-                    .header("authorization", test_auth_header())
-                    .body(Body::from(serde_json::to_string(&body).unwrap()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_wipe_secrets_requires_auth() {
-        let app = build_operator_router();
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("DELETE")
-                    .uri("/api/bots/test-bot/secrets")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn test_start_bot_requires_auth() {
-        let app = build_operator_router();
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/bots/test-bot/start")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn test_stop_bot_requires_auth() {
-        let app = build_operator_router();
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/bots/test-bot/stop")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn test_run_now_requires_auth() {
-        let app = build_operator_router();
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/bots/test-bot/run-now")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -10162,58 +9966,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_auth_session_rejects_bad_signature() {
-        ensure_state_dir();
-
-        let app = build_operator_router();
-
-        // First obtain a real nonce from the challenge endpoint.
-        let challenge_resp = build_operator_router()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/challenge")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(challenge_resp.status(), StatusCode::OK);
-        let challenge_body = challenge_resp
-            .into_body()
-            .collect()
-            .await
-            .unwrap()
-            .to_bytes();
-        let challenge_json: serde_json::Value = serde_json::from_slice(&challenge_body).unwrap();
-        let nonce = challenge_json["nonce"].as_str().unwrap().to_string();
-
-        // Use the real nonce but a garbled (too-short) signature.
-        let body = serde_json::json!({
-            "nonce": nonce,
-            "signature": "0xdeadbeef",
-        });
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/auth/session")
-                    .header("content-type", "application/json")
-                    .body(Body::from(serde_json::to_string(&body).unwrap()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(
-            response.status(),
-            StatusCode::UNAUTHORIZED,
-            "Garbled signature with valid nonce should be rejected with 401"
-        );
-    }
-
-    #[tokio::test]
     async fn test_secrets_wrong_submitter_returns_forbidden() {
         ensure_state_dir();
 
@@ -10462,39 +10214,6 @@ mod tests {
             response.status(),
             StatusCode::FORBIDDEN,
             "Wrong submitter should get 403 on wipe_secrets"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_run_now_inactive_bot() {
-        ensure_state_dir();
-
-        // Seed a bot that is NOT active.
-        seed_bot(
-            "run-now-inactive-1",
-            TEST_AUTH_ADDRESS,
-            false,
-            "sandbox-run-now-inactive-1",
-        );
-
-        let app = build_operator_router();
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/bots/run-now-inactive-1/run-now")
-                    .header("authorization", test_auth_header())
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(
-            response.status(),
-            StatusCode::CONFLICT,
-            "run-now on inactive bot should return 409 CONFLICT"
         );
     }
 

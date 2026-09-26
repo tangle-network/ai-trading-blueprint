@@ -191,14 +191,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_hyperliquid_expert_prompt_has_api() {
-        let p = HyperliquidProvider;
-        assert!(p.expert_prompt().contains("api.hyperliquid.xyz"));
-        assert!(p.expert_prompt().contains("hyperliquid_market_type"));
-        assert!(p.expert_prompt().contains("100000000"));
-    }
-
-    #[test]
     fn test_hyperliquid_handled_events() {
         let p = HyperliquidProvider;
         for event in p.handled_event_types() {

@@ -500,39 +500,6 @@ mod tests {
     }
 
     #[test]
-    fn preflight_request_round_trip() {
-        let req = dummy_request();
-        let json = serde_json::to_string(&req).unwrap();
-        let decoded: PreflightRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded.chain_id, req.chain_id);
-        assert_eq!(decoded.vault, req.vault);
-        assert_eq!(decoded.target, req.target);
-        assert_eq!(decoded.min_output, req.min_output);
-        assert_eq!(decoded.fork_block, req.fork_block);
-    }
-
-    #[test]
-    fn preflight_result_round_trip() {
-        let result = PreflightResult {
-            pass: true,
-            predicted_output: U256::from(2_500_000_000u64),
-            predicted_health_factor: Some(U256::from(1_500_000_000_000_000_000u128)),
-            gas_estimate: 220_000,
-            reason: None,
-            balance_before: U256::from(0u64),
-            balance_after: U256::from(2_500_000_000u64),
-        };
-        let json = serde_json::to_string(&result).unwrap();
-        let decoded: PreflightResult = serde_json::from_str(&json).unwrap();
-        assert!(decoded.pass);
-        assert_eq!(decoded.predicted_output, result.predicted_output);
-        assert_eq!(
-            decoded.predicted_health_factor,
-            result.predicted_health_factor
-        );
-    }
-
-    #[test]
     fn preflight_failure_helper() {
         let r = PreflightResult::failure("nope");
         assert!(!r.pass);

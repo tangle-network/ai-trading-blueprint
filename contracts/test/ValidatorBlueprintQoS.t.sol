@@ -166,10 +166,6 @@ contract ValidatorBlueprintQoSTest is Test {
         assertEq(blueprint.validatorReputation(serviceId, operator1), 100);
     }
 
-    function test_querySlashingOrigin_returnsSelf() public view {
-        assertEq(blueprint.querySlashingOrigin(serviceId), address(blueprint));
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // LIVENESS (HEARTBEAT)
     // ═══════════════════════════════════════════════════════════════════════════

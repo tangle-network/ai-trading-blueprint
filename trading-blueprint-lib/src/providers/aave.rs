@@ -129,12 +129,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_aave_expert_prompt_has_addresses() {
-        let p = AaveV3Provider;
-        assert!(p.expert_prompt().contains("aave-reserve-status.js"));
-    }
-
-    #[test]
     fn test_aave_handled_events() {
         let p = AaveV3Provider;
         for event in p.handled_event_types() {

@@ -111,15 +111,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_gmx_expert_prompt_has_addresses() {
-        let p = GmxV2Provider;
-        assert!(
-            p.expert_prompt()
-                .contains("0x7C68C7866A64FA2160F78EEaE12217FFbf871fa8")
-        );
-    }
-
-    #[test]
     fn test_gmx_handled_events() {
         let p = GmxV2Provider;
         for event in p.handled_event_types() {

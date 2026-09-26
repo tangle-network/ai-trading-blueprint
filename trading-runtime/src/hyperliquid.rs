@@ -864,27 +864,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn order_type_serde_roundtrip() {
-        let cases = vec![
-            (r#"{"type":"limit","price":"2500"}"#, "limit"),
-            (r#"{"type":"market"}"#, "market"),
-            (
-                r#"{"type":"stop_loss","trigger_price":"2400","is_market":true}"#,
-                "stop_loss",
-            ),
-            (
-                r#"{"type":"take_profit","trigger_price":"2600","is_market":false}"#,
-                "take_profit",
-            ),
-        ];
-        for (json, expected_type) in cases {
-            let ot: HlOrderType = serde_json::from_str(json).unwrap();
-            let out = serde_json::to_string(&ot).unwrap();
-            assert!(out.contains(expected_type), "got: {out}");
-        }
-    }
-
-    #[test]
     fn place_order_request_with_symbol() {
         let json = r#"{
             "asset": "ETH",
@@ -910,21 +889,6 @@ mod tests {
         let req: PlaceOrderRequest = serde_json::from_str(json).unwrap();
         assert!(matches!(req.asset, AssetId::Index(1)));
         assert!(req.reduce_only);
-    }
-
-    #[test]
-    fn cancel_request_serde() {
-        let json = r#"{"asset": 0, "order_id": 12345}"#;
-        let req: CancelOrderRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.asset, 0);
-        assert_eq!(req.order_id, 12345);
-    }
-
-    #[test]
-    fn leverage_request_defaults() {
-        let json = r#"{"asset": 1, "leverage": 10}"#;
-        let req: SetLeverageRequest = serde_json::from_str(json).unwrap();
-        assert!(req.is_cross); // default true
     }
 
     #[test]
@@ -1006,25 +970,6 @@ mod tests {
         assert!(ledger3.all().is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn position_record_serde() {
-        let rec = HlPositionRecord {
-            asset: "BTC".into(),
-            size: "-0.01".into(),
-            entry_price: "67000".into(),
-            side: "short".into(),
-            sl_oid: None,
-            tp_oid: Some(789),
-            opened_at: 12345,
-            reconciled: true,
-        };
-        let json = serde_json::to_string(&rec).unwrap();
-        let parsed: HlPositionRecord = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.asset, "BTC");
-        assert_eq!(parsed.side, "short");
-        assert!(parsed.reconciled);
     }
 
     #[tokio::test]

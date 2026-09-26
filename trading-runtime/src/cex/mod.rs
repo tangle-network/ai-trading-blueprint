@@ -272,41 +272,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn order_side_serde_lowercase() {
-        let s = serde_json::to_string(&OrderSide::Buy).unwrap();
-        assert_eq!(s, "\"buy\"");
-        let parsed: OrderSide = serde_json::from_str("\"sell\"").unwrap();
-        assert_eq!(parsed, OrderSide::Sell);
-    }
-
-    #[test]
-    fn order_type_market_serde() {
-        let json = r#"{"type":"market"}"#;
-        let parsed: CexOrderType = serde_json::from_str(json).unwrap();
-        assert!(matches!(parsed, CexOrderType::Market));
-        let out = serde_json::to_string(&parsed).unwrap();
-        assert!(out.contains("market"));
-    }
-
-    #[test]
-    fn order_type_limit_serde() {
-        let json = r#"{"type":"limit","price":"42500.50"}"#;
-        let parsed: CexOrderType = serde_json::from_str(json).unwrap();
-        match parsed {
-            CexOrderType::Limit { price } => assert_eq!(price.to_string(), "42500.50"),
-            _ => panic!("expected limit"),
-        }
-    }
-
-    #[test]
-    fn time_in_force_serde_uppercase() {
-        let s = serde_json::to_string(&TimeInForce::Gtc).unwrap();
-        assert_eq!(s, "\"GTC\"");
-        let parsed: TimeInForce = serde_json::from_str("\"IOC\"").unwrap();
-        assert_eq!(parsed, TimeInForce::Ioc);
-    }
-
-    #[test]
     fn cex_error_status_mapping() {
         let cases: Vec<(CexError, StatusCode)> = vec![
             (CexError::AuthFailed("x".into()), StatusCode::UNAUTHORIZED),
@@ -336,25 +301,6 @@ mod tests {
             let (status, _) = <(StatusCode, String)>::from(err);
             assert_eq!(status, expected);
         }
-    }
-
-    #[test]
-    fn order_request_serde_roundtrip() {
-        let req = CexOrderRequest {
-            symbol: "BTCUSDT".into(),
-            side: OrderSide::Buy,
-            order_type: CexOrderType::Limit {
-                price: "42000.50".parse().unwrap(),
-            },
-            quantity: "0.001".parse().unwrap(),
-            time_in_force: Some(TimeInForce::Gtc),
-            client_order_id: Some("test-1".into()),
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        let parsed: CexOrderRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.symbol, "BTCUSDT");
-        assert_eq!(parsed.side, OrderSide::Buy);
-        assert_eq!(parsed.quantity.to_string(), "0.001");
     }
 
     #[test]

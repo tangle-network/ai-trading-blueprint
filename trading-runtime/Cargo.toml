@@ -68,6 +68,3 @@ default = []
 # Exposes test-only helpers (e.g. SecretsBackedKeyProvider::write_bot_file)
 # so sibling crates can seed encrypted-secrets fixtures in their own tests.
 test-utils = []
-# Enables fork-based preflight integration tests that hit a real Ethereum
-# RPC. Off by default; requires `RPC_URL` env var when on.
-preflight-fork-tests = []

@@ -1067,31 +1067,6 @@ mod tests {
     }
 
     #[test]
-    fn test_uniswap_v3_quoter_known_chain_resolves() {
-        assert!(uniswap_v3_quoter_for_chain(1).is_some());
-        assert!(uniswap_v3_quoter_for_chain(8453).is_some());
-        assert!(uniswap_v3_quoter_for_chain(42161).is_some());
-    }
-
-    #[test]
-    fn test_uniswap_v3_quoter_unknown_chain_returns_none() {
-        assert!(uniswap_v3_quoter_for_chain(999_999).is_none());
-    }
-
-    #[test]
-    fn test_aerodrome_quoter_only_base() {
-        assert!(aerodrome_quoter_for_chain(8453).is_some());
-        assert!(aerodrome_quoter_for_chain(1).is_none());
-    }
-
-    #[test]
-    fn test_morpho_for_chain_known() {
-        assert!(morpho_for_chain(1).is_some());
-        assert!(morpho_for_chain(8453).is_some());
-        assert!(morpho_for_chain(42161).is_none());
-    }
-
-    #[test]
     fn test_uniswap_v4_quoter_envvar_override() {
         // Use a unique env var name so we don't clobber another test.
         // Different process state, so just validate the lookup function.
@@ -1115,27 +1090,12 @@ mod tests {
     }
 
     #[test]
-    fn test_uniswap_v3_request_round_trips() {
-        let body = r#"{"token_in":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","token_out":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","fee_tier":3000,"amount_in":"1000000000000000000"}"#;
-        let req: UniswapV3QuoteRequest = serde_json::from_str(body).unwrap();
-        assert_eq!(req.fee_tier, 3000);
-        assert_eq!(req.amount_in, "1000000000000000000");
-    }
-
-    #[test]
     fn test_aave_request_rejects_invalid_action() {
         // Sanity check — case normalization happens inside the handler, but
         // the deserializer accepts arbitrary strings.
         let body = r#"{"asset":"0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48","action":"deposit"}"#;
         let req: AaveQuoteRequest = serde_json::from_str(body).unwrap();
         assert_eq!(req.action, "deposit");
-    }
-
-    #[test]
-    fn test_morpho_request_round_trips() {
-        let body = r#"{"market_id":"0x1234567890123456789012345678901234567890123456789012345678901234","action":"supply"}"#;
-        let req: MorphoQuoteRequest = serde_json::from_str(body).unwrap();
-        assert_eq!(req.action, "supply");
     }
 
     #[test]

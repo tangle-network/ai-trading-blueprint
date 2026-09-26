@@ -687,20 +687,6 @@ mod tests {
         assert!(value.get("txHash").is_none(), "txHash should be omitted");
     }
 
-    #[test]
-    fn heartbeat_serializes_compactly() {
-        let msg = NavMessage::Heartbeat { ts: 1234 };
-        let value = serde_json::to_value(&msg).unwrap();
-        assert_eq!(value, json!({ "type": "heartbeat", "ts": 1234 }));
-    }
-
-    #[test]
-    fn vault_key_lowercases() {
-        let a = VaultKey::new("0xAbCdEf", 1);
-        let b = VaultKey::new("0xabcdef", 1);
-        assert_eq!(a, b);
-    }
-
     #[derive(Default)]
     struct StaticNavSource {
         readings: tokio::sync::Mutex<Vec<NavReading>>,

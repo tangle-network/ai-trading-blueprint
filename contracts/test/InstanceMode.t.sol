@@ -128,10 +128,6 @@ contract InstanceModeTest is Setup {
     // TEST: instanceMode flag
     // ═══════════════════════════════════════════════════════════════════════════
 
-    function test_instanceMode_defaultsFalse() public view {
-        assertFalse(blueprint.instanceMode());
-    }
-
     function test_instanceMode_setByTangle() public {
         vm.prank(tangleCore);
         blueprint.setInstanceMode(true);

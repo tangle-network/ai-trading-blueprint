@@ -241,29 +241,31 @@ Use `STAKING_CONTRACT` as the contract name throughout the operator and deployme
 
 ### Testing
 
+[ci.yml](.github/workflows/ci.yml) owns the merge-gate commands.
+The main ones are:
+
 ```bash
-# Solidity (429 tests including adversarial fuzz)
-cd contracts && forge test
+# Solidity, including red-team, invariant and fuzz suites
+forge test
 
-# Rust unit tests (481 tests)
-cargo test -p trading-runtime --lib          # 310 tests
-cargo test -p trading-http-api --lib         # 16 tests
-cargo test -p trading-blueprint-lib --lib    # 99 tests
-cargo test -p trading-validator-lib --lib    # 56 tests
+# Rust
+cargo test -p trading-validator-lib --lib
+cargo test -p trading-runtime --lib
+cargo test -p trading-http-api
+cargo test -p trading-blueprint-lib --lib
+cargo test -p trading-blueprint-bin --test operator_api_tests
 
-# Integration tests
-cargo test -p trading-runtime --test new_signals_integration      # 9 signal type tests
-cargo test -p trading-runtime --test backtest_runner_equivalence  # backtest↔live equivalence
-
-# Hyperliquid E2E (requires funded testnet account)
-HYPERLIQUID_E2E=1 EXECUTOR_PRIVATE_KEY=0x... \
-  cargo test -p trading-runtime --test hyperliquid_e2e -- --nocapture
-
-# Full E2E with Docker sidecars
-SIDECAR_E2E=1 cargo test -p trading-blueprint-lib --test tangle_e2e_full
+# Arena UI
+cd arena && pnpm run test && pnpm run smoke:agent-workspace -- --fixture
 ```
 
-**Total: 928 tests (429 Forge + 499 Rust), 0 failures.**
+Chain and sidecar integration suites run outside CI:
+
+```bash
+cargo test -p trading-runtime --test anvil_integration
+cargo test -p trading-runtime --test backtest_runner_equivalence
+SIDECAR_E2E=1 cargo test -p trading-blueprint-lib --test tangle_e2e_full
+```
 
 ## Operator API
 

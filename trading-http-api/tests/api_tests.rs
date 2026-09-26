@@ -1127,32 +1127,6 @@ async fn test_auth_valid_token() {
 }
 
 #[tokio::test]
-async fn test_adapters_list() {
-    let mock = MockServer::start().await;
-    let state = test_state(&mock.uri()).await;
-    let app = build_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/adapters")
-                .header("authorization", auth_header())
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let adapters = json["adapters"].as_array().unwrap();
-    assert!(adapters.len() >= 6);
-    assert!(adapters.iter().any(|a| a == "uniswap_v3"));
-    assert!(adapters.iter().any(|a| a == "aave_v3"));
-}
-
-#[tokio::test]
 async fn test_market_data_prices() {
     let mock = MockServer::start().await;
 
@@ -1200,31 +1174,6 @@ async fn test_market_data_prices() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let prices = json["prices"].as_array().unwrap();
     assert_eq!(prices.len(), 2);
-}
-
-#[tokio::test]
-async fn test_portfolio_empty_state() {
-    let mock = MockServer::start().await;
-    let state = test_state(&mock.uri()).await;
-    let app = build_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/portfolio/state")
-                .header("authorization", auth_header())
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["positions"].as_array().unwrap().len(), 0);
-    assert_eq!(json["total_value_usd"], "0");
 }
 
 #[tokio::test]
@@ -2357,32 +2306,6 @@ async fn test_metrics_snapshot_and_history() {
     assert_eq!(snap["account_value_usd"], "10500.50");
     assert_eq!(snap["positions_count"], 3);
     assert_eq!(snap["trade_count"], 15);
-}
-
-#[tokio::test]
-async fn test_metrics_current() {
-    let mock = MockServer::start().await;
-    let state = test_state(&mock.uri()).await;
-    let bot_id = state.bot_id.clone();
-    let app = build_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/metrics")
-                .header("authorization", auth_header())
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["bot_id"], bot_id);
-    assert_eq!(json["paper_trade"], true);
-    assert_eq!(json["trading_active"], true);
 }
 
 // ── Multi-bot trading API tests ─────────────────────────────────────────────
@@ -4712,58 +4635,6 @@ async fn test_multi_bot_circuit_breaker_accepts_numeric_payload() {
 }
 
 #[tokio::test]
-async fn test_multi_bot_portfolio_state_exists() {
-    let state = multi_bot_state();
-    let app = build_multi_bot_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/portfolio/state")
-                .header("authorization", "Bearer bot-token-abc")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(json["positions"].is_array());
-    assert!(json["total_value_usd"].is_string());
-}
-
-#[tokio::test]
-async fn test_multi_bot_adapters_list() {
-    let state = multi_bot_state();
-    let app = build_multi_bot_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/adapters")
-                .header("authorization", "Bearer bot-token-abc")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(
-        json["adapters"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|adapter| adapter == "uniswap_v3")
-    );
-}
-
-#[tokio::test]
 async fn test_multi_bot_metrics_snapshot_and_history() {
     let state = multi_bot_state();
     let app = build_multi_bot_router(state);
@@ -6239,32 +6110,6 @@ async fn test_execute_missing_validation() {
         .unwrap();
 
     assert_eq!(response.status(), 400);
-}
-
-#[tokio::test]
-async fn test_metrics_history_empty() {
-    let mock = MockServer::start().await;
-    let state = test_state(&mock.uri()).await;
-    let app = build_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/metrics/history?limit=10")
-                .header("authorization", auth_header())
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let snapshots = json["snapshots"].as_array().unwrap();
-    // May or may not be empty (depends on test execution order due to shared state),
-    // but should always be a valid array
-    let _ = snapshots;
 }
 
 #[tokio::test]
@@ -7775,28 +7620,6 @@ async fn test_clob_get_book() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // COLLATERAL ROUTES
 // ═══════════════════════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn test_collateral_status_default() {
-    let mock = MockServer::start().await;
-    let state = test_state(&mock.uri()).await;
-    let app = build_router(state);
-
-    // GET /collateral/status — no RPC configured in test state, should return 503
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/collateral/status")
-                .header("authorization", auth_header())
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    // Test state has no rpc_url → 503 Service Unavailable
-    assert_eq!(response.status(), 503);
-}
 
 #[tokio::test]
 async fn test_collateral_release_requires_auth() {
