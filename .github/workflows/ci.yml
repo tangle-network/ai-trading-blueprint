@@ -158,8 +158,16 @@ jobs:
         working-directory: arena
         run: pnpm run build
 
+      # Self-hosted runners ship no system Chrome; install one into the tool cache.
+      - uses: browser-actions/setup-chrome@v2
+        id: chrome
+        with:
+          chrome-version: stable
+
       - name: Fixture smoke
         working-directory: arena
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
         run: pnpm run smoke:agent-workspace -- --fixture
 
   # ── Solidity ──────────────────────────────────────────────────────────────
