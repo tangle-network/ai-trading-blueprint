@@ -26,14 +26,11 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            runs-on: ubuntu-latest
-    runs-on: ${{ matrix.runs-on }}
+    runs-on: [self-hosted, ci-public]
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
-      - name: System dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -80,11 +77,11 @@ jobs:
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
               --json assets --jq ".assets[] | select(.name == \"$name\") | .name" \
               | grep -qx "$name"; then
-              mkdir -p /tmp/existing-release-assets
-              rm -f "/tmp/existing-release-assets/$name"
+              mkdir -p "$RUNNER_TEMP/existing-release-assets"
+              rm -f "$RUNNER_TEMP/existing-release-assets/$name"
               gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
-                --pattern "$name" --dir /tmp/existing-release-assets
-              if cmp -s "$file" "/tmp/existing-release-assets/$name"; then
+                --pattern "$name" --dir "$RUNNER_TEMP/existing-release-assets"
+              if cmp -s "$file" "$RUNNER_TEMP/existing-release-assets/$name"; then
                 echo "asset already exists unchanged: $name"
               else
                 echo "::error::release asset already exists with different bytes: $name"
@@ -105,7 +102,7 @@ jobs:
   # arch (see tangle-network/blueprint manager `sources/manifest.rs`). Runs once.
   manifest:
     needs: release
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci-public]
     steps:
       - name: Build + upload per-binary multi-arch manifests
         env:
@@ -114,7 +111,7 @@ jobs:
           set -euo pipefail
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
-          mkdir -p /tmp/m
+          mkdir -p "$RUNNER_TEMP/m"
 
           upload_asset() {
             local file="$1"
@@ -123,11 +120,11 @@ jobs:
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
               --json assets --jq ".assets[] | select(.name == \"$name\") | .name" \
               | grep -qx "$name"; then
-              mkdir -p /tmp/existing-release-assets
-              rm -f "/tmp/existing-release-assets/$name"
+              mkdir -p "$RUNNER_TEMP/existing-release-assets"
+              rm -f "$RUNNER_TEMP/existing-release-assets/$name"
               gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
-                --pattern "$name" --dir /tmp/existing-release-assets
-              if cmp -s "$file" "/tmp/existing-release-assets/$name"; then
+                --pattern "$name" --dir "$RUNNER_TEMP/existing-release-assets"
+              if cmp -s "$file" "$RUNNER_TEMP/existing-release-assets/$name"; then
                 echo "asset already exists unchanged: $name"
               else
                 echo "::error::release asset already exists with different bytes: $name"
@@ -143,15 +140,15 @@ jobs:
             for triple in $RELEASE_TARGETS; do
               case "$triple" in *x86_64*) arch=x86_64;; *aarch64*) arch=aarch64;; esac
               asset="${b}-${triple}.tar.xz"
-              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "${asset}.sha256" --dir /tmp/m --clobber
-              sha="$(awk '{print $1}' "/tmp/m/${asset}.sha256")"
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "${asset}.sha256" --dir "$RUNNER_TEMP/m" --clobber
+              sha="$(awk '{print $1}' "$RUNNER_TEMP/m/${asset}.sha256")"
               entries="${entries}{\"os\":\"linux\",\"arch\":\"${arch}\",\"url\":\"${BASE}/${asset}\",\"sha256\":\"${sha}\"},"
             done
             entries="${entries%,}"
             printf '{"schema":"tangle-binary-manifest/v1","blueprint":"%s","version":"%s","binaries":[%s]}\n' \
-              "$b" "$TAG" "$entries" > "/tmp/m/${b}-manifest.json"
-            cat "/tmp/m/${b}-manifest.json"
-            upload_asset "/tmp/m/${b}-manifest.json"
+              "$b" "$TAG" "$entries" > "$RUNNER_TEMP/m/${b}-manifest.json"
+            cat "$RUNNER_TEMP/m/${b}-manifest.json"
+            upload_asset "$RUNNER_TEMP/m/${b}-manifest.json"
           done
 
           # cargo-dist dist-manifest.json: the blueprint-manager's Remote/Github
@@ -166,9 +163,9 @@ jobs:
             arts="${arts}\"${b}\":{\"kind\":\"executable-zip\",\"assets\":[{\"name\":\"${b}\",\"kind\":\"executable\"}]},"
           done
           arts="${arts%,}"
-          printf '{"artifacts":{%s}}\n' "$arts" > /tmp/m/dist-manifest.json
-          cat /tmp/m/dist-manifest.json
-          upload_asset /tmp/m/dist-manifest.json
+          printf '{"artifacts":{%s}}\n' "$arts" > "$RUNNER_TEMP/m/dist-manifest.json"
+          cat "$RUNNER_TEMP/m/dist-manifest.json"
+          upload_asset "$RUNNER_TEMP/m/dist-manifest.json"
 
   # After the release assets are published, trigger the on-chain publish in
   # tnt-core. The current blueprint-manager path falls back to blueprint sources
@@ -187,7 +184,7 @@ jobs:
   # before the next one starts.
   publish-onchain:
     needs: [release, manifest]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci-public]
     steps:
       - name: Trigger tnt-core binary publish (all blueprints, serialized)
         env:
