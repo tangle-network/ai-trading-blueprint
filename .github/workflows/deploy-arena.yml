@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       deployments: write

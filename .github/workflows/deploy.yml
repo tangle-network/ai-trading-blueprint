@@ -83,7 +83,7 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/staging') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'staging')
     needs: build-and-test
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     environment:
       name: staging
       url: ${{ steps.deploy.outputs.explorer_url }}
@@ -199,7 +199,7 @@ jobs:
     if: |
       github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'production'
     needs: build-and-test
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     environment:
       # The `production` GitHub environment must be configured with required
       # reviewers (2) and branch protection so only `master` can target it.
