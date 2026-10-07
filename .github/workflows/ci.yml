@@ -21,7 +21,7 @@ env:
 jobs:
   changes:
     name: Classify changes
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
@@ -126,7 +126,7 @@ jobs:
     name: Arena UI
     needs: changes
     if: needs.changes.outputs.arena == 'true'
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     env:
       TZ: America/Denver
     steps:
@@ -158,16 +158,8 @@ jobs:
         working-directory: arena
         run: pnpm run build
 
-      # Self-hosted runners ship no system Chrome; install one into the tool cache.
-      - uses: browser-actions/setup-chrome@v2
-        id: chrome
-        with:
-          chrome-version: stable
-
       - name: Fixture smoke
         working-directory: arena
-        env:
-          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
         run: pnpm run smoke:agent-workspace -- --fixture
 
   # ── Solidity ──────────────────────────────────────────────────────────────
@@ -175,7 +167,7 @@ jobs:
     name: Forge build + test
     needs: changes
     if: needs.changes.outputs.contracts == 'true'
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -202,7 +194,7 @@ jobs:
     name: Rust check + test
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -215,6 +207,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       # Check our crates (not --workspace: bin crates pull in heavier
       # deployment-only dependencies).
@@ -250,7 +244,7 @@ jobs:
     name: Clippy
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -263,6 +257,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Clippy
         run: |
@@ -276,7 +272,7 @@ jobs:
     name: Rustfmt
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
@@ -293,7 +289,7 @@ jobs:
     name: Security audit
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
@@ -314,7 +310,7 @@ jobs:
     name: Evals typecheck
     needs: changes
     if: needs.changes.outputs.evals == 'true'
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
@@ -333,7 +329,7 @@ jobs:
     name: CI Gate
     needs: [changes, arena, forge, rust, clippy, fmt, audit, evals]
     if: always()
-    runs-on: [self-hosted, ci-public]
+    runs-on: ubuntu-latest
     steps:
       - name: Check required lanes
         env:
