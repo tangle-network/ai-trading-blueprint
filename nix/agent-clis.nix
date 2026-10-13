@@ -11,7 +11,7 @@
 # for all arches.
 #
 # Kinds:
-#   - "bare-elf"    → single Linux ELF, no archive (factory-droids, forge)
+#   - "bare-elf"    → single Linux ELF, no archive (factory-droids)
 #   - "bun-sea"     → Bun single-executable: ELF + appended JS bundle (opencode).
 #                     Skips autoPatchelfHook + strip — any byte mutation breaks
 #                     the bundle's integrity check; relies on the host glibc
