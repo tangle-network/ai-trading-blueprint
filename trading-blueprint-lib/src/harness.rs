@@ -15,9 +15,8 @@
 //!
 //! The supported set is the intersection of three constraints, derived from the
 //! deployed artifacts (do not widen it without re-verifying all three):
-//! - adapter registered in the sidecar server bundle (`registerAdapterFactory`
-//!   in the pinned base image: opencode, claude-code, codex, kimi-code, amp,
-//!   factory-droids, pi, hermes, openclaw, acp, cursor),
+//! - adapter registered in the pinned sidecar server bundle
+//!   (`registerAdapterFactory`),
 //! - CLI binary present in this repo's `blueprint-sidecar:all-harness` image
 //!   (`nix/agent-clis.nix`: opencode, claude, codex, qwen, gemini, amp, pi,
 //!   factory-droids, codex-acp, copilot),
