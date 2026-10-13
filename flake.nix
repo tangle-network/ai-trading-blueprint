@@ -77,7 +77,6 @@
           agentClisAttrs.codex-acp
           agentClisAttrs.github-copilot
           agentClisAttrs.pi
-          agentClisAttrs.forge
         ];
 
         # Kitchen sink across every category.
@@ -133,7 +132,7 @@
         packages.ai            = mkProfile "ai" (systemDeps ++ coreCLIs ++ pythonDeps ++ aiDeps ++ agentClis);
         # Harness profile baked into the blueprint-sidecar image at
         # /nix/profile/bin — opencode/claude-code/codex/qwen/gemini/amp/pi/
-        # forge/factory-droids/codex-acp/github-copilot + node runtime.
+        # factory-droids/codex-acp/github-copilot + node runtime.
         # NOTE: no nodejs here — the npm-tarball agent wrappers reference
         # nodejs_22 by absolute store path (it stays in the closure), and
         # putting `node` on /nix/profile/bin would shadow the server base's
