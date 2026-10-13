@@ -1,7 +1,7 @@
 # blueprint-sidecar:all-harness — the sandbox sidecar image, owned by THIS repo.
 #
 # Self-sufficient: the coding-agent harnesses (opencode, claude-code, codex,
-# qwen, gemini, amp, pi, forge, factory-droids, codex-acp, github-copilot) are
+# qwen, gemini, amp, pi, factory-droids, codex-acp, github-copilot) are
 # built from this repo's own Nix profile (nix/agent-clis.nix → flake output
 # `.#sidecar-harness`) and baked into /nix/profile/bin. No runtime dependence on
 # the upstream sandbox tooling or SDK — only the shared recipe.
