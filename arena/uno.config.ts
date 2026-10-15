@@ -153,14 +153,14 @@ export default defineConfig({
   content: {
     filesystem: [
       'node_modules/@tangle-network/blueprint-ui/src/**/*.{js,ts,jsx,tsx}',
-      'node_modules/@tangle-network/ui/dist/**/*.js',
+      'node_modules/@tangle-network/ui/src/**/*.{js,ts,jsx,tsx}',
       'node_modules/.pnpm/@tangle-network+blueprint-ui@*/node_modules/@tangle-network/blueprint-ui/src/**/*.{js,ts,jsx,tsx}',
     ],
     pipeline: {
       include: [
         'src/**/*.{jsx,tsx}',
         'node_modules/@tangle-network/blueprint-ui/src/**/*.{js,ts,jsx,tsx}',
-        'node_modules/@tangle-network/ui/dist/**/*.js',
+        'node_modules/@tangle-network/ui/src/**/*.{js,ts,jsx,tsx}',
         'node_modules/.pnpm/@tangle-network+blueprint-ui@*/node_modules/@tangle-network/blueprint-ui/src/**/*.{js,ts,jsx,tsx}',
       ],
       exclude: [

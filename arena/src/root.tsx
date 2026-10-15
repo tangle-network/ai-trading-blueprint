@@ -1,6 +1,7 @@
 import 'virtual:uno.css';
 import '@tangle-network/sandbox-ui/styles';
 import '@tangle-network/brand/styles/tokens.css';
+import '@tangle-network/ui/styles/presentation.css';
 import './styles/global.scss';
 
 import { AppToaster } from '@tangle-network/blueprint-ui/components';
