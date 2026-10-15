@@ -259,7 +259,7 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
           {responses.length > 0 && (
             <div className="space-y-2">
               {responses.map((response, vi) => (
-                <ValidatorCard key={`${trade.id}-${response.validator}-${vi}`} response={response} index={vi} />
+                <ValidatorCard key={`${trade.id}-${response.validator}-${vi}`} response={response} />
               ))}
             </div>
           )}

@@ -13,7 +13,6 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
-    scroll-behavior: smooth;
     /* Theme the root canvas so overscroll and any unmounted-tree moment paint
        brand background instead of browser-default white. criticalThemeCss inlines
        the same Brand token sheet before this stylesheet loads. */
@@ -128,7 +127,7 @@
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color var(--motion-surface), box-shadow var(--motion-surface);
 
   &:hover {
     border-color: var(--glass-border-hover);
@@ -368,9 +367,9 @@
 
 .arena-sort-header-button {
   transition:
-    background-color 150ms ease,
-    color 150ms ease,
-    opacity 150ms ease;
+    background-color var(--motion-control),
+    color var(--motion-control),
+    opacity var(--motion-control);
 }
 
 .arena-sort-header-button:hover,
@@ -1042,4 +1041,11 @@
 .arena-chat-shell[data-sandbox-ui='true'] .py-3\.5 {
   padding-top: 0.875rem;
   padding-bottom: 0.875rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-card,
+  .arena-sort-header-button {
+    transition: none;
+  }
 }
