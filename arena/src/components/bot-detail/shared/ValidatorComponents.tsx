@@ -1,3 +1,4 @@
+import { CopyButton } from '@tangle-network/ui/markdown';
 import { useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import { Badge } from '@tangle-network/blueprint-ui/components';
@@ -15,28 +16,6 @@ export function truncateAddress(addr: string): string {
 export function truncateSignature(sig: string): string {
   if (sig.length <= 20) return sig;
   return `${sig.slice(0, 10)}...${sig.slice(-8)}`;
-}
-
-// ── CopyButton ──────────────────────────────────────────────────────────
-
-export function CopyButton({ text, label }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <button
-      onClick={handleCopy}
-      className="text-xs font-data text-arena-elements-textTertiary hover:text-arena-elements-textSecondary transition-colors cursor-pointer"
-      title={`Copy ${label ?? 'value'}`}
-    >
-      {copied ? 'Copied' : (label ?? 'Copy')}
-    </button>
-  );
 }
 
 // ── ScoreRing ───────────────────────────────────────────────────────────
@@ -166,7 +145,7 @@ export function ValidatorCard({ response, index }: { response: ValidatorResponse
                       <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
                         Signature
                       </span>
-                      <CopyButton text={response.signature} label="Copy" />
+                      <CopyButton text={response.signature} />
                     </div>
                     <code className="text-xs font-data text-arena-elements-textTertiary break-all">
                       {truncateSignature(response.signature)}
@@ -190,7 +169,7 @@ export function ValidatorCard({ response, index }: { response: ValidatorResponse
                         <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
                           Verifying Contract
                         </span>
-                        <CopyButton text={response.verifyingContract!} label="Copy" />
+                        <CopyButton text={response.verifyingContract!} />
                       </div>
                       <code className="text-xs font-data text-arena-elements-textTertiary">
                         {truncateAddress(response.verifyingContract!)}
@@ -205,7 +184,7 @@ export function ValidatorCard({ response, index }: { response: ValidatorResponse
                     <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
                       Validator Address
                     </span>
-                    <CopyButton text={response.validator} label="Copy" />
+                    <CopyButton text={response.validator} />
                   </div>
                   <code className="text-xs font-data text-arena-elements-textTertiary break-all">
                     {response.validator}

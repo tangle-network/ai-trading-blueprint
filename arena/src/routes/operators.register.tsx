@@ -2,13 +2,12 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { MetaFunction } from 'react-router';
 import { ConnectKitButton } from 'connectkit';
 import { useAccount } from 'wagmi';
-import { toast } from 'sonner';
+import { CopyButton } from '@tangle-network/ui/markdown';
 import {
   Activity,
   CheckCircle2,
   ChevronDown,
   CircleAlert,
-  Copy,
   Globe,
   Lock,
   Plus,
@@ -16,7 +15,6 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { copyText } from '@tangle-network/sandbox-ui/utils';
 import type { Address } from 'viem';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import { StatusBadge } from '~/components/ui/StatusBadge';
@@ -69,22 +67,6 @@ function Panel({
 
 const inputClass =
   'h-9 w-full rounded-[5px] border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-2 font-mono text-sm text-[var(--arena-terminal-text)] placeholder:text-[var(--arena-terminal-text-subtle)] transition-[border-color] duration-150 hover:border-[var(--arena-terminal-border-hover)] focus-visible:border-[var(--arena-terminal-border-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--arena-terminal-accent)]';
-
-function CopyButton({ value, label }: { value: string; label: string }) {
-  return (
-    <button
-      type="button"
-      onClick={async () => {
-        await copyText(value);
-        toast.success(`${label} copied`);
-      }}
-      className="inline-flex h-7 items-center gap-1.5 border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-panel-strong)] px-2.5 font-data text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--arena-terminal-text-secondary)] transition-colors hover:border-[var(--arena-terminal-border-hover)] hover:text-[var(--arena-terminal-text)]"
-    >
-      <Copy className="h-3 w-3" aria-hidden="true" />
-      Copy
-    </button>
-  );
-}
 
 function AccessModeOption({
   mode,
@@ -506,7 +488,7 @@ export default function OperatorRegisterPage() {
         <Panel
           title="Run your operator"
           description="Copy this into your operator host. The env block is prefilled with the choices above."
-          aside={<CopyButton value={installCommand} label="Install command" />}
+          aside={<CopyButton text={installCommand} />}
         >
           <pre className="overflow-x-auto border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--arena-terminal-text-secondary)]">
             {installCommand}
@@ -516,7 +498,7 @@ export default function OperatorRegisterPage() {
             <span className="font-display text-xs font-semibold uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
               .env block
             </span>
-            <CopyButton value={envBlock} label="Env block" />
+            <CopyButton text={envBlock} />
           </div>
           <pre className="mt-1.5 overflow-x-auto border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--arena-terminal-text-secondary)]">
             {envBlock}

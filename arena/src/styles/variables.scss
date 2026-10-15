@@ -1,221 +1,59 @@
-/*
- * OBSIDIAN TERMINAL — CSS Variables
- * Dark-first, luxury crypto terminal aesthetic.
- */
-
-/* ═══ Dark Theme (Default) ═══ */
-:root,
-:root[data-theme='dark'] {
-  /* Borders/dividers were 0.06 (≈invisible) — surfaces had no separation on
-     the near-black base ("dark on dark"). Lift to a readable contrast and widen
-     the depth ramp so cards/sections clearly sit above the page. */
-  --arena-elements-borderColor: rgba(240, 240, 245, 0.14);
-  --arena-elements-borderColorActive: theme('colors.violet.400');
-
-  --arena-elements-bg-depth-1: #0A0A0F;
-  --arena-elements-bg-depth-2: #16161F;
-  --arena-elements-bg-depth-3: #20202C;
-  --arena-elements-bg-depth-4: #2B2B3A;
-
-  --arena-elements-textPrimary: #F0F0F5;
-  --arena-elements-textSecondary: #8A8A9E;
-  --arena-elements-textTertiary: #5A5A6E;
-
-  --arena-elements-button-primary-background: rgba(142, 89, 255, 0.14);
-  --arena-elements-button-primary-backgroundHover: rgba(142, 89, 255, 0.24);
-  --arena-elements-button-primary-text: #A87BFF;
-
-  --arena-elements-button-secondary-background: rgba(240, 240, 245, 0.06);
-  --arena-elements-button-secondary-backgroundHover: rgba(240, 240, 245, 0.10);
-  --arena-elements-button-secondary-text: #F0F0F5;
-
-  --arena-elements-button-danger-background: rgba(255, 59, 92, 0.12);
-  --arena-elements-button-danger-backgroundHover: rgba(255, 59, 92, 0.20);
-  --arena-elements-button-danger-text: #FF3B5C;
-
-  --arena-elements-icon-success: #00FF88;
-  --arena-elements-icon-error: #FF4D6A;
-  --arena-elements-icon-warning: #FFB800;
-  --arena-elements-icon-primary: #F0F0F5;
-  --arena-elements-icon-secondary: #5A5A6E;
-
-  --arena-elements-dividerColor: rgba(240, 240, 245, 0.10);
-  --arena-elements-item-backgroundHover: rgba(240, 240, 245, 0.05);
-  --arena-elements-item-backgroundActive: rgba(240, 240, 245, 0.09);
-  --arena-elements-focus: #8E59FF;
-
-  /* shadcn/ui CSS Variables - Dark */
-  --background: 240 30% 4%;
-  --foreground: 240 10% 95%;
-  --card: 240 25% 7%;
-  --card-foreground: 240 10% 95%;
-  --popover: 240 25% 7%;
-  --popover-foreground: 240 10% 95%;
-  --primary: 263 100% 68%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 240 15% 14%;
-  --secondary-foreground: 240 10% 95%;
-  --muted: 240 15% 14%;
-  --muted-foreground: 240 10% 55%;
-  --accent: 240 15% 14%;
-  --accent-foreground: 240 10% 95%;
-  --destructive: 348 100% 61%;
-  --destructive-foreground: 0 0% 100%;
-  --border: 240 10% 16%;
-  --input: 240 10% 16%;
-  --ring: 263 100% 68%;
-  --radius: 0.625rem;
-
-  --chart-1: 155 100% 50%;
-  --chart-2: 197 100% 50%;
-  --chart-3: 45 100% 50%;
-  --chart-4: 263 90% 66%;
-  --chart-5: 348 100% 61%;
-
-  /* Glass morphism tokens — the actual card surface (.glass-card reads these).
-     Lift the surface clearly above the #0A0A0F page (was rgba(18,18,26,.60)
-     ≈ #0E0E14, indistinguishable from the page → "dark on dark"). Mirror the
-     light theme, where cards sit a full step above the base. */
-  --glass-bg: rgba(32, 32, 46, 0.72);
-  --glass-bg-strong: rgba(40, 40, 56, 0.86);
-  --glass-border: rgba(240, 240, 245, 0.12);
-  --glass-border-hover: rgba(240, 240, 245, 0.20);
-  --glass-blur: 16px;
-
-  /* Gradient mesh colors */
-  --mesh-emerald: rgba(0, 255, 136, 0.04);
-  --mesh-violet: rgba(139, 92, 246, 0.04);
-  --mesh-blue: rgba(0, 180, 255, 0.03);
-
-  --arena-terminal-bg: #0a1716;
-  --arena-terminal-surface: #10211f;
-  --arena-terminal-panel: #152b29;
-  --arena-terminal-panel-strong: #1b3936;
-  --arena-terminal-border: #314947;
-  --arena-terminal-border-hover: rgba(80, 210, 193, 0.52);
-  --arena-terminal-text: #f6fefd;
-  --arena-terminal-text-secondary: #d2dad7;
-  --arena-terminal-text-muted: #949e9c;
-  --arena-terminal-text-subtle: #697371;
-  --arena-terminal-accent: #50d2c1;
-  --arena-terminal-accent-soft: #143c38;
-  --arena-terminal-accent-strong: #1a5a53;
-  --arena-terminal-accent-text: #06100e;
-  --arena-terminal-brand: #9b7cff;
-  --arena-terminal-brand-soft: #251d38;
-  --arena-terminal-brand-strong: #7657ff;
-  --arena-terminal-brand-border: rgba(155, 124, 255, 0.44);
-  --arena-terminal-brand-text: #f3efff;
-  --arena-terminal-success: #50d2c1;
-  --arena-terminal-success-soft: #143c38;
-  --arena-terminal-success-border: rgba(80, 210, 193, 0.34);
-  --arena-terminal-danger: #ff5d6c;
-  --arena-terminal-warning: #f2c066;
-  --arena-terminal-shadow-lg: 0 22px 80px rgba(0, 0, 0, 0.28);
-  --arena-terminal-tooltip: rgba(15, 26, 31, 0.95);
-}
-
-/* ═══ Light Theme ═══ */
-:root[data-theme='light'] {
-  /* Darker, more present borders so surfaces separate on the light base
-     (mirror of the dark-theme contrast lift). */
-  --arena-elements-borderColor: rgba(10, 10, 15, 0.16);
-  --arena-elements-borderColorActive: #7C3AED;
-
-  --arena-elements-bg-depth-1: #F8F8FC;
-  --arena-elements-bg-depth-2: #EAEBF2;
-  --arena-elements-bg-depth-3: #DBDCE6;
-  --arena-elements-bg-depth-4: #CBCCD8;
-
-  --arena-elements-textPrimary: #0E0E16;
-  --arena-elements-textSecondary: #44445A;
-  --arena-elements-textTertiary: #6B6B82;
-
-  --arena-elements-button-primary-background: rgba(124, 58, 237, 0.10);
-  --arena-elements-button-primary-backgroundHover: rgba(124, 58, 237, 0.18);
-  --arena-elements-button-primary-text: #6D28D9;
-
-  --arena-elements-button-secondary-background: rgba(10, 10, 15, 0.06);
-  --arena-elements-button-secondary-backgroundHover: rgba(10, 10, 15, 0.10);
-  --arena-elements-button-secondary-text: #0E0E16;
-
-  --arena-elements-button-danger-background: rgba(200, 30, 52, 0.08);
-  --arena-elements-button-danger-backgroundHover: rgba(200, 30, 52, 0.14);
-  --arena-elements-button-danger-text: #A01628;
-
-  --arena-elements-icon-success: #007A42;
-  --arena-elements-icon-error: #C81E34;
-  --arena-elements-icon-warning: #B88000;
-  --arena-elements-icon-primary: #0E0E16;
-  --arena-elements-icon-secondary: #6B6B82;
-
-  --arena-elements-dividerColor: rgba(10, 10, 15, 0.12);
-  --arena-elements-item-backgroundHover: rgba(10, 10, 15, 0.05);
-  --arena-elements-item-backgroundActive: rgba(10, 10, 15, 0.09);
-  --arena-elements-focus: #7C3AED;
-
-  /* shadcn/ui CSS Variables - Light */
-  --background: 240 20% 97%;
-  --foreground: 240 30% 5%;
-  --card: 0 0% 100%;
-  --card-foreground: 240 30% 5%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 240 30% 5%;
-  --primary: 263 84% 52%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 240 10% 92%;
-  --secondary-foreground: 240 30% 5%;
-  --muted: 240 10% 92%;
-  --muted-foreground: 240 10% 35%;
-  --accent: 240 10% 92%;
-  --accent-foreground: 240 30% 5%;
-  --destructive: 348 85% 42%;
-  --destructive-foreground: 0 0% 100%;
-  --border: 240 10% 88%;
-  --input: 240 10% 88%;
-  --ring: 155 100% 25%;
-  --chart-1: 155 80% 28%;
-  --chart-2: 197 80% 38%;
-  --chart-3: 45 80% 42%;
-  --chart-4: 263 70% 48%;
-  --chart-5: 348 80% 42%;
-
-  --glass-bg: rgba(255, 255, 255, 0.75);
-  --glass-bg-strong: rgba(255, 255, 255, 0.90);
-  --glass-border: rgba(10, 10, 15, 0.08);
-  --glass-border-hover: rgba(10, 10, 15, 0.15);
-  --glass-blur: 16px;
-
-  --mesh-emerald: rgba(0, 122, 66, 0.03);
-  --mesh-violet: rgba(100, 60, 200, 0.03);
-  --mesh-blue: rgba(0, 100, 180, 0.02);
-
-  --arena-terminal-bg: #f1f7f6;
-  --arena-terminal-surface: #ffffff;
-  --arena-terminal-panel: #e7f1ef;
-  --arena-terminal-panel-strong: #dbeae7;
-  --arena-terminal-border: #bdd1cd;
-  --arena-terminal-border-hover: rgba(13, 159, 140, 0.46);
-  --arena-terminal-text: #071113;
-  --arena-terminal-text-secondary: #263a3d;
-  --arena-terminal-text-muted: #5e6f73;
-  --arena-terminal-text-subtle: #7a898d;
-  --arena-terminal-accent: #0d9f8c;
-  --arena-terminal-accent-soft: #dff6f2;
-  --arena-terminal-accent-strong: #08786e;
-  --arena-terminal-accent-text: #031f1c;
-  --arena-terminal-brand: #6d28d9;
-  --arena-terminal-brand-soft: #efe9ff;
-  --arena-terminal-brand-strong: #5b21b6;
-  --arena-terminal-brand-border: rgba(109, 40, 217, 0.36);
-  --arena-terminal-brand-text: #ffffff;
-  --arena-terminal-success: #0d9f8c;
-  --arena-terminal-success-soft: #dff6f2;
-  --arena-terminal-success-border: rgba(13, 159, 140, 0.34);
-  --arena-terminal-danger: #c7374d;
-  --arena-terminal-warning: #9b6a11;
-  --arena-terminal-shadow-lg: 0 18px 46px rgba(15, 35, 42, 0.12);
-  --arena-terminal-tooltip: rgba(255, 255, 255, 0.96);
+/* Brand owns both palettes. These names adapt existing Arena and blueprint-ui consumers. */
+:root {
+  --arena-elements-borderColor: var(--border-default);
+  --arena-elements-borderColorActive: hsl(var(--hsl-ring));
+  --arena-elements-bg-depth-1: var(--depth-1);
+  --arena-elements-bg-depth-2: var(--depth-2);
+  --arena-elements-bg-depth-3: var(--depth-3);
+  --arena-elements-bg-depth-4: var(--depth-4);
+  --arena-elements-textPrimary: var(--text-primary);
+  --arena-elements-textSecondary: var(--text-secondary);
+  --arena-elements-textTertiary: var(--text-muted);
+  --arena-elements-button-primary-background: var(--accent-surface-soft);
+  --arena-elements-button-primary-backgroundHover: var(--accent-surface-strong);
+  --arena-elements-button-primary-text: var(--accent-text);
+  --arena-elements-button-secondary-background: var(--depth-3);
+  --arena-elements-button-secondary-backgroundHover: var(--depth-4);
+  --arena-elements-button-secondary-text: var(--text-primary);
+  --arena-elements-button-danger-background: var(--surface-danger-bg);
+  --arena-elements-button-danger-backgroundHover: var(--surface-danger-border);
+  --arena-elements-button-danger-text: var(--surface-danger-text);
+  --arena-elements-icon-success: var(--surface-success-text);
+  --arena-elements-icon-error: var(--surface-danger-text);
+  --arena-elements-icon-warning: var(--surface-warning-text);
+  --arena-elements-icon-primary: var(--text-primary);
+  --arena-elements-icon-secondary: var(--text-muted);
+  --arena-elements-dividerColor: var(--border-subtle);
+  --arena-elements-item-backgroundHover: var(--depth-3);
+  --arena-elements-item-backgroundActive: var(--accent-surface-strong);
+  --arena-elements-focus: hsl(var(--hsl-ring));
+  --mesh-emerald: var(--mesh-teal);
+  --arena-terminal-bg: var(--depth-1);
+  --arena-terminal-surface: var(--depth-2);
+  --arena-terminal-panel: var(--depth-3);
+  --arena-terminal-panel-strong: var(--depth-4);
+  --arena-terminal-border: var(--border-default);
+  --arena-terminal-border-hover: var(--border-accent-hover);
+  --arena-terminal-text: var(--text-primary);
+  --arena-terminal-text-secondary: var(--text-secondary);
+  --arena-terminal-text-muted: var(--text-muted);
+  --arena-terminal-text-subtle: var(--text-dim);
+  --arena-terminal-accent: var(--accent-text);
+  --arena-terminal-accent-soft: var(--accent-surface-soft);
+  --arena-terminal-accent-strong: var(--accent-surface-strong);
+  --arena-terminal-accent-text: hsl(var(--hsl-primary-foreground));
+  --arena-terminal-brand: var(--accent-text);
+  --arena-terminal-brand-soft: var(--accent-surface-soft);
+  --arena-terminal-brand-strong: hsl(var(--hsl-primary));
+  --arena-terminal-brand-border: var(--border-accent);
+  --arena-terminal-brand-text: hsl(var(--hsl-primary-foreground));
+  --arena-terminal-success: var(--surface-success-text);
+  --arena-terminal-success-soft: var(--surface-success-bg);
+  --arena-terminal-success-border: var(--surface-success-border);
+  --arena-terminal-danger: var(--surface-danger-text);
+  --arena-terminal-warning: var(--surface-warning-text);
+  --arena-terminal-shadow-lg: var(--shadow-dropdown);
+  --arena-terminal-tooltip: var(--depth-4);
 }
 
 :root {
@@ -230,8 +68,8 @@
 
 body,
 .bp-tone-arena {
-  --bp-font-display: var(--font-display, 'Outfit', system-ui, sans-serif);
-  --bp-font-data: var(--font-data, 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace);
+  --bp-font-display: var(--font-display);
+  --bp-font-data: var(--font-mono);
 
   --bp-glass-bg: var(--glass-bg, transparent);
   --bp-glass-bg-strong: var(--glass-bg-strong, var(--bp-glass-bg, transparent));
@@ -289,7 +127,7 @@ a:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--arena-elements-focus);
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px rgba(142, 89, 255, 0.15);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--arena-elements-focus) 15%, transparent);
 }
 
 input:focus-visible,

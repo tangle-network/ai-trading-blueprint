@@ -153,12 +153,14 @@ export default defineConfig({
   content: {
     filesystem: [
       'node_modules/@tangle-network/blueprint-ui/src/**/*.{js,ts,jsx,tsx}',
+      'node_modules/@tangle-network/ui/dist/**/*.js',
       'node_modules/.pnpm/@tangle-network+blueprint-ui@*/node_modules/@tangle-network/blueprint-ui/src/**/*.{js,ts,jsx,tsx}',
     ],
     pipeline: {
       include: [
         'src/**/*.{jsx,tsx}',
         'node_modules/@tangle-network/blueprint-ui/src/**/*.{js,ts,jsx,tsx}',
+        'node_modules/@tangle-network/ui/dist/**/*.js',
         'node_modules/.pnpm/@tangle-network+blueprint-ui@*/node_modules/@tangle-network/blueprint-ui/src/**/*.{js,ts,jsx,tsx}',
       ],
       exclude: [
@@ -199,9 +201,9 @@ export default defineConfig({
   },
   rules: [
     ['b', {}],
-    [/^font-display$/, () => ({ 'font-family': "'Outfit', system-ui, sans-serif" })],
-    [/^font-body$/, () => ({ 'font-family': "'DM Sans', system-ui, sans-serif" })],
-    [/^font-data$/, () => ({ 'font-family': "'IBM Plex Mono', 'JetBrains Mono', monospace" })],
+    [/^font-display$/, () => ({ 'font-family': "var(--font-display)" })],
+    [/^font-body$/, () => ({ 'font-family': "var(--font-sans)" })],
+    [/^font-data$/, () => ({ 'font-family': "var(--font-mono)" })],
     [/^noise-bg$/, () => ({
       'background-image': "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E\")",
     })],
