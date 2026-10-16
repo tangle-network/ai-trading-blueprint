@@ -62,9 +62,47 @@ separately from unexpected errors. The local static app was not given a fake
 backend. No wallet connected, account registered, command executed, endpoint
 probed, or paid turn requested.
 
-Phone/light/reduced-motion, clipboard denied/fallback, other four contextual
-copy controls behind domain routes, envelope/validator/chat states, theme
-switching and first paint remain unproved. Root owns independent media review
-and completion of these acceptance conditions before merge. Deployment and
-served user-flow proof remain required after merge; latency, physical-device
+## Additional local phone, light and reduced-motion evidence
+
+Capture-only gate `beelink1-010e5b7961d29a881cb7e85239143dbc` exited 0 at
+2026-10-16T01:58:09Z: 43 seconds overall, 18 seconds admission wait and
+20 seconds command time. It guarded author
+`4a613c6c67d3cdb43b13e1ffcf4dd83893751f9d` before/after and proved its only
+difference from executable source `9645c98b` was this proof document.
+The exact installed dependencies and built-file hashes matched the prior
+`d3bda3` identity before and after; no installation or compilation was repeated.
+The terminal watcher was armed within the same launch operation, 0.532 seconds
+after launch. The host retained a cache-prune `Errno 11` / `cache=unpruned`
+warning; that warning is separate from the browser command's exit 0.
+
+| Actual CSS viewport | Actual theme | Actual reduced-motion preference | Public copy checks | Original uncut video |
+| --- | --- | --- | --- | --- |
+| 390 x 844 | light | false | 6/6 PASS | 5.08 seconds |
+| 390 x 844 | light | true | 6/6 PASS, plus native denied-policy check | 5.44 seconds |
+| 1440 x 900 | light | true | 6/6 PASS | 7.20 seconds |
+
+Each case repeated native Tab/visible focus, Enter install copy, pointer env
+copy, contextual success/ready feedback and local-state env recopy. Native
+clipboard bytes matched 630 / 204 / 172 bytes respectively; focus remained on
+the activated controls. Actual viewport meta, theme and media-query preference
+matched the capture inputs. Document overflow, page errors and unexpected
+console errors were all 0 in each case. Browser-received CSS matched the same
+556723-byte production stylesheet hash above. All 22 viewport screenshots and
+three original recordings were inspected with chronological one-second samples.
+No full-page or tall-element screenshot resized the recording viewport.
+
+The phone/light/reduced case used Chromium's actual permission policy to deny
+`clipboard-write`. `navigator.permissions` reported `denied`, and the unchanged
+native clipboard API threw `NotAllowedError`. Activating the real Copy install
+control then displayed `Copy failed`, retained focus and left the clipboard at
+its existing 22-byte baseline. This proves genuine denied-policy failure
+feedback. The fallback did **not** copy under this policy; fallback success is
+not claimed. No clipboard API or domain backend was mocked.
+
+Phone/dark, the remaining viewport/theme/preference combinations, successful
+clipboard fallback, other four contextual copy controls behind domain routes,
+envelope/validator/chat states, theme switching and first paint remain unproved.
+Root owns independent media review and completion of the remaining acceptance
+conditions before merge. Deployment and served user-flow proof remain required
+after merge; calibrated timing, latency, physical-device, full motion conformance
 and production outcomes are UNKNOWN.
