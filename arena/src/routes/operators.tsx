@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useOutlet } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { resolveOperatorRpc, useOperators } from '@tangle-network/blueprint-ui';
@@ -388,6 +388,11 @@ function BlueprintOperatorsTable({
 }
 
 export default function OperatorsPage() {
+  const childRoute = useOutlet();
+  return childRoute ?? <OperatorsDirectoryPage />;
+}
+
+function OperatorsDirectoryPage() {
   const [selectedId, setSelectedId] = useState(() => TRADING_BLUEPRINTS[0]?.id ?? '');
   const selectedBlueprint = useMemo(
     () => TRADING_BLUEPRINTS.find((blueprint) => blueprint.id === selectedId) ?? TRADING_BLUEPRINTS[0],
