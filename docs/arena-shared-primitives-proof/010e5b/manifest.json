@@ -1,0 +1,184 @@
+{
+  "gate": "beelink1-010e5b7961d29a881cb7e85239143dbc",
+  "authorSHA": "4a613c6c67d3cdb43b13e1ffcf4dd83893751f9d",
+  "executableSHA": "9645c98b64c0ea834e33f856121cd81860c2a251",
+  "scope": "local-public-copy-only",
+  "served": "UNKNOWN",
+  "latency": "UNKNOWN",
+  "physicalDevice": "UNKNOWN",
+  "motionConformance": "UNKNOWN",
+  "cacheWarning": "Errno11 cache prune failure; cache=unpruned; browser command exit0 stands",
+  "cases": {
+    "phone-light-normal": {
+      "viewport": {
+        "innerWidth": 390,
+        "innerHeight": 844,
+        "viewportMeta": "width=device-width, initial-scale=1"
+      },
+      "theme": {
+        "className": "",
+        "dataTheme": "light",
+        "colorScheme": "light"
+      },
+      "reducedMotion": false,
+      "verdict": "PASS_PUBLIC_COPY_ONLY",
+      "checks": 6,
+      "nativeClipboardPolicy": null,
+      "videoSeconds": 5.08
+    },
+    "phone-light-reduced": {
+      "viewport": {
+        "innerWidth": 390,
+        "innerHeight": 844,
+        "viewportMeta": "width=device-width, initial-scale=1"
+      },
+      "theme": {
+        "className": "",
+        "dataTheme": "light",
+        "colorScheme": "light"
+      },
+      "reducedMotion": true,
+      "verdict": "PASS_PUBLIC_COPY_ONLY",
+      "checks": 7,
+      "nativeClipboardPolicy": {
+        "status": "PASS_NATIVE_FAILURE_FEEDBACK",
+        "state": "denied",
+        "writeRejected": true,
+        "errorName": "NotAllowedError",
+        "mechanism": "Chromium Browser.setPermission; clipboard API unchanged"
+      },
+      "videoSeconds": 5.44
+    },
+    "desktop-light-reduced": {
+      "viewport": {
+        "innerWidth": 1440,
+        "innerHeight": 900,
+        "viewportMeta": "width=device-width, initial-scale=1"
+      },
+      "theme": {
+        "className": "",
+        "dataTheme": "light",
+        "colorScheme": "light"
+      },
+      "reducedMotion": true,
+      "verdict": "PASS_PUBLIC_COPY_ONLY",
+      "checks": 6,
+      "nativeClipboardPolicy": null,
+      "videoSeconds": 7.2
+    }
+  },
+  "files": {
+    "phone-light-normal/03-copy-install-keyboard-exact.png": {
+      "bytes": 70727,
+      "sha256": "bdd20fbe56d73113d047c10ac391d9f8f198f0f892f4df3b8df96ecce2c49d5f"
+    },
+    "phone-light-normal/06-public-local-state-copy.png": {
+      "bytes": 75487,
+      "sha256": "646d79ece5d8164c4b2d41d9a2c34578cef30ee6dd684584a08964f6fef2a805"
+    },
+    "phone-light-normal/05-ready-labels-restored.png": {
+      "bytes": 73286,
+      "sha256": "ccc384a4e7fbccf9d549ad0990431f7303d0d66e54475fab7308424265e424f4"
+    },
+    "phone-light-normal/01-public-route.png": {
+      "bytes": 63553,
+      "sha256": "0edff3297ccb227a3d03fb3d3fbf48d0dc89be8af6ebddfe8e1a880b9e7637d2"
+    },
+    "phone-light-normal/02-copy-install-native-tab.png": {
+      "bytes": 71486,
+      "sha256": "3bcb1389e419e6f02002decf64b2bfd24058d87d05c8cbe7777f55fdb32a3346"
+    },
+    "phone-light-normal/copy-panel-restored.png": {
+      "bytes": 73286,
+      "sha256": "ccc384a4e7fbccf9d549ad0990431f7303d0d66e54475fab7308424265e424f4"
+    },
+    "phone-light-normal/04-copy-env-pointer-exact.png": {
+      "bytes": 73750,
+      "sha256": "0d680a08f35e0ac23b250ae46e175a3c63ae95b0a6e2466c6bb5db4ab763711b"
+    },
+    "phone-light-normal/page@be60a0ba9fc036819a59312c534c8b74.webm": {
+      "bytes": 445723,
+      "sha256": "88a5d111f2ed8fd4eb039589a30b7c6ea5a52f68ff22ac0e022a56b6cedebc38"
+    },
+    "phone-light-normal/observations.json": {
+      "bytes": 13383,
+      "sha256": "087cb1df83b8bd267acb2428655bea202faf5d7728b7b737c2ec1b5834533a60"
+    },
+    "phone-light-reduced/03-copy-install-keyboard-exact.png": {
+      "bytes": 70726,
+      "sha256": "b800a7a1e3fb0b19c786f184542c64e71a6ac7f1b9ec85fdd359fdab4f557265"
+    },
+    "phone-light-reduced/07-native-permission-denied-copy.png": {
+      "bytes": 75572,
+      "sha256": "5d8d88551af97bfd17f6b783ec98f56524d58f36bbfcb6260946c77668faf83a"
+    },
+    "phone-light-reduced/06-public-local-state-copy.png": {
+      "bytes": 75486,
+      "sha256": "45a2f0dd79756986662a45425985eb67d6f3e992984fe48e6261c208d95cb379"
+    },
+    "phone-light-reduced/05-ready-labels-restored.png": {
+      "bytes": 73286,
+      "sha256": "ccc384a4e7fbccf9d549ad0990431f7303d0d66e54475fab7308424265e424f4"
+    },
+    "phone-light-reduced/01-public-route.png": {
+      "bytes": 63553,
+      "sha256": "0edff3297ccb227a3d03fb3d3fbf48d0dc89be8af6ebddfe8e1a880b9e7637d2"
+    },
+    "phone-light-reduced/02-copy-install-native-tab.png": {
+      "bytes": 71486,
+      "sha256": "3bcb1389e419e6f02002decf64b2bfd24058d87d05c8cbe7777f55fdb32a3346"
+    },
+    "phone-light-reduced/copy-panel-restored.png": {
+      "bytes": 73286,
+      "sha256": "ccc384a4e7fbccf9d549ad0990431f7303d0d66e54475fab7308424265e424f4"
+    },
+    "phone-light-reduced/04-copy-env-pointer-exact.png": {
+      "bytes": 73777,
+      "sha256": "ce791121c9d5e87b9614eb5dc4036d313b6838a7e973d0812a14f08b371408ce"
+    },
+    "phone-light-reduced/page@97a5d6e33cdac404f90ecb5288b653ef.webm": {
+      "bytes": 551553,
+      "sha256": "b08081f921d15e64e6f41facfa6c834f93f97064f5425ac6647fb97ae3b82315"
+    },
+    "phone-light-reduced/observations.json": {
+      "bytes": 14106,
+      "sha256": "60604931d32bf0237bfeacb72c5537d127333a8f6f669b89e1d62baea1228d96"
+    },
+    "desktop-light-reduced/03-copy-install-keyboard-exact.png": {
+      "bytes": 130836,
+      "sha256": "df5cf3443fe1cbe2e95fb7f4ed6464584b583303558f084a4b42bc40d04f0619"
+    },
+    "desktop-light-reduced/06-public-local-state-copy.png": {
+      "bytes": 128268,
+      "sha256": "41249d4de8f0b64540e61dbeeac24573698b11fe4c37b8671929ec80e29defd6"
+    },
+    "desktop-light-reduced/05-ready-labels-restored.png": {
+      "bytes": 134024,
+      "sha256": "f08aae0c24c02889386a2d4510dd19c017370175c17703c71127bb3bf1f1e87f"
+    },
+    "desktop-light-reduced/01-public-route.png": {
+      "bytes": 123560,
+      "sha256": "7ec762bfbe7795f28622f6b1cd21bdef153755965e50392bb32ed917da4fb150"
+    },
+    "desktop-light-reduced/02-copy-install-native-tab.png": {
+      "bytes": 130263,
+      "sha256": "a14870decfa8edce32fa7256bafb2ce6b91af7e3dae6727f89510f3c04ae84f3"
+    },
+    "desktop-light-reduced/copy-panel-restored.png": {
+      "bytes": 134024,
+      "sha256": "f08aae0c24c02889386a2d4510dd19c017370175c17703c71127bb3bf1f1e87f"
+    },
+    "desktop-light-reduced/04-copy-env-pointer-exact.png": {
+      "bytes": 134416,
+      "sha256": "cc2a5d9f79762eeee26a0d99c9622b17fd5b2488431905050778af9f06f4f7ff"
+    },
+    "desktop-light-reduced/page@0ee08ba737a82de01da76c4604d436aa.webm": {
+      "bytes": 849963,
+      "sha256": "511f1b5e11c1e7c213401abcaf6b47c6a5ced83b1d555705b85d61946d5026c7"
+    },
+    "desktop-light-reduced/observations.json": {
+      "bytes": 13471,
+      "sha256": "c6934aed7b543d068df6acf34576babf2215c3ac3d8a10db258381faf8bd2c6b"
+    }
+  }
+}

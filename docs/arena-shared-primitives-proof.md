@@ -106,3 +106,17 @@ Root owns independent media review and completion of the remaining acceptance
 conditions before merge. Deployment and served user-flow proof remain required
 after merge; calibrated timing, latency, physical-device, full motion conformance
 and production outcomes are UNKNOWN.
+
+## Retained public artifacts
+
+The [case and hash manifest](arena-shared-primitives-proof/010e5b/manifest.json)
+retains all 22 original viewport PNGs, all three original uncut WebMs and the
+three actual case observations. Each file has a byte count and SHA-256.
+
+- [Phone/light/normal observations](arena-shared-primitives-proof/010e5b/phone-light-normal/observations.json)
+- [Phone/light/reduced observations, including native permission denial](arena-shared-primitives-proof/010e5b/phone-light-reduced/observations.json)
+- [Desktop/light/reduced observations](arena-shared-primitives-proof/010e5b/desktop-light-reduced/observations.json)
+
+These are local built-app recordings with external domain traffic blocked,
+not a served-production or full-design qualification. Earlier source and
+failed-route recordings remain retained in the delivery evidence history.
