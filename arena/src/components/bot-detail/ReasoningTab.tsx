@@ -237,7 +237,7 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
                     <code className="text-xs font-data text-arena-elements-textTertiary">
                       {truncateAddress(trade.validation.intentHash)}
                     </code>
-                    <CopyButton text={trade.validation.intentHash} />
+                    <CopyButton text={trade.validation.intentHash} label="Copy" />
                   </div>
                 )}
                 {validationDisplay && (

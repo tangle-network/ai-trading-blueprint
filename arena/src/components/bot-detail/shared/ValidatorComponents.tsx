@@ -137,7 +137,7 @@ export function ValidatorCard({ response }: { response: ValidatorResponseDetail 
                       <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
                         Signature
                       </span>
-                      <CopyButton text={response.signature} />
+                      <CopyButton text={response.signature} label="Copy" />
                     </div>
                     <code className="text-xs font-data text-arena-elements-textTertiary break-all">
                       {truncateSignature(response.signature)}
@@ -161,7 +161,7 @@ export function ValidatorCard({ response }: { response: ValidatorResponseDetail 
                         <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
                           Verifying Contract
                         </span>
-                        <CopyButton text={response.verifyingContract!} />
+                        <CopyButton text={response.verifyingContract!} label="Copy" />
                       </div>
                       <code className="text-xs font-data text-arena-elements-textTertiary">
                         {truncateAddress(response.verifyingContract!)}
@@ -176,7 +176,7 @@ export function ValidatorCard({ response }: { response: ValidatorResponseDetail 
                     <span className="text-xs font-data uppercase tracking-wider text-arena-elements-textTertiary">
                       Validator Address
                     </span>
-                    <CopyButton text={response.validator} />
+                    <CopyButton text={response.validator} label="Copy" />
                   </div>
                   <code className="text-xs font-data text-arena-elements-textTertiary break-all">
                     {response.validator}

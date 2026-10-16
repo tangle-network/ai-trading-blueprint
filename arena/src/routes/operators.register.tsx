@@ -488,7 +488,7 @@ export default function OperatorRegisterPage() {
         <Panel
           title="Run your operator"
           description="Copy this into your operator host. The env block is prefilled with the choices above."
-          aside={<CopyButton text={installCommand} />}
+          aside={<CopyButton text={installCommand} label="Copy install" copiedLabel="Command copied" />}
         >
           <pre className="overflow-x-auto border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--arena-terminal-text-secondary)]">
             {installCommand}
@@ -498,7 +498,7 @@ export default function OperatorRegisterPage() {
             <span className="font-display text-xs font-semibold uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
               .env block
             </span>
-            <CopyButton text={envBlock} />
+            <CopyButton text={envBlock} label="Copy .env" copiedLabel="Env copied" />
           </div>
           <pre className="mt-1.5 overflow-x-auto border border-[var(--arena-terminal-border)] bg-[var(--arena-terminal-bg)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--arena-terminal-text-secondary)]">
             {envBlock}
