@@ -13,15 +13,14 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
-    scroll-behavior: smooth;
     /* Theme the root canvas so overscroll and any unmounted-tree moment paint
-       brand background instead of browser-default white. Mirrors the literal
-       values inlined by criticalThemeCss before this sheet loads. */
+       brand background instead of browser-default white. criticalThemeCss inlines
+       the same Brand token sheet before this stylesheet loads. */
     background: var(--arena-terminal-bg);
   }
 
   body {
-    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    font-family: var(--font-sans);
     line-height: 1.6;
     min-height: 100vh;
     background: var(--arena-elements-bg-depth-1);
@@ -79,16 +78,16 @@
 
 /* ═══ Typography Classes ═══ */
 .font-display {
-  font-family: 'Outfit', system-ui, sans-serif;
+  font-family: var(--font-display);
 }
 
 .font-body {
-  font-family: 'DM Sans', system-ui, sans-serif;
+  font-family: var(--font-sans);
 }
 
 .font-data,
 .font-mono {
-  font-family: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-feature-settings: 'tnum' 1;
 }
 
@@ -128,7 +127,7 @@
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color var(--motion-surface), box-shadow var(--motion-surface);
 
   &:hover {
     border-color: var(--glass-border-hover);
@@ -245,7 +244,7 @@
   border-radius: 50%;
   font-weight: 700;
   font-size: 12px;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
 }
 
 .rank-1 {
@@ -280,37 +279,34 @@
 
 .score-ring .score-value {
   position: absolute;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
   font-weight: 700;
   font-size: 13px;
 }
 
 /* ═══ Selection ═══ */
 ::selection {
-  background: rgba(0, 255, 136, 0.2);
-  color: #F0F0F5;
+  background: var(--accent-surface-strong);
+  color: var(--text-primary);
 }
 
 /* ═══ Arena Chat Integration ═══ */
+/* The composer keeps Arena's layout; Brand owns its surfaces and control states. */
 .arena-chat-shell[data-sandbox-ui='true'] {
   --chat-input-py: 0.75rem;
-  --chat-label-size: 11px;
+  --chat-label-size: var(--font-size-xs);
   --chat-label-weight: 700;
   --chat-label-tracking: 0.18em;
-  --chat-input-bg: color-mix(in srgb, white 84%, transparent);
-  --chat-input-border: color-mix(in srgb, var(--arena-elements-dividerColor) 90%, transparent);
-  --chat-input-focus-border: color-mix(in srgb, #8b5cf6 40%, white);
-  --chat-input-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.04),
-    0 12px 28px rgba(139, 92, 246, 0.08);
-  --chat-input-focus-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.06),
-    0 16px 36px rgba(139, 92, 246, 0.12);
-  --chat-send-border: rgba(139, 92, 246, 0.22);
-  --chat-send-bg: linear-gradient(135deg, rgba(139, 92, 246, 0.14), rgba(91, 63, 214, 0.2));
-  --chat-send-hover-bg: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(91, 63, 214, 0.28));
-  --chat-send-color: #6d28d9;
-  --chat-send-ring: rgba(139, 92, 246, 0.28);
+  --chat-input-bg: var(--arena-elements-bg-depth-2);
+  --chat-input-border: var(--arena-elements-dividerColor);
+  --chat-input-focus-border: var(--arena-elements-focus);
+  --chat-input-shadow: var(--shadow-card);
+  --chat-input-focus-shadow: var(--shadow-accent);
+  --chat-send-border: var(--arena-terminal-brand-border);
+  --chat-send-bg: var(--arena-terminal-brand-soft);
+  --chat-send-hover-bg: var(--arena-terminal-brand-strong);
+  --chat-send-color: var(--arena-terminal-brand);
+  --chat-send-ring: var(--arena-elements-focus);
 }
 
 .arena-trace-terminal {
@@ -353,7 +349,7 @@
   align-items: center;
   gap: 0.35rem;
   border-radius: 3px;
-  font-family: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 0.075em;
@@ -371,9 +367,9 @@
 
 .arena-sort-header-button {
   transition:
-    background-color 150ms ease,
-    color 150ms ease,
-    opacity 150ms ease;
+    background-color var(--motion-control),
+    color var(--motion-control),
+    opacity var(--motion-control);
 }
 
 .arena-sort-header-button:hover,
@@ -407,45 +403,28 @@
   --muted: var(--arena-elements-bg-depth-3);
   --muted-foreground: var(--arena-elements-textTertiary);
   --accent: var(--arena-elements-item-backgroundHover);
-  --primary: #6d28d9;
-  --brand-primary: #6d28d9;
-  --brand-strong: #5b21b6;
-  --brand-glow: #8b5cf6;
-  --brand-cool: #6d28d9;
+  --primary: var(--arena-terminal-brand);
+  --brand-primary: var(--arena-terminal-brand);
+  --brand-strong: var(--arena-terminal-brand-strong);
+  --brand-glow: var(--arena-terminal-brand);
+  --brand-cool: var(--arena-terminal-brand);
   --border: var(--arena-elements-dividerColor);
   --border-default: var(--arena-elements-dividerColor);
   --border-subtle: color-mix(in srgb, var(--arena-elements-dividerColor) 72%, transparent);
-  --border-accent: color-mix(in srgb, #8b5cf6 42%, transparent);
-  --border-accent-hover: color-mix(in srgb, #8b5cf6 62%, transparent);
-  --accent-surface-soft: color-mix(in srgb, #8b5cf6 10%, transparent);
-  --accent-text: #6d28d9;
+  --border-accent: color-mix(in srgb, var(--arena-terminal-brand) 42%, transparent);
+  --border-accent-hover: color-mix(in srgb, var(--arena-terminal-brand) 62%, transparent);
+  --accent-surface-soft: color-mix(in srgb, var(--arena-terminal-brand) 10%, transparent);
+  --accent-text: var(--arena-terminal-brand);
   --bg-root: var(--arena-elements-bg-depth-1);
   --bg-card: var(--arena-elements-bg-depth-2);
   --text-primary: var(--arena-elements-textPrimary);
   --text-muted: var(--arena-elements-textTertiary);
   --text-dim: var(--arena-elements-textTertiary);
-  --surface-success-bg: rgba(16, 185, 129, 0.08);
-  --surface-success-border: rgba(16, 185, 129, 0.24);
-  --surface-success-text: #047857;
-  --surface-warning-bg: rgba(245, 158, 11, 0.09);
-  --surface-warning-border: rgba(245, 158, 11, 0.28);
-  --surface-warning-text: #b45309;
-  --surface-danger-bg: rgba(244, 63, 94, 0.08);
-  --surface-danger-border: rgba(244, 63, 94, 0.24);
-  --surface-danger-text: #be123c;
-  --code-error: #be123c;
-  --code-success: #047857;
-  --radius-sm: 5px;
-  --radius-md: 6px;
-  --radius-lg: 7px;
-  --radius-xl: 8px;
-  --radius-full: 999px;
+  --code-error: var(--arena-terminal-danger);
+  --code-success: var(--arena-terminal-success);
   --avatar-size: 2rem;
   --chat-message-px: 0.875rem;
   --chat-message-py: 0.7rem;
-  --font-size-xs: 11px;
-  --font-size-base: 14px;
-  --line-height-base: 1.5;
 }
 
 .arena-sandbox-transcript--terminal {
@@ -478,9 +457,9 @@
   --surface-success-bg: color-mix(in srgb, var(--arena-terminal-success) 12%, var(--arena-terminal-panel));
   --surface-success-border: var(--arena-terminal-success-border);
   --surface-success-text: var(--arena-terminal-success);
-  --surface-danger-text: #ff7f9a;
+  --surface-danger-text: var(--arena-terminal-danger);
   --code-success: var(--arena-terminal-success);
-  --code-error: #ff7f9a;
+  --code-error: var(--arena-terminal-danger);
   --shadow-card: none;
   --shadow-dropdown: var(--arena-terminal-shadow-lg);
 }
@@ -903,13 +882,6 @@
 }
 
 :root[data-theme='dark'] .arena-chat-shell[data-sandbox-ui='true'] {
-  --hsl-background: 240 30% 4%;
-  --hsl-foreground: 240 10% 95%;
-  --hsl-card: 240 25% 7%;
-  --hsl-card-foreground: 240 10% 95%;
-  --hsl-muted: 240 15% 14%;
-  --hsl-muted-foreground: 240 10% 55%;
-  --hsl-border: 240 10% 16%;
   --background: var(--hsl-background);
   --foreground: var(--hsl-foreground);
   --card: var(--hsl-card);
@@ -923,8 +895,8 @@
   --depth-3: var(--arena-elements-bg-depth-3);
   --depth-4: var(--arena-elements-bg-depth-4);
 
-  --glass-bg: rgba(18, 18, 26, 0.72);
-  --glass-bg-strong: rgba(18, 18, 26, 0.86);
+  --glass-bg: var(--arena-elements-bg-depth-2);
+  --glass-bg-strong: var(--arena-elements-bg-depth-3);
   --glass-border: var(--arena-elements-borderColor);
   --glass-border-hover: var(--arena-elements-dividerColor);
 
@@ -1009,7 +981,7 @@
 }
 
 .arena-chat-shell[data-sandbox-ui='true'] [aria-label='Message input'] {
-  font-family: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
   color: #2f354b;
 }
 
@@ -1069,4 +1041,11 @@
 .arena-chat-shell[data-sandbox-ui='true'] .py-3\.5 {
   padding-top: 0.875rem;
   padding-bottom: 0.875rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-card,
+  .arena-sort-header-button {
+    transition: none;
+  }
 }

@@ -5,36 +5,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { criticalThemeCss } from '~/lib/theme/criticalThemeCss';
 // vitest sets css:false, which empties .scss imports (even ?raw), so source
 // contracts are read straight from disk. import.meta.dirname needs the node
 // types that arena's tsconfig now includes.
 const src = (rel: string) =>
   readFileSync(resolve(import.meta.dirname, '..', rel), 'utf8');
-
-describe('critical theme CSS', () => {
-  const variables = src('styles/variables.scss');
-
-  function tokenValue(scope: 'dark' | 'light'): string {
-    // variables.scss declares --arena-terminal-bg once per theme block, dark
-    // first (:root) then light (:root[data-theme='light']).
-    const matches = [...variables.matchAll(/--arena-terminal-bg:\s*(#[0-9a-fA-F]{3,8})/g)];
-    expect(matches.length).toBe(2);
-    return scope === 'dark' ? matches[0][1] : matches[1][1];
-  }
-
-  it('stays in sync with the dark theme background token', () => {
-    expect(criticalThemeCss.toLowerCase()).toContain(
-      `html{background-color:${tokenValue('dark').toLowerCase()};color-scheme:dark}`,
-    );
-  });
-
-  it('stays in sync with the light theme background token', () => {
-    expect(criticalThemeCss.toLowerCase()).toContain(
-      `html[data-theme='light']{background-color:${tokenValue('light').toLowerCase()};color-scheme:light}`,
-    );
-  });
-});
 
 describe('root shell contract', () => {
   const root = src('root.tsx');

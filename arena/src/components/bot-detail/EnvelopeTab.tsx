@@ -21,6 +21,7 @@
 
 import { useMemo, useState } from 'react';
 import { useAccount, useSignTypedData } from 'wagmi';
+import { Card, CardContent, CardHeader, CardTitle } from '@tangle-network/ui/primitives';
 import { Button } from '@tangle-network/blueprint-ui/components';
 import {
   useDeleteEnvelope,
@@ -90,12 +91,21 @@ function EnvelopeStatusCard({
   loading: boolean;
   error: Error | null;
 }) {
-  if (loading) return <Card title="Current envelope"><p className="text-sm">Loading…</p></Card>;
-  if (error) return <Card title="Current envelope"><p className="text-sm text-red-500">{error.message}</p></Card>;
+  if (loading) return (<Card variant="glass">
+        <CardHeader><CardTitle>Current envelope</CardTitle></CardHeader>
+        <CardContent><p className="text-sm">Loading…</p></CardContent>
+      </Card>);
+  if (error) return (<Card variant="glass">
+        <CardHeader><CardTitle>Current envelope</CardTitle></CardHeader>
+        <CardContent><p className="text-sm text-red-500">{error.message}</p></CardContent>
+      </Card>);
   if (!envelope) {
     return (
-      <Card title="Current envelope">
+      <Card variant="glass">
+        <CardHeader><CardTitle>Current envelope</CardTitle></CardHeader>
+        <CardContent>
         <p className="text-base text-arena-elements-textSecondary">No envelope on file. Sign and submit one below to enable envelope-mode trading.</p>
+      </CardContent>
       </Card>
     );
   }
@@ -105,7 +115,9 @@ function EnvelopeStatusCard({
   const expiresIn = formatDuration(envelope.expires_at - now);
 
   return (
-    <Card title="Current envelope">
+    <Card variant="glass">
+        <CardHeader><CardTitle>Current envelope</CardTitle></CardHeader>
+        <CardContent>
       <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
         <Field label="Protocol" value={envelope.protocol} />
         <Field label="Bot" value={envelope.bot_id} mono />
@@ -140,7 +152,8 @@ function EnvelopeStatusCard({
           <Field label="Can open positions" value={envelope.policy.can_open_positions ? 'yes' : 'close-only'} small />
         </dl>
       </div>
-    </Card>
+    </CardContent>
+      </Card>
   );
 }
 
@@ -223,7 +236,9 @@ function SignAndSubmitCard({
   };
 
   return (
-    <Card title="Sign and submit envelope">
+    <Card variant="glass">
+        <CardHeader><CardTitle>Sign and submit envelope</CardTitle></CardHeader>
+        <CardContent>
       <div className="flex gap-1 mb-3 border-b border-arena-elements-borderColor">
         <ModeTabButton active={mode === 'build'} onClick={() => setMode('build')}>
           Build
@@ -316,7 +331,8 @@ function SignAndSubmitCard({
           </div>
         </>
       )}
-    </Card>
+    </CardContent>
+      </Card>
   );
 }
 
@@ -356,7 +372,9 @@ function RevokeCard({
   error: Error | null;
 }) {
   return (
-    <Card title="Revoke">
+    <Card variant="glass">
+        <CardHeader><CardTitle>Revoke</CardTitle></CardHeader>
+        <CardContent>
       <p className="text-sm text-arena-elements-textSecondary mb-2">
         Clearing the stored envelope blocks new envelope-mode trades immediately. Already-confirmed
         on-chain trades cannot be reverted from here. To restore trading you must sign and submit a
@@ -366,20 +384,12 @@ function RevokeCard({
       <Button variant="destructive" onClick={onRevoke} disabled={revoking}>
         {revoking ? 'Revoking…' : 'Revoke envelope'}
       </Button>
-    </Card>
+    </CardContent>
+      </Card>
   );
 }
 
-// ── primitives ──
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="glass-card rounded-xl border border-arena-elements-dividerColor/70 p-5">
-      <h3 className="text-lg font-display font-semibold mb-4 text-arena-elements-textPrimary">{title}</h3>
-      {children}
-    </section>
-  );
-}
+// ── Envelope fields ──
 
 function Field({
   label,

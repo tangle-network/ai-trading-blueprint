@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { m, AnimatePresence } from 'framer-motion';
+import { CopyButton } from '@tangle-network/ui/markdown';
+import { useId, useState } from 'react';
 import { Badge } from '@tangle-network/blueprint-ui/components';
 import { useThemeValue } from '@tangle-network/blueprint-ui';
 import type { TradeSimulation, ValidatorResponseDetail } from '~/lib/types/trade';
@@ -15,28 +15,6 @@ export function truncateAddress(addr: string): string {
 export function truncateSignature(sig: string): string {
   if (sig.length <= 20) return sig;
   return `${sig.slice(0, 10)}...${sig.slice(-8)}`;
-}
-
-// ── CopyButton ──────────────────────────────────────────────────────────
-
-export function CopyButton({ text, label }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <button
-      onClick={handleCopy}
-      className="text-xs font-data text-arena-elements-textTertiary hover:text-arena-elements-textSecondary transition-colors cursor-pointer"
-      title={`Copy ${label ?? 'value'}`}
-    >
-      {copied ? 'Copied' : (label ?? 'Copy')}
-    </button>
-  );
 }
 
 // ── ScoreRing ───────────────────────────────────────────────────────────
@@ -77,7 +55,7 @@ export function ScoreRing({ score, size = 44, indeterminate = false }: { score: 
           strokeDashoffset={indeterminate ? circumference * 0.7 : offset}
           strokeLinecap="round"
           style={{ filter: `drop-shadow(0 0 4px ${color}40)` }}
-          className={indeterminate ? 'animate-spin origin-center' : undefined}
+          className={indeterminate ? 'animate-spin origin-center motion-reduce:animate-none' : undefined}
         />
       </svg>
       <span
@@ -92,23 +70,23 @@ export function ScoreRing({ score, size = 44, indeterminate = false }: { score: 
 
 // ── ValidatorCard ───────────────────────────────────────────────────────
 
-export function ValidatorCard({ response, index }: { response: ValidatorResponseDetail; index: number }) {
+export function ValidatorCard({ response }: { response: ValidatorResponseDetail }) {
+  const detailId = useId();
   const [expanded, setExpanded] = useState(false);
   const hasSignature = hasUsableValidatorSignature(response.signature);
   const hasEip712Domain = response.chainId != null && response.verifyingContract;
   const isBypass = isPaperBypassResponse(response);
 
   return (
-    <m.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.04, duration: 0.3 }}
-    >
+    <div>
       <div className="rounded-lg border border-arena-elements-borderColor bg-arena-elements-background-depth-3 dark:bg-arena-elements-background-depth-4 overflow-hidden">
         {/* Validator header */}
         <button
-          onClick={() => setExpanded(!expanded)}
-          className="w-full flex items-center gap-3 px-4 py-3 hover:bg-arena-elements-background-depth-3 transition-colors cursor-pointer"
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={detailId}
+          onClick={() => setExpanded((value) => !value)}
+          className="w-full flex items-center gap-3 px-4 py-3 hover:bg-arena-elements-background-depth-3 [transition:background-color_var(--motion-control)] motion-reduce:transition-none cursor-pointer"
         >
           {!isBypass && <ScoreRing score={response.score} size={36} />}
           <div className="flex-1 min-w-0 text-left">
@@ -135,19 +113,12 @@ export function ValidatorCard({ response, index }: { response: ValidatorResponse
               </div>
             )}
           </div>
-          <div className="i-ph:caret-down text-arena-elements-textTertiary transition-transform" style={{ transform: expanded ? 'rotate(180deg)' : 'none' }} />
+          <div className="i-ph:caret-down text-arena-elements-textTertiary" style={{ transform: expanded ? 'rotate(180deg)' : 'none' }} />
         </button>
 
         {/* Expanded detail */}
-        <AnimatePresence>
           {expanded && (
-            <m.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="overflow-hidden"
-            >
+            <div id={detailId} className="overflow-hidden">
               <div className="px-4 pb-4 space-y-3 border-t border-arena-elements-dividerColor pt-3">
                 {/* Reasoning */}
                 <div>
@@ -212,11 +183,10 @@ export function ValidatorCard({ response, index }: { response: ValidatorResponse
                   </code>
                 </div>
               </div>
-            </m.div>
+            </div>
           )}
-        </AnimatePresence>
       </div>
-    </m.div>
+    </div>
   );
 }
 

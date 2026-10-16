@@ -1,0 +1,373 @@
+{
+  "scope": "operator-public-copy",
+  "url": "http://127.0.0.1:43196/operators/register",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "requestedColorScheme": "light",
+  "requestedReducedMotion": "reduce",
+  "browser": {
+    "playwright": "1.63.0",
+    "version": "153.0.8010.12",
+    "captureNode": "v24.18.0"
+  },
+  "steps": [
+    {
+      "name": "public-route",
+      "status": "PASS",
+      "observed": null
+    },
+    {
+      "name": "copy-install-native-tab",
+      "status": "PASS",
+      "observed": {
+        "text": "Copy install",
+        "ariaLabel": "Copy install",
+        "focusVisible": true,
+        "outline": "oklab(0.468767 0.0342499 -0.197278 / 0.8) solid 1px",
+        "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, oklab(0.468767 0.0342499 -0.197278 / 0.18) 0px 0px 0px 4px, rgba(0, 0, 0, 0) 0px 0px 0px 0px"
+      }
+    },
+    {
+      "name": "copy-install-keyboard-exact",
+      "status": "PASS",
+      "observed": {
+        "exactBytesMatch": true,
+        "bytes": 630,
+        "clipboardSHA256": "5cdffaa294779d97d38e33ddc70736c8a5fb8a94d42927443d5a755ddebb6421",
+        "expectedSHA256": "5cdffaa294779d97d38e33ddc70736c8a5fb8a94d42927443d5a755ddebb6421",
+        "copiedLabel": "Command copied",
+        "focusRetained": true
+      }
+    },
+    {
+      "name": "copy-env-pointer-exact",
+      "status": "PASS",
+      "observed": {
+        "exactBytesMatch": true,
+        "bytes": 204,
+        "clipboardSHA256": "008a94a2f62c52ed44a54c35ac9f2108e083db74cbf84a1706124420c316c59e",
+        "expectedSHA256": "008a94a2f62c52ed44a54c35ac9f2108e083db74cbf84a1706124420c316c59e",
+        "copiedLabel": "Env copied",
+        "focusRetained": true
+      }
+    },
+    {
+      "name": "ready-labels-restored",
+      "status": "PASS",
+      "observed": {
+        "install": "Copy install",
+        "env": "Copy .env"
+      }
+    },
+    {
+      "name": "public-local-state-copy",
+      "status": "PASS",
+      "observed": {
+        "exactBytesMatch": true,
+        "bytes": 172,
+        "clipboardSHA256": "57cea77984b853719a194a275461a58454a7c6f9d4a26712622e38a238174dda",
+        "expectedSHA256": "57cea77984b853719a194a275461a58454a7c6f9d4a26712622e38a238174dda",
+        "domainOperation": "NONE_LOCAL_REACT_STATE_ONLY"
+      }
+    }
+  ],
+  "blockedRequests": [
+    {
+      "origin": "https://fonts.googleapis.com",
+      "path": "[external-path]",
+      "method": "GET",
+      "type": "stylesheet"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "origin": "https://eth.llamarpc.com",
+      "path": "[external-path]",
+      "method": "POST",
+      "type": "fetch"
+    }
+  ],
+  "consoleErrors": [
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://fonts.googleapis.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    },
+    {
+      "message": "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+      "location": "https://eth.llamarpc.com/[external-path]"
+    }
+  ],
+  "pageErrors": [],
+  "loadedStylesheets": [
+    {
+      "url": "http://127.0.0.1:43196/assets/root-BNTGKAMX.css",
+      "bytes": 556723,
+      "sha256": "13490b4f4a1497d71f03032051f8a103c98027e5e84bc850ff4242960b3029f0"
+    }
+  ],
+  "domainBackend": "BLOCKED_NOT_SIMULATED",
+  "registration": "NOT_ATTEMPTED",
+  "wallet": "NOT_CONNECTED",
+  "paidTurns": "NOT_ATTEMPTED",
+  "production": "UNKNOWN",
+  "motion": "UNKNOWN",
+  "latency": "UNKNOWN",
+  "physicalDevice": "UNKNOWN",
+  "renderedPublicCode": {
+    "install": {
+      "bytes": 630,
+      "sha256": "5cdffaa294779d97d38e33ddc70736c8a5fb8a94d42927443d5a755ddebb6421"
+    },
+    "env": {
+      "bytes": 204,
+      "sha256": "008a94a2f62c52ed44a54c35ac9f2108e083db74cbf84a1706124420c316c59e"
+    }
+  },
+  "actualTheme": {
+    "className": "",
+    "dataTheme": "light",
+    "colorScheme": "light"
+  },
+  "actualReducedMotion": true,
+  "viewportCSS": {
+    "innerWidth": 1440,
+    "innerHeight": 900,
+    "viewportMeta": "width=device-width, initial-scale=1"
+  },
+  "documentOverflow": 0,
+  "unexpectedConsoleErrors": [],
+  "actualURL": "http://127.0.0.1:43196/operators/register",
+  "domSummary": "Skip to content\nHome\nAgents\nActivity\nObservatory\nOperators\nMy Agents\nNew Agent\nTransactions\nConnect Wallet\nEthereum\nBecome an operator\nPublic\nACCESS\n5\nCAPACITY\n∞\nWALLETS\n\nHost trading agents on your infrastructure. You decide who can launch and how many.\n\nDirectory\nOperator identity\n\nThe wallet you connect is your operator identity — it can always launch agents on your own node.\n\nConnect wallet\nWho can launch agents\n\nEnforced fail-closed on the provision path — not just advertised. In allowlist mode, only these wallets can launch an agent on your operator.\n\nAllowlist\nOnly wallets you add can launch agents on your operator.\nPublic\nAnyone can launch agents on your operator, up to your capacity.\nCapacity\n\nMax concurrent agents your node will host. Enforced on the provision path — requests beyond this are refused. Leave at 0 for unlimited.\n\nMAX CONCURRENT AGENTS\nSupported strategies\n\nAdvertised in the directory so requesters know what your operator hosts. Optional.\n\nMomentum\nMean reversion\nTrend following\nArbitrage\nMarket making\nHyperliquid perps\nDEX spot\nYield\nPrediction markets\nVolatility\nSentiment\nFEE ON HOSTED AGENTS (%) — OPTIONAL\nYou earn fees from agents you host. Set on-chain in the fee distributor; left out of the install env.\nEndpoint & readiness\n\nYour operator API's public URL. We poll it live so you can see your node answer and your own policy reflected.\n\nOPERATOR API ENDPOINT\n\nEnter your endpoint above to run a live readiness check.\n\nRun your operator\n\nCopy this into your operator host. The env block is prefilled with the choices above.\n\nCopy install\n# 1. Provision the host (Docker + 50GB state volume):\n./deploy/setup-hetzner.sh trading-operator <ssh-key-name>\n\n# 2. On the operator host, write the env and bring the stack up:\nmkdir -p /opt/trading-blueprint && cd /opt/trading-blueprint\ncat > .env <<'EOF'\nTRADING_REQUESTER_ACCESS_MODE=public\nOPERATOR_MAX_CAPACITY=5\nOPERATOR_API_PORT=9200\nTRADING_API_PORT=9100\nSIDECAR_IMAGE=ghcr.io/tangle-network/blueprint-sidecar:all-harness\nEOF\nchmod 600 .env\ndocker compose up -d\n\n# Operator API:  http://<host>:9200  (health: /health, policy: /api/meta)\n# Trading API:   http://<host>:9100   (agent-facing)\n.ENV BLOCK\nEnv copied\nCopied to clipboard\nTRADING_REQUESTER_ACCESS_MODE=public\nOPERATOR_MAX_CAPACITY=5\nOPERATOR_API_PORT=9200\nTRADING_API_PORT=9100\nSIDECAR_IMAGE=ghcr.io/tangle-network/blueprint-sidecar:all-harness\nADVANCED — HOW ENFORCEMENT WORKS",
+  "assertionFailures": 0,
+  "verdict": "PASS_PUBLIC_COPY_ONLY"
+}

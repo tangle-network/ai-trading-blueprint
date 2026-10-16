@@ -1,8 +1,9 @@
+import { CopyButton } from '@tangle-network/ui/markdown';
 import { m, AnimatePresence } from 'framer-motion';
 import { useBotTrades, useBotRecentValidations } from '~/lib/hooks/useBotApi';
 import { Badge, Card, CardContent } from '@tangle-network/blueprint-ui/components';
 import type { Trade } from '~/lib/types/trade';
-import { CopyButton, ScoreRing, ValidatorCard, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
+import { ScoreRing, ValidatorCard, truncateAddress, SimulationDetail } from './shared/ValidatorComponents';
 import { AssetPairDisplay } from './shared/AssetDisplay';
 import { SkeletonCard } from '~/components/ui/Skeleton';
 import type { BotOperatorKind, BotVerificationState } from '~/lib/types/bot';
@@ -258,7 +259,7 @@ function TradeValidationCard({ trade, index }: { trade: Trade; index: number }) 
           {responses.length > 0 && (
             <div className="space-y-2">
               {responses.map((response, vi) => (
-                <ValidatorCard key={`${trade.id}-${response.validator}-${vi}`} response={response} index={vi} />
+                <ValidatorCard key={`${trade.id}-${response.validator}-${vi}`} response={response} />
               ))}
             </div>
           )}

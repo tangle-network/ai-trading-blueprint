@@ -759,7 +759,6 @@ export function TradeHistoryTab({
                             <ValidatorCard
                               key={`${trade.id}-expand-${response.validator}-${vi}`}
                               response={response}
-                              index={vi}
                             />
                           ))}
                         </div>
