@@ -5,7 +5,7 @@
 //
 // Run:
 //   OPERATOR_API_URL=https://<box> ZAI_API_KEY=<key> \
-//   node dist/evals/bin/operator-matrix-smoke.js --private-key 0x...
+//   node evals/dist/bin/operator-matrix-smoke.js --private-key 0x...
 import { runTradingPersonaEval } from '../trading/persona-agent-eval.js'
 import { STANDARD_USER_PERSONAS } from '../sim/user-personas.js'
 import { defaultScenarios } from '../trading/personas/scenarios.js'

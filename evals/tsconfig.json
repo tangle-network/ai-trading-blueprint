@@ -15,7 +15,7 @@
     "declaration": true,
     "sourceMap": true,
     "rootDir": "src",
-    "outDir": "../dist/evals",
+    "outDir": "dist",
     "types": ["node"]
   },
   "include": ["src/**/*.ts"]

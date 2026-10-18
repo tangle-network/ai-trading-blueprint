@@ -4,38 +4,29 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:evals": "tsc -p evals/tsconfig.json",
-    "eval:agent-strategy": "npm run build:evals --silent && node dist/evals/bin/trading-agent-strategy-eval.js",
-    "eval:autoresearch-loop": "npm run build:evals --silent && node dist/evals/bin/autoresearch-loop-eval.js",
-    "eval:full": "npm run build:evals --silent && node dist/evals/bin/full-eval.js",
-    "eval:chat-code-strategy": "npm run build:evals --silent && node dist/evals/bin/chat-code-strategy-e2e.js",
-    "eval:chat-mcp-strategy": "npm run build:evals --silent && node dist/evals/bin/chat-mcp-strategy-e2e.js",
-    "eval:chat-sandbox": "npm run build:evals --silent && node dist/evals/bin/chat-sandbox-e2e.js",
-    "eval:local-product": "npm run build:evals --silent && node dist/evals/bin/local-product-e2e.js",
-    "eval:product-browser": "npm run build:evals --silent && node dist/evals/bin/product-browser-eval.js",
-    "eval:self-improvement-mcp": "npm run build:evals --silent && node dist/evals/bin/self-improvement-mcp-eval.js",
-    "eval:strategy-templates": "npm run build:evals --silent && node dist/evals/bin/strategy-template-eval.js",
-    "eval:trading-lifecycle": "npm run build:evals --silent && node dist/evals/bin/trading-lifecycle-eval.js",
-    "eval:trading-personas": "npm run build:evals --silent && node dist/evals/bin/agent-eval-trading-personas.js",
-    "agent:user-lab": "npm run build:evals --silent && node dist/evals/bin/active-user-lab.js",
-    "agent:fleet-audit": "npm run build:evals --silent && node dist/evals/bin/live-agent-fleet-audit.js",
+    "build:evals": "npm --prefix evals run build",
+    "eval:agent-strategy": "npm --prefix evals run build --silent && node evals/dist/bin/trading-agent-strategy-eval.js",
+    "eval:autoresearch-loop": "npm --prefix evals run build --silent && node evals/dist/bin/autoresearch-loop-eval.js",
+    "eval:full": "npm --prefix evals run build --silent && node evals/dist/bin/full-eval.js",
+    "eval:chat-code-strategy": "npm --prefix evals run build --silent && node evals/dist/bin/chat-code-strategy-e2e.js",
+    "eval:chat-mcp-strategy": "npm --prefix evals run build --silent && node evals/dist/bin/chat-mcp-strategy-e2e.js",
+    "eval:chat-sandbox": "npm --prefix evals run build --silent && node evals/dist/bin/chat-sandbox-e2e.js",
+    "eval:local-product": "npm --prefix evals run build --silent && node evals/dist/bin/local-product-e2e.js",
+    "eval:product-browser": "npm --prefix evals run build --silent && node evals/dist/bin/product-browser-eval.js",
+    "eval:self-improvement-mcp": "npm --prefix evals run build --silent && node evals/dist/bin/self-improvement-mcp-eval.js",
+    "eval:strategy-templates": "npm --prefix evals run build --silent && node evals/dist/bin/strategy-template-eval.js",
+    "eval:trading-lifecycle": "npm --prefix evals run build --silent && node evals/dist/bin/trading-lifecycle-eval.js",
+    "eval:trading-personas": "npm --prefix evals run build --silent && node evals/dist/bin/agent-eval-trading-personas.js",
+    "agent:user-lab": "npm --prefix evals run build --silent && node evals/dist/bin/active-user-lab.js",
+    "agent:fleet-audit": "npm --prefix evals run build --silent && node evals/dist/bin/live-agent-fleet-audit.js",
     "release:local-artifacts": "scripts/release-local-artifacts.sh",
-    "typecheck:evals": "tsc -p evals/tsconfig.json --noEmit",
-    "eval:harness-self-improve": "npm run build:evals --silent && node dist/evals/bin/harness-self-improve-eval.js",
-    "eval:per-bot-self-improve": "npm run build:evals --silent && node dist/evals/bin/per-bot-self-improve-eval.js",
-    "eval:planted-improvement": "npm run build:evals --silent && node dist/evals/bin/planted-improvement-eval.js",
-    "eval:breaker-recovery": "npm run build:evals --silent && node dist/evals/bin/breaker-recovery-eval.js"
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.0",
-    "typescript": "^5.6.3",
-    "vega": "^6.2.0",
-    "vega-lite": "^6.4.3"
+    "typecheck:evals": "npm --prefix evals run typecheck",
+    "eval:harness-self-improve": "npm --prefix evals run build --silent && node evals/dist/bin/harness-self-improve-eval.js",
+    "eval:per-bot-self-improve": "npm --prefix evals run build --silent && node evals/dist/bin/per-bot-self-improve-eval.js",
+    "eval:planted-improvement": "npm --prefix evals run build --silent && node evals/dist/bin/planted-improvement-eval.js",
+    "eval:breaker-recovery": "npm --prefix evals run build --silent && node evals/dist/bin/breaker-recovery-eval.js"
   },
   "engines": {
     "node": ">=22.13.0"
-  },
-  "dependencies": {
-    "@ax-llm/ax": "23.0.5"
   }
 }
