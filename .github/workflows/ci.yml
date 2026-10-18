@@ -95,7 +95,7 @@ jobs:
                 ;;
             esac
             case "$file" in
-              evals/*|package.json|package-lock.json|tsconfig.json|tsconfig.*.json)
+              evals/*|package.json|tsconfig.json|tsconfig.*.json)
                 evals=true
                 ;;
             esac
@@ -318,12 +318,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: evals/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --prefix evals
 
       - name: Typecheck evals
-        run: npx tsc -p evals/tsconfig.json --noEmit
+        run: npm --prefix evals run typecheck
 
   ci-gate:
     name: CI Gate
