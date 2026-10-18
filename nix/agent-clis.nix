@@ -11,7 +11,7 @@
 # for all arches.
 #
 # Kinds:
-#   - "bare-elf"    → single Linux ELF, no archive (factory-droids, forge)
+#   - "bare-elf"    → single Linux ELF, no archive (factory-droids)
 #   - "bun-sea"     → Bun single-executable: ELF + appended JS bundle (opencode).
 #                     Skips autoPatchelfHook + strip — any byte mutation breaks
 #                     the bundle's integrity check; relies on the host glibc
@@ -293,24 +293,5 @@ in {
     kind = "npm-tarball";
     nodeEntry = "dist/cli.js";
     description = "Pi Coding Agent (Mario Zechner / pi-mono).";
-  };
-
-  # ─── Forge (tailcallhq, per-arch bare ELF) ────────────────────────────────
-  # Bin renamed `forgecode` to avoid colliding with Foundry's solidity `forge`.
-  forge = mkCliAgent {
-    name = "forge";
-    binary = "forgecode";
-    version = "2.11.4";
-    url = sel {
-      "x86_64-linux"  = "https://github.com/tailcallhq/forgecode/releases/download/v2.11.4/forge-x86_64-unknown-linux-gnu";
-      "aarch64-linux" = "https://github.com/tailcallhq/forgecode/releases/download/v2.11.4/forge-aarch64-unknown-linux-gnu";
-    };
-    sha256 = sel {
-      "x86_64-linux"  = "sha256-BGqtXmYhWWb/6Ft7vGxSbHYPuCkTpClCfrCYH+aGEAo=";
-      "aarch64-linux" = "sha256-XdCnapJQYwUxtuNM9SyENmfOezs0TU0bbIMQbgv7SMc=";
-    };
-    kind = "bare-elf";
-    description = "Forge coding agent (tailcallhq/forgecode) — multi-provider, shell-integrated.";
-    license = lib.licenses.asl20;
   };
 }

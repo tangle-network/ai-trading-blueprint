@@ -15,16 +15,15 @@
 //!
 //! The supported set is the intersection of three constraints, derived from the
 //! deployed artifacts (do not widen it without re-verifying all three):
-//! - adapter registered in the sidecar server bundle (`registerAdapterFactory`
-//!   in the pinned base image: opencode, claude-code, codex, kimi-code, amp,
-//!   factory-droids, pi, hermes, openclaw, forge, acp, cursor),
+//! - adapter registered in the pinned sidecar server bundle
+//!   (`registerAdapterFactory`),
 //! - CLI binary present in this repo's `blueprint-sidecar:all-harness` image
 //!   (`nix/agent-clis.nix`: opencode, claude, codex, qwen, gemini, amp, pi,
-//!   forgecode, factory-droids, codex-acp, copilot),
+//!   factory-droids, codex-acp, copilot),
 //! - an auth path the operator environment can actually satisfy
 //!   (`operator_credentials::harness_ai_env`).
 //!
-//! Known-but-rejected harnesses get a precise reason so config-time errors are
+//! Known or retired harnesses get a precise reason so config-time errors are
 //! actionable instead of a bare "unsupported".
 
 use serde_json::{Map, Value};
@@ -56,7 +55,7 @@ const REJECTED_HARNESS_REASONS: &[(&str, &str)] = &[
     ),
     (
         "forge",
-        "the image ships the binary as `forgecode` but the sidecar adapter spawns `forge`",
+        "the Forge coding harness has been retired from the blueprint-sidecar image",
     ),
     (
         "hermes",
@@ -184,7 +183,7 @@ mod tests {
         let err = normalize_agent_harness("amp").unwrap_err();
         assert!(err.contains("AMP_API_KEY"), "{err}");
         let err = normalize_agent_harness("forge").unwrap_err();
-        assert!(err.contains("forgecode"), "{err}");
+        assert!(err.contains("retired"), "{err}");
     }
 
     #[test]

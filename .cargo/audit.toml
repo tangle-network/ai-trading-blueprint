@@ -8,6 +8,10 @@ ignore = [
     "RUSTSEC-2025-0055", # tracing-subscriber 0.2: inactive lock-only Ark dependency
     "RUSTSEC-2026-0118", # hickory-proto: inactive lock-only libp2p dependency; no fix
     "RUSTSEC-2026-0119", # hickory-proto: inactive lock-only libp2p dependency
+    "RUSTSEC-2026-0258", # h2 0.3.27 is required by reqwest 0.11 in phala-tee-deploy-rs
+    "RUSTSEC-2026-0235", # rkyv 0.7 comes only through rust_decimal
+    "RUSTSEC-2024-0449", # unsafe-libyaml unmaintained notice without a vulnerability
+    "RUSTSEC-2026-0253", # lru 0.16.4 unsound LruCache::pop panic-safety case comes only through alloy-provider's internal cache
 
     # Unmaintained upstream transitive packages.
     "RUSTSEC-2021-0141", # dotenv
