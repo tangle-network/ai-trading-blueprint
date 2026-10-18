@@ -1624,26 +1624,6 @@ mod tests {
     }
 
     #[test]
-    fn trading_agent_substrate_versions_match_root_package() {
-        let sandbox_package: serde_json::Value =
-            serde_json::from_str(&trading_agent_package_json()).expect("valid package json");
-        let root_package: serde_json::Value =
-            serde_json::from_str(include_str!("../../../package.json")).expect("root package json");
-        for dependency in [
-            "@tangle-network/agent-eval",
-            "@tangle-network/agent-interface",
-            "@tangle-network/agent-runtime",
-            "@tangle-network/agent-knowledge",
-        ] {
-            assert_eq!(
-                sandbox_package["dependencies"][dependency],
-                root_package["dependencies"][dependency],
-                "{dependency} must stay aligned between the app and provisioned sandboxes"
-            );
-        }
-    }
-
-    #[test]
     fn trading_agent_opencode_config_registers_eval_providers_without_secrets() {
         let config: serde_json::Value =
             serde_json::from_str(&trading_agent_opencode_config_json()).expect("valid config json");

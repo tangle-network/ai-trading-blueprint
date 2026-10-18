@@ -49,6 +49,10 @@ ignore = [
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 1 and 2 remain transitive through upstream TLS clients; no workspace code imports them" },
     { id = "RUSTSEC-2025-0141", reason = "bincode 1 is required by Solana transaction serde compatibility; bincode 2 uses a different wire API" },
     { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is compile-time only through upstream macros; no workspace runtime path" },
+    { id = "RUSTSEC-2026-0258", reason = "h2 0.3.27 is required by reqwest 0.11 in phala-tee-deploy-rs; no h2 0.3 fix and reqwest 0.11 cannot select h2 0.4.16, which the workspace HTTP stack already uses; it is an HTTP client toward the operator's TEE deploy endpoint and serves no h2 connections" },
+    { id = "RUSTSEC-2026-0235", reason = "rkyv 0.7 comes only through rust_decimal; no workspace code archives or validates rkyv data, so untrusted archives never reach it" },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained notice without a vulnerability; reached through serde_yaml in docktopus and phala-tee-deploy-rs, which parse operator-supplied configuration" },
+    { id = "RUSTSEC-2026-0253", reason = "lru 0.16.4 unsound LruCache::pop panic-safety case comes only through alloy-provider's internal cache; workspace code never calls LruCache::pop and no lru release has the fix yet" },
 ]
 
 # ── Licences ────────────────────────────────────────────────────────────────
