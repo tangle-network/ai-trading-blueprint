@@ -47,6 +47,15 @@ Test the actual non-loopback browser route when changing development proxies.
 Expose asynchronous failures, bind labels to controls, preserve readable theme contrast, and respect reduced-motion preferences.
 Destructive controls need confirmation or undo.
 
-Use the package scripts and CI for current checks.
+## Qualification
+
+Merge `origin/main` before code qualification. Run the commands for the touched surface below through `beelink-gate auto https://github.com/tangle-network/ai-trading-blueprint.git <full-sha> -- bash -lc '<commands>'`, using the existing toolchains and frozen package installs. Workflow and documentation changes use YAML and content checks.
+
+- Rust: `cargo fmt --all -- --check`, then `cargo check -p <affected-crate>`, `cargo clippy -p <affected-crate> -- -D warnings`, and the affected integration tests with `cargo test -p <affected-crate> --test <integration-target>`.
+- Arena: `cd arena && pnpm install --frozen-lockfile && pnpm typecheck && pnpm build && pnpm test && pnpm smoke:agent-workspace -- --fixture`.
+- Evals: `npm ci --prefix evals && npm --prefix evals run typecheck && npm --prefix evals run build`.
+- Contracts: `git submodule update --init --recursive && forge soldeer install && forge build && forge test -vvv && forge test --match-path "contracts/test/fuzz/*" -vvv`.
+
+Build affected binaries before integration tests. [Dependency qualification](docs/dependency-policy.md#local-security-qualification) owns the retained static-analysis commands. Generic PR/main-push CI is retired; the existing deployment workflow still calls the full nine-job qualification graph before either target can broadcast. Signing secrets, environment approvals and post-deploy verification remain in that deployment workflow.
 [run-devnet.sh](scripts/run-devnet.sh) and the existing integration tests own local prerequisites and startup behavior.
 Report skipped infrastructure and substituted providers with the result.

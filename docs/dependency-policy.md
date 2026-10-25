@@ -148,14 +148,21 @@ emits `audits/sbom.cdx.json`. Commit the SBOM as part of every
 release PR — it's the single source of truth for the dep graph at
 release time.
 
-## CI gate
+## Local security qualification
 
-`.github/workflows/static-analysis.yml` runs `cargo deny check` on
-every PR (and on `main` push). A failure blocks merge until either:
+Automatic PR/push static analysis is retired. For dependency or security changes, use the canonical Beelink gate in [CLAUDE.md](../CLAUDE.md#qualification) with the existing cargo-deny, cargo-audit, Slither and Solidity toolchains available. Run Rust analysis through that admitted gate:
 
-- the offending crate is bumped, or
-- a deliberate `[advisories.ignore]` / `[licenses.exceptions]` entry
-  is added with a rationale, reviewed in code review.
+```bash
+beelink-gate auto https://github.com/tangle-network/ai-trading-blueprint.git <full-sha> -- bash -lc 'cargo deny check && cargo audit -D warnings'
+```
+
+For production-contract changes, run the former Slither population through the same gate after initializing pinned submodules and installing Soldeer dependencies. The existing `slither.config.json` retains dependency/test/script exclusions and triage settings:
+
+```bash
+beelink-gate auto https://github.com/tangle-network/ai-trading-blueprint.git <full-sha> -- bash -lc 'git submodule update --init --recursive && forge soldeer install && for f in TradeValidator TradingVault PolicyEngine FeeDistributor StrategyRegistry VaultDeployer VaultFactory VaultShare VaultShareDeployer ChainlinkUsdValuator WrappedAssetValuator UniswapV3TwapValuator; do slither "contracts/src/$f.sol" --config-file slither.config.json || exit; done'
+```
+
+Resolve findings by upgrading the offending dependency or documenting a reviewed rationale in the existing advisory/license exception or contract triage configuration. Tool availability and completed analysis are required evidence; these commands do not establish that analysis ran. The deploy caller retains its separate qualification and signing authority.
 
 ## Out-of-scope
 
