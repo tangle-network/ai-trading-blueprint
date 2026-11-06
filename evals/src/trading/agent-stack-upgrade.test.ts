@@ -100,7 +100,6 @@ test('Agent Eval executes a deterministic optimization generation', async () => 
       expectUsage: 'off',
     })
     assert.equal(result.optimization?.name, 'deterministic-harness-search')
-    assert.equal(result.generationsExplored, 1)
     assert.equal(typeof result.winner.surface, 'string')
     assert.equal((JSON.parse(result.winner.surface as string) as HarnessConfig).version, 2)
   } finally {

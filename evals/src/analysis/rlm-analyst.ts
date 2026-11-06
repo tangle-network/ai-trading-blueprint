@@ -6,43 +6,23 @@
  * byte budgets and reasons about success/failure, citing trace+span ids.
  *
  * 100% SDK primitives:
- *   - `analyzeTraces` (agent-eval) — the actor/responder trace-analyst loop
- *   - `OtlpFileTraceStore` — the byte-budgeted trace source the actor queries
- *   - `AxAI` (@ax-llm/ax) pointed at our Kimi/GLM OpenAI-compatible endpoints
+ *   - `analyzeTraces` + `createChatTraceEngine` (agent-eval) — the bounded
+ *     trace-analyst loop over a caller-owned chat transport
+ *   - `OtlpFileTraceStore` — the byte-budgeted trace source the analyst queries
+ *   - `traceAnalystChatClient` (llm-call.ts) — the Kimi/GLM chat transport
  *
- * Domain framing lives in the `question` (per the SDK contract); the actor
- * protocol (discovery → narrow → deep-read over OTLP) is the SDK default.
+ * Domain framing lives in the `question` (per the SDK contract); the trace
+ * research policy (discovery → narrow → deep-read over OTLP) is the SDK default.
  */
 
 import { writeFileSync } from 'node:fs'
-import {
-  ai as createAxAI,
-  type AxAIOpenAIModel,
-  type AxAIService,
-} from '@ax-llm/ax'
-import { analyzeTraces, OtlpFileTraceStore } from '@tangle-network/agent-eval/traces'
+import { createChatTraceEngine } from '@tangle-network/agent-eval'
+import { analyzeTraces, OtlpFileTraceStore, type AnalyzeTracesResult } from '@tangle-network/agent-eval/traces'
 import { captureRunToOtlp } from './otlp-capture.js'
-import { resolveModel } from '../sim/llm-call.js'
+import { resolveModel, traceAnalystChatClient } from '../sim/llm-call.js'
 
 // Default to the sharper model for the analyst's reasoning over traces.
 const DEFAULT_ANALYST_MODEL = 'glm-5.1'
-
-/** Build an AxAIService bound to a Kimi/GLM OpenAI-compatible endpoint, reusing
- *  the single provider table in llm-call.ts (`resolveModel` validates the key
- *  and throws on unknown model / missing env var — fail closed, since a blind
- *  analyst is worse than no analyst). */
-export function buildAnalystAi(model: string = DEFAULT_ANALYST_MODEL): { ai: AxAIService; modelId: string } {
-  const cfg = resolveModel(model)
-  const ai = createAxAI({
-    name: 'openai',
-    apiKey: cfg.apiKey(),
-    apiURL: cfg.baseUrl,
-    // Ax accepts custom OpenAI-compatible model IDs at runtime but narrows this
-    // field to its built-in model enum.
-    config: { model: cfg.modelId as AxAIOpenAIModel },
-  })
-  return { ai, modelId: cfg.modelId }
-}
 
 // The trading-domain framing. This is what makes the generic SDK analyst OUR
 // analyst: the precise success/failure taxonomy and the anti-fabrication rule.
@@ -72,8 +52,9 @@ Deliver: (1) per-family rollup (counts per bucket), (2) the headline finding —
 
 export interface RlmAnalysisResult {
   answer: string
-  findings: string[]
-  turnCount: number
+  findings: AnalyzeTracesResult['findings']
+  modelCalls: number
+  toolCalls: number
   otlpPath: string
   realCellCount: number
   model: string
@@ -85,15 +66,19 @@ export interface RlmAnalysisResult {
  */
 export async function runRlmAnalyst(
   runDir: string,
-  opts: { model?: string; maxTurns?: number; maxSubqueries?: number; question?: string } = {},
+  opts: { model?: string; maxTurns?: number; question?: string } = {},
 ): Promise<RlmAnalysisResult> {
   const capture = captureRunToOtlp(runDir)
-  const { ai, modelId } = buildAnalystAi(opts.model)
+  const model = opts.model ?? DEFAULT_ANALYST_MODEL
+  // resolveModel throws on unknown model / missing key — fail closed, since a
+  // blind analyst is worse than no analyst.
+  const modelId = resolveModel(model).modelId
   if (capture.cellCount === 0) {
     const empty: RlmAnalysisResult = {
       answer: 'No cells found in run dir — nothing to analyze.',
       findings: [],
-      turnCount: 0,
+      modelCalls: 0,
+      toolCalls: 0,
       otlpPath: capture.otlpPath,
       realCellCount: 0,
       model: modelId,
@@ -108,26 +93,21 @@ export async function runRlmAnalyst(
     { question: opts.question ?? TRADING_QUESTION },
     {
       source: store,
-      ai,
-      model: modelId,
-      // Headroom: the ax actor loop spends some turns recovering from its own
-      // codegen slips (undefined helpers, missing console.log); 32 leaves room
-      // to still reach final() with a full classification.
-      maxTurns: opts.maxTurns ?? 32,
-      maxSubqueries: opts.maxSubqueries ?? 1,
-      // (actorDescription omitted — keep the SDK's OTLP-protocol actor; the
-      //  trading framing rides in `question`.)
-      progressLogPath: `${runDir}/rlm-analysis.progress.jsonl`,
-      onTurn: (t) => {
-        process.stderr.write(`  [rlm-analyst turn ${t.turn}${t.isError ? ' ERR' : ''}] ${(t.output ?? '').slice(0, 120)}\n`)
-      },
+      engine: createChatTraceEngine({
+        chat: traceAnalystChatClient(model),
+        model: modelId,
+      }),
+      // Headroom: 32 investigation turns plus the engine's one report call.
+      limits: { maxIterations: opts.maxTurns ?? 32, maxLlmCalls: (opts.maxTurns ?? 32) + 1 },
+      log: (message) => process.stderr.write(`  [rlm-analyst] ${message.slice(0, 160)}\n`),
     },
   )
 
   const out: RlmAnalysisResult = {
     answer: result.answer,
     findings: result.findings,
-    turnCount: result.turnCount,
+    modelCalls: result.modelCalls,
+    toolCalls: result.toolCalls,
     otlpPath: capture.otlpPath,
     realCellCount: capture.realCellCount,
     model: modelId,
@@ -137,7 +117,7 @@ export async function runRlmAnalyst(
     '# RLM trace analysis',
     '',
     `Run: \`${runDir}\``,
-    `Model: ${modelId}  ·  actor turns: ${result.turnCount}  ·  real cells: ${capture.realCellCount}`,
+    `Model: ${modelId}  ·  model calls: ${result.modelCalls}  ·  tool calls: ${result.toolCalls}  ·  real cells: ${capture.realCellCount}`,
     `OTLP dataset: \`${capture.otlpPath}\``,
     '',
     '## Answer',
@@ -146,7 +126,7 @@ export async function runRlmAnalyst(
     '',
     '## Findings',
     '',
-    ...result.findings.map((f) => `- ${f}`),
+    ...result.findings.map((f) => `- [${f.severity}] ${f.claim} (${f.evidence.map((e) => e.uri).join(', ')})`),
   ].join('\n')
   writeFileSync(`${runDir}/rlm-analysis.md`, md)
   writeFileSync(`${runDir}/rlm-analysis.json`, JSON.stringify(out, null, 2))

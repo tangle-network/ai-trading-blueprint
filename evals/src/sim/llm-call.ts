@@ -1,43 +1,27 @@
 /**
  * `llmCall()` — the SINGLE LLM-invocation helper every judge + user-sim
- * call goes through. Backed by agent-runtime's `runAgentTaskStream` +
- * `createOpenAICompatibleBackend` (NOT a CLI subprocess).
+ * call goes through (NOT a CLI subprocess). Two transports, one per owner:
+ *   - `llmChatClient` — agent-runtime's `profileChatClient`: each call runs one
+ *     exact `AgentProfile` through `createExecutor({ backend: 'router' })` ->
+ *     `streamAgentTurn` against the model's OpenAI-compatible endpoint, so
+ *     retries, usage, and the served-model check are Runtime's. Judges,
+ *     user-sim turns, and the autoresearch judge use it.
+ *   - `traceAnalystChatClient` — agent-eval's OpenAI-compatible `ChatClient`,
+ *     for `createChatTraceEngine`, whose per-turn trace tools a fixed Runtime
+ *     profile cannot declare in advance.
  *
- * Why this design:
- *   - Previously this file spawned `claude --print` per call. That hit
- *     Anthropic CLI rate limits during a 36-cell campaign and every cell
- *     failed simultaneously (smoke v4). Routing through agent-runtime's
- *     backend abstraction means we (a) stay on the same model providers
- *     the bot itself uses (Z.AI / Moonshot — no extra rate-limit budget
- *     contention) and (b) inherit retry / backoff / circuit-breaker that
- *     the agent-runtime substrate already implements.
- *   - The full `defineAgent` ceremony (manifest + tools + rubric files)
- *     is overkill for one-shot judge / user-sim calls. `runAgentTaskStream`
- *     is the right primitive: it wraps the backend with proper context,
- *     emits structured `RuntimeStreamEvent`s we can accumulate, and is
- *     one async call instead of four manifest files per judge.
+ * Why not a CLI: spawning `claude --print` per call hit Anthropic CLI rate
+ * limits during a 36-cell campaign (smoke v4). These call the providers the
+ * bot itself uses (Z.AI / Moonshot).
  *
- * SOT — every judge + user-sim turn generator routes through this file.
- *   - user-sim turns (evals/src/sim/user-sim-driver.ts)
- *   - primary user-sim judge (evals/src/sim/multishot-user-sim.ts)
- *   - skeptical secondary judge (evals/src/sim/baseline-bots.ts)
- *   - research judge (evals/src/research/research-judge.ts)
- *   - robustness judge (evals/src/robustness/robustness-driver.ts)
- *   - agent-in-loop walk-forward (evals/src/sim/agent-in-loop.ts)
- *
- * If you need an LLM call in this codebase, IMPORT from here. Do not
- * spawn a CLI or `fetch` an API directly. Model selection and provider
- * routing live in `model-routing.ts` and are re-exported here.
+ * If you need an LLM call in this codebase, IMPORT from here. Do not spawn a
+ * CLI or `fetch` an API directly. Model selection and provider routing live in
+ * `model-routing.ts` and are re-exported here.
  */
 
-import { createOpenAICompatibleBackend, runAgentTaskStream } from '@tangle-network/agent-runtime'
-import type { AgentTaskSpec } from '@tangle-network/agent-runtime'
-import {
-  modelExecutionIdentity,
-  resolveModel,
-  type LlmModel,
-  type ModelRouting,
-} from './model-routing.js'
+import { createChatClient, type ChatClient } from '@tangle-network/agent-eval'
+import { profileChatClient } from '@tangle-network/agent-runtime/kernel'
+import { resolveModel, type LlmModel } from './model-routing.js'
 
 export {
   modelExecutionIdentity,
@@ -51,10 +35,55 @@ export {
  *  doesn't kill an eval campaign mid-run. */
 const DEFAULT_MODEL: LlmModel = 'kimi-k2'
 
-// Model selection moved OUT of a central const and INTO each profile
-// (evals/src/profiles/*.ts carries its own `model.provider`). Callers that
-// need a one-shot call still pass `model` to llmCall directly; everything
-// judge/user-sim goes through runProfile and inherits the profile's pick.
+/** An OpenAI-compatible endpoint: a `model-routing.ts` entry, or an explicit
+ *  one (e.g. the Tangle Router) for a model outside that table. */
+export interface LlmEndpoint {
+  baseUrl: string
+  apiKey: string
+  modelId: string
+  /** Provider identity Runtime records for the profile, e.g. `tangle-router`. */
+  provider: string
+}
+
+function routedEndpoint(model: LlmModel): LlmEndpoint {
+  const { baseUrl, apiKey, modelId, executionIdentity } = resolveModel(model)
+  return { baseUrl, apiKey: apiKey(), modelId, provider: executionIdentity.split('/')[0] ?? model }
+}
+
+/** The exact profile one Runtime chat client executes; requests must match it. */
+export interface LlmChatOptions {
+  model?: LlmModel
+  endpoint?: LlmEndpoint
+  system?: string
+  temperature?: number
+  maxOutputTokens?: number
+}
+
+/** Build the Runtime-backed chat client for a routed model or an explicit endpoint. */
+export function llmChatClient(opts: LlmChatOptions = {}): ChatClient {
+  const cfg = opts.endpoint ?? routedEndpoint(opts.model ?? DEFAULT_MODEL)
+  return profileChatClient({
+    profile: {
+      name: 'eval-llm-call',
+      harness: 'cli-base',
+      model: {
+        provider: cfg.provider,
+        default: cfg.modelId,
+        ...(opts.maxOutputTokens !== undefined ? { maxVisibleOutputTokens: opts.maxOutputTokens } : {}),
+        ...(opts.temperature !== undefined ? { metadata: { temperature: opts.temperature } } : {}),
+      },
+      ...(opts.system ? { prompt: { systemPrompt: opts.system } } : {}),
+    },
+    executor: { backend: 'router', routerBaseUrl: cfg.baseUrl, routerKey: cfg.apiKey },
+    context: 'evals llm-call',
+  })
+}
+
+/** Chat client for agent-eval's trace-analysis engine (tool-carrying turns). */
+export function traceAnalystChatClient(model: LlmModel): ChatClient {
+  const { baseUrl, apiKey, modelId } = routedEndpoint(model)
+  return createChatClient({ transport: 'openai-compatible', baseUrl, apiKey, defaultModel: modelId })
+}
 
 export interface LlmCallOptions {
   prompt: string
@@ -72,9 +101,9 @@ export interface LlmCallResult {
   ok: boolean
 }
 
-/** Token + cost usage accumulated from the backend's `llm_call` stream
- *  events. Zeros when the provider reported no usage (which downstream
- *  backend-integrity guards correctly read as a stub fingerprint). */
+/** Provider-reported token + cost usage. Zeros when the provider reported no
+ *  usage (which downstream backend-integrity guards correctly read as a stub
+ *  fingerprint). */
 export interface LlmUsage {
   input: number
   output: number
@@ -87,89 +116,29 @@ export interface LlmCallUsageResult extends LlmCallResult {
 
 /** Core LLM call. Async — returns a promise. */
 export async function llmCall(opts: LlmCallOptions): Promise<LlmCallResult> {
-  const cfg = resolveModel(opts.model ?? DEFAULT_MODEL)
-  const backend = createOpenAICompatibleBackend({
-    apiKey: cfg.apiKey(),
-    baseUrl: cfg.baseUrl,
-    model: cfg.modelId,
-  })
-  const task: AgentTaskSpec = {
-    id: `eval-llm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    intent: 'one-shot eval LLM call (judge or user-sim turn)',
-    domain: 'eval',
-  }
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 180_000)
-  const parts: string[] = []
-  let backendError: string | null = null
-  try {
-    for await (const ev of runAgentTaskStream({
-      task,
-      backend,
-      input: { message: opts.prompt },
-      signal: controller.signal,
-    })) {
-      if (ev.type === 'text_delta') parts.push(ev.text)
-      else if (ev.type === 'backend_error') backendError = ev.message
-    }
-  } catch (e) {
-    return { output: parts.join('').trim(), exitCode: 1, stderr: (e as Error).message, ok: false }
-  } finally {
-    clearTimeout(timer)
-  }
-  if (backendError) {
-    return { output: parts.join('').trim(), exitCode: 1, stderr: backendError, ok: false }
-  }
-  const output = parts.join('').trim()
-  return { output, exitCode: 0, stderr: '', ok: output.length > 0 }
+  const { usage: _usage, ...result } = await llmCallWithUsage(opts)
+  return result
 }
 
-/** Core LLM call that ALSO reports provider-reported token + cost usage,
- *  accumulated from the backend's `llm_call` stream events. Use this when a
- *  caller must thread real usage into a `RunRecord` / `ctx.cost.observeTokens`
- *  (the backend-integrity guard keys on nonzero token usage). Same routing +
- *  timeout handling as `llmCall`. */
+/** Core LLM call that ALSO reports provider-reported token + cost usage. Use
+ *  this when a caller must thread real usage into a `RunRecord` /
+ *  `ctx.cost.observeTokens` (the backend-integrity guard keys on nonzero token
+ *  usage). */
 export async function llmCallWithUsage(opts: LlmCallOptions): Promise<LlmCallUsageResult> {
-  const cfg = resolveModel(opts.model ?? DEFAULT_MODEL)
-  const backend = createOpenAICompatibleBackend({
-    apiKey: cfg.apiKey(),
-    baseUrl: cfg.baseUrl,
-    model: cfg.modelId,
-  })
-  const task: AgentTaskSpec = {
-    id: `eval-llm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    intent: 'one-shot eval LLM call with usage accounting',
-    domain: 'eval',
-  }
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 180_000)
-  const parts: string[] = []
   const usage: LlmUsage = { input: 0, output: 0, costUsd: 0 }
-  let backendError: string | null = null
   try {
-    for await (const ev of runAgentTaskStream({
-      task,
-      backend,
-      input: { message: opts.prompt },
-      signal: controller.signal,
-    })) {
-      if (ev.type === 'text_delta') parts.push(ev.text)
-      else if (ev.type === 'llm_call') {
-        usage.input += ev.tokensIn ?? 0
-        usage.output += ev.tokensOut ?? 0
-        usage.costUsd += ev.costUsd ?? 0
-      } else if (ev.type === 'backend_error') backendError = ev.message
-    }
+    const res = await llmChatClient(opts.model ? { model: opts.model } : {}).chat({
+      messages: [{ role: 'user', content: opts.prompt }],
+      timeoutMs: opts.timeoutMs ?? 180_000,
+    })
+    usage.input = res.usage.promptTokens
+    usage.output = res.usage.completionTokens
+    usage.costUsd = res.costUsd ?? 0
+    const output = res.content.trim()
+    return { output, exitCode: 0, stderr: '', ok: output.length > 0, usage }
   } catch (e) {
-    return { output: parts.join('').trim(), exitCode: 1, stderr: (e as Error).message, ok: false, usage }
-  } finally {
-    clearTimeout(timer)
+    return { output: '', exitCode: 1, stderr: (e as Error).message, ok: false, usage }
   }
-  if (backendError) {
-    return { output: parts.join('').trim(), exitCode: 1, stderr: backendError, ok: false, usage }
-  }
-  const output = parts.join('').trim()
-  return { output, exitCode: 0, stderr: '', ok: output.length > 0, usage }
 }
 
 /** Extract the first JSON object from an LLM response. Tolerates code
@@ -188,16 +157,6 @@ export function extractJson<T>(text: string): T | null {
   } catch {
     return null
   }
-}
-
-/** Convenience: call LLM, extract a JSON object, return null on any failure.
- *  Judges use this to defer error handling to the call site instead of
- *  duplicating spawn-stderr + try-catch + slice-bounds-check in every
- *  judge function. */
-export async function llmCallJson<T>(opts: LlmCallOptions): Promise<{ result: T | null; raw: LlmCallResult }> {
-  const raw = await llmCall(opts)
-  if (!raw.ok) return { result: null, raw }
-  return { result: extractJson<T>(raw.output), raw }
 }
 
 // ─── Profile-based invocation ─────────────────────────────────────────

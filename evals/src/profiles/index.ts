@@ -10,7 +10,7 @@
  *   2. Each judge / user-sim is a `defineEvalProfile({...})` literal in
  *      its own file (primary-rubric-judge.ts, etc.).
  *   3. `runProfile(profile, input)` resolves the model to a backend and
- *      routes through agent-runtime's `runAgentTaskStream` — the SAME
+ *      routes through agent-runtime's `profileChatClient` — the SAME
  *      generic primitive the centralized sandbox SDK and the
  *      decentralized blueprint will each use with their own profile
  *      shapes. No shared package; just the generic runtime contract.
