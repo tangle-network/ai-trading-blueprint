@@ -6,8 +6,7 @@
  *     We don't need a SHARED struct between this eval, the centralized
  *     sandbox SDK, and the decentralized blueprint — we need each consumer
  *     to define its OWN shape sized to its domain, and route through the
- *     same generic runtime primitives (`runAgentTaskStream`,
- *     `createOpenAICompatibleBackend`).
+ *     same generic runtime primitive (`profileChatClient` in llm-call.ts).
  *   - This profile only needs the minimum to (a) build a backend (model
  *     provider + name) and (b) prime the LLM (system prompt). Everything
  *     else the sandbox SDK profile carries (tools, mcp, subagents,

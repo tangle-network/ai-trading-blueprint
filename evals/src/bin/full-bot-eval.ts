@@ -272,7 +272,7 @@ async function writeArtifacts(outDir: string, headerIntent: UserIntent, partial:
   // evidence-cited success/failure findings. Replaces the regex classifier.
   try {
     const rlm = await runRlmAnalyst(outDir)
-    process.stderr.write(`  ✓ RLM analysis (${rlm.model}): ${rlm.realCellCount} real cells, ${rlm.findings.length} findings, ${rlm.turnCount} turns → rlm-analysis.md\n`)
+    process.stderr.write(`  ✓ RLM analysis (${rlm.model}): ${rlm.realCellCount} real cells, ${rlm.findings.length} findings, ${rlm.modelCalls} model calls → rlm-analysis.md\n`)
   } catch (e) {
     process.stderr.write(`  ! RLM analysis failed: ${(e as Error).message.slice(0, 200)}\n`)
   }

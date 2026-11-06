@@ -5,11 +5,11 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import {
   FileSystemFeedbackTrajectoryStore,
   type FeedbackLabel,
-  callLlmJson,
   createFeedbackTrajectory,
   validateRunRecord,
 } from '@tangle-network/agent-eval'
 import { sha256 } from '../lib/crypto.js'
+import { extractJson, llmChatClient } from '../sim/llm-call.js'
 import { currentCommitSha } from '../trading/persona-runner.js'
 import { isoStamp, repoRoot, resolveRepo } from '../lib/repo.js'
 
@@ -279,7 +279,6 @@ async function judgeQuality(
   deterministic: DeterministicQuality,
   options: AutoresearchLoopOptions,
 ): Promise<QualityJudgment> {
-  if (!callLlmJson) throw new Error('agent-eval callLlmJson is required for judged autoresearch evals')
   const model = options.model ?? process.env.BAD_TANGLE_ROUTER_MODEL ?? 'deepseek-v4-pro'
   const baseUrl = options.baseUrl ?? process.env.BAD_TANGLE_ROUTER_BASE_URL ?? process.env.TANGLE_ROUTER_BASE_URL ?? 'https://router.tangle.tools/v1'
   const apiKey = options.apiKey ?? process.env.BAD_TANGLE_ROUTER_API_KEY ?? process.env.TANGLE_API_KEY
@@ -310,34 +309,24 @@ async function judgeQuality(
 async function callJudgeWithRetry(
   input: { model: string; prompt: string; baseUrl: string; apiKey: string },
 ): Promise<QualityJudgment> {
-  if (!callLlmJson) throw new Error('agent-eval callLlmJson is required for judged autoresearch evals')
+  const client = llmChatClient({
+    endpoint: { baseUrl: input.baseUrl, apiKey: input.apiKey, modelId: input.model, provider: 'tangle-router' },
+    system: [
+      'Return strict JSON only.',
+      'Scores are numbers in [0,1]. verdict is pass, weak_pass, or fail.',
+      'failures and next_prompt_policy must be non-empty when overall_score < 0.75.',
+      'Do not return empty arrays unless the trace is genuinely excellent.',
+    ].join(' '),
+    temperature: 0,
+    maxOutputTokens: 2200,
+  })
   let lastError: unknown
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const prompt = attempt === 1 ? input.prompt : compactJudgePrompt(input.prompt, attempt)
     try {
-      const { value } = await callLlmJson<QualityJudgment>({
-        model: input.model,
-        temperature: 0,
-        maxTokens: 2200,
-        messages: [
-          {
-            role: 'system',
-            content: [
-              'Return strict JSON only.',
-              'Scores are numbers in [0,1]. verdict is pass, weak_pass, or fail.',
-              'failures and next_prompt_policy must be non-empty when overall_score < 0.75.',
-              'Do not return empty arrays unless the trace is genuinely excellent.',
-            ].join(' '),
-          },
-          { role: 'user', content: prompt },
-        ],
-        jsonMode: true,
-      }, {
-        baseUrl: input.baseUrl,
-        apiKey: input.apiKey,
-        defaultTimeoutMs: 120_000,
-        maximumAttempts: 2,
-      })
+      const res = await client.chat({ messages: [{ role: 'user', content: prompt }], jsonMode: true, timeoutMs: 120_000 })
+      const value = extractJson<QualityJudgment>(res.content)
+      if (!value) throw new Error(`autoresearch judge returned no JSON object: ${res.content.slice(0, 200)}`)
       return value
     } catch (error) {
       lastError = error
