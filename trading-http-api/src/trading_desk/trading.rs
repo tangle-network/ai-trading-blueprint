@@ -39,7 +39,10 @@ pub(super) fn plan_order(
                     spec.base.symbol, spec.base.decimals
                 ));
             }
-            let spend = quantity * limit_price;
+            let spend = quantity
+                .checked_mul(limit_price)
+                .ok_or("order notional is too large")?
+                .normalize();
             if spend.scale() > spec.quote.decimals as u32 {
                 return Err(format!(
                     "quantity × limitPrice has more decimals than {} supports ({})",
@@ -60,7 +63,10 @@ pub(super) fn plan_order(
                     spec.base.symbol, spec.base.decimals
                 ));
             }
-            let proceeds = quantity * limit_price;
+            let proceeds = quantity
+                .checked_mul(limit_price)
+                .ok_or("order notional is too large")?
+                .normalize();
             if proceeds.scale() > spec.quote.decimals as u32 {
                 return Err(format!(
                     "quantity × limitPrice has more decimals than {} supports ({})",
@@ -85,6 +91,7 @@ fn desk_intent_hash(
     bot: &DeskBotRecord,
     planned: &PlannedOrder,
     deadline: chrono::DateTime<chrono::Utc>,
+    metadata: &serde_json::Value,
 ) -> Option<String> {
     let intent = trading_runtime::TradeIntentBuilder::new()
         .strategy_id(DESK_STRATEGY_ID)
@@ -95,7 +102,7 @@ fn desk_intent_hash(
         .min_amount_out(planned.min_amount_out.parse().ok()?)
         .target_protocol(DESK_PROTOCOL)
         .chain_id(bot.chain_id)
-        .metadata(serde_json::Value::Null)
+        .metadata(metadata.clone())
         .build()
         .ok()?;
     let mut intent = intent;
@@ -257,94 +264,109 @@ pub(super) async fn submit_order(
         Err(message) => return desk_error(StatusCode::BAD_REQUEST, &message),
     };
 
-    // Stage the execution identity before the durable claim: reconciliation
-    // must be able to prove or refute this exact intent on chain even if the
-    // process dies between claim and outcome persistence.
-    let deadline =
-        chrono::Utc::now() + chrono::Duration::seconds(state.validation_deadline_secs as i64);
-    let deadline_ts = deadline.timestamp() as u64;
-    let intent_hash = match desk_intent_hash(&bot, &planned, deadline) {
-        Some(hash) => hash,
-        None => return desk_error(StatusCode::INTERNAL_SERVER_ERROR, "intent hashing failed"),
-    };
-
     let key = order_key(&grant.grant_id, &client_order_id);
-    let now = now_secs();
-
-    // Durable claim: insert only if absent, under the write lock. A
-    // concurrent duplicate or a post-crash replay resolves to the stored
-    // record below instead of executing twice.
-    let claim = {
-        let _guard = ORDER_WRITE_LOCK.lock().expect("order write lock");
-        match ORDERS.get(&key) {
-            Ok(Some(stored)) => Ok(Some(stored)),
-            Ok(None) => {
-                let record = DeskOrder {
-                    grant_id: grant.grant_id.clone(),
-                    bot_id: grant.bot_id.clone(),
-                    network: grant.network.clone(),
-                    chain_id: grant.chain_id,
-                    vault_address: bot.vault_address.clone(),
-                    client_order_id: client_order_id.clone(),
-                    instrument: spec.name.clone(),
-                    side: body.side.clone(),
-                    quantity: body.quantity.normalize().to_string(),
-                    limit_price: body.limit_price.normalize().to_string(),
-                    amount_in: planned.amount_in.clone(),
-                    min_amount_out: planned.min_amount_out.clone(),
-                    intent_hash: Some(intent_hash.clone()),
-                    deadline: deadline_ts,
-                    status: DeskOrderStatus::Pending,
-                    venue_order_id: None,
-                    filled_quantity: None,
-                    quote_amount: None,
-                    average_fill_price: None,
-                    paper: bot.paper_trade,
-                    error: None,
-                    created_at: now,
-                    updated_at: now,
-                };
-                match ORDERS.insert(key.clone(), record) {
-                    Ok(()) => Ok(None),
-                    Err(err) => Err(desk_error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        &format!("order store: {err}"),
-                    )),
-                }
-            }
-            Err(err) => Err(desk_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("order store: {err}"),
-            )),
-        }
-    };
-    let (stored, claimed) = match claim {
-        Err(response) => return response,
-        Ok(Some(stored)) => (stored, false),
-        Ok(None) => (
-            ORDERS
-                .get(&key)
-                .ok()
-                .flatten()
-                .expect("just-inserted order"),
-            true,
-        ),
-    };
-
-    if !claimed {
-        // Idempotent replay: same payload returns the stored result; a
-        // different payload under the same id is a client bug.
-        let same = stored.side == body.side
-            && stored.instrument.eq_ignore_ascii_case(&body.instrument)
-            && stored.quantity == body.quantity.normalize().to_string()
-            && stored.limit_price == body.limit_price.normalize().to_string();
-        if !same {
+    let replay = |stored: &DeskOrder| {
+        if stored.side != body.side
+            || stored.instrument != spec.name
+            || stored.quantity != body.quantity.normalize().to_string()
+            || stored.limit_price != body.limit_price.normalize().to_string()
+        {
             return desk_error(
                 StatusCode::CONFLICT,
                 "clientOrderId already used with a different order",
             );
         }
-        return (StatusCode::OK, Json(order_json(&stored))).into_response();
+        (StatusCode::OK, Json(order_json(stored))).into_response()
+    };
+    match ORDERS.get(&key) {
+        Ok(Some(stored)) => return replay(&stored),
+        Ok(None) => (),
+        Err(_) => return desk_error(StatusCode::SERVICE_UNAVAILABLE, "order journal unavailable"),
+    }
+    let now = now_secs();
+    let mut deadline_ts = now
+        .saturating_add(state.validation_deadline_secs)
+        .min(grant.expires_at);
+    let chain_order = if bot.paper_trade {
+        None
+    } else {
+        let Some((swap, expires_at)) = &eligibility.verified_swap else {
+            return desk_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "signed swap enforcement required",
+            );
+        };
+        if planned.token_in.parse().ok() != Some(swap.token_in)
+            || planned.token_out.parse().ok() != Some(swap.token_out)
+        {
+            return desk_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "the envelope does not authorize these swap legs",
+            );
+        }
+        deadline_ts = deadline_ts.min(*expires_at);
+        let start = match super::reconcile::stage(&bot, &planned, swap.router, &spec).await {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                return desk_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "cannot verify the enrolled chain and vault",
+                );
+            }
+        };
+        Some(start)
+    };
+    let Some(deadline) = i64::try_from(deadline_ts)
+        .ok()
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+    else {
+        return desk_error(StatusCode::BAD_REQUEST, "invalid order deadline");
+    };
+    if now_secs() >= deadline_ts {
+        return desk_error(StatusCode::FORBIDDEN, "the trading authority has expired");
+    }
+    let metadata = json!({"deskGrantId": grant.grant_id, "deskClientOrderId": client_order_id});
+    let Some(intent_hash) = desk_intent_hash(&bot, &planned, deadline, &metadata) else {
+        return desk_error(StatusCode::BAD_REQUEST, "invalid swap intent");
+    };
+    let record = DeskOrder {
+        grant_id: grant.grant_id.clone(),
+        bot_id: grant.bot_id.clone(),
+        network: grant.network.clone(),
+        chain_id: grant.chain_id,
+        vault_address: bot.vault_address.clone(),
+        client_order_id: client_order_id.clone(),
+        instrument: spec.name.clone(),
+        side: body.side.clone(),
+        quantity: body.quantity.normalize().to_string(),
+        limit_price: body.limit_price.normalize().to_string(),
+        amount_in: planned.amount_in.clone(),
+        min_amount_out: planned.min_amount_out.clone(),
+        intent_hash: Some(intent_hash.clone()),
+        chain_order,
+        deadline: deadline_ts,
+        status: DeskOrderStatus::Pending,
+        venue_order_id: None,
+        filled_quantity: None,
+        quote_amount: None,
+        average_fill_price: None,
+        paper: bot.paper_trade,
+        error: None,
+        created_at: now,
+        updated_at: now,
+    };
+    {
+        let _guard = ORDER_WRITE_LOCK.lock().expect("order write lock");
+        match ORDERS.get(&key) {
+            Ok(Some(stored)) => return replay(&stored),
+            Ok(None) if ORDERS.insert(key.clone(), record.clone()).is_ok() => (),
+            _ => {
+                return desk_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "cannot reserve this order in the journal",
+                );
+            }
+        }
     }
 
     // Build the executor request and run it through the same path as the
@@ -384,7 +406,7 @@ pub(super) async fn submit_order(
             min_amount_out: planned.min_amount_out.clone(),
             target_protocol: DESK_PROTOCOL.to_string(),
             amount_format: Some(AmountFormat::Human),
-            metadata: serde_json::Value::Null,
+            metadata,
         },
         validation,
     };
@@ -402,144 +424,50 @@ pub(super) async fn submit_order(
     let outcome =
         crate::routes::execute::execute_multi_bot(State(Arc::clone(&state)), http_request).await;
 
-    let mut record = ORDERS
-        .get(&key)
-        .ok()
-        .flatten()
-        .expect("claimed order exists");
-    record.updated_at = now_secs();
-    match outcome {
-        Ok(axum::Json(response)) => {
-            record.paper = response.paper_trade;
-            let tx_hash = if valid_tx_hash(&response.tx_hash) {
-                Some(response.tx_hash.clone())
-            } else {
-                None
-            };
-            if response.paper_trade {
-                // A paper result is not chain settlement: the outcome exists
-                // but can never be confirmed on chain.
-                record.status = DeskOrderStatus::Unknown;
-                record.venue_order_id = None;
-                record.error = Some(
-                    "paper swap recorded; paper results are never reported as filled".to_string(),
+    let stored = {
+        let _guard = ORDER_WRITE_LOCK.lock().expect("order write lock");
+        let mut latest = match ORDERS.get(&key) {
+            Ok(Some(order)) => order,
+            _ => {
+                return desk_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "order journal unavailable; look up the original client order ID",
                 );
-            } else if tx_hash.is_some()
-                && response.block_number.is_some()
-                && response.amount_out_raw.is_some()
-            {
-                // Confirmed settlement identified by a valid tx hash: derive
-                // the fill amounts from the observed output, never from the
-                // order terms alone. A settlement without a usable tx hash
-                // stays pending for GET reconciliation to prove.
-                match settlement_from_observation(
-                    &spec,
-                    &body.side,
-                    &record.quantity,
-                    &planned.amount_in,
-                    response.amount_out_raw.as_deref().unwrap_or_default(),
-                ) {
-                    Some(settlement) => {
-                        record.status = DeskOrderStatus::Filled;
-                        record.venue_order_id = tx_hash;
-                        record.filled_quantity = Some(settlement.filled_quantity);
-                        record.quote_amount = Some(settlement.quote_amount);
-                        record.average_fill_price = settlement.average_fill_price;
-                    }
-                    None => {
-                        record.status = DeskOrderStatus::Unknown;
-                        record.venue_order_id = tx_hash;
-                        record.error = Some(
-                            "settlement confirmed but its output could not be decoded".to_string(),
-                        );
-                    }
+            }
+        };
+        if latest.status == DeskOrderStatus::Filled || latest.status == DeskOrderStatus::Rejected {
+            return (StatusCode::OK, Json(order_json(&latest))).into_response();
+        }
+        match outcome {
+            Ok(Json(reply)) if reply.paper_trade => {
+                latest.paper = true;
+                latest.status = DeskOrderStatus::Unknown;
+                latest.error = Some("paper execution has no on-chain settlement".into());
+            }
+            Ok(Json(reply)) if valid_tx_hash(&reply.tx_hash) => {
+                latest.venue_order_id = Some(reply.tx_hash)
+            }
+            Ok(_) => (),
+            Err((status, _)) => {
+                if latest.paper {
+                    latest.status = DeskOrderStatus::Rejected;
                 }
-            } else {
-                // Submitted without an observed settlement yet.
-                record.status = DeskOrderStatus::Pending;
-                record.venue_order_id = tx_hash;
+                latest.error = Some(format!("executor returned {status}"));
             }
         }
-        Err((status, message)) => {
-            // Submission-boundary classification. Only a definitive
-            // executor refusal (4xx other than 409) proves no transaction
-            // was ever built or sent: that is a rejection. A 409 is the
-            // executor's dedup replay of this exact intent (a prior attempt
-            // may have landed), and a 5xx failed after the submission
-            // boundary where a transaction may already be on chain — both
-            // stay pending for GET reconciliation, never reported rejected.
-            match classify_executor_error(status) {
-                ExecutorErrorClass::DefinitiveRejection => {
-                    record.status = DeskOrderStatus::Rejected;
-                    record.error = Some(format!("{status}: {message}"));
-                }
-                ExecutorErrorClass::SubmissionUncertain => {
-                    record.status = DeskOrderStatus::Pending;
-                    record.venue_order_id = None;
-                    record.error = Some(format!(
-                        "{status}: {message}; outcome uncertain, reconciliation pending"
-                    ));
-                }
-            }
-        }
-    }
-    if let Err(err) = persist_order(&key, &record) {
-        // The staged claim is still `pending` in the store; never report a
-        // terminal outcome that is not durable. The client polls GET, which
-        // reconciles from the chain by the staged intent hash.
-        tracing::error!(
-            order = %key,
-            error = %err,
-            "CRITICAL: trading-desk order outcome could not be persisted; staged record left pending"
-        );
-        return desk_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "order outcome could not be persisted; poll the order to reconcile",
-        );
-    }
-
-    let status = if record.status == DeskOrderStatus::Rejected {
-        StatusCode::UNPROCESSABLE_ENTITY
-    } else {
-        StatusCode::OK
-    };
-    (status, Json(order_json(&record))).into_response()
-}
-
-/// Classify an executor error by whether a transaction could exist.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ExecutorErrorClass {
-    /// The executor definitively refused before any transaction was built
-    /// or sent (4xx other than 409).
-    DefinitiveRejection,
-    /// The request crossed the submission boundary: the executor's dedup
-    /// saw this exact intent before (409), or execution failed after
-    /// submission (5xx) where a transaction may already be on chain.
-    SubmissionUncertain,
-}
-
-pub(super) fn classify_executor_error(status: StatusCode) -> ExecutorErrorClass {
-    if status == StatusCode::CONFLICT || status.is_server_error() {
-        ExecutorErrorClass::SubmissionUncertain
-    } else {
-        ExecutorErrorClass::DefinitiveRejection
-    }
-}
-
-/// Persist an order outcome, retrying once: a terminal status reported to
-/// the client must be durable.
-fn persist_order(key: &str, record: &DeskOrder) -> Result<(), String> {
-    let mut last_err = None;
-    for _ in 0..2 {
-        match ORDERS
-            .update(key, |existing| *existing = record.clone())
-            .map(|_| ())
+        latest.updated_at = now_secs();
+        if ORDERS
+            .update(&key, |existing| *existing = latest.clone())
+            .is_err()
         {
-            Ok(()) => return Ok(()),
-            Err(err) => last_err = Some(err.to_string()),
+            return desk_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "order outcome unavailable; look up the original client order ID",
+            );
         }
-    }
-    Err(last_err.unwrap_or_else(|| "order store update failed".to_string()))
+        latest
+    };
+    super::reconcile::reconcile_get(&state, stored).await
 }
 
 /// Order wire shape per the Trading consumer contract: immutable
@@ -553,6 +481,7 @@ pub(super) fn order_json(order: &DeskOrder) -> serde_json::Value {
         "connectionId": order.grant_id,
         "network": order.network,
         "clientOrderId": order.client_order_id,
+        "intentHash": order.intent_hash,
         "instrument": order.instrument,
         "side": order.side,
         "quantity": order.quantity,

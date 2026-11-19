@@ -1,460 +1,293 @@
-//! GET-time reconciliation for uncertain desk orders.
-//!
-//! A submit that crashed before its outcome was persisted — or that the
-//! executor answered ambiguously (dedup conflict, 5xx after the submission
-//! boundary) — leaves the order `pending`. This module proves or refutes the
-//! settlement on chain from the order's own staged identity
-//! (`chain_id` + `vault_address` + `intent_hash`), never from the latest
-//! transaction that happens to match: a receipt must name this vault and
-//! carry a `TradeExecuted` event whose `intentHash` topic equals the staged
-//! hash, and its output token must be the instrument's expected leg.
-//!
-//! All decisions are made by the pure `classify_*` functions (unit-tested
-//! with synthetic receipts); the async path only gathers chain facts and is
-//! best-effort — an RPC outage never takes the order read down.
-
-use super::trading::{Settlement, order_json, settlement_from_observation};
+//! A desk acknowledgment becomes a fill only after the enrolled vault records this order's intent.
+use super::trading::{PlannedOrder, Settlement, order_json, settlement_from_observation};
 use super::*;
-
+use alloy::eips::BlockId;
 use alloy::primitives::{Address, B256, U256, keccak256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::Filter;
 use trading_runtime::contracts::ITradingVault;
 
-/// Confirmations required on a settlement receipt before it is reported as
-/// `filled` (default 1 = the receipt's own block). Overridable for tests and
-/// higher-security deployments via `TRADING_DESK_ORDER_CONFIRMATIONS`.
-pub(super) fn required_confirmations() -> u64 {
-    std::env::var("TRADING_DESK_ORDER_CONFIRMATIONS")
-        .ok()
-        .and_then(|raw| raw.trim().parse().ok())
-        .filter(|confirmations| *confirmations > 0)
-        .unwrap_or(1)
+fn rpc(url: &str) -> Result<impl Provider + use<>, String> {
+    Ok(ProviderBuilder::new().connect_http(url.parse().map_err(|_| "invalid operator RPC")?))
 }
 
-/// `TradeExecuted(address indexed target, uint256 value, uint256
-/// outputGained, address outputToken, bytes32 indexed intentHash)` — the
-/// only settlement proof this desk accepts. Kept in sync with
-/// `contracts/src/libraries/VaultTypes.sol` and the executor's decoder.
-fn trade_executed_topic() -> B256 {
-    keccak256("TradeExecuted(address,uint256,uint256,address,bytes32)".as_bytes())
-}
-
-// ── Pure classification ──────────────────────────────────────────────────────
-
-/// Chain facts gathered from one receipt candidate for the staged intent.
-pub(super) struct ReceiptFacts {
-    pub tx_hash: String,
-    pub status_success: bool,
-    pub to: Option<Address>,
-    pub block_number: u64,
-    /// The receipt's `TradeExecuted` log for this intent, if present and
-    /// structurally decodable.
-    pub settlement: Option<SettlementLog>,
-}
-
-pub(super) struct SettlementLog {
-    pub output_token: Address,
-    pub output_gained_raw: String,
-}
-
-#[derive(Debug)]
-pub(super) enum ReconcileOutcome {
-    Filled {
-        tx_hash: String,
-        settlement: Settlement,
-    },
-    /// Nothing decisive yet; an optional human note replaces a stale one.
-    StillPending {
-        note: Option<String>,
-    },
-    Rejected {
-        reason: String,
-    },
-    Unknown {
-        note: String,
-        tx_hash: Option<String>,
-    },
-}
-
-/// Decide an outcome from one receipt's facts.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn classify_receipt(
-    facts: &ReceiptFacts,
-    vault: Address,
-    expected_output_token: Address,
-    current_block: u64,
-    confirmations: u64,
+/// Capture the earliest possible settlement block before handing an order to the executor.
+pub(super) async fn stage(
+    bot: &DeskBotRecord,
+    order: &PlannedOrder,
+    router: Address,
     spec: &InstrumentSpec,
-    side: &str,
-    quantity: &str,
-    exact_spend: &str,
-) -> ReconcileOutcome {
-    let tx_hash = facts.tx_hash.clone();
-    if !facts.status_success {
-        return ReconcileOutcome::Rejected {
-            reason: format!("transaction {tx_hash} reverted on chain"),
-        };
+) -> Result<ChainOrder, String> {
+    let provider = rpc(&bot.rpc_url)?;
+    let vault: Address = bot.vault_address.parse().map_err(|_| "invalid vault")?;
+    let (chain, block, code) = tokio::try_join!(
+        provider.get_chain_id(),
+        provider.get_block_number(),
+        provider.get_code_at(vault)
+    )
+    .map_err(|_| "chain unavailable")?;
+    if chain != bot.chain_id || vault.is_zero() || code.is_empty() {
+        return Err("chain or vault mismatch".into());
     }
-    if facts.to != Some(vault) {
-        return ReconcileOutcome::Unknown {
-            note: format!(
-                "transaction {tx_hash} did not target this vault; refusing to claim its settlement"
-            ),
-            tx_hash: Some(tx_hash),
-        };
-    }
-    let Some(log) = facts.settlement.as_ref() else {
-        return ReconcileOutcome::Unknown {
-            note: format!(
-                "transaction {tx_hash} succeeded but carries no TradeExecuted event for this intent"
-            ),
-            tx_hash: Some(tx_hash),
-        };
-    };
-    if log.output_token != expected_output_token {
-        return ReconcileOutcome::Unknown {
-            note: "settlement event paid an unexpected output token".to_string(),
-            tx_hash: Some(tx_hash),
-        };
-    }
-    if current_block.saturating_sub(facts.block_number) < confirmations {
-        return ReconcileOutcome::StillPending {
-            note: Some("settlement observed; awaiting confirmations".to_string()),
-        };
-    }
-    match settlement_from_observation(spec, side, quantity, exact_spend, &log.output_gained_raw) {
-        Some(settlement) => ReconcileOutcome::Filled {
-            tx_hash,
-            settlement,
-        },
-        None => ReconcileOutcome::Unknown {
-            note: "settlement confirmed but its output could not be decoded".to_string(),
-            tx_hash: Some(tx_hash),
-        },
-    }
+    Ok(ChainOrder {
+        from_block: block,
+        router,
+        token_in: order.token_in.parse().map_err(|_| "invalid input token")?,
+        token_out: order
+            .token_out
+            .parse()
+            .map_err(|_| "invalid output token")?,
+        base_decimals: spec.base.decimals,
+        quote_decimals: spec.quote.decimals,
+    })
 }
 
-/// The vault reports the intent unexecuted: it may still land before its
-/// deadline; after that, it never can.
-pub(super) fn classify_unexecuted(now: u64, deadline: u64) -> ReconcileOutcome {
-    if now < deadline {
-        ReconcileOutcome::StillPending { note: None }
-    } else {
-        ReconcileOutcome::Rejected {
-            reason: "intent deadline expired without on-chain execution".to_string(),
-        }
-    }
+enum Observed {
+    Pending,
+    Expired,
+    Filled(String, Settlement),
 }
 
-pub(super) enum LogScanDecision {
-    /// Exactly one settlement event matches the intent: fetch its receipt.
-    Unique,
-    Unknown(String),
-}
-
-/// The vault flags the intent executed but no tx hash is known: exactly one
-/// matching settlement log is proof; zero or many is ambiguity.
-pub(super) fn classify_log_scan(matching_logs: usize) -> LogScanDecision {
-    match matching_logs {
-        1 => LogScanDecision::Unique,
-        0 => LogScanDecision::Unknown(
-            "vault flags the intent executed but no TradeExecuted event was found".to_string(),
-        ),
-        many => LogScanDecision::Unknown(format!(
-            "{many} settlements match this intent; refusing to pick one"
-        )),
-    }
-}
-
-// ── Chain probes ─────────────────────────────────────────────────────────────
-
-impl ReceiptFacts {
-    fn from_receipt(
-        receipt: &alloy::rpc::types::TransactionReceipt,
-        vault: Address,
-        intent: B256,
-        tx_hash: &str,
-    ) -> Self {
-        let topic0 = trade_executed_topic();
-        let settlement = receipt.inner.logs().iter().find_map(|log| {
-            let topics = log.topics();
-            if log.address() != vault
-                || topics.first() != Some(&topic0)
-                || topics.get(2) != Some(&intent)
-            {
-                return None;
-            }
-            let data = log.data().data.as_ref();
-            if data.len() < 96 {
-                return None;
-            }
-            Some(SettlementLog {
-                output_gained_raw: U256::from_be_slice(&data[32..64]).to_string(),
-                output_token: Address::from_word(B256::from_slice(&data[64..96])),
-            })
-        });
-        Self {
-            tx_hash: tx_hash.to_string(),
-            status_success: receipt.status(),
-            to: receipt.to,
-            block_number: receipt.block_number.unwrap_or(0),
-            settlement,
-        }
-    }
-}
-
-/// Probe by a known tx hash: fetch the receipt and classify it.
-#[allow(clippy::too_many_arguments)]
-async fn probe_by_hash(
-    provider: &impl Provider,
-    vault: Address,
-    expected_output_token: Address,
-    intent: B256,
-    tx_hash: B256,
+async fn settlement(
     order: &DeskOrder,
+    binding: &ChainOrder,
     spec: &InstrumentSpec,
-) -> Result<ReconcileOutcome, String> {
-    let Some(receipt) = provider
-        .get_transaction_receipt(tx_hash)
-        .await
-        .map_err(|err| format!("receipt fetch: {err}"))?
+    url: &str,
+) -> Result<Observed, String> {
+    let rpc = rpc(url)?;
+    let vault: Address = order
+        .vault_address
+        .parse()
+        .map_err(|_| "invalid staged vault")?;
+    let intent: B256 = order
+        .intent_hash
+        .as_deref()
+        .unwrap_or("")
+        .parse()
+        .map_err(|_| "invalid staged intent")?;
+    let (chain, tip) = tokio::try_join!(rpc.get_chain_id(), rpc.get_block_number())
+        .map_err(|_| "chain unavailable")?;
+    if chain != order.chain_id {
+        return Err("RPC chain changed".into());
+    }
+    let confirmations = std::env::var("TRADING_DESK_ORDER_CONFIRMATIONS")
+        .ok()
+        .and_then(|n| n.parse::<u64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let Some(height) = tip
+        .checked_sub(confirmations - 1)
+        .filter(|h| *h >= binding.from_block)
     else {
-        return Ok(ReconcileOutcome::StillPending {
-            note: Some("intent transaction broadcast but not yet on chain".to_string()),
-        });
+        return Ok(Observed::Pending);
     };
-    let current_block = provider
-        .get_block_number()
+    let safe = rpc
+        .get_block_by_number(height.into())
         .await
-        .map_err(|err| format!("block height: {err}"))?;
-    let facts = ReceiptFacts::from_receipt(&receipt, vault, intent, &tx_hash.to_string());
-    Ok(classify_receipt(
-        &facts,
-        vault,
-        expected_output_token,
-        current_block,
-        required_confirmations(),
+        .map_err(|_| "checkpoint unavailable")?
+        .ok_or("checkpoint unavailable")?;
+    let contract = ITradingVault::new(vault, &rpc);
+    let executed = contract
+        .executedIntents(intent)
+        .block(BlockId::hash(safe.header.hash))
+        .call()
+        .await
+        .map_err(|_| "cannot read this vault at its checkpoint")?;
+    if !executed {
+        return Ok(if safe.header.timestamp > order.deadline {
+            Observed::Expired
+        } else {
+            Observed::Pending
+        });
+    }
+    let signature = keccak256("TradeExecuted(address,uint256,uint256,address,bytes32)");
+    let filter = Filter::new()
+        .address(vault)
+        .event_signature(signature)
+        .topic1(binding.router.into_word())
+        .topic2(intent);
+    let hash: B256 = match order.venue_order_id.as_deref().and_then(|s| s.parse().ok()) {
+        Some(hash) => hash,
+        None => {
+            // Immutable once executed. Locate the transition in logarithmic reads, even if the desk spent weeks offline.
+            let (mut lo, mut hi) = (binding.from_block, height);
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                let seen = contract
+                    .executedIntents(intent)
+                    .block(BlockId::number(mid))
+                    .call()
+                    .await
+                    .map_err(|_| "historical vault state unavailable")?;
+                if seen {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            let logs = rpc
+                .get_logs(&filter.from_block(lo).to_block(lo))
+                .await
+                .map_err(|_| "settlement log unavailable")?;
+            let [event] = logs.as_slice() else {
+                return Ok(Observed::Pending);
+            };
+            if event.removed {
+                return Ok(Observed::Pending);
+            }
+            event
+                .transaction_hash
+                .ok_or("settlement event has no transaction")?
+        }
+    };
+    let Some(receipt) = rpc
+        .get_transaction_receipt(hash)
+        .await
+        .map_err(|_| "receipt unavailable")?
+    else {
+        return Ok(Observed::Pending);
+    };
+    let Some(block) = receipt
+        .block_number
+        .filter(|n| *n >= binding.from_block && *n <= height)
+    else {
+        return Ok(Observed::Pending);
+    };
+    if !receipt.status() || receipt.to != Some(vault) || receipt.transaction_hash != hash {
+        return Ok(Observed::Pending);
+    }
+    let canonical = rpc
+        .get_block_by_number(block.into())
+        .await
+        .map_err(|_| "receipt block unavailable")?
+        .ok_or("receipt block unavailable")?;
+    if receipt.block_hash != Some(canonical.header.hash) {
+        return Ok(Observed::Pending);
+    }
+    let topics = [signature, binding.router.into_word(), intent];
+    let mut matches = receipt
+        .inner
+        .logs()
+        .iter()
+        .filter(|log| !log.removed && log.address() == vault && log.topics() == topics);
+    let Some(event) = matches.next() else {
+        return Ok(Observed::Pending);
+    };
+    if matches.next().is_some() {
+        return Ok(Observed::Pending);
+    }
+    let bytes = event.data().data.as_ref();
+    if bytes.len() != 96 || Address::from_word(B256::from_slice(&bytes[64..])) != binding.token_out
+    {
+        return Ok(Observed::Pending);
+    }
+    let output = U256::from_be_slice(&bytes[32..64]).to_string();
+    let Some(result) = settlement_from_observation(
         spec,
         &order.side,
         &order.quantity,
         &order.amount_in,
-    ))
-}
-
-/// Probe by the staged intent alone: ask the vault whether it executed this
-/// exact intent, then scan for the settlement event if it says yes.
-async fn probe_by_intent(
-    provider: &impl Provider,
-    vault: Address,
-    expected_output_token: Address,
-    intent: B256,
-    order: &DeskOrder,
-    spec: &InstrumentSpec,
-) -> Result<ReconcileOutcome, String> {
-    let executed = ITradingVault::new(vault, provider)
-        .executedIntents(intent)
-        .call()
-        .await
-        .map_err(|err| format!("executedIntents probe: {err}"))?;
-    if !executed {
-        return Ok(classify_unexecuted(now_secs(), order.deadline));
-    }
-    let logs = provider
-        .get_logs(
-            &Filter::new()
-                .address(vault)
-                .event_signature(trade_executed_topic())
-                .topic2(intent)
-                .from_block(0u64),
-        )
-        .await
-        .map_err(|err| format!("settlement log scan: {err}"))?;
-    match classify_log_scan(logs.len()) {
-        LogScanDecision::Unique => {
-            let tx_hash = logs[0]
-                .transaction_hash
-                .ok_or_else(|| "settlement log missing its transaction hash".to_string())?;
-            probe_by_hash(
-                provider,
-                vault,
-                expected_output_token,
-                intent,
-                tx_hash,
-                order,
-                spec,
-            )
-            .await
-        }
-        LogScanDecision::Unknown(note) => Ok(ReconcileOutcome::Unknown {
-            note,
-            tx_hash: None,
-        }),
-    }
-}
-
-async fn reconcile_chain(
-    order: &DeskOrder,
-    spec: &InstrumentSpec,
-    rpc_url: &str,
-) -> Result<ReconcileOutcome, String> {
-    let vault: Address = order
-        .vault_address
+        &output,
+    ) else {
+        return Ok(Observed::Pending);
+    };
+    let received = if order.side == "buy" {
+        &result.filled_quantity
+    } else {
+        &result.quote_amount
+    };
+    let measured: Decimal = received
         .parse()
-        .map_err(|err| format!("vault address: {err}"))?;
-    let expected_output_token: Address = match order.side.as_str() {
-        "buy" => &spec.base.address,
-        _ => &spec.quote.address,
-    }
-    .parse()
-    .map_err(|_| format!("instrument token address invalid for side {}", order.side))?;
-    // Same shape as a tx hash: 0x + 64 hex chars for a 32-byte scalar.
-    let intent: B256 = order
-        .intent_hash
-        .as_deref()
-        .unwrap_or_default()
+        .map_err(|_| "settlement quantity out of range")?;
+    let floor: Decimal = order
+        .min_amount_out
         .parse()
-        .map_err(|err| format!("staged intent hash: {err}"))?;
-    let provider = ProviderBuilder::new().connect_http(
-        rpc_url
-            .parse()
-            .map_err(|err| format!("bot rpc url: {err}"))?,
-    );
-    match order
-        .venue_order_id
-        .as_deref()
-        .filter(|hash| valid_tx_hash(hash))
-    {
-        Some(tx_hash) => {
-            let tx_hash: B256 = tx_hash
-                .parse()
-                .map_err(|err| format!("stored tx hash: {err}"))?;
-            probe_by_hash(
-                &provider,
-                vault,
-                expected_output_token,
-                intent,
-                tx_hash,
-                order,
-                spec,
-            )
-            .await
-        }
-        None => probe_by_intent(&provider, vault, expected_output_token, intent, order, spec).await,
+        .map_err(|_| "invalid staged minimum")?;
+    if measured < floor {
+        return Ok(Observed::Pending);
     }
+    Ok(Observed::Filled(hash.to_string(), result))
 }
 
-// ── Outcome application ──────────────────────────────────────────────────────
-
-fn apply(order: &mut DeskOrder, outcome: ReconcileOutcome) {
-    match outcome {
-        ReconcileOutcome::Filled {
-            tx_hash,
-            settlement,
-        } => {
-            order.status = DeskOrderStatus::Filled;
-            order.venue_order_id = Some(tx_hash);
-            order.filled_quantity = Some(settlement.filled_quantity);
-            order.quote_amount = Some(settlement.quote_amount);
-            order.average_fill_price = settlement.average_fill_price;
-            order.error = None;
-            order.updated_at = now_secs();
-        }
-        ReconcileOutcome::StillPending { note } => {
-            if let Some(note) = note {
-                order.error = Some(note);
-                order.updated_at = now_secs();
-            }
-        }
-        ReconcileOutcome::Rejected { reason } => {
-            order.status = DeskOrderStatus::Rejected;
-            order.error = Some(reason);
-            order.updated_at = now_secs();
-        }
-        ReconcileOutcome::Unknown { note, tx_hash } => {
-            order.status = DeskOrderStatus::Unknown;
-            if let Some(hash) = tx_hash.filter(|hash| valid_tx_hash(hash)) {
-                order.venue_order_id = Some(hash);
-            }
-            order.error = Some(note);
-            order.updated_at = now_secs();
-        }
-    }
-}
-
-fn stored_response(order: &DeskOrder) -> Response {
-    (StatusCode::OK, Json(order_json(order))).into_response()
-}
-
-/// `GET /api/trading-desk/orders/{clientOrderId}` body: the stored order,
-/// reconciled against the chain when its outcome is still uncertain.
 pub(super) async fn reconcile_get(state: &Arc<MultiBotTradingState>, order: DeskOrder) -> Response {
-    // Only uncertain live orders can reconcile: paper outcomes can never be
-    // confirmed on chain, terminal outcomes never change, and without a
-    // staged intent hash there is nothing to prove against.
-    if order.paper
-        || order.status == DeskOrderStatus::Filled
-        || order.status == DeskOrderStatus::Rejected
-        || !order.intent_hash.as_deref().is_some_and(valid_tx_hash)
+    let stored = |o: &DeskOrder| (StatusCode::OK, Json(order_json(o))).into_response();
+    let terminal = |o: &DeskOrder| {
+        matches!(
+            o.status,
+            DeskOrderStatus::Filled | DeskOrderStatus::Rejected
+        )
+    };
+    if order.paper || terminal(&order) {
+        return stored(&order);
+    }
+    let (Some(binding), Some(spec), Some(bot)) = (
+        order.chain_order.as_ref(),
+        resolve_instrument(order.chain_id, &order.instrument),
+        state
+            .desk_resolve_bot
+            .as_ref()
+            .and_then(|resolve| resolve(&order.bot_id)),
+    ) else {
+        return stored(&order);
+    };
+    let (input, output) = if order.side == "buy" {
+        (&spec.quote, &spec.base)
+    } else {
+        (&spec.base, &spec.quote)
+    };
+    if bot.chain_id != order.chain_id
+        || spec.base.decimals != binding.base_decimals
+        || spec.quote.decimals != binding.quote_decimals
+        || input.address.parse().ok() != Some(binding.token_in)
+        || output.address.parse().ok() != Some(binding.token_out)
     {
-        return stored_response(&order);
+        return stored(&order);
     }
-    let Some(bot) = state
-        .desk_resolve_bot
-        .as_ref()
-        .and_then(|resolve| resolve(&order.bot_id))
-    else {
-        return stored_response(&order);
-    };
-    // The staged identity is only trustworthy for the chain it was claimed
-    // on; a bot moved to another chain must not inherit it.
-    if bot.chain_id != order.chain_id {
-        return stored_response(&order);
-    }
-    let Some(spec) = resolve_instrument(order.chain_id, &order.instrument) else {
-        return stored_response(&order);
-    };
-
-    let outcome = match reconcile_chain(&order, &spec, &bot.rpc_url).await {
-        Ok(outcome) => outcome,
-        Err(note) => {
-            // Best-effort: an RPC outage must not take the order read down.
-            tracing::warn!(
-                order = %order.client_order_id,
-                note = %note,
-                "trading-desk order reconciliation probe failed; returning stored state"
-            );
-            return stored_response(&order);
-        }
-    };
-    if matches!(outcome, ReconcileOutcome::StillPending { note: None }) {
-        return stored_response(&order);
-    }
-
-    let mut updated = order.clone();
-    apply(&mut updated, outcome);
-    let key = order_key(&updated.grant_id, &updated.client_order_id);
+    let observed = match tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        settlement(&order, binding, &spec, &bot.rpc_url),
+    )
+    .await
     {
-        let _guard = ORDER_WRITE_LOCK.lock().expect("order write lock");
-        // Never regress a record another writer already settled.
-        if let Ok(Some(current)) = ORDERS.get(&key) {
-            if current.status == DeskOrderStatus::Filled
-                || current.status == DeskOrderStatus::Rejected
-            {
-                return stored_response(&current);
-            }
+        Ok(Ok(Observed::Pending)) | Err(_) => return stored(&order),
+        Ok(Ok(other)) => other,
+        Ok(Err(note)) => {
+            tracing::warn!(order = %order.client_order_id, %note, "desk settlement unavailable");
+            return stored(&order);
         }
-        let result = ORDERS
-            .update(&key, |existing| *existing = updated.clone())
-            .map(|_| ());
-        if let Err(err) = result {
-            tracing::error!(
-                order = %updated.client_order_id,
-                error = %err,
-                "CRITICAL: trading-desk reconciled outcome could not be persisted; keeping stored state"
-            );
-            return stored_response(&order);
-        }
+    };
+    let _guard = ORDER_WRITE_LOCK.lock().expect("order write lock");
+    let key = order_key(&order.grant_id, &order.client_order_id);
+    let Ok(Some(mut current)) = ORDERS.get(&key) else {
+        return desk_error(StatusCode::SERVICE_UNAVAILABLE, "order journal unavailable");
+    };
+    if terminal(&current) {
+        return stored(&current);
     }
-    stored_response(&updated)
+    match observed {
+        Observed::Filled(hash, fill) => {
+            current.status = DeskOrderStatus::Filled;
+            current.venue_order_id = Some(hash);
+            current.filled_quantity = Some(fill.filled_quantity);
+            current.quote_amount = Some(fill.quote_amount);
+            current.average_fill_price = fill.average_fill_price;
+            current.error = None;
+        }
+        Observed::Expired => {
+            current.status = DeskOrderStatus::Rejected;
+            current.error = Some(
+                "the confirmed chain passed the order deadline without executing this intent"
+                    .into(),
+            );
+        }
+        Observed::Pending => return stored(&current),
+    }
+    current.updated_at = now_secs();
+    match ORDERS.update(&key, |record| *record = current.clone()) {
+        Ok(_) => stored(&current),
+        Err(_) => desk_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "order outcome could not be recorded; refresh the original order",
+        ),
+    }
 }

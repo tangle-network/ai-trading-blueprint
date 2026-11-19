@@ -515,6 +515,24 @@ async fn desk_paper_flow_from_consent_to_order_replay() {
     assert_eq!(body["paper"], json!(true));
     assert!(body["reason"].as_str().unwrap().contains("paper"));
 
+    let first_intent = body["intentHash"]
+        .as_str()
+        .expect("staged intent")
+        .to_owned();
+    let second_id = uuid::Uuid::new_v4().to_string();
+    let (status, second) = post_json(
+        app,
+        "/api/trading-desk/orders",
+        &credential,
+        order_body(&second_id, "buy", "1.50", "2500.25"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_ne!(
+        second["intentHash"].as_str().expect("distinct intent"),
+        first_intent
+    );
+
     // Get it back.
     let (status, body) = get(
         app,
@@ -536,6 +554,8 @@ async fn desk_paper_flow_from_consent_to_order_replay() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], json!("unknown"));
+
+    assert_eq!(body["intentHash"], json!(first_intent));
 
     // Same clientOrderId with a different payload is a conflict.
     let (status, body) = post_json(

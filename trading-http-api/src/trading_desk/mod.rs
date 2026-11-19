@@ -271,6 +271,17 @@ impl DeskGrant {
     }
 }
 
+/// Immutable chain inputs used to identify this order after a process restart.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainOrder {
+    pub from_block: u64,
+    pub router: alloy::primitives::Address,
+    pub token_in: alloy::primitives::Address,
+    pub token_out: alloy::primitives::Address,
+    pub base_decimals: u8,
+    pub quote_decimals: u8,
+}
+
 /// Durable desk order. The `(grant_id, client_order_id)` pair is claimed
 /// atomically before execution; replays return the stored record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -297,6 +308,8 @@ pub struct DeskOrder {
     /// uncertain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intent_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_order: Option<ChainOrder>,
     /// Unix seconds until which the staged intent can still execute on
     /// chain; expiry with no execution is a definitive rejection.
     #[serde(default)]
@@ -581,6 +594,7 @@ fn oauth_error(error: &str, description: &str) -> Response {
 // ── Eligibility ──────────────────────────────────────────────────────────────
 
 struct Eligibility {
+    verified_swap: Option<(trading_runtime::envelope::UniswapV3SwapEnforcement, u64)>,
     bot: Option<DeskBotRecord>,
     envelope_summary: Option<serde_json::Value>,
     problems: Vec<String>,
@@ -617,6 +631,7 @@ fn check_eligibility(
 ) -> Eligibility {
     let mut problems = Vec::new();
     let mut envelope_summary = None;
+    let mut verified_swap = None;
 
     let bot = state
         .desk_resolve_bot
@@ -628,6 +643,7 @@ fn check_eligibility(
             problems.push("bot not found".to_string());
             return Eligibility {
                 bot: None,
+                verified_swap,
                 envelope_summary,
                 problems,
             };
@@ -677,6 +693,24 @@ fn check_eligibility(
 
             match verify {
                 Some(signer_count) => {
+                    if let Some(trading_runtime::envelope::EnvelopeEnforcement::UniswapV3Swap(
+                        swap,
+                    )) = &envelope.enforcement
+                    {
+                        if !swap.router.is_zero()
+                            && !swap.token_in.is_zero()
+                            && !swap.token_out.is_zero()
+                            && swap.token_in != swap.token_out
+                        {
+                            verified_swap = Some((swap.clone(), envelope.expires_at));
+                        }
+                    }
+                    if !bot.paper_trade && verified_swap.is_none() {
+                        problems.push(
+                            "the signed envelope must bind a swap router and both tokens"
+                                .to_string(),
+                        );
+                    }
                     envelope_summary = Some(json!({
                         "vaultAddress": bot.vault_address,
                         "protocol": envelope.protocol,
@@ -717,6 +751,7 @@ fn check_eligibility(
 
     Eligibility {
         bot: Some(bot),
+        verified_swap,
         envelope_summary,
         problems,
     }
