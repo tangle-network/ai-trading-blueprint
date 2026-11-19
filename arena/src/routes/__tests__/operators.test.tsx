@@ -3,33 +3,44 @@ import { render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const hoisted = vi.hoisted(() => ({
-  operators: [
-    {
-      address: '0x1111111111111111111111111111111111111111',
-      rpcAddress: 'https://operator-one.test',
-    },
-  ],
-  operatorCount: 1n,
-}));
-
 vi.mock('react-router', () => ({
   Link: ({ children, to, ...props }: any) => <a href={to} {...props}>{children}</a>,
 }));
 
-vi.mock('@tangle-network/blueprint-ui', () => ({
-  resolveOperatorRpc: (value: string) => value,
-  useOperators: () => ({
-    operators: hoisted.operators,
-    operatorCount: hoisted.operatorCount,
+// Simulates an https page: the http operator is discovered on-chain but the
+// browser cannot fetch it (mixed content), so it must surface as "no TLS"
+// instead of silently disappearing.
+vi.mock('~/lib/operator/discovery', () => ({
+  useOperatorDirectory: () => ({
+    registryConfigured: true,
+    registry: {
+      counts: { 44: '2' },
+      entries: [
+        { address: '0x1111111111111111111111111111111111111111', rpcAddress: 'https://operator-one.test', apiUrl: 'https://operator-one.test', blueprintIds: [44] },
+        { address: '0x2222222222222222222222222222222222222222', rpcAddress: 'http://no-tls-operator.test:9210', apiUrl: 'http://no-tls-operator.test:9210', blueprintIds: [44] },
+      ],
+    },
+    apiUrls: ['https://operator-one.test', 'https://fallback-operator.test'],
+    endpoints: [
+      { apiUrl: 'https://fallback-operator.test', sources: ['env'], blueprintIds: [], browserReachable: true },
+      {
+        apiUrl: 'https://operator-one.test',
+        sources: ['env', 'chain'],
+        blueprintIds: [44],
+        browserReachable: true,
+      },
+      {
+        apiUrl: 'http://no-tls-operator.test:9210',
+        sources: ['chain'],
+        blueprintIds: [44],
+        browserReachable: false,
+        unreachableReason: 'mixed-content',
+      },
+    ],
+    isDiscovering: false,
+    discoveryError: null,
   }),
-}));
-
-vi.mock('~/lib/operator/meta', () => ({
-  ALL_TRADING_OPERATOR_API_URLS: [
-    'https://operator-one.test',
-    'https://fallback-operator.test',
-  ],
+  isMixedContentBlocked: (url: string) => url.startsWith('http://'),
 }));
 
 vi.mock('~/lib/blueprints', () => ({
@@ -52,11 +63,7 @@ vi.mock('~/lib/blueprints', () => ({
 
 function renderOperatorsPage(ui: ReactNode) {
   const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
+    defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -65,12 +72,12 @@ function renderOperatorsPage(ui: ReactNode) {
   );
 }
 
-describe('operators route', () => {
+describe('operator directory', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('shows registered blueprint operators with API access metadata', async () => {
+  it('shows registrations, access and a request link for each reachable operator', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.startsWith('https://operator-one.test')) {
@@ -100,17 +107,25 @@ describe('operators route', () => {
     const { default: OperatorsPage } = await import('../operators');
     renderOperatorsPage(<OperatorsPage />);
 
-    expect(screen.getByRole('heading', { name: 'Operators' })).toBeInTheDocument();
-    expect(screen.getByText('1 registered on-chain for blueprint #44.')).toBeInTheDocument();
-    expect(screen.getByText('0x1111111111111111111111111111111111111111')).toBeInTheDocument();
-    expect(screen.getAllByText('https://operator-one.test').length).toBeGreaterThan(0);
+    // The no-TLS operator stays listed with its registration...
+    expect(screen.getAllByText('http://no-tls-operator.test:9210').length).toBeGreaterThan(0);
 
+    // ...and is badged as unreachable from the browser rather than probed.
+    const badges = await screen.findAllByText(/no tls/i);
+    expect(badges.length).toBeGreaterThan(0);
+    expect(badges[0]).toHaveAttribute(
+      'title',
+      expect.stringContaining('Unreachable from browser (no TLS)'),
+    );
+
+    // The https operator is still probed and reported healthy.
     await waitFor(() => {
-      expect(screen.getAllByText('Public').length).toBeGreaterThan(0);
       expect(screen.getAllByText('Online').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('Shared endpoint').length).toBeGreaterThan(0);
     });
-
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const probedUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(probedUrls.some((url) => url.startsWith('http://no-tls-operator.test'))).toBe(false);
+    expect(screen.getByText('2 registered on-chain for blueprint #44.')).toBeInTheDocument();
     expect(screen.getAllByText('https://fallback-operator.test').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Allowlist').length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: 'Request' }).length).toBeGreaterThanOrEqual(2);
