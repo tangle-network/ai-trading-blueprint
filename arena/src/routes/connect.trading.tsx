@@ -573,9 +573,7 @@ function ConsentFlow({
                   </a>
                 </div>
                 <p className={MUTED_TEXT}>
-                  Authorizing returns you to Trading with a single-use code. The desk can then read
-                  the account, submit and read spot-swap orders, and revoke this connection — only
-                  for the verified bot vault above, and only until it expires.
+                  Pause new orders in your Trading desk. You can revoke this connection in Arena.
                 </p>
               </div>
             ) : null}
@@ -594,16 +592,16 @@ function EnvelopeTerms({ preview, address }: { preview: DeskPreview; address: st
   const terms: Array<[string, ReactNode]> = [
     ['Your account', address],
     [
-      'Bot vault (verified against the signed envelope)',
+      'Vault',
       normalizeVaultAddress(envelope.vaultAddress) ?? 'No nonzero vault address in the verified envelope.',
     ],
     [
       'Allowed operation',
-      `Atomic spot swaps on ${preview.instruments.map(instrumentName).join(', ') || 'no instruments'} quoted in ${preview.quoteCurrency} via ${envelope.protocol}`,
+      `Spot swaps on ${preview.instruments.map(instrumentName).join(', ')} through ${envelope.protocol === 'uniswap_v3' ? 'Uniswap v3' : envelope.protocol}`,
     ],
     [
-      'Bounds',
-      `Max trade size $${envelope.maxTradeSizeUsd} · max total exposure $${envelope.maxTotalExposureUsd}`,
+      'Trading limits',
+      `$${envelope.maxTradeSizeUsd} per trade · $${envelope.maxTotalExposureUsd} total exposure`,
     ],
     ...(envelope.swap ? [
       ['Swap', `${envelope.swap.input} → ${envelope.swap.output}`],
@@ -619,7 +617,7 @@ function EnvelopeTerms({ preview, address }: { preview: DeskPreview; address: st
           <dt className="font-display text-xs font-semibold uppercase tracking-[0.08em] text-[var(--arena-terminal-text-subtle)]">
             {label}
           </dt>
-          <dd className="break-all font-data text-xs text-[var(--arena-terminal-text)]">{value}</dd>
+          <dd className="min-w-0 text-sm leading-relaxed text-[var(--arena-terminal-text)] [overflow-wrap:anywhere]">{value}</dd>
         </div>
       ))}
     </dl>
