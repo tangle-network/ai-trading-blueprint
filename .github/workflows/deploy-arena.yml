@@ -71,6 +71,13 @@ jobs:
           VITE_HYPEREVM_MAINNET_VAULT_FACTORY_ADDRESS: ${{ vars.VITE_HYPEREVM_MAINNET_VAULT_FACTORY_ADDRESS || '' }}
           VITE_HYPEREVM_MAINNET_VAULT_ADDRESS: ${{ vars.VITE_HYPEREVM_MAINNET_VAULT_ADDRESS || '' }}
           VITE_HYPEREVM_MAINNET_PAPER_TRADE: ${{ vars.VITE_HYPEREVM_MAINNET_PAPER_TRADE || 'false' }}
+          # Wallet-delegated trading desk consent (/connect/trading): the exact
+          # https origin of the enrolled operator for each network (no path,
+          # query, or credentials — same restriction as Trading's tangle-vault).
+          # Empty means the network is not enrolled and the route renders an
+          # honest view-only state instead of contacting any operator.
+          VITE_TRADING_DESK_OPERATOR_ORIGIN_TEST: ${{ vars.TRADING_DESK_OPERATOR_ORIGIN_TEST || '' }}
+          VITE_TRADING_DESK_OPERATOR_ORIGIN_LIVE: ${{ vars.TRADING_DESK_OPERATOR_ORIGIN_LIVE || '' }}
         run: pnpm run build
 
       # `cloudflare/wrangler-action` tries to install wrangler via `pnpm add`
