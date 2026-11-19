@@ -183,6 +183,8 @@ fn grant_activity_requires_active_phase_and_freshness() {
         network: "test".to_string(),
         chain_id: 998,
         vault_address: "0xvault".to_string(),
+        paper_at_grant: Some(true),
+        envelope_digest: None,
         redirect_uri: DEFAULT_REDIRECT_URI.to_string(),
         issued_at: now,
         expires_at: now + 100,

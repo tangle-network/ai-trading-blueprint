@@ -19,7 +19,9 @@ use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 use trading_http_api::trading_desk::DeskBotRecord;
 use trading_http_api::{BotContext, MultiBotTradingState, build_multi_bot_router};
-use trading_runtime::envelope::{SignedEnvelope, TradingPolicy, VaultPolicy};
+use trading_runtime::envelope::{
+    EnvelopeEnforcement, SignedEnvelope, TradingPolicy, UniswapV3SwapEnforcement, VaultPolicy,
+};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -187,6 +189,10 @@ async fn paper_harness() -> (DeskHarness, String) {
 }
 
 async fn install_envelope(harness: &DeskHarness, bot_id: &str) {
+    install_envelope_nonce(harness, bot_id, 1).await
+}
+
+async fn install_envelope_nonce(harness: &DeskHarness, bot_id: &str, nonce: u64) {
     let (vault, chain_id) = {
         let bots = harness.bots.lock().unwrap();
         let bot = bots.get(bot_id).expect("bot for envelope");
@@ -216,9 +222,25 @@ async fn install_envelope(harness: &DeskHarness, bot_id: &str) {
         min_signatures: 1,
         issued_at: chrono::Utc::now().timestamp() as u64,
         expires_at: chrono::Utc::now().timestamp() as u64 + 3_600,
-        nonce: 1,
+        nonce,
         verifying_contract: TEST_ENVELOPE_CONTRACT.to_string(),
-        enforcement: None,
+        enforcement: Some(EnvelopeEnforcement::UniswapV3Swap(
+            UniswapV3SwapEnforcement {
+                router: "0xE592427A0AEce92De3Edee1F18E0157C05861564"
+                    .parse()
+                    .unwrap(),
+                token_in: "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+                    .parse()
+                    .unwrap(),
+                token_out: WETH.parse().unwrap(),
+                fee_tier: 3000,
+                max_single_amount_in: 10_000_000u64.into(),
+                max_total_amount_in: 50_000_000u64.into(),
+                max_value: Default::default(),
+                min_output_per_input: 1u64.into(),
+                sqrt_price_limit_x96: Default::default(),
+            },
+        )),
         signatures: vec![],
     };
     signed
@@ -368,11 +390,18 @@ async fn authorize(
     network: &str,
     challenge: &str,
 ) -> (StatusCode, Value) {
+    let (_, preview) = get(
+        app,
+        &format!("/api/trading-desk/authorize/preview?bot_id={bot_id}&network={network}"),
+        credential,
+    )
+    .await;
     post_json(
         app,
         "/api/trading-desk/authorize",
         credential,
         json!({
+            "envelope_digest": preview["envelope"]["digest"],
             "network": network,
             "bot_id": bot_id,
             "state": "desk-test-state",
@@ -943,6 +972,12 @@ async fn desk_grant_binding_blocks_reassigned_or_drifted_bots() {
     let (status, body) = get(app, "/api/trading-desk/account", &credential).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["paper"], json!(false));
+    install_envelope_nonce(&harness, &live_bot, 2).await;
+    let (status, detail) = get(app, "/api/trading-desk/account", &credential).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{detail}");
+    assert!(detail["message"].as_str().unwrap().contains("terms"));
+    let (token, _) = connect_desk(app, &session, &live_bot, "live").await;
+    let credential = format!("Bearer {token}");
     harness
         .bots
         .lock()
@@ -953,6 +988,22 @@ async fn desk_grant_binding_blocks_reassigned_or_drifted_bots() {
     let (status, body) = get(app, "/api/trading-desk/account", &credential).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body["message"].as_str().unwrap().contains("paper"));
+
+    let (paper_token, _) = connect_desk(app, &session, &paper_bot, "test").await;
+    harness
+        .bots
+        .lock()
+        .unwrap()
+        .get_mut(&paper_bot)
+        .unwrap()
+        .paper_trade = false;
+    let (status, detail) = get(
+        app,
+        "/api/trading-desk/account",
+        &format!("Bearer {paper_token}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{detail}");
 }
 
 #[tokio::test]

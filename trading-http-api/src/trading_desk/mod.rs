@@ -236,10 +236,13 @@ pub struct DeskGrant {
     pub chain_id: u64,
     /// Vault the grant is bound to. Every desk request re-checks it so
     /// reassigning the bot id to a different vault cannot reuse authority.
-    /// Empty only for records written before the field existed (then unbound
-    /// legacy grants simply skip the check).
     #[serde(default)]
     pub vault_address: String,
+    /// Grants predating the execution-mode binding require new consent.
+    #[serde(default)]
+    pub paper_at_grant: Option<bool>,
+    #[serde(default)]
+    pub envelope_digest: Option<alloy::primitives::B256>,
     pub redirect_uri: String,
     pub issued_at: u64,
     pub expires_at: u64,
@@ -516,6 +519,18 @@ fn desk_grant(
         .map_err(|err| desk_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("grant store: {err}")))?
         .ok_or_else(|| desk_error(StatusCode::UNAUTHORIZED, "unknown desk credential"))?;
 
+    let bot = bound_grant_bot(state, &grant)?;
+    let _ = GRANTS.update(&format!("grant:{}", grant.grant_id), |record| {
+        record.last_used_at = Some(now_secs());
+    });
+    Ok((grant, bot))
+}
+
+#[allow(clippy::result_large_err)]
+fn bound_grant_bot(
+    state: &MultiBotTradingState,
+    grant: &DeskGrant,
+) -> Result<DeskBotRecord, Response> {
     if grant.revoked_at.is_some() {
         return Err(desk_error(StatusCode::UNAUTHORIZED, "connection revoked"));
     }
@@ -523,14 +538,20 @@ fn desk_grant(
         return Err(desk_error(StatusCode::UNAUTHORIZED, "connection expired"));
     }
 
-    let bot = bot_for_grant(state, &grant)?;
+    let bot = bot_for_grant(state, grant)?;
+    if !bot.owner_address.eq_ignore_ascii_case(&grant.owner_address) {
+        return Err(desk_error(
+            StatusCode::UNAUTHORIZED,
+            "the bot owner changed; reconnect",
+        ));
+    }
 
     // Binding checks: the connection's authority covers exactly this
     // vault + chain + trading mode. Any drift (bot reassigned to another
     // vault, moved chains, switched to paper) invalidates the credential —
     // reassignment must never inherit a live connection.
-    if !grant.vault_address.is_empty()
-        && !bot.vault_address.eq_ignore_ascii_case(&grant.vault_address)
+    if grant.vault_address.is_empty()
+        || !bot.vault_address.eq_ignore_ascii_case(&grant.vault_address)
     {
         return Err(desk_error(
             StatusCode::UNAUTHORIZED,
@@ -543,17 +564,22 @@ fn desk_grant(
             "bot moved to a different chain; reconnect",
         ));
     }
-    if grant.network == NETWORK_LIVE && bot.paper_trade {
+    if grant.paper_at_grant != Some(bot.paper_trade) {
         return Err(desk_error(
             StatusCode::CONFLICT,
-            "bot switched to paper trading; a live connection cannot drive it; reconnect",
+            "paper or live trading mode changed or was never approved; reconnect",
+        ));
+    }
+    let current_digest = crate::routes::envelope::get_signed_envelope(&grant.bot_id)
+        .and_then(|envelope| envelope.digest().ok());
+    if current_digest.is_none() || grant.envelope_digest != current_digest {
+        return Err(desk_error(
+            StatusCode::CONFLICT,
+            "signed trading terms changed; reconnect",
         ));
     }
 
-    let _ = GRANTS.update(&format!("grant:{}", grant.grant_id), |record| {
-        record.last_used_at = Some(now_secs());
-    });
-    Ok((grant, bot))
+    Ok(bot)
 }
 
 #[allow(clippy::result_large_err)] // axum handlers return `Response` on error
@@ -595,6 +621,7 @@ fn oauth_error(error: &str, description: &str) -> Response {
 
 struct Eligibility {
     verified_swap: Option<(trading_runtime::envelope::UniswapV3SwapEnforcement, u64)>,
+    envelope_digest: Option<alloy::primitives::B256>,
     bot: Option<DeskBotRecord>,
     envelope_summary: Option<serde_json::Value>,
     problems: Vec<String>,
@@ -632,6 +659,7 @@ fn check_eligibility(
     let mut problems = Vec::new();
     let mut envelope_summary = None;
     let mut verified_swap = None;
+    let mut envelope_digest = None;
 
     let bot = state
         .desk_resolve_bot
@@ -644,6 +672,7 @@ fn check_eligibility(
             return Eligibility {
                 bot: None,
                 verified_swap,
+                envelope_digest,
                 envelope_summary,
                 problems,
             };
@@ -693,6 +722,7 @@ fn check_eligibility(
 
             match verify {
                 Some(signer_count) => {
+                    envelope_digest = envelope.digest().ok();
                     if let Some(trading_runtime::envelope::EnvelopeEnforcement::UniswapV3Swap(
                         swap,
                     )) = &envelope.enforcement
@@ -712,6 +742,7 @@ fn check_eligibility(
                         );
                     }
                     envelope_summary = Some(json!({
+                        "digest": envelope_digest,
                         "vaultAddress": bot.vault_address,
                         "protocol": envelope.protocol,
                         "expiresAt": envelope.expires_at,
@@ -752,6 +783,7 @@ fn check_eligibility(
     Eligibility {
         bot: Some(bot),
         verified_swap,
+        envelope_digest,
         envelope_summary,
         problems,
     }
@@ -780,7 +812,9 @@ struct InstrumentSpec {
 /// canonical Ethereum registry, so local devnets work out of the box.
 fn resolve_instrument(chain_id: u64, name: &str) -> Option<InstrumentSpec> {
     let (base_symbol, quote_symbol) = name.split_once('-')?;
-    if !quote_symbol.eq_ignore_ascii_case(QUOTE_CURRENCY) {
+    if !base_symbol.eq_ignore_ascii_case(INSTRUMENT_BASE)
+        || !quote_symbol.eq_ignore_ascii_case(QUOTE_CURRENCY)
+    {
         return None;
     }
     let base = token_metadata_for_chain(Some(chain_id), base_symbol)?;

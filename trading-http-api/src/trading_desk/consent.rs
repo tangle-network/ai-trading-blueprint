@@ -26,7 +26,12 @@ pub(super) async fn authorize_preview(
         Some(chain_id) => chain_id,
         None => return desk_error(StatusCode::BAD_REQUEST, "network must be test or live"),
     };
-    let eligibility = check_eligibility(&state, &query.bot_id, &address);
+    let mut eligibility = check_eligibility(&state, &query.bot_id, &address);
+    if let Some(bot) = &eligibility.bot {
+        if let Some((_, reason)) = network_mismatch(bot, &query.network, chain_id) {
+            eligibility.problems.push(reason);
+        }
+    }
 
     let payload = json!({
         "botId": query.bot_id,
@@ -53,11 +58,36 @@ pub(super) struct AuthorizeRequest {
     code_challenge_method: String,
     redirect_uri: String,
     #[serde(default)]
+    envelope_digest: Option<alloy::primitives::B256>,
+    #[serde(default)]
     expires_in: Option<u64>,
 }
 
 fn default_s256() -> String {
     "S256".to_string()
+}
+
+fn network_mismatch(
+    bot: &DeskBotRecord,
+    network: &str,
+    chain_id: u64,
+) -> Option<(StatusCode, String)> {
+    if bot.chain_id != chain_id {
+        return Some((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "bot is on chain {} but {network} maps to chain {chain_id}",
+                bot.chain_id
+            ),
+        ));
+    }
+    if network == NETWORK_LIVE && bot.paper_trade {
+        return Some((
+            StatusCode::FORBIDDEN,
+            "paper-trading bots cannot be connected on the live network".into(),
+        ));
+    }
+    None
 }
 
 /// `POST /api/trading-desk/authorize`
@@ -99,20 +129,16 @@ pub(super) async fn authorize(
         Ok(bot) => bot,
         Err(response) => return response,
     };
-    if bot.chain_id != chain_id {
-        return desk_error(
-            StatusCode::BAD_REQUEST,
-            &format!(
-                "bot is on chain {} but network {} maps to chain {}",
-                bot.chain_id, body.network, chain_id
-            ),
-        );
+    if let Some((status, reason)) = network_mismatch(bot, &body.network, chain_id) {
+        return desk_error(status, &reason);
     }
-    // A paper-only executor must never be authorized as a live venue.
-    if body.network == NETWORK_LIVE && bot.paper_trade {
+    if eligibility.envelope_digest.is_none()
+        || ((!bot.paper_trade || body.envelope_digest.is_some())
+            && body.envelope_digest != eligibility.envelope_digest)
+    {
         return desk_error(
-            StatusCode::FORBIDDEN,
-            "paper-trading bots cannot be connected on the live network",
+            StatusCode::CONFLICT,
+            "signed trading terms changed; review the current terms before approving",
         );
     }
 
@@ -121,6 +147,10 @@ pub(super) async fn authorize(
         .unwrap_or(DEFAULT_GRANT_TTL_SECS)
         .clamp(MIN_GRANT_TTL_SECS, MAX_GRANT_TTL_SECS);
     let now = now_secs();
+    let expires_at = eligibility
+        .verified_swap
+        .as_ref()
+        .map_or(now + ttl, |(_, expiry)| (now + ttl).min(*expiry));
     let code = format!("tdsk-code-{}", random_hex(32));
     let grant = DeskGrant {
         grant_id: uuid::Uuid::new_v4().to_string(),
@@ -129,9 +159,11 @@ pub(super) async fn authorize(
         network: body.network.clone(),
         chain_id,
         vault_address: bot.vault_address.clone(),
+        paper_at_grant: Some(bot.paper_trade),
+        envelope_digest: eligibility.envelope_digest,
         redirect_uri: body.redirect_uri.clone(),
         issued_at: now,
-        expires_at: now + ttl,
+        expires_at,
         revoked_at: None,
         last_used_at: None,
         phase: GrantPhase::Pending {
@@ -157,7 +189,7 @@ pub(super) async fn authorize(
             "grantId": grant_id,
             "redirectUri": body.redirect_uri,
             "expiresIn": CODE_TTL_SECS,
-            "grantExpiresIn": ttl,
+            "grantExpiresIn": expires_at.saturating_sub(now),
         })),
     )
         .into_response()

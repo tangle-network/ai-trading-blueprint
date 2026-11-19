@@ -357,6 +357,34 @@ pub(super) async fn submit_order(
         updated_at: now,
     };
     {
+        // The order reservation and wallet revocation share a boundary. Once reserved,
+        // a submitted order remains reconcilable even when the owner stops the desk.
+        let _grant_guard = GRANT_WRITE_LOCK.lock().expect("grant write lock");
+        let current = match GRANTS.get(&format!("grant:{}", grant.grant_id)) {
+            Ok(Some(current)) => current,
+            _ => {
+                return desk_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "cannot confirm current trading authority",
+                );
+            }
+        };
+        match bound_grant_bot(&state, &current) {
+            Ok(latest)
+                if latest.trading_active
+                    && latest.service_id == bot.service_id
+                    && latest.rpc_url == bot.rpc_url =>
+            {
+                ()
+            }
+            Ok(_) => {
+                return desk_error(
+                    StatusCode::CONFLICT,
+                    "operator changed during order preflight; review the desk",
+                );
+            }
+            Err(response) => return response,
+        }
         let _guard = ORDER_WRITE_LOCK.lock().expect("order write lock");
         match ORDERS.get(&key) {
             Ok(Some(stored)) => return replay(&stored),
