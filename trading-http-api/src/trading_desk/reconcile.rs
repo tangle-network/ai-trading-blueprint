@@ -50,7 +50,8 @@ pub(super) async fn stage(
 enum Observed {
     Pending,
     Expired,
-    Filled(String, Settlement),
+    Settled(String, Settlement, DeskOrderStatus),
+    Unmeasured(String),
 }
 
 async fn settlement(
@@ -185,21 +186,52 @@ async fn settlement(
     {
         return Ok(Observed::Pending);
     }
+    let unmeasured = || Observed::Unmeasured(hash.to_string());
     let output = U256::from_be_slice(&bytes[32..64]).to_string();
-    let Some(result) = settlement_from_observation(
-        spec,
-        &order.side,
-        &order.quantity,
-        &order.amount_in,
-        &output,
-    ) else {
-        return Ok(Observed::Pending);
+    let transfer = keccak256("Transfer(address,address,uint256)");
+    let vault_word = vault.into_word();
+    let (mut sent, mut returned) = (U256::ZERO, U256::ZERO);
+    for log in receipt
+        .inner
+        .logs()
+        .iter()
+        .filter(|log| !log.removed && log.address() == binding.token_in)
+    {
+        let [event, from, to] = log.topics() else {
+            continue;
+        };
+        if *event != transfer || (*from != vault_word && *to != vault_word) {
+            continue;
+        }
+        let data = log.data().data.as_ref();
+        if data.len() != 32 {
+            return Ok(unmeasured());
+        }
+        let value = U256::from_be_slice(data);
+        if *from == vault_word {
+            sent = sent.checked_add(value).ok_or("invalid input transfers")?;
+        }
+        if *to == vault_word {
+            returned = returned.checked_add(value).ok_or("invalid input refunds")?;
+        }
+    }
+    let Some(input) = sent.checked_sub(returned) else {
+        return Ok(unmeasured());
     };
-    let received = if order.side == "buy" {
-        &result.filled_quantity
+    let Some(result) = settlement_from_observation(spec, &order.side, &input.to_string(), &output)
+    else {
+        return Ok(unmeasured());
+    };
+    let (paid, received) = if order.side == "buy" {
+        (&result.quote_amount, &result.filled_quantity)
     } else {
-        &result.quote_amount
+        (&result.filled_quantity, &result.quote_amount)
     };
+    let paid: Decimal = paid.parse().map_err(|_| "input amount out of range")?;
+    let ceiling: Decimal = order
+        .amount_in
+        .parse()
+        .map_err(|_| "invalid staged input")?;
     let measured: Decimal = received
         .parse()
         .map_err(|_| "settlement quantity out of range")?;
@@ -207,21 +239,20 @@ async fn settlement(
         .min_amount_out
         .parse()
         .map_err(|_| "invalid staged minimum")?;
-    if measured < floor {
-        return Ok(Observed::Pending);
+    if measured < floor || paid > ceiling {
+        return Ok(unmeasured());
     }
-    Ok(Observed::Filled(hash.to_string(), result))
+    let status = if order.side == "sell" && paid < ceiling {
+        DeskOrderStatus::Cancelled
+    } else {
+        DeskOrderStatus::Filled
+    };
+    Ok(Observed::Settled(hash.to_string(), result, status))
 }
 
 pub(super) async fn reconcile_get(state: &Arc<MultiBotTradingState>, order: DeskOrder) -> Response {
     let stored = |o: &DeskOrder| (StatusCode::OK, Json(order_json(o))).into_response();
-    let terminal = |o: &DeskOrder| {
-        matches!(
-            o.status,
-            DeskOrderStatus::Filled | DeskOrderStatus::Rejected
-        )
-    };
-    if order.paper || terminal(&order) {
+    if order.paper || order.status.terminal() {
         return stored(&order);
     }
     let (Some(binding), Some(spec), Some(bot)) = (
@@ -265,17 +296,24 @@ pub(super) async fn reconcile_get(state: &Arc<MultiBotTradingState>, order: Desk
     let Ok(Some(mut current)) = ORDERS.get(&key) else {
         return desk_error(StatusCode::SERVICE_UNAVAILABLE, "order journal unavailable");
     };
-    if terminal(&current) {
+    if current.status.terminal() {
         return stored(&current);
     }
     match observed {
-        Observed::Filled(hash, fill) => {
-            current.status = DeskOrderStatus::Filled;
+        Observed::Settled(hash, fill, status) => {
+            current.status = status;
             current.venue_order_id = Some(hash);
             current.filled_quantity = Some(fill.filled_quantity);
             current.quote_amount = Some(fill.quote_amount);
             current.average_fill_price = fill.average_fill_price;
-            current.error = None;
+            current.error = (status == DeskOrderStatus::Cancelled).then(|| {
+                "The swap settled. The unspent remainder stayed in the vault.".to_string()
+            });
+        }
+        Observed::Unmeasured(hash) => {
+            current.status = DeskOrderStatus::Unknown;
+            current.venue_order_id = Some(hash);
+            current.error = Some("The vault executed this intent. Its receipt does not establish both token amounts within the approved limits.".into());
         }
         Observed::Expired => {
             current.status = DeskOrderStatus::Rejected;

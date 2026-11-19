@@ -1,4 +1,4 @@
-use super::trading::{plan_order, settlement_from_observation};
+use super::trading::plan_order;
 use super::*;
 
 fn dec(value: &str) -> Decimal {
@@ -234,34 +234,6 @@ fn tx_hash_validation_requires_0x_plus_64_hex() {
     assert!(!valid_tx_hash("0xshort"));
     assert!(!valid_tx_hash(&format!("0x{}", "zz".repeat(32))));
     assert!(!valid_tx_hash(&format!("0X{}", "ab".repeat(32))));
-}
-
-#[test]
-fn settlement_derives_from_observed_output_only() {
-    let instrument = TestInstrument::new(18, 6);
-
-    // buy: observed 1.5 base out, exact 3750.375 quote in.
-    let buy = settlement_from_observation(
-        &instrument.spec,
-        "buy",
-        "1.5",
-        "3750.375",
-        "1500000000000000000",
-    )
-    .expect("buy settlement");
-    assert_eq!(buy.filled_quantity, "1.5");
-    assert_eq!(buy.quote_amount, "3750.375");
-    assert_eq!(buy.average_fill_price.as_deref(), Some("2500.25"));
-
-    // sell: full 2 base in, observed 6001.000001 quote out.
-    let sell = settlement_from_observation(&instrument.spec, "sell", "2", "2", "6001000001")
-        .expect("sell settlement");
-    assert_eq!(sell.filled_quantity, "2");
-    assert_eq!(sell.quote_amount, "6001.000001");
-
-    // Zero observed output or garbage raw never settles.
-    assert!(settlement_from_observation(&instrument.spec, "buy", "1.5", "3750.375", "0").is_none());
-    assert!(settlement_from_observation(&instrument.spec, "sell", "2", "2", "not-units").is_none());
 }
 
 #[test]

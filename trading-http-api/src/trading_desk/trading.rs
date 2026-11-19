@@ -110,8 +110,7 @@ fn desk_intent_hash(
     Some(trading_runtime::intent::hash_intent(&intent))
 }
 
-/// Settlement amounts derived from an observed on-chain output, in canonical
-/// decimal strings the consumer can bound-check.
+/// Both legs are measured in the same vault transaction.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Settlement {
     pub(super) filled_quantity: String,
@@ -122,50 +121,32 @@ pub(super) struct Settlement {
 pub(super) fn settlement_from_observation(
     spec: &InstrumentSpec,
     side: &str,
-    quantity: &str,
-    exact_spend: &str,
+    raw_input: &str,
     raw_output: &str,
 ) -> Option<Settlement> {
-    let average = |quote: &str, filled: &str| -> Option<String> {
-        let quote = quote.parse::<Decimal>().ok()?;
-        let filled = filled.parse::<Decimal>().ok()?;
-        if filled <= Decimal::ZERO {
-            return None;
-        }
-        Some((quote / filled).round_dp(18).normalize().to_string())
+    let (base, quote) = match side {
+        "buy" => (raw_output, raw_input),
+        "sell" => (raw_input, raw_output),
+        _ => return None,
     };
-    match side {
-        // buy: exact quote spend in, observed base out.
-        "buy" => {
-            let filled = raw_units_to_decimal(raw_output, spec.base.decimals)?;
-            let quote = exact_spend.to_string();
-            if filled == "0" || quote == "0" {
-                return None;
-            }
-            Some(Settlement {
-                average_fill_price: average(&quote, &filled),
-                filled_quantity: filled,
-                quote_amount: quote,
-            })
-        }
-        // sell: exact base spend in (the full quantity), observed quote out.
-        "sell" => {
-            let filled = quantity.to_string();
-            let quote = raw_units_to_decimal(raw_output, spec.quote.decimals)?;
-            if filled == "0" || quote == "0" {
-                return None;
-            }
-            Some(Settlement {
-                average_fill_price: average(&quote, &filled),
-                filled_quantity: filled,
-                quote_amount: quote,
-            })
-        }
-        _ => None,
+    let filled_quantity = raw_units_to_decimal(base, spec.base.decimals)?;
+    let quote_amount = raw_units_to_decimal(quote, spec.quote.decimals)?;
+    let base: Decimal = filled_quantity.parse().ok()?;
+    let quote: Decimal = quote_amount.parse().ok()?;
+    if base <= Decimal::ZERO || quote <= Decimal::ZERO {
+        return None;
     }
+    let average_fill_price = quote
+        .checked_div(base)
+        .map(|v| v.round_dp(18))
+        .filter(|v| *v > Decimal::ZERO)
+        .map(|v| v.normalize().to_string());
+    Some(Settlement {
+        filled_quantity,
+        quote_amount,
+        average_fill_price,
+    })
 }
-
-// ── Handlers: desk credential surface ────────────────────────────────────────
 
 /// `GET /api/trading-desk/account`
 ///
@@ -464,7 +445,7 @@ pub(super) async fn submit_order(
                 );
             }
         };
-        if latest.status == DeskOrderStatus::Filled || latest.status == DeskOrderStatus::Rejected {
+        if latest.status.terminal() {
             return (StatusCode::OK, Json(order_json(&latest))).into_response();
         }
         match outcome {
@@ -501,7 +482,7 @@ pub(super) async fn submit_order(
 
 /// Order wire shape per the Trading consumer contract: immutable
 /// `clientOrderId`/`instrument`/`side`/canonical `quantity`+`limitPrice`,
-/// `status` ∈ pending/filled/rejected/unknown, `venueOrderId` a tx hash when
+/// `status` ∈ pending/filled/cancelled/rejected/unknown, `venueOrderId` a tx hash when
 /// present, and settlement amounts only when actually observed on chain.
 pub(super) fn order_json(order: &DeskOrder) -> serde_json::Value {
     json!({

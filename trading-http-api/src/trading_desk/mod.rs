@@ -342,6 +342,8 @@ pub struct DeskOrder {
 pub enum DeskOrderStatus {
     Pending,
     Filled,
+    /// An atomic sell settled with some input left in the vault and no open remainder.
+    Cancelled,
     Rejected,
     /// Outcome exists but cannot be confirmed on chain (paper execution, or a
     /// settlement whose observation was lost or undecodable).
@@ -349,10 +351,15 @@ pub enum DeskOrderStatus {
 }
 
 impl DeskOrderStatus {
+    fn terminal(self) -> bool {
+        matches!(self, Self::Filled | Self::Cancelled | Self::Rejected)
+    }
+
     fn as_str(self) -> &'static str {
         match self {
             DeskOrderStatus::Pending => "pending",
             DeskOrderStatus::Filled => "filled",
+            DeskOrderStatus::Cancelled => "cancelled",
             DeskOrderStatus::Rejected => "rejected",
             DeskOrderStatus::Unknown => "unknown",
         }
