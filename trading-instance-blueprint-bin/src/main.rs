@@ -241,6 +241,30 @@ async fn main() -> Result<(), blueprint_sdk::Error> {
                     validation_trust: bot.validation_trust,
                 })
             }),
+            desk_resolve_bot: Some(Box::new(|bot_id: &str| {
+                trading_blueprint_lib::state::bots()
+                    .ok()
+                    .and_then(|store| store.values().ok())
+                    .and_then(|bots| bots.into_iter().find(|bot| bot.id == bot_id))
+                    .map(|bot| trading_http_api::trading_desk::DeskBotRecord {
+                        bot_id: bot.id,
+                        name: bot.name,
+                        owner_address: if bot.submitter_address.is_empty() {
+                            bot.operator_address
+                        } else {
+                            bot.submitter_address
+                        },
+                        vault_address: bot.vault_address,
+                        chain_id: bot.chain_id,
+                        rpc_url: bot.rpc_url,
+                        paper_trade: bot.paper_trade,
+                        trading_active: bot.trading_active,
+                        service_id: bot.service_id,
+                        strategy_config: bot.strategy_config,
+                        risk_params: bot.risk_params,
+                        validation_trust: bot.validation_trust,
+                    })
+            })),
             clob_client,
             chain_client,
             chain_client_rpc_url: Some(rpc_url_for_chain),
