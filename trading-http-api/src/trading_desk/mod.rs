@@ -730,26 +730,25 @@ fn check_eligibility(
             match verify {
                 Some(signer_count) => {
                     envelope_digest = envelope.digest().ok();
+                    let mut swap_terms = None;
                     if let Some(trading_runtime::envelope::EnvelopeEnforcement::UniswapV3Swap(
                         swap,
                     )) = &envelope.enforcement
                     {
-                        if !swap.router.is_zero()
-                            && !swap.token_in.is_zero()
-                            && !swap.token_out.is_zero()
-                            && swap.token_in != swap.token_out
-                        {
+                        swap_terms = desk_swap_terms(bot.chain_id, swap);
+                        if swap_terms.is_some() {
                             verified_swap = Some((swap.clone(), envelope.expires_at));
                         }
                     }
                     if !bot.paper_trade && verified_swap.is_none() {
                         problems.push(
-                            "the signed envelope must bind a swap router and both tokens"
+                            "the signed envelope must authorize the desk's spot pair and a positive spend limit"
                                 .to_string(),
                         );
                     }
                     envelope_summary = Some(json!({
                         "digest": envelope_digest,
+                        "swap": swap_terms,
                         "vaultAddress": bot.vault_address,
                         "protocol": envelope.protocol,
                         "expiresAt": envelope.expires_at,
@@ -843,6 +842,30 @@ fn resolve_instrument(chain_id: u64, name: &str) -> Option<InstrumentSpec> {
 
 fn instruments_for_chain(chain_id: u64) -> Vec<serde_json::Value> {
     instrument_details_for_chain(chain_id)
+}
+
+fn desk_swap_terms(
+    chain_id: u64,
+    swap: &trading_runtime::envelope::UniswapV3SwapEnforcement,
+) -> Option<serde_json::Value> {
+    let input = token_metadata_for_chain(Some(chain_id), &swap.token_in.to_string())?;
+    let output = token_metadata_for_chain(Some(chain_id), &swap.token_out.to_string())?;
+    let side = match (input.symbol, output.symbol) {
+        (INSTRUMENT_BASE, QUOTE_CURRENCY) => "sell",
+        (QUOTE_CURRENCY, INSTRUMENT_BASE) => "buy",
+        _ => return None,
+    };
+    if swap.router.is_zero()
+        || swap.max_single_amount_in.is_zero()
+        || swap.max_total_amount_in.is_zero()
+    {
+        return None;
+    }
+    Some(json!({
+        "side": side, "input": input.symbol, "output": output.symbol, "router": swap.router,
+        "maxInputPerSwap": raw_units_to_decimal(&swap.max_single_amount_in.to_string(), input.decimals)?,
+        "maxInputTotal": raw_units_to_decimal(&swap.max_total_amount_in.to_string(), input.decimals)?,
+    }))
 }
 
 /// Canonical instrument names (`{BASE}-{QUOTE}`) — the strings clients match
