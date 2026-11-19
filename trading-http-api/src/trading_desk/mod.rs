@@ -53,6 +53,7 @@ use crate::routes::execute::{AmountFormat, ExecuteRequest, IntentPayload, Valida
 use crate::{BotContext, MultiBotTradingState};
 
 mod consent;
+mod reconcile;
 mod trading;
 
 #[cfg(test)]
@@ -290,6 +291,16 @@ pub struct DeskOrder {
     /// Executor inputs (human-readable decimals), for audit.
     pub amount_in: String,
     pub min_amount_out: String,
+    /// Canonical intent hash staged at claim time, before execution:
+    /// reconciliation proves or refutes this exact intent against the vault
+    /// (`executedIntents` + `TradeExecuted` logs) when a submit outcome is
+    /// uncertain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_hash: Option<String>,
+    /// Unix seconds until which the staged intent can still execute on
+    /// chain; expiry with no execution is a definitive rejection.
+    #[serde(default)]
+    pub deadline: u64,
     pub status: DeskOrderStatus,
     /// On-chain tx hash once one exists (the venue order id on this desk).
     #[serde(default, skip_serializing_if = "Option::is_none")]
