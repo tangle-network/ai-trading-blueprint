@@ -354,10 +354,7 @@ pub(super) async fn submit_order(
             Ok(latest)
                 if latest.trading_active
                     && latest.service_id == bot.service_id
-                    && latest.rpc_url == bot.rpc_url =>
-            {
-                ()
-            }
+                    && latest.rpc_url == bot.rpc_url => {}
             Ok(_) => {
                 return desk_error(
                     StatusCode::CONFLICT,
