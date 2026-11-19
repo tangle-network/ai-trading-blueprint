@@ -2,14 +2,13 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import type { MetaFunction } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { resolveOperatorRpc, useOperators } from '@tangle-network/blueprint-ui';
 import { Identicon, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@tangle-network/blueprint-ui/components';
 import type { Address } from 'viem';
 import { ArenaHeaderLink, ArenaPageHeader } from '~/components/arena/ArenaPageHeader';
 import { SQUARE_TABLE_CLASS, StaticTableHeaderLabel } from '~/components/arena/SortableTableHeader';
 import { Skeleton, SkeletonTableRow } from '~/components/ui/Skeleton';
 import type { OperatorMeta } from '~/lib/operator/meta';
-import { isMixedContentBlocked, useOperatorDirectory } from '~/lib/operator/discovery';
+import { isMixedContentBlocked, useOperatorDirectory, type ChainOperatorEntry } from '~/lib/operator/discovery';
 import { TRADING_BLUEPRINTS, type TradingBlueprintDef } from '~/lib/blueprints';
 
 export const meta: MetaFunction = () => [
@@ -167,7 +166,7 @@ function buildBlueprintOperatorRows({
   apiLoading,
   fallbackUrls,
 }: {
-  operators: Array<{ address: Address; rpcAddress?: string }>;
+  operators: ChainOperatorEntry[];
   apiRows: OperatorApiRow[];
   apiLoading: boolean;
   fallbackUrls: string[];
@@ -181,9 +180,7 @@ function buildBlueprintOperatorRows({
   const registeredApiUrls = new Set<string>();
 
   const rows: BlueprintOperatorRow[] = operators.map((operator) => {
-    const apiUrl = normalizeDirectoryUrl(
-      operator.rpcAddress ? resolveOperatorRpc(operator.rpcAddress) : undefined,
-    );
+    const apiUrl = normalizeDirectoryUrl(operator.apiUrl);
     if (apiUrl) registeredApiUrls.add(apiUrl);
     let api = apiUrl ? apiByUrl.get(apiUrl) : undefined;
     if (!api && apiUrl && isMixedContentBlocked(apiUrl)) {
@@ -217,10 +214,12 @@ function buildBlueprintOperatorRows({
 function BlueprintOperatorsTable({
   rows,
   isLoadingOperators,
+  emptyMessage,
   selectedBlueprint,
 }: {
   rows: BlueprintOperatorRow[];
   isLoadingOperators: boolean;
+  emptyMessage: string;
   selectedBlueprint: TradingBlueprintDef | undefined;
 }) {
   const empty = rows.length === 0;
@@ -250,7 +249,7 @@ function BlueprintOperatorsTable({
             </div>
           ))
         ) : empty ? (
-          <div className="px-3 py-4 text-sm text-[var(--arena-terminal-muted)]">No operators found for this blueprint.</div>
+          <div className="px-3 py-4 text-sm text-[var(--arena-terminal-muted)]">{emptyMessage}</div>
         ) : (
           rows.map((row) => {
             const access = row.api?.meta?.request_access;
@@ -317,7 +316,7 @@ function BlueprintOperatorsTable({
             ) : empty ? (
               <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={5} className="px-3 py-4 text-sm text-[var(--arena-terminal-muted)]">
-                  No operators found for {selectedBlueprint?.name ?? 'this blueprint'}.
+                  {emptyMessage}
                 </TableCell>
               </TableRow>
             ) : (
@@ -393,9 +392,21 @@ export default function OperatorsPage() {
     () => TRADING_BLUEPRINTS.find((blueprint) => blueprint.id === selectedId) ?? TRADING_BLUEPRINTS[0],
     [selectedId],
   );
-  const blueprintId = selectedBlueprint ? BigInt(selectedBlueprint.blueprintId) : 0n;
-  const { operators, operatorCount } = useOperators(blueprintId);
+  const blueprintId = selectedBlueprint?.blueprintId.toString();
   const directory = useOperatorDirectory();
+  const registrationCount = blueprintId ? directory.registry?.counts[blueprintId] : undefined;
+  const operators = useMemo(
+    () => directory.registry?.entries.filter((row) => row.blueprintIds.includes(Number(blueprintId))) ?? [],
+    [directory.registry, blueprintId],
+  );
+  const registryStatus = registrationCount !== undefined
+    ? `${registrationCount} registered on-chain for blueprint #${blueprintId}.`
+    : !directory.registryConfigured
+      ? 'This network has no configured operator registry.'
+      : directory.isDiscovering ? 'Reading the operator registry…' : 'The operator registry could not be read.';
+  const emptyMessage = registrationCount === '0'
+    ? 'No operators are registered for this blueprint.'
+    : 'No operator endpoints are available for this blueprint.';
   // Probe only browser-reachable endpoints; no-TLS endpoints are surfaced as
   // static rows so operators learn their endpoint must be served over https.
   const probeUrls = directory.apiUrls;
@@ -433,7 +444,7 @@ export default function OperatorsPage() {
         titleWidthClassName="min-[1180px]:w-[11rem]"
         metrics={[
           { label: 'APIs', value: directory.endpoints.length.toString() },
-          { label: 'On-chain', value: operatorCount.toString() },
+          { label: 'On-chain', value: registrationCount ?? '—' },
           { label: 'Public', value: publicApiCount.toString() },
         ]}
         controls={(
@@ -476,7 +487,7 @@ export default function OperatorsPage() {
                 {selectedBlueprint?.name ?? 'Trading'} operators
               </h2>
               <p className="text-sm text-[var(--arena-terminal-muted)]">
-                {operatorCount.toString()} registered on-chain for blueprint #{selectedBlueprint?.blueprintId ?? '0'}.
+                {registryStatus}
               </p>
             </div>
             <Link
@@ -488,7 +499,8 @@ export default function OperatorsPage() {
           </div>
           <BlueprintOperatorsTable
             rows={directoryRows}
-            isLoadingOperators={operators.length === 0 && operatorCount > 0n}
+            isLoadingOperators={directory.isDiscovering}
+            emptyMessage={emptyMessage}
             selectedBlueprint={selectedBlueprint}
           />
         </section>

@@ -7,28 +7,19 @@ vi.mock('react-router', () => ({
   Link: ({ children, to, ...props }: any) => <a href={to} {...props}>{children}</a>,
 }));
 
-vi.mock('@tangle-network/blueprint-ui', () => ({
-  resolveOperatorRpc: (value: string) => value,
-  useOperators: () => ({
-    operators: [
-      {
-        address: '0x1111111111111111111111111111111111111111',
-        rpcAddress: 'https://operator-one.test',
-      },
-      {
-        address: '0x2222222222222222222222222222222222222222',
-        rpcAddress: 'http://no-tls-operator.test:9210',
-      },
-    ],
-    operatorCount: 2n,
-  }),
-}));
-
 // Simulates an https page: the http operator is discovered on-chain but the
 // browser cannot fetch it (mixed content), so it must surface as "no TLS"
 // instead of silently disappearing.
 vi.mock('~/lib/operator/discovery', () => ({
   useOperatorDirectory: () => ({
+    registryConfigured: true,
+    registry: {
+      counts: { 44: '2' },
+      entries: [
+        { address: '0x1111111111111111111111111111111111111111', rpcAddress: 'https://operator-one.test', apiUrl: 'https://operator-one.test', blueprintIds: [44] },
+        { address: '0x2222222222222222222222222222222222222222', rpcAddress: 'http://no-tls-operator.test:9210', apiUrl: 'http://no-tls-operator.test:9210', blueprintIds: [44] },
+      ],
+    },
     apiUrls: ['https://operator-one.test'],
     endpoints: [
       {
