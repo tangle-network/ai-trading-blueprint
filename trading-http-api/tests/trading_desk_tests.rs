@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Once};
 
-use axum::Router;
 use alloy::primitives::U256;
+use axum::Router;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use http_body_util::BodyExt;

@@ -194,7 +194,13 @@ jobs:
     name: Rust check + test
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    # ubuntu-latest rolled to 26.04 in Nov 2026; its default g++ headers
+    # no longer transitively provide <cstdint>, which breaks the bundled
+    # C++ build of librocksdb-sys 0.11.0+8.1.1 (via blueprint-auth, the
+    # rocksdb 0.21 line). Stay on 24.04 — the image the deploy hosts and
+    # the Docker builder (bookworm, g++-12) match — until a rocksdb
+    # release newer than 0.21 is consumable through blueprint-auth.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
@@ -244,7 +250,10 @@ jobs:
     name: Clippy
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    # Same librocksdb-sys 0.11.0+8.1.1 <cstdint> breakage as the rust
+    # job above — see the comment there before moving this back to
+    # ubuntu-latest.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
