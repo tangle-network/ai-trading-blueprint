@@ -33,20 +33,24 @@ impl TestInstrument {
 fn buy_spend_is_quantity_times_price() {
     let instrument = TestInstrument::new(18, 6);
     let planned = plan_order(&instrument.spec, "buy", dec("1.5"), dec("2500.25")).expect("plan");
-    assert_eq!(planned.amount_in, "3750.375");
-    assert_eq!(planned.min_amount_out, "1.5");
-    assert_eq!(planned.token_in, "0xquote");
-    assert_eq!(planned.token_out, "0xbase");
+    assert_eq!(planned.input.quantity, "3750.375");
+    assert_eq!(planned.input.base_units, "3750375000");
+    assert_eq!(planned.output.base_units, "1500000000000000000");
+    assert_eq!(planned.output.quantity, "1.5");
+    assert_eq!(planned.input.token, "0xquote");
+    assert_eq!(planned.output.token, "0xbase");
 }
 
 #[test]
 fn sell_spend_is_quantity_min_out_is_proceeds() {
     let instrument = TestInstrument::new(18, 6);
     let planned = plan_order(&instrument.spec, "sell", dec("2"), dec("3000.5")).expect("plan");
-    assert_eq!(planned.amount_in, "2");
-    assert_eq!(planned.min_amount_out, "6001");
-    assert_eq!(planned.token_in, "0xbase");
-    assert_eq!(planned.token_out, "0xquote");
+    assert_eq!(planned.input.quantity, "2");
+    assert_eq!(planned.output.quantity, "6001");
+    assert_eq!(planned.input.base_units, "2000000000000000000");
+    assert_eq!(planned.output.base_units, "6001000000");
+    assert_eq!(planned.input.token, "0xbase");
+    assert_eq!(planned.output.token, "0xquote");
 }
 
 #[test]

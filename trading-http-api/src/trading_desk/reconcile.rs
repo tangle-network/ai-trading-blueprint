@@ -37,9 +37,14 @@ pub(super) async fn stage(
     Ok(ChainOrder {
         from_block: block,
         router,
-        token_in: order.token_in.parse().map_err(|_| "invalid input token")?,
+        token_in: order
+            .input
+            .token
+            .parse()
+            .map_err(|_| "invalid input token")?,
         token_out: order
-            .token_out
+            .output
+            .token
             .parse()
             .map_err(|_| "invalid output token")?,
         base_decimals: spec.base.decimals,

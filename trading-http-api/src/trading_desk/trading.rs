@@ -5,22 +5,47 @@ use super::*;
 
 // ── Order math ───────────────────────────────────────────────────────────────
 
-pub(super) struct PlannedOrder {
-    pub(super) token_in: String,
-    pub(super) token_out: String,
-    pub(super) amount_in: String,
-    pub(super) min_amount_out: String,
+use alloy::primitives::U256;
+
+pub(super) struct PlannedLeg {
+    pub(super) token: String,
+    pub(super) quantity: String,
+    pub(super) base_units: String,
 }
 
-/// Convert a human quantity + limit price into exact executor inputs.
-///
-/// buy:  spend ≤ quantity × limitPrice quote; receive exactly `quantity`
-///       base → `min_amount_out` is `quantity` verbatim (no rounding).
-/// sell: spend exactly `quantity` base; receive ≥ quantity × limitPrice
-///       quote, floored to the quote token's decimals.
-///
-/// Rejects any order whose legs cannot be represented exactly in the
-/// tokens' decimals (precision loss = rejection, never silent rounding).
+pub(super) struct PlannedOrder {
+    pub(super) input: PlannedLeg,
+    pub(super) output: PlannedLeg,
+}
+
+/// Compute each leg exactly, including products beyond Decimal's intermediate precision.
+fn plan_leg(token: &InstrumentLeg, mantissa: U256, scale: u32) -> Result<PlannedLeg, String> {
+    let decimals = u32::from(token.decimals);
+    let factor = U256::from(10)
+        .checked_pow(U256::from(scale.abs_diff(decimals)))
+        .ok_or("order exceeds supported precision")?;
+    let units = if scale > decimals {
+        if mantissa % factor != U256::ZERO {
+            return Err(format!(
+                "order cannot be represented in {} base units",
+                token.symbol
+            ));
+        }
+        mantissa / factor
+    } else {
+        mantissa
+            .checked_mul(factor)
+            .ok_or("order amount is too large")?
+    };
+    let base_units = units.to_string();
+    Ok(PlannedLeg {
+        token: token.address.clone(),
+        quantity: raw_units_to_decimal(&base_units, token.decimals)
+            .expect("unsigned integer has decimal digits"),
+        base_units,
+    })
+}
+
 pub(super) fn plan_order(
     spec: &InstrumentSpec,
     side: &str,
@@ -30,58 +55,19 @@ pub(super) fn plan_order(
     if quantity <= Decimal::ZERO || limit_price <= Decimal::ZERO {
         return Err("quantity and limitPrice must be positive".to_string());
     }
-
-    match side {
-        "buy" => {
-            if quantity.scale() > spec.base.decimals as u32 {
-                return Err(format!(
-                    "quantity has more decimals than {} supports ({})",
-                    spec.base.symbol, spec.base.decimals
-                ));
-            }
-            let spend = quantity
-                .checked_mul(limit_price)
-                .ok_or("order notional is too large")?
-                .normalize();
-            if spend.scale() > spec.quote.decimals as u32 {
-                return Err(format!(
-                    "quantity × limitPrice has more decimals than {} supports ({})",
-                    spec.quote.symbol, spec.quote.decimals
-                ));
-            }
-            Ok(PlannedOrder {
-                token_in: spec.quote.address.clone(),
-                token_out: spec.base.address.clone(),
-                amount_in: spend.normalize().to_string(),
-                min_amount_out: quantity.normalize().to_string(),
-            })
-        }
-        "sell" => {
-            if quantity.scale() > spec.base.decimals as u32 {
-                return Err(format!(
-                    "quantity has more decimals than {} supports ({})",
-                    spec.base.symbol, spec.base.decimals
-                ));
-            }
-            let proceeds = quantity
-                .checked_mul(limit_price)
-                .ok_or("order notional is too large")?
-                .normalize();
-            if proceeds.scale() > spec.quote.decimals as u32 {
-                return Err(format!(
-                    "quantity × limitPrice has more decimals than {} supports ({})",
-                    spec.quote.symbol, spec.quote.decimals
-                ));
-            }
-            Ok(PlannedOrder {
-                token_in: spec.base.address.clone(),
-                token_out: spec.quote.address.clone(),
-                amount_in: quantity.normalize().to_string(),
-                min_amount_out: proceeds.normalize().to_string(),
-            })
-        }
-        _ => Err("side must be buy or sell".to_string()),
-    }
+    let amount = U256::from(quantity.mantissa().unsigned_abs());
+    let base = plan_leg(&spec.base, amount, quantity.scale())?;
+    let quote = plan_leg(
+        &spec.quote,
+        amount * U256::from(limit_price.mantissa().unsigned_abs()),
+        quantity.scale() + limit_price.scale(),
+    )?;
+    let (input, output) = match side {
+        "buy" => (quote, base),
+        "sell" => (base, quote),
+        _ => return Err("side must be buy or sell".into()),
+    };
+    Ok(PlannedOrder { input, output })
 }
 
 /// Bind the desk's approved swap to the request that the executor will verify.
@@ -275,8 +261,8 @@ pub(super) async fn submit_order(
                 "signed swap enforcement required",
             );
         };
-        if planned.token_in.parse().ok() != Some(swap.token_in)
-            || planned.token_out.parse().ok() != Some(swap.token_out)
+        if planned.input.token.parse().ok() != Some(swap.token_in)
+            || planned.output.token.parse().ok() != Some(swap.token_out)
         {
             return desk_error(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -329,12 +315,12 @@ pub(super) async fn submit_order(
         intent: IntentPayload {
             strategy_id: DESK_STRATEGY_ID.to_string(),
             action: "swap".to_string(),
-            token_in: planned.token_in,
-            token_out: planned.token_out,
-            amount_in: planned.amount_in.clone(),
-            min_amount_out: planned.min_amount_out.clone(),
+            token_in: planned.input.token,
+            token_out: planned.output.token,
+            amount_in: planned.input.base_units,
+            min_amount_out: planned.output.base_units,
             target_protocol: DESK_PROTOCOL.to_string(),
-            amount_format: Some(AmountFormat::Human),
+            amount_format: Some(AmountFormat::BaseUnits),
             metadata: json!({"deskGrantId": grant.grant_id, "deskClientOrderId": client_order_id}),
         },
         validation,
@@ -355,8 +341,8 @@ pub(super) async fn submit_order(
         side: body.side.clone(),
         quantity: body.quantity.normalize().to_string(),
         limit_price: body.limit_price.normalize().to_string(),
-        amount_in: planned.amount_in,
-        min_amount_out: planned.min_amount_out,
+        amount_in: planned.input.quantity,
+        min_amount_out: planned.output.quantity,
         intent_hash: Some(execute_request.validation.intent_hash.clone()),
         chain_order,
         deadline: deadline_ts,
