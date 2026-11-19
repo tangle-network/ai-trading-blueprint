@@ -667,6 +667,7 @@ fn check_eligibility(
             match verify {
                 Some(signer_count) => {
                     envelope_summary = Some(json!({
+                        "vaultAddress": bot.vault_address,
                         "protocol": envelope.protocol,
                         "expiresAt": envelope.expires_at,
                         "maxTradeSizeUsd": envelope.policy.max_trade_size_usd.to_string(),

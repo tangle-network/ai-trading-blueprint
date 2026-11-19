@@ -472,6 +472,7 @@ async fn desk_paper_flow_from_consent_to_order_replay() {
         ])
     );
     assert!(body["envelope"]["maxTradeSizeUsd"].is_string());
+    assert_eq!(body["envelope"]["vaultAddress"], json!(VAULT));
 
     // Authorize + PKCE exchange.
     let (verifier, challenge) = pkce_pair();
