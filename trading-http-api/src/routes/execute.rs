@@ -597,7 +597,7 @@ fn ensure_validation_score_binding(
 /// Parse and validate the common fields of an `ExecuteRequest`.
 ///
 /// Returns the built `TradeIntent` or an HTTP error.
-fn parse_execute_request(
+pub(crate) fn parse_execute_request(
     req: &ExecuteRequest,
     chain_id: Option<u64>,
 ) -> Result<TradeIntent, (StatusCode, String)> {
@@ -802,7 +802,7 @@ fn hyperliquid_order_from_intent(
     })
 }
 
-fn expected_validation_hashes(
+pub(crate) fn expected_validation_hashes(
     intent: &TradeIntent,
     vault_address: &str,
     adapter_chain_id: Option<u64>,

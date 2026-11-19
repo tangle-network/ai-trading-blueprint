@@ -84,30 +84,28 @@ pub(super) fn plan_order(
     }
 }
 
-/// Canonical intent hash for a desk order: identifies the order uniquely
-/// for the executor's dedup while remaining the standard intent hash of
-/// what will actually execute.
-fn desk_intent_hash(
-    bot: &DeskBotRecord,
-    planned: &PlannedOrder,
-    deadline: chrono::DateTime<chrono::Utc>,
-    metadata: &serde_json::Value,
-) -> Option<String> {
-    let intent = trading_runtime::TradeIntentBuilder::new()
-        .strategy_id(DESK_STRATEGY_ID)
-        .action(trading_runtime::Action::Swap)
-        .token_in(&planned.token_in)
-        .token_out(&planned.token_out)
-        .amount_in(planned.amount_in.parse().ok()?)
-        .min_amount_out(planned.min_amount_out.parse().ok()?)
-        .target_protocol(DESK_PROTOCOL)
-        .chain_id(bot.chain_id)
-        .metadata(metadata.clone())
-        .build()
-        .ok()?;
-    let mut intent = intent;
-    intent.deadline = deadline;
-    Some(trading_runtime::intent::hash_intent(&intent))
+/// Bind the desk's approved swap to the request that the executor will verify.
+fn bind_swap_request(
+    request: &mut ExecuteRequest,
+    bot: &crate::BotContext,
+) -> Result<(), (StatusCode, String)> {
+    let protocol_chain_id = crate::protocol_chain_id_for_protocol_from_config(
+        bot.chain_id,
+        &bot.strategy_config,
+        &request.intent.target_protocol,
+    );
+    let intent = crate::routes::execute::parse_execute_request(request, Some(protocol_chain_id))?;
+    (
+        request.validation.intent_hash,
+        request.validation.execution_hash,
+    ) = crate::routes::execute::expected_validation_hashes(
+        &intent,
+        &bot.vault_address,
+        Some(protocol_chain_id),
+        bot.chain_id,
+        !bot.paper_trade,
+    )?;
+    Ok(())
 }
 
 /// Both legs are measured in the same vault transaction.
@@ -298,19 +296,54 @@ pub(super) async fn submit_order(
         };
         Some(start)
     };
-    let Some(deadline) = i64::try_from(deadline_ts)
-        .ok()
-        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
-    else {
-        return desk_error(StatusCode::BAD_REQUEST, "invalid order deadline");
-    };
     if now_secs() >= deadline_ts {
         return desk_error(StatusCode::FORBIDDEN, "the trading authority has expired");
     }
-    let metadata = json!({"deskGrantId": grant.grant_id, "deskClientOrderId": client_order_id});
-    let Some(intent_hash) = desk_intent_hash(&bot, &planned, deadline, &metadata) else {
-        return desk_error(StatusCode::BAD_REQUEST, "invalid swap intent");
+    // Bind before reserving the order so an invalid swap never enters the journal.
+    let validation = ValidationPayload {
+        // The desk's authority is the verified wallet envelope, not validator
+        // consensus; `approved` is required by the executor's request gate.
+        approved: true,
+        aggregate_score: 100,
+        intent_hash: String::new(),
+        execution_hash: String::new(),
+        deadline: Some(deadline_ts),
+        // Paper bots need the explicit paper-mode bypass (no validator
+        // signatures exist for a desk order); live bots rely on the envelope.
+        validator_responses: if bot.paper_trade {
+            vec![crate::routes::execute::ValidatorResponsePayload {
+                validator: crate::routes::validate::PAPER_MODE_VALIDATOR.to_string(),
+                score: 100,
+                reasoning: "trading-desk order".to_string(),
+                signature: String::new(),
+                chain_id: None,
+                verifying_contract: None,
+                validated_at: None,
+            }]
+        } else {
+            Vec::new()
+        },
+        simulation: None,
     };
+    let mut execute_request = ExecuteRequest {
+        intent: IntentPayload {
+            strategy_id: DESK_STRATEGY_ID.to_string(),
+            action: "swap".to_string(),
+            token_in: planned.token_in,
+            token_out: planned.token_out,
+            amount_in: planned.amount_in.clone(),
+            min_amount_out: planned.min_amount_out.clone(),
+            target_protocol: DESK_PROTOCOL.to_string(),
+            amount_format: Some(AmountFormat::Human),
+            metadata: json!({"deskGrantId": grant.grant_id, "deskClientOrderId": client_order_id}),
+        },
+        validation,
+    };
+
+    let execution_context = bot.bot_context();
+    if let Err((status, message)) = bind_swap_request(&mut execute_request, &execution_context) {
+        return desk_error(status, &message);
+    }
     let record = DeskOrder {
         grant_id: grant.grant_id.clone(),
         bot_id: grant.bot_id.clone(),
@@ -322,9 +355,9 @@ pub(super) async fn submit_order(
         side: body.side.clone(),
         quantity: body.quantity.normalize().to_string(),
         limit_price: body.limit_price.normalize().to_string(),
-        amount_in: planned.amount_in.clone(),
-        min_amount_out: planned.min_amount_out.clone(),
-        intent_hash: Some(intent_hash.clone()),
+        amount_in: planned.amount_in,
+        min_amount_out: planned.min_amount_out,
+        intent_hash: Some(execute_request.validation.intent_hash.clone()),
         chain_order,
         deadline: deadline_ts,
         status: DeskOrderStatus::Pending,
@@ -379,53 +412,11 @@ pub(super) async fn submit_order(
         }
     }
 
-    // Build the executor request and run it through the same path as the
-    // per-bot /execute route (envelope checks, policy limits, paper/live).
-    let validation = ValidationPayload {
-        // The desk's authority is the verified wallet envelope, not validator
-        // consensus; `approved` is required by the executor's request gate.
-        approved: true,
-        aggregate_score: 100,
-        intent_hash,
-        execution_hash: format!("0x{}", "00".repeat(32)),
-        deadline: Some(deadline_ts),
-        // Paper bots need the explicit paper-mode bypass (no validator
-        // signatures exist for a desk order); live bots rely on the envelope.
-        validator_responses: if bot.paper_trade {
-            vec![crate::routes::execute::ValidatorResponsePayload {
-                validator: crate::routes::validate::PAPER_MODE_VALIDATOR.to_string(),
-                score: 100,
-                reasoning: "trading-desk order".to_string(),
-                signature: String::new(),
-                chain_id: None,
-                verifying_contract: None,
-                validated_at: None,
-            }]
-        } else {
-            Vec::new()
-        },
-        simulation: None,
-    };
-    let execute_request = ExecuteRequest {
-        intent: IntentPayload {
-            strategy_id: DESK_STRATEGY_ID.to_string(),
-            action: "swap".to_string(),
-            token_in: planned.token_in.clone(),
-            token_out: planned.token_out.clone(),
-            amount_in: planned.amount_in.clone(),
-            min_amount_out: planned.min_amount_out.clone(),
-            target_protocol: DESK_PROTOCOL.to_string(),
-            amount_format: Some(AmountFormat::Human),
-            metadata,
-        },
-        validation,
-    };
-
     let http_request = axum::http::Request::builder()
         .method(axum::http::Method::POST)
         .uri("/execute")
         .header("content-type", "application/json")
-        .extension(bot.bot_context())
+        .extension(execution_context)
         .body(axum::body::Body::from(
             serde_json::to_vec(&execute_request).expect("serialize execute request"),
         ))
