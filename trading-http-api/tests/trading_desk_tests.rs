@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Once};
 
 use axum::Router;
+use alloy::primitives::U256;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
@@ -234,10 +235,10 @@ async fn install_envelope_nonce(harness: &DeskHarness, bot_id: &str, nonce: u64)
                     .unwrap(),
                 token_out: WETH.parse().unwrap(),
                 fee_tier: 3000,
-                max_single_amount_in: 10_000_000u64.into(),
-                max_total_amount_in: 50_000_000u64.into(),
+                max_single_amount_in: U256::from(10_000_000u64),
+                max_total_amount_in: U256::from(50_000_000u64),
                 max_value: Default::default(),
-                min_output_per_input: 1u64.into(),
+                min_output_per_input: U256::from(1),
                 sqrt_price_limit_x96: Default::default(),
             },
         )),
