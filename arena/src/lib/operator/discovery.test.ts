@@ -41,11 +41,11 @@ function memStorage() {
 
 describe('isMixedContentBlocked', () => {
   it('blocks absolute http endpoints on https pages', () => {
-    expect(isMixedContentBlocked('http://178.104.232.124:9210', 'https:')).toBe(true);
+    expect(isMixedContentBlocked('http://192.0.2.1:9210', 'https:')).toBe(true);
   });
 
   it('allows https endpoints and relative URLs on https pages', () => {
-    expect(isMixedContentBlocked('https://178.104.232.124.sslip.io', 'https:')).toBe(false);
+    expect(isMixedContentBlocked('https://operator.example', 'https:')).toBe(false);
     expect(isMixedContentBlocked('/operator-api', 'https:')).toBe(false);
   });
 
@@ -108,8 +108,8 @@ describe('buildOperatorDirectory', () => {
         chainEntry(),
         chainEntry({
           address: '0xEF69000000000000000000000000000000000002',
-          rpcAddress: 'http://178.104.232.124:9210',
-          apiUrl: 'http://178.104.232.124:9210',
+          rpcAddress: 'http://192.0.2.1:9210',
+          apiUrl: 'http://192.0.2.1:9210',
         }),
       ],
       envUrls: [],
@@ -117,7 +117,7 @@ describe('buildOperatorDirectory', () => {
     });
 
     expect(directory.apiUrls).toEqual(['https://operator-a.example']);
-    const blocked = directory.endpoints.find((endpoint) => endpoint.apiUrl === 'http://178.104.232.124:9210');
+    const blocked = directory.endpoints.find((endpoint) => endpoint.apiUrl === 'http://192.0.2.1:9210');
     expect(blocked?.browserReachable).toBe(false);
     expect(blocked?.unreachableReason).toBe('mixed-content');
   });
