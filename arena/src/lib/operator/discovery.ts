@@ -1,9 +1,12 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useStore } from '@nanostores/react';
+import { zeroAddress } from 'viem';
 import {
   discoverOperatorsWithClient,
   getAddresses,
-  publicClient,
+  getPublicClient,
+  selectedChainIdStore,
   resolveOperatorRpc,
   type DiscoveredOperator,
 } from '@tangle-network/blueprint-ui';
@@ -25,7 +28,7 @@ function normalizeUrl(value: string): string {
  */
 
 export const DISCOVERY_TTL_MS = 5 * 60_000;
-const DISCOVERY_CACHE_KEY = 'arena.operator-discovery.v1';
+const DISCOVERY_CACHE_KEY = 'arena.operator-discovery.v2';
 
 export interface ChainOperatorEntry {
   address: string;
@@ -129,10 +132,15 @@ export function buildOperatorDirectory({
   };
 }
 
+interface RegistrySnapshot {
+  entries: ChainOperatorEntry[];
+  counts: Record<string, string>;
+}
+
 interface DiscoveryCacheRecord {
   key: string;
   ts: number;
-  entries: ChainOperatorEntry[];
+  snapshot: RegistrySnapshot;
 }
 
 type DiscoveryStorage = Pick<Storage, 'getItem' | 'setItem'>;
@@ -145,24 +153,24 @@ function defaultStorage(): DiscoveryStorage | null {
   }
 }
 
-function readCache(storage: DiscoveryStorage | null, key: string, now: number): ChainOperatorEntry[] | null {
+function readCache(storage: DiscoveryStorage | null, key: string, now: number): RegistrySnapshot | null {
   if (!storage) return null;
   try {
     const raw = storage.getItem(DISCOVERY_CACHE_KEY);
     if (!raw) return null;
     const record = JSON.parse(raw) as DiscoveryCacheRecord;
-    if (record.key !== key || !Array.isArray(record.entries)) return null;
+    if (record.key !== key || !Array.isArray(record.snapshot?.entries) || !record.snapshot.counts) return null;
     if (now - record.ts > DISCOVERY_TTL_MS) return null;
-    return record.entries;
+    return record.snapshot;
   } catch {
     return null;
   }
 }
 
-function writeCache(storage: DiscoveryStorage | null, key: string, now: number, entries: ChainOperatorEntry[]): void {
+function writeCache(storage: DiscoveryStorage | null, key: string, now: number, snapshot: RegistrySnapshot): void {
   if (!storage) return;
   try {
-    storage.setItem(DISCOVERY_CACHE_KEY, JSON.stringify({ key, ts: now, entries } satisfies DiscoveryCacheRecord));
+    storage.setItem(DISCOVERY_CACHE_KEY, JSON.stringify({ key, ts: now, snapshot } satisfies DiscoveryCacheRecord));
   } catch {
     // Quota/serialization failures only cost us the cross-navigation cache.
   }
@@ -170,64 +178,40 @@ function writeCache(storage: DiscoveryStorage | null, key: string, now: number, 
 
 export interface ChainDiscoveryDeps {
   blueprintIds?: bigint[];
-  discover?: (blueprintId: bigint) => Promise<{ operators: DiscoveredOperator[] }>;
+  discover: (blueprintId: bigint) => Promise<{ operators: DiscoveredOperator[]; operatorCount: bigint }>;
+  networkKey?: string;
   resolveRpc?: (raw: string) => string;
   now?: () => number;
   storage?: DiscoveryStorage | null;
 }
 
-function defaultDiscover(blueprintId: bigint): Promise<{ operators: DiscoveredOperator[] }> {
-  return discoverOperatorsWithClient(publicClient, getAddresses().services, blueprintId);
-}
-
-function cacheKeyFor(blueprintIds: bigint[]): string {
-  let services = 'unknown';
-  try {
-    services = getAddresses().services;
-  } catch {
-    // Keep a stable key when chain config is unavailable (tests, SSR).
-  }
-  return `${services}:${blueprintIds.map(String).join(',')}`;
-}
-
-/**
- * Walk on-chain operator registrations for the trading blueprints and resolve
- * each operator's advertised RPC endpoint into an API base URL.
- *
- * Per-blueprint failures are tolerated (a dead RPC or unregistered blueprint
- * must not take down discovery for the others); a fully failed walk resolves
- * to [] so callers fall back to the env seed. Results are cached in
- * sessionStorage for DISCOVERY_TTL_MS so navigation does not re-walk the chain.
- */
-export async function fetchChainOperators(deps: ChainDiscoveryDeps = {}): Promise<ChainOperatorEntry[]> {
-  const blueprintIds = deps.blueprintIds ?? ALL_BLUEPRINT_IDS ?? [];
-  const discover = deps.discover ?? defaultDiscover;
+/** One read per blueprint supplies both the directory and the on-chain count. Missing counts mean the read failed. */
+export async function fetchChainOperators(deps: ChainDiscoveryDeps): Promise<RegistrySnapshot> {
+  const blueprintIds = deps.blueprintIds ?? ALL_BLUEPRINT_IDS;
   const resolveRpc = deps.resolveRpc ?? resolveOperatorRpc;
   const now = deps.now ?? Date.now;
   const storage = deps.storage === undefined ? defaultStorage() : deps.storage;
-  const key = cacheKeyFor(blueprintIds);
+  const key = (deps.networkKey ?? '') + ':' + blueprintIds.join(',');
 
   const cached = readCache(storage, key, now());
   if (cached) return cached;
 
-  const settled = await Promise.allSettled(blueprintIds.map((id) => discover(id)));
+  const settled = await Promise.allSettled(blueprintIds.map((id) => deps.discover(id)));
 
-  const byAddress = new Map<string, ChainOperatorEntry>();
+  const registrations = new Map<string, ChainOperatorEntry>();
+  const counts: Record<string, string> = {};
   settled.forEach((result, index) => {
     if (result.status !== 'fulfilled') return;
     const blueprintId = Number(blueprintIds[index]);
+    counts[String(blueprintIds[index])] = result.value.operatorCount.toString();
     for (const operator of result.value.operators) {
-      const addressKey = operator.address.toLowerCase();
-      const existing = byAddress.get(addressKey);
+      const registration = operator.address.toLowerCase() + ':' + operator.rpcAddress;
+      const existing = registrations.get(registration);
       if (existing) {
         if (!existing.blueprintIds.includes(blueprintId)) existing.blueprintIds.push(blueprintId);
-        if (!existing.rpcAddress && operator.rpcAddress) {
-          existing.rpcAddress = operator.rpcAddress;
-          existing.apiUrl = normalizeUrl(resolveRpc(operator.rpcAddress));
-        }
         continue;
       }
-      byAddress.set(addressKey, {
+      registrations.set(registration, {
         address: operator.address,
         rpcAddress: operator.rpcAddress,
         apiUrl: operator.rpcAddress ? normalizeUrl(resolveRpc(operator.rpcAddress)) : '',
@@ -236,12 +220,9 @@ export async function fetchChainOperators(deps: ChainDiscoveryDeps = {}): Promis
     }
   });
 
-  const entries = Array.from(byAddress.values());
-  const anySucceeded = settled.some((result) => result.status === 'fulfilled');
-  if (anySucceeded) {
-    writeCache(storage, key, now(), entries);
-  }
-  return entries;
+  const snapshot = { entries: Array.from(registrations.values()), counts };
+  if (settled.length && settled.every((walk) => walk.status === 'fulfilled')) writeCache(storage, key, now(), snapshot);
+  return snapshot;
 }
 
 const operatorFailures = new Map<string, { at: number; message: string }>();
@@ -267,6 +248,8 @@ export function getOperatorFailure(apiUrl: string): { at: number; message: strin
 export const OPERATOR_DISCOVERY_QUERY_KEY = ['operator-chain-discovery'] as const;
 
 export interface UseOperatorDirectoryResult extends OperatorDirectory {
+  registryConfigured: boolean;
+  registry?: RegistrySnapshot;
   isDiscovering: boolean;
   discoveryError: Error | null;
 }
@@ -277,21 +260,32 @@ export interface UseOperatorDirectoryResult extends OperatorDirectory {
  * env-configured list, so existing deployments never regress.
  */
 export function useOperatorDirectory(): UseOperatorDirectoryResult {
+  const chainId = useStore(selectedChainIdStore);
+  const services = getAddresses().services;
+  const registryConfigured = Boolean(services && services !== zeroAddress);
   const query = useQuery({
-    queryKey: OPERATOR_DISCOVERY_QUERY_KEY,
-    queryFn: () => fetchChainOperators(),
+    queryKey: [...OPERATOR_DISCOVERY_QUERY_KEY, chainId, services],
+    enabled: registryConfigured,
+    queryFn: () => {
+      const client = getPublicClient();
+      return fetchChainOperators({
+        networkKey: chainId + ':' + services,
+        discover: (id) => discoverOperatorsWithClient(client, services, id),
+      });
+    },
     staleTime: DISCOVERY_TTL_MS,
     gcTime: DISCOVERY_TTL_MS * 2,
     retry: 1,
   });
 
-  const chainOperators = query.data;
+  const registry = query.data;
   const isDiscovering = query.isLoading;
   const discoveryError = query.error instanceof Error ? query.error : null;
 
   return useMemo(() => ({
-    ...buildOperatorDirectory({ chainOperators: chainOperators ?? [] }),
+    ...buildOperatorDirectory({ chainOperators: registry?.entries ?? [] }),
+    registryConfigured, registry,
     isDiscovering,
     discoveryError,
-  }), [chainOperators, isDiscovering, discoveryError]);
+  }), [registryConfigured, registry, isDiscovering, discoveryError]);
 }

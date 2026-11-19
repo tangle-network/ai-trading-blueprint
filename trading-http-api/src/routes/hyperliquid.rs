@@ -1,8 +1,6 @@
 //! Hyperliquid native perps trading routes.
 //!
-//! These endpoints let the agent trade directly on Hyperliquid's L1 via the
-//! native REST API (not the on-chain bridge). Supports market/limit/stop/TP
-//! orders, leverage management, and position queries.
+//! These endpoints let the agent trade directly on Hyperliquid's L1 via the native REST API (not the on-chain bridge). Supports market/limit/stop/TP orders, leverage management, and position queries.
 
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
@@ -995,6 +993,7 @@ mod tests {
             validation_deadline_secs: 300,
             min_validator_score: 50,
             resolve_bot: Box::new(|_| None),
+            desk_resolve_bot: None,
             list_envelope_bots: None,
             clob_client: None,
             chain_client: None,

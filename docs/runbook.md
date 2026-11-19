@@ -571,6 +571,35 @@ For each new EVM chain we want to support:
 
 ---
 
+## 7a. Trading desk activation (vault-family gate)
+
+The trading-desk OAuth2 connection issues desk credentials that execute
+atomic spot swaps through the vault's `executeUniswapV3SwapEnvelope` — the
+EVM `TradingVault` envelope family (the `v3.json` stack from §7).
+
+**Not every funded vault is that family.** The published
+`deployments/998/hyperliquid-vault.json` and `deployments/999/hyperliquid-vault.json`
+manifests are `HyperliquidVault` — a HyperCore-only account family with no
+`executeUniswapV3SwapEnvelope`. Operating a funded Hyperliquid vault does
+not enable atomic EVM USDC spot swaps, so a HyperCore-only vault must be
+refused a desk grant.
+
+The gate is the §7 deploy record itself: the desk enrolls a chain only when
+`deployments/<chainId>/v3.json` exists (dir override:
+`TRADING_DESK_DEPLOYMENTS_DIR`). On any other chain the desk refuses —
+`authorize` and its preview report `network chain <id> has no enrolled EVM
+trading vault` and no credential is issued. Paper bots are refused too: the
+credential's promise is the atomic swap, which the vault family cannot
+honor.
+
+**Activation for a new chain:** complete §7 (deploy + `VERIFICATION
+PASSED`), which writes the manifest, then confirm the vault bytecode at the
+bot's address exposes the envelope interface before allowing wallet
+consent. No chain is enrolled today; 998/999 are HyperCore-only and stay
+unenrolled until a real `TradingVault` deployment exists there.
+
+---
+
 ## 8. Adding a new venue
 
 When adding a new protocol/venue (e.g. a new DEX or lending market), follow
@@ -681,6 +710,7 @@ If anything fails the smoke test, restore from the pre-rotation snapshot
 | Bot registry | `<state_dir>/trading-bots.json` |
 | Activation progress | `<state_dir>/activation-progress.json` |
 | Deployments | `deployments/<chainId>/v3.json` |
+| Desk enrollment | `deployments/<chainId>/v3.json` via `TRADING_DESK_DEPLOYMENTS_DIR` (`trading-http-api/src/trading_desk.rs`) |
 | Alert taxonomy | `trading-http-api/src/alerts.rs` |
 | Renewal cron | `trading-http-api/src/envelope_renewal.rs` |
 | Watcher | `trading-http-api/src/envelope_watcher.rs` |

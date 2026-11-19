@@ -1530,7 +1530,7 @@ describe('PerformanceTab', () => {
   it('uses time-only intraday NAV ticks on multi-day ranges', async () => {
     mockMetrics = [
       {
-        timestamp: '2026-05-29T06:00:00.000Z',
+        timestamp: new Date('2026-05-29T00:00:00').toISOString(),
         account_value_usd: 10000,
         realized_pnl: 0,
         unrealized_pnl: 0,
@@ -1538,7 +1538,7 @@ describe('PerformanceTab', () => {
         trade_count: 0,
       },
       {
-        timestamp: '2026-05-30T06:00:00.000Z',
+        timestamp: new Date('2026-05-30T00:00:00').toISOString(),
         account_value_usd: 10008,
         realized_pnl: 8,
         unrealized_pnl: 0,
@@ -1546,7 +1546,7 @@ describe('PerformanceTab', () => {
         trade_count: 1,
       },
       {
-        timestamp: '2026-05-30T12:00:00.000Z',
+        timestamp: new Date('2026-05-30T06:00:00').toISOString(),
         account_value_usd: 10012,
         realized_pnl: 12,
         unrealized_pnl: 0,
@@ -1554,7 +1554,7 @@ describe('PerformanceTab', () => {
         trade_count: 1,
       },
       {
-        timestamp: '2026-05-30T12:25:00.000Z',
+        timestamp: new Date('2026-05-30T06:25:00').toISOString(),
         account_value_usd: 10014,
         realized_pnl: 14,
         unrealized_pnl: 0,
@@ -1562,7 +1562,7 @@ describe('PerformanceTab', () => {
         trade_count: 1,
       },
       {
-        timestamp: '2026-05-30T18:30:00.000Z',
+        timestamp: new Date('2026-05-30T12:30:00').toISOString(),
         account_value_usd: 10018,
         realized_pnl: 18,
         unrealized_pnl: 0,
@@ -1582,9 +1582,9 @@ describe('PerformanceTab', () => {
     const formatter = chartOptions.timeScale?.tickMarkFormatter;
     if (!formatter) throw new Error('Expected NAV chart tick formatter');
 
-    expect(formatter(Math.floor(Date.parse('2026-05-30T06:00:00.000Z') / 1000))).toBe('May 30');
-    const sixAmLabel = formatter(Math.floor(Date.parse('2026-05-30T12:00:00.000Z') / 1000));
-    const sixTwentyFiveLabel = formatter(Math.floor(Date.parse('2026-05-30T12:25:00.000Z') / 1000));
+    expect(formatter(Math.floor(new Date('2026-05-30T00:00:00').getTime() / 1000))).toBe('May 30');
+    const sixAmLabel = formatter(Math.floor(new Date('2026-05-30T06:00:00').getTime() / 1000));
+    const sixTwentyFiveLabel = formatter(Math.floor(new Date('2026-05-30T06:25:00').getTime() / 1000));
     expect(sixAmLabel).toBe('6:00 AM');
     expect(sixTwentyFiveLabel).toBe('6:25 AM');
     expect(sixAmLabel).not.toContain('May 30');
@@ -1843,7 +1843,7 @@ describe('PerformanceTab', () => {
   it('labels live NAV separately when it is newer than the latest checkpoint', () => {
     mockMetrics = [
       {
-        timestamp: '2026-05-27T10:05:11.000Z',
+        timestamp: new Date('2026-05-27T04:05:11').toISOString(),
         account_value_usd: 10.93,
         realized_pnl: 0,
         unrealized_pnl: -0.1,
@@ -1853,7 +1853,7 @@ describe('PerformanceTab', () => {
     ];
     mockPortfolio = {
       displayTotalValueUsd: 8.2,
-      observedAt: '2026-05-27T10:07:12.000Z',
+      observedAt: new Date('2026-05-27T04:07:12').toISOString(),
       stale: false,
     };
 
@@ -1870,7 +1870,7 @@ describe('PerformanceTab', () => {
   it('does not label live NAV when the latest checkpoint is already fresh', () => {
     mockMetrics = [
       {
-        timestamp: '2026-05-27T10:05:11.000Z',
+        timestamp: new Date('2026-05-27T04:05:11').toISOString(),
         account_value_usd: 10.93,
         realized_pnl: 0,
         unrealized_pnl: -0.1,
@@ -1880,7 +1880,7 @@ describe('PerformanceTab', () => {
     ];
     mockPortfolio = {
       displayTotalValueUsd: 8.2,
-      observedAt: '2026-05-27T10:05:41.000Z',
+      observedAt: new Date('2026-05-27T04:05:41').toISOString(),
       stale: false,
     };
 

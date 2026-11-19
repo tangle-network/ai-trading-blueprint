@@ -248,6 +248,7 @@ sol! {
         function executeMorphoBorrowEnvelope(HealthFactorParams calldata params, Envelope calldata env, MorphoBorrowEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function executeMorphoRepayEnvelope(DebtReductionParams calldata params, Envelope calldata env, MorphoRepayEnforcement calldata enf, address[] calldata approvalSigners, bytes[] calldata signatures, uint256[] calldata scores) external;
         function envelopeConsumedAmount(bytes32 envelopeHash) external view returns (uint256);
+        function executedIntents(bytes32 intentHash) external view returns (bool);
         function emergencyWithdraw(address token, address to) external;
         function getBalance(address token) external view returns (uint256);
         function pause() external;

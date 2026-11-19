@@ -2438,6 +2438,7 @@ fn multi_bot_state_with_strategy_config_and_bot(
     let bot_id = bot_id.to_string();
     let strategy_config = strategy_config.clone();
     Arc::new(MultiBotTradingState {
+        desk_resolve_bot: None,
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
             .to_string(),
         market_data_base_url: market_data_base_url.to_string(),
@@ -2495,6 +2496,7 @@ fn multi_bot_state_for_bot_with_nav_reconciler(
     ensure_state_dir();
     let auth_token = auth_token.to_string();
     Arc::new(MultiBotTradingState {
+        desk_resolve_bot: None,
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
             .to_string(),
         market_data_base_url: "http://localhost:1234".to_string(),
@@ -5448,6 +5450,7 @@ async fn test_multi_bot_portfolio_state_preserves_snapshot_total_when_vault_look
     .expect("record trade");
 
     let state = Arc::new(MultiBotTradingState {
+        desk_resolve_bot: None,
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
             .to_string(),
         market_data_base_url: "http://localhost:1234".to_string(),
@@ -6353,6 +6356,7 @@ async fn test_multi_bot_validate_bad_action() {
 fn multi_bot_state_with_validators(validator_uris: Vec<String>) -> Arc<MultiBotTradingState> {
     ensure_state_dir();
     Arc::new(MultiBotTradingState {
+        desk_resolve_bot: None,
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
             .to_string(),
         market_data_base_url: "http://localhost:1234".to_string(),
@@ -7036,6 +7040,7 @@ async fn test_multi_bot_clob_execute() {
         .unwrap();
 
     let state = Arc::new(MultiBotTradingState {
+        desk_resolve_bot: None,
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
             .to_string(),
         market_data_base_url: "http://localhost:1234".to_string(),
@@ -7169,6 +7174,7 @@ async fn test_multi_bot_clob_execute_rejects_onchain_validator_denial() {
         .unwrap();
 
     let state = Arc::new(MultiBotTradingState {
+        desk_resolve_bot: None,
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
             .to_string(),
         market_data_base_url: "http://localhost:1234".to_string(),
@@ -7264,6 +7270,7 @@ async fn test_multi_bot_clob_execute_not_configured() {
     let rpc_mock_uri = rpc_mock.uri();
 
     let state = Arc::new(MultiBotTradingState {
+        desk_resolve_bot: None,
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
             .to_string(),
         market_data_base_url: "http://localhost:1234".to_string(),
@@ -7365,6 +7372,7 @@ async fn test_multi_bot_clob_execute_missing_metadata() {
     .expect("clob client");
 
     let state = Arc::new(MultiBotTradingState {
+        desk_resolve_bot: None,
         operator_private_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
             .to_string(),
         market_data_base_url: "http://localhost:1234".to_string(),

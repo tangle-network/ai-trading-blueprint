@@ -41,11 +41,11 @@ function memStorage() {
 
 describe('isMixedContentBlocked', () => {
   it('blocks absolute http endpoints on https pages', () => {
-    expect(isMixedContentBlocked('http://178.104.232.124:9210', 'https:')).toBe(true);
+    expect(isMixedContentBlocked('http://192.0.2.1:9210', 'https:')).toBe(true);
   });
 
   it('allows https endpoints and relative URLs on https pages', () => {
-    expect(isMixedContentBlocked('https://178.104.232.124.sslip.io', 'https:')).toBe(false);
+    expect(isMixedContentBlocked('https://operator.example', 'https:')).toBe(false);
     expect(isMixedContentBlocked('/operator-api', 'https:')).toBe(false);
   });
 
@@ -108,8 +108,8 @@ describe('buildOperatorDirectory', () => {
         chainEntry(),
         chainEntry({
           address: '0xEF69000000000000000000000000000000000002',
-          rpcAddress: 'http://178.104.232.124:9210',
-          apiUrl: 'http://178.104.232.124:9210',
+          rpcAddress: 'http://192.0.2.1:9210',
+          apiUrl: 'http://192.0.2.1:9210',
         }),
       ],
       envUrls: [],
@@ -117,7 +117,7 @@ describe('buildOperatorDirectory', () => {
     });
 
     expect(directory.apiUrls).toEqual(['https://operator-a.example']);
-    const blocked = directory.endpoints.find((endpoint) => endpoint.apiUrl === 'http://178.104.232.124:9210');
+    const blocked = directory.endpoints.find((endpoint) => endpoint.apiUrl === 'http://192.0.2.1:9210');
     expect(blocked?.browserReachable).toBe(false);
     expect(blocked?.unreachableReason).toBe('mixed-content');
   });
@@ -138,16 +138,17 @@ describe('fetchChainOperators', () => {
     const discover = vi.fn(async (blueprintId: bigint) => {
       if (blueprintId === 14n) throw new Error('rpc down');
       return {
-        operators: [operator(`0x${blueprintId.toString().padStart(40, '0')}`, `https://op-${blueprintId}.example`)],
+        operatorCount: 1n, operators: [operator(`0x${blueprintId.toString().padStart(40, '0')}`, `https://op-${blueprintId}.example`)],
       };
     });
 
-    const entries = await fetchChainOperators({
+    const { entries, counts } = await fetchChainOperators({
       blueprintIds: [13n, 14n, 15n],
       discover,
       storage: null,
     });
 
+    expect(counts).toEqual({ 13: '1', 15: '1' });
     expect(discover).toHaveBeenCalledTimes(3);
     expect(entries.map((entry) => entry.apiUrl).sort()).toEqual([
       'https://op-13.example',
@@ -156,7 +157,7 @@ describe('fetchChainOperators', () => {
   });
 
   it('resolves to an empty list when every blueprint walk fails (env fallback)', async () => {
-    const entries = await fetchChainOperators({
+    const { entries, counts } = await fetchChainOperators({
       blueprintIds: [13n, 14n],
       discover: async () => {
         throw new Error('chain unavailable');
@@ -164,6 +165,7 @@ describe('fetchChainOperators', () => {
       storage: null,
     });
 
+    expect(counts).toEqual({});
     expect(entries).toEqual([]);
     expect(buildOperatorDirectory({
       chainOperators: entries,
@@ -174,15 +176,16 @@ describe('fetchChainOperators', () => {
 
   it('dedupes an operator registered on multiple blueprints by address', async () => {
     const discover = vi.fn(async () => ({
-      operators: [operator('0x5Af6000000000000000000000000000000000001', 'https://operator-a.example')],
+      operatorCount: 1n, operators: [operator('0x5Af6000000000000000000000000000000000001', 'https://operator-a.example')],
     }));
 
-    const entries = await fetchChainOperators({
+    const { entries, counts } = await fetchChainOperators({
       blueprintIds: [13n, 14n],
       discover,
       storage: null,
     });
 
+    expect(counts).toEqual({ 13: '1', 14: '1' });
     expect(entries).toHaveLength(1);
     expect(entries[0]?.blueprintIds).toEqual([13, 14]);
   });
@@ -190,7 +193,7 @@ describe('fetchChainOperators', () => {
   it('caches results for the TTL and re-walks the chain after expiry', async () => {
     const storage = memStorage();
     const discover = vi.fn(async () => ({
-      operators: [operator('0x5Af6000000000000000000000000000000000001', 'https://operator-a.example')],
+      operatorCount: 1n, operators: [operator('0x5Af6000000000000000000000000000000000001', 'https://operator-a.example')],
     }));
     let nowMs = 1_000_000;
 

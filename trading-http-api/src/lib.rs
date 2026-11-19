@@ -21,6 +21,7 @@ pub mod routes;
 pub mod sandbox_store;
 pub mod session_auth;
 pub mod trade_store;
+pub mod trading_desk;
 pub mod trial_marker;
 
 use alloy::primitives::Address;
@@ -159,6 +160,13 @@ pub struct MultiBotTradingState {
     /// Resolves a bearer token into a BotContext. Injected by the binary.
     #[allow(clippy::type_complexity)]
     pub resolve_bot: Box<dyn Fn(&str) -> Option<BotContext> + Send + Sync>,
+    /// Resolves a bot id into the operator-owned projection the trading-desk
+    /// flow needs (ownership, deployment, strategy). `None` (tests) disables
+    /// the desk authorization routes; the binary injects it from the bot
+    /// store.
+    #[allow(clippy::type_complexity)]
+    pub desk_resolve_bot:
+        Option<Box<dyn Fn(&str) -> Option<trading_desk::DeskBotRecord> + Send + Sync>>,
     /// Enumerates bots that have envelope-mode authorization enabled.
     /// Used by the envelope renewal cron to scan for expiring/consumed
     /// envelopes. `None` disables the cron (the binary opts in by setting
@@ -212,6 +220,7 @@ impl Default for MultiBotTradingState {
             validation_deadline_secs: 30,
             min_validator_score: 0,
             resolve_bot: Box::new(|_| None),
+            desk_resolve_bot: None,
             list_envelope_bots: None,
             clob_client: None,
             chain_client: None,
@@ -543,6 +552,7 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
     // auth middleware below, so scrapers can hit it without a bearer token.
     let prom_router = routes::prometheus::multi_bot_router().with_state(Arc::clone(&state));
     let nav_stream_config = state.nav_stream_config.clone();
+    let desk_state = Arc::clone(&state);
     let auth_router = Router::new()
         .route("/health", get(multi_bot_health))
         .route("/ready", get(multi_bot_ready))
@@ -596,6 +606,18 @@ pub fn build_multi_bot_router(state: Arc<MultiBotTradingState>) -> Router {
     let mut outer = Router::new().merge(prom_router);
     if let Some(nav_config) = nav_stream_config {
         outer = outer.merge(routes::nav_ws::router(nav_config));
+    }
+    // The trading-desk OAuth2+PKCE flow (wallet consent + narrow desk
+    // credential) also sits ahead of the per-bot auth middleware: its
+    // handlers authenticate themselves via wallet session or desk token,
+    // never a bot bearer token. Unavailable when the binary did not inject
+    // a bot resolver.
+    if desk_state.desk_resolve_bot.is_some() {
+        let desk_router = trading_desk::router()
+            .layer(sandbox_runtime::operator_api::build_cors_layer())
+            .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+            .with_state(desk_state);
+        outer = outer.merge(desk_router);
     }
     outer.merge(auth_router)
 }

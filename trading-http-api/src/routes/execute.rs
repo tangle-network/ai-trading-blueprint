@@ -136,6 +136,11 @@ pub struct ExecuteResponse {
     /// CLOB order ID (set only for polymarket_clob trades).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clob_order_id: Option<String>,
+    /// Output amount in raw base units of the output token, set only when the
+    /// executor observed the on-chain settlement (confirmed envelope/vault
+    /// swaps). Absent for paper trades and unconfirmed submissions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amount_out_raw: Option<String>,
 }
 
 pub fn router() -> Router<Arc<TradingApiState>> {
@@ -592,7 +597,7 @@ fn ensure_validation_score_binding(
 /// Parse and validate the common fields of an `ExecuteRequest`.
 ///
 /// Returns the built `TradeIntent` or an HTTP error.
-fn parse_execute_request(
+pub(crate) fn parse_execute_request(
     req: &ExecuteRequest,
     chain_id: Option<u64>,
 ) -> Result<TradeIntent, (StatusCode, String)> {
@@ -797,7 +802,7 @@ fn hyperliquid_order_from_intent(
     })
 }
 
-fn expected_validation_hashes(
+pub(crate) fn expected_validation_hashes(
     intent: &TradeIntent,
     vault_address: &str,
     adapter_chain_id: Option<u64>,
@@ -1178,23 +1183,13 @@ async fn resolve_market_valuation(
     }
 }
 
-/// Value a paper perp open/close from intent metadata for the perp venues
-/// (`hyperliquid`, `gmx_v2`, `vertex`). A perp position is recorded with its
-/// entry price + asset-unit size so the portfolio realizes PnL as
-/// `notional × (exit − entry)/entry × dir` (Long: `(current − entry) × amount`;
-/// Short: `(entry − current) × amount` — see `PortfolioState::update_prices`),
-/// not as a spot token swap. Fees are applied downstream by `paper_fill_costs`
-/// using the canonical per-venue taker schedule.
+/// Value a paper perp open/close from intent metadata for the perp venues (`hyperliquid`, `gmx_v2`, `vertex`). A perp position is recorded with its entry price + asset-unit size so the portfolio realizes PnL as `notional × (exit − entry)/entry × dir` (Long: `(current − entry) × amount`; Short: `(entry − current) × amount` — see `PortfolioState::update_prices`), not as a spot token swap. Fees are applied downstream by `paper_fill_costs` using the canonical per-venue taker schedule.
 ///
 /// Two intent shapes are supported:
-///   * Hyperliquid threads an explicit `asset_size` (asset units) plus a price
-///     and/or notional — `position_size` is the asset size directly.
-///   * gmx_v2 / vertex (`perp_tick.js buildPerpIntent`) thread `notional_usdc`
-///     (USD) + a `mark_price`; `amount_in` is the USD notional, not asset units,
-///     so `position_size = notional / entry_price` (asset units).
+///   * Hyperliquid threads an explicit `asset_size` (asset units) plus a price and/or notional — `position_size` is the asset size directly.
+///   * gmx_v2 / vertex (`perp_tick.js buildPerpIntent`) thread `notional_usdc` (USD) + a `mark_price`; `amount_in` is the USD notional, not asset units, so `position_size = notional / entry_price` (asset units).
 ///
-/// Fails closed: a priced perp with no resolvable price/notional returns an
-/// error so the trade is rejected rather than recorded as a bogus $1-entry fill.
+/// Fails closed: a priced perp with no resolvable price/notional returns an error so the trade is rejected rather than recorded as a bogus $1-entry fill.
 fn resolve_perp_metadata_valuation(
     intent: &IntentPayload,
 ) -> Result<Option<TradeValuationSnapshot>, (StatusCode, String)> {
@@ -2246,26 +2241,13 @@ const PAPER_UNKNOWN_FEE_BPS: u32 = 30;
 /// `strategy_config.paper_gas_cost_usd`. Deducted from token_out received.
 const DEFAULT_PAPER_GAS_COST_USD: f64 = 0.05;
 
-/// Compute the realistic cost of a paper DEX/vault swap from REAL data: the
-/// authoritative per-protocol taker fee (`trading_runtime::protocol_fees`), a
-/// principled AMM price-impact term scaled by trade size against a reference
-/// liquidity depth, and a per-swap gas/tx cost.
+/// Compute the realistic cost of a paper DEX/vault swap from REAL data: the authoritative per-protocol taker fee (`trading_runtime::protocol_fees`), a principled AMM price-impact term scaled by trade size against a reference liquidity depth, and a per-swap gas/tx cost.
 ///
-/// Returns `(net_out, total_cost_bps, fee_bps, impact_bps, gas_cost_usd)` where
-/// `net_out` is the `token_out` the bot actually receives after fee + impact +
-/// gas (gas converted to `token_out` at the mid price and subtracted).
+/// Returns `(net_out, total_cost_bps, fee_bps, impact_bps, gas_cost_usd)` where `net_out` is the `token_out` the bot actually receives after fee + impact + gas (gas converted to `token_out` at the mid price and subtracted).
 ///
-/// Price-impact model: `impact_bps = min(CAP, notional_usd / reference_liquidity_usd * 10_000)`.
-/// This is a linear constant-product approximation around the current price —
-/// the larger the order relative to pool depth, the worse the fill. The
-/// reference depth is a real, configurable parameter (not a flat magic bps):
-/// on testnet the live reserves are too small to be meaningful, so impact is
-/// modelled against a representative mainnet-scale depth the strategy targets.
+/// Price-impact model: `impact_bps = min(CAP, notional_usd / reference_liquidity_usd * 10_000)`. This is a linear constant-product approximation around the current price — the larger the order relative to pool depth, the worse the fill. The reference depth is a real, configurable parameter (not a flat magic bps): on testnet the live reserves are too small to be meaningful, so impact is modelled against a representative mainnet-scale depth the strategy targets.
 ///
-/// Fees come exclusively from the canonical schedule; there is no invented flat
-/// swap cost. An unknown protocol falls back to the 0.30% DEX default. Gas is a
-/// real, configurable per-swap tx cost so paper PnL is never inflated by free
-/// execution.
+/// Fees come exclusively from the canonical schedule; there is no invented flat swap cost. An unknown protocol falls back to the 0.30% DEX default. Gas is a real, configurable per-swap tx cost so paper PnL is never inflated by free execution.
 fn paper_fill_costs(
     protocol: &str,
     gross_out: Decimal,
@@ -2447,6 +2429,7 @@ async fn execute_paper_trade(
         gas_used: Some("0".to_string()),
         paper_trade: true,
         clob_order_id: None,
+        amount_out_raw: None,
     }))
 }
 
@@ -2632,6 +2615,7 @@ async fn execute_paper_clob_trade(
             gas_used: Some("0".to_string()),
             paper_trade: true,
             clob_order_id: None,
+            amount_out_raw: None,
         }),
         fill_valuation,
     })
@@ -2770,13 +2754,13 @@ async fn execute_real_envelope_trade_inner(
     use trading_runtime::envelope::params_builder::build_envelope_shape;
     use trading_runtime::executor::{decimal_to_u256, get_adapter};
 
-    // Fee-aware pre-trade gate. Refuses (a) any protocol we have no canonical
-    // fee schedule for (so we never trade blind), and (b) any notional below
-    // the venue's min-worth-submitting floor (where venue fees + gas alone
-    // would eat most plausible profit). The agent's loop prompt also carries
-    // the full schedule so reasoning is fee-aware upstream — this is the
-    // runtime safety net, not the primary check.
-    trading_runtime::protocol_fees::gate_min_notional(&intent.target_protocol, intent.amount_in)
+    let notional_usd = valuation.notional_usd.ok_or_else(|| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "A USD valuation is required to check the venue minimum".to_string(),
+        )
+    })?;
+    trading_runtime::protocol_fees::gate_min_notional(&intent.target_protocol, notional_usd)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     let adapter = get_adapter(
@@ -2878,7 +2862,7 @@ async fn execute_real_envelope_trade_inner(
         notional_usd: valuation.notional_usd.map(|v| v.to_string()),
         requested_price_usd: None,
         filled_price_usd: None,
-        filled_amount: confirmed_amount_out,
+        filled_amount: confirmed_amount_out.clone(),
         slippage_bps: None,
         execution_reason: Some("Confirmed via envelope-mode execution".into()),
         prediction_metadata: extract_prediction_metadata(&req.intent),
@@ -2908,6 +2892,7 @@ async fn execute_real_envelope_trade_inner(
         gas_used: outcome.gas_used.map(|g| g.to_string()),
         paper_trade: false,
         clob_order_id: None,
+        amount_out_raw: confirmed_amount_out,
     }))
 }
 
@@ -3045,7 +3030,7 @@ async fn execute_real_trade_inner(
         notional_usd: valuation.notional_usd.map(|value| value.to_string()),
         requested_price_usd: None,
         filled_price_usd: None,
-        filled_amount: confirmed_amount_out,
+        filled_amount: confirmed_amount_out.clone(),
         slippage_bps: None,
         execution_reason: outcome
             .output_gained
@@ -3083,6 +3068,7 @@ async fn execute_real_trade_inner(
         gas_used: outcome.gas_used.map(|g| g.to_string()),
         paper_trade: false,
         clob_order_id: None,
+        amount_out_raw: confirmed_amount_out,
     }))
 }
 
@@ -3185,6 +3171,7 @@ async fn execute_clob_trade(
         gas_used: None,
         paper_trade: false,
         clob_order_id: Some(response.order_id),
+        amount_out_raw: None,
     }))
 }
 
@@ -3444,6 +3431,7 @@ async fn execute_hyperliquid_trade(
         gas_used: None,
         paper_trade: false,
         clob_order_id: None,
+        amount_out_raw: None,
     }))
 }
 
@@ -3723,7 +3711,11 @@ fn enforce_live_risk_budget_decision(
 }
 
 /// Multi-bot execute handler -- resolves bot from request extensions (set by auth middleware).
-async fn execute_multi_bot(
+// `pub(crate)`: also invoked directly by the trading-desk order submitter
+// (trading_desk::submit_order), which reuses the full execution pipeline —
+// auth-independent because the desk handler has already resolved and
+// authorized the bot.
+pub(crate) async fn execute_multi_bot(
     State(state): State<Arc<MultiBotTradingState>>,
     request: Request,
 ) -> Result<Json<ExecuteResponse>, (StatusCode, String)> {

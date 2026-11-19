@@ -47,16 +47,11 @@ jobs:
 
       - name: Build arena UI
         working-directory: arena
-        # The build runs HERE (not in CF Pages' build system), so Vite only sees
-        # env from this step — CF Pages dashboard vars do NOT apply. Bake the live
-        # operator backend URL in so the deployed arena fetches bots/leaderboard
-        # from the operator instead of falling back to the empty-state card.
-        # Single canonical operator plus optional comma/JSON list of public
-        # operator endpoints for fleet-wide homepage volume. The operator's
-        # CORS_ALLOWED_ORIGINS must include this arena origin.
+        # The browser uses published operator URLs and the on-chain directory.
+        # An empty configuration leaves discovery to the directory.
         env:
-          VITE_OPERATOR_API_URL: ${{ vars.TRADING_OPERATOR_API_URL || 'https://178.104.232.124.sslip.io' }}
-          VITE_TRADING_OPERATOR_API_URLS: ${{ vars.TRADING_OPERATOR_API_URLS || vars.TRADING_OPERATOR_API_URL || 'https://178.104.232.124.sslip.io' }}
+          VITE_OPERATOR_API_URL: ${{ vars.TRADING_OPERATOR_API_URL }}
+          VITE_TRADING_OPERATOR_API_URLS: ${{ vars.TRADING_OPERATOR_API_URLS }}
           VITE_ADDITIONAL_TRADING_OPERATOR_API_URLS: ${{ vars.ADDITIONAL_TRADING_OPERATOR_API_URLS || '' }}
           VITE_BLUEPRINT_ID: ${{ vars.VITE_BLUEPRINT_ID || '1' }}
           VITE_INSTANCE_BLUEPRINT_ID: ${{ vars.VITE_INSTANCE_BLUEPRINT_ID || '2' }}
@@ -76,6 +71,13 @@ jobs:
           VITE_HYPEREVM_MAINNET_VAULT_FACTORY_ADDRESS: ${{ vars.VITE_HYPEREVM_MAINNET_VAULT_FACTORY_ADDRESS || '' }}
           VITE_HYPEREVM_MAINNET_VAULT_ADDRESS: ${{ vars.VITE_HYPEREVM_MAINNET_VAULT_ADDRESS || '' }}
           VITE_HYPEREVM_MAINNET_PAPER_TRADE: ${{ vars.VITE_HYPEREVM_MAINNET_PAPER_TRADE || 'false' }}
+          # Wallet-delegated trading desk consent (/connect/trading): the exact
+          # https origin of the enrolled operator for each network (no path,
+          # query, or credentials — same restriction as Trading's tangle-vault).
+          # Empty means the network is not enrolled and the route renders an
+          # honest view-only state instead of contacting any operator.
+          VITE_TRADING_DESK_OPERATOR_ORIGIN_TEST: ${{ vars.TRADING_DESK_OPERATOR_ORIGIN_TEST || '' }}
+          VITE_TRADING_DESK_OPERATOR_ORIGIN_LIVE: ${{ vars.TRADING_DESK_OPERATOR_ORIGIN_LIVE || '' }}
         run: pnpm run build
 
       # `cloudflare/wrangler-action` tries to install wrangler via `pnpm add`
