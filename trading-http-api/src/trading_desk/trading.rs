@@ -305,9 +305,10 @@ pub(super) async fn submit_order(
             );
         }
         deadline_ts = deadline_ts.min(*expires_at);
-        let start = match super::reconcile::stage(&bot, &planned, swap.router, &spec).await {
-            Ok(snapshot) => snapshot,
-            Err(_) => {
+        let check = super::reconcile::stage(&bot, &planned, swap.router, &spec);
+        let start = match tokio::time::timeout(std::time::Duration::from_secs(5), check).await {
+            Ok(Ok(snapshot)) => snapshot,
+            _ => {
                 return desk_error(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "cannot verify the enrolled chain and vault",

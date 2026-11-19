@@ -29,6 +29,11 @@ pub(super) async fn stage(
     if chain != bot.chain_id || vault.is_zero() || code.is_empty() {
         return Err("chain or vault mismatch".into());
     }
+    ITradingVault::new(vault, &provider)
+        .executedIntents(B256::ZERO)
+        .call()
+        .await
+        .map_err(|_| "vault does not expose intent receipts")?;
     Ok(ChainOrder {
         from_block: block,
         router,
@@ -89,7 +94,7 @@ async fn settlement(
     let contract = ITradingVault::new(vault, &rpc);
     let executed = contract
         .executedIntents(intent)
-        .block(BlockId::hash(safe.header.hash))
+        .block(BlockId::hash_canonical(safe.header.hash))
         .call()
         .await
         .map_err(|_| "cannot read this vault at its checkpoint")?;
@@ -109,32 +114,31 @@ async fn settlement(
     let hash: B256 = match order.venue_order_id.as_deref().and_then(|s| s.parse().ok()) {
         Some(hash) => hash,
         None => {
-            // Immutable once executed. Locate the transition in logarithmic reads, even if the desk spent weeks offline.
-            let (mut lo, mut hi) = (binding.from_block, height);
-            while lo < hi {
-                let mid = lo + (hi - lo) / 2;
-                let seen = contract
-                    .executedIntents(intent)
-                    .block(BlockId::number(mid))
-                    .call()
+            // Search the actual submission window. Even after a long outage, only a small range of
+            // event logs is normally needed. Ordinary RPC nodes need no historical contract state.
+            let mut start = binding.from_block;
+            let event = loop {
+                let end = start.saturating_add(511).min(height);
+                let logs = rpc
+                    .get_logs(&filter.clone().from_block(start).to_block(end))
                     .await
-                    .map_err(|_| "historical vault state unavailable")?;
-                if seen {
-                    hi = mid;
-                } else {
-                    lo = mid + 1;
+                    .map_err(|_| "settlement log unavailable")?;
+                match logs.as_slice() {
+                    [event] if !event.removed => break event.clone(),
+                    [] if end < height => {
+                        let last = rpc
+                            .get_block_by_number(end.into())
+                            .await
+                            .map_err(|_| "log range unavailable")?
+                            .ok_or("log range unavailable")?;
+                        if last.header.timestamp > order.deadline {
+                            return Ok(Observed::Pending);
+                        }
+                        start = end + 1;
+                    }
+                    _ => return Ok(Observed::Pending),
                 }
-            }
-            let logs = rpc
-                .get_logs(&filter.from_block(lo).to_block(lo))
-                .await
-                .map_err(|_| "settlement log unavailable")?;
-            let [event] = logs.as_slice() else {
-                return Ok(Observed::Pending);
             };
-            if event.removed {
-                return Ok(Observed::Pending);
-            }
             event
                 .transaction_hash
                 .ok_or("settlement event has no transaction")?
